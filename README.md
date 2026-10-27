@@ -32,7 +32,7 @@ wgh-rag-system/
 │   │   ├── definition/       #   ToolDefinitionParser（OpenAI function JSON → ToolSpecification）
 │   │   ├── demo/             #   OrderQueryHandler（FUNCTION_CALLING 演示 handler）
 │   │   └── service/          #   ToolConfigService / SkillFileService
-│   ├── sql/                  # init.sql + migration_YYYYMMDD_*.sql
+│   ├── sql/                  # schema.sql（完整 DDL + 索引）+ data.sql（种子数据）+ init.sql（一键入口）
 │   └── pom.xml
 └── rag-frontend/             # Vue 3 前端
     └── src/
@@ -150,14 +150,8 @@ docker run -d --name postgres-with-vector \
   -p 5432:5432 \
   pgvector/pgvector:pg16
 
-# 初始化（会创建全部 8 张表 + 种子数据）
+# 初始化（会创建全部 8 张表 + 25 个业务索引 + 种子数据）
 docker exec -i postgres-with-vector psql -U postgres -d wgh_rag < rag-backend/sql/init.sql
-
-# 已存在库需要执行的增量 migration（按日期顺序）
-docker exec -i postgres-with-vector psql -U postgres -d wgh_rag < rag-backend/sql/migration_20261023_chat_eval.sql
-docker exec -i postgres-with-vector psql -U postgres -d wgh_rag < rag-backend/sql/migration_20261023_context_compression_persist.sql
-docker exec -i postgres-with-vector psql -U postgres -d wgh_rag < rag-backend/sql/migration_20261027_tool_skill_executor_config.sql
-docker exec -i postgres-with-vector psql -U postgres -d wgh_rag < rag-backend/sql/migration_20261027_tool_types_executor_config.sql
 ```
 
 ### 2. 后端
@@ -266,7 +260,7 @@ npm run dev   # http://localhost:5173
 
 | 路径 | 说明 |
 |------|------|
-| `rag-backend/sql/` | init + 增量 migration，按 `migration_YYYYMMDD_<topic>.sql` 命名 |
+| `rag-backend/sql/` | 一键入口 `init.sql` → 串联 `schema.sql`（完整 DDL + 索引 + COMMENT）+ `data.sql`（种子数据 + 老库兼容修复）；所有历史 migration 已合入，新库只需跑 init.sql |
 | `rag-backend/rag-app/skills/` | Skill 磁盘目录（由 `wgh.skill.base-path` 解析而来） |
 | `rag-backend/uploads/` | 按知识库 ID 分子目录 |
 | `rag-backend/logs/` | 运行日志（SizeAndTimeBasedRollingPolicy） |
@@ -345,9 +339,9 @@ npm run dev   # http://localhost:5173
 
 | 项目 | 状态 | 说明 |
 |------|------|------|
-| SQL init（10 张表） | ✅ 完成 | 含 wgh_chat_session / wgh_chat_window / wgh_tool / wgh_llm_model / wgh_embedding_model / wgh_knowledge_base / wgh_knowledge_file / wgh_chat_message / wgh_kb_* |
+| SQL init（8 张表 + 25 个业务索引 + 种子数据） | ✅ 完成 | schema.sql 幂等 DDL（CREATE TABLE / INDEX 全部 IF NOT EXISTS）+ data.sql 种子 INSERT，所有历史 migration 已合入 |
 | pgvector 向量扩展 | ✅ 完成 | 自动建表 + 可选 IVF 索引 |
-| Migration（评估 + 压缩持久化 + Skill 迁移 + 工具类型） | ✅ 完成 | 增量脚本按日期命名，幂等可重复执行 |
+| 老库兼容修复 | ✅ 内置 | data.sql 末尾含幂等 SKILL executor_config 格式修复 UPDATE，新库空跑安全 |
 
 ## 系统截图
 
