@@ -1,0 +1,55 @@
+## ============================================================
+## 测试环境配置 (test)
+## CI/CD 集成测试使用 pgvector，可降级到内存
+## ============================================================
+
+server:
+  port: 8080
+
+spring:
+  config:
+    activate:
+      on-profile: test
+    import: optional:file:./config/application-test.properties
+
+  datasource:
+    driver-class-name: org.postgresql.Driver
+    url: jdbc:postgresql://${TEST_DB_HOST:test-pg}:${TEST_DB_PORT:5432}/wgh_rag_test?currentSchema=public&stringtype=unspecified
+    username: ${TEST_DB_USERNAME:postgres}
+    password: ${TEST_DB_PASSWORD:postgres}
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+
+mybatis-plus:
+  configuration:
+    log-impl: org.apache.ibatis.logging.nologging.NoLoggingImpl
+
+wgh:
+  pgvector:
+    default-dimension: 1536
+    create-table: true
+    skip-create-vector-extension: false
+    use-index: false
+    connect-on-startup: true
+    allow-fallback-to-in-memory: true
+  rag:
+    retrieve:
+      top-k: 5
+      min-score: 0.3
+    context:
+      max-history-messages: 20
+      max-history-tokens: 4000
+      enable-compression: true
+      recent-window-rounds: 4
+      mid-term-window-rounds: 6
+      long-term-facts-tokens: 400
+      summary-max-tokens: 600
+      summary-timeout-seconds: 20
+
+logging:
+  level:
+    root: WARN
+    com.wgh.rag: INFO
+  file:
+    path: ./logs/test

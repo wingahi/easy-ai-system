@@ -1,0 +1,91 @@
+## ============================================================
+## 生产环境配置 (prod)
+## 敏感配置通过环境变量/外部配置中心注入
+## ============================================================
+
+server:
+  port: ${SERVER_PORT:8080}
+  servlet:
+    context-path: /
+
+spring:
+  config:
+    activate:
+      on-profile: prod
+    import:
+      - optional:file:${APP_CONFIG_PATH:./config}/application-prod.properties
+      - optional:nacos:wgh-rag-prod?group=DEFAULT_GROUP
+  datasource:
+    driver-class-name: org.postgresql.Driver
+    url: jdbc:postgresql://${PROD_DB_HOST:pg-cluster}:${PROD_DB_PORT:5432}/${PROD_DB_NAME:wgh_rag}?currentSchema=public&stringtype=unspecified
+    username: ${PROD_DB_USERNAME:postgres}
+    password: ${PROD_DB_PASSWORD:}
+    hikari:
+      pool-name: WghRagProdHikariPool
+      maximum-pool-size: ${PROD_DB_POOL_MAX:50}
+      minimum-idle: ${PROD_DB_POOL_MIN:10}
+      connection-timeout: 10000
+      idle-timeout: 300000
+      max-lifetime: 1500000
+      leak-detection-threshold: 30000
+      validation-timeout: 5000
+      initialization-fail-timeout: 30000
+
+mybatis-plus:
+  configuration:
+    log-impl: org.apache.ibatis.logging.nologging.NoLoggingImpl
+
+wgh:
+  jwt:
+    secret: ${WGH_JWT_SECRET}                     # 必填
+    expiration: 86400000
+  pgvector:
+    default-dimension: 1536
+    create-table: true
+    skip-create-vector-extension: ${WGH_PGVECTOR_SKIP_EXT:false}
+    use-index: true                                # 生产建议开启 IVFFlat 索引
+    index-list-size: 100
+    default-table-name: rag_vector_store
+    connect-on-startup: true
+    allow-fallback-to-in-memory: false             # 生产强制 pgvector
+  
+  rag:
+    retrieve:
+      top-k: 5
+      min-score: 0.35
+      enable-rerank: true
+    split:
+      max-length: 512
+      overlap-length: 64
+      default-strategy: AUTO
+    context:
+      max-history-messages: 20
+      max-history-tokens: 4000
+      enable-compression: true
+      recent-window-rounds: 4
+      mid-term-window-rounds: 6
+      long-term-facts-tokens: 400
+      summary-max-tokens: 600
+      summary-timeout-seconds: 20
+
+logging:
+  level:
+    root: WARN
+    com.wgh.rag: INFO
+    dev.langchain4j: INFO
+  file:
+    path: /var/log/wgh-rag
+  logback:
+    rollingpolicy:
+      max-file-size: 100MB
+      max-history: 30
+      total-size-cap: 10GB
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: when-authorized

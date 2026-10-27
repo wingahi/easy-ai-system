@@ -1,0 +1,153 @@
+server:
+  port: 8080
+  servlet:
+    context-path: /
+
+spring:
+  profiles:
+    active: ${WGH_PROFILE:dev}
+
+  application:
+    name: wgh-rag-system
+
+  # ===== PostgreSQL 数据源（pgvector 向量化复用同一连接池） =====
+  datasource:
+    driver-class-name: org.postgresql.Driver
+    url: jdbc:postgresql://${WGH_DB_HOST:localhost}:${WGH_DB_PORT:5432}/${WGH_DB_NAME:wgh_rag}?currentSchema=public&stringtype=unspecified
+    username: ${WGH_DB_USERNAME:postgres}
+    password: ${WGH_DB_PASSWORD:postgres}
+    hikari:
+      pool-name: WghRagHikariPool
+      maximum-pool-size: ${WGH_DB_POOL_MAX:20}
+      minimum-idle: ${WGH_DB_POOL_MIN:5}
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+      connection-test-query: SELECT 1
+      leak-detection-threshold: 60000
+      initialization-fail-timeout: -1   # 启动时连接失败不阻断
+
+  # ===== 文件上传 =====
+  servlet:
+    multipart:
+      max-file-size: 50MB
+      max-request-size: 50MB
+      file-size-threshold: 10240
+
+  # ===== Jackson 序列化 =====
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+    time-zone: Asia/Shanghai
+
+# ===== MyBatis Plus =====
+mybatis-plus:
+  mapper-locations: classpath*:/mapper/**/*.xml
+  type-aliases-package: com.wgh.rag.**.entity
+  type-aliases-super-type: com.wgh.rag.common.entity.BaseEntity
+  type-handlers-package: com.wgh.rag.common.handler
+  configuration:
+    map-underscore-to-camel-case: true
+    cache-enabled: true
+    lazy-loading-enabled: true
+    use-generated-keys: true
+    default-statement-timeout: 25
+    call-setters-on-nulls: true
+  global-config:
+    db-config:
+      id-type: auto
+      logic-delete-field: deleted
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+
+# ===== WGH RAG 自定义配置 =====
+wgh:
+  jwt:
+    secret: ${WGH_JWT_SECRET:wgh-rag-system-secret-key-must-be-at-least-256-bits-long-for-hs256-algorithm}
+    expiration: 86400000     # 24小时
+    header: Authorization
+    prefix: "Bearer "
+  
+  pgvector:
+    default-dimension: 1536
+    create-table: true
+    skip-create-vector-extension: ${WGH_PGVECTOR_SKIP_EXT:false}   # DB 侧没装 pgvector 时设为 true，由 DBA 预先执行 CREATE EXTENSION vector
+    use-index: false                                              # >10万条数据时开启 IVFFlat
+    index-list-size: 100
+    default-table-name: rag_vector_store
+    connect-on-startup: true
+    allow-fallback-to-in-memory: ${WGH_PGVECTOR_FALLBACK:false}
+  
+  rag:
+    retrieve:
+      top-k: 5
+      min-score: 0.3
+      enable-rerank: false
+    split:
+      max-length: 512
+      overlap-length: 64
+      default-strategy: AUTO
+    context:
+      max-history-messages: 20                                   # 超过此条数触发分层压缩
+      max-history-tokens: 4000
+      enable-compression: true
+      recent-window-rounds: 4                                   # 分层压缩：近期窗口（轮，保留原文）
+      mid-term-window-rounds: 6                                 # 分层压缩：中期窗口（轮，LLM 摘要）
+      long-term-facts-tokens: 400                               # 分层压缩：远期对话 Token 预算（关键事实）
+      summary-max-tokens: 600                                   # 分层压缩：LLM 摘要最大输出 Token
+      summary-timeout-seconds: 20                               # 分层压缩：摘要 LLM 调用超时（秒）
+  
+  file:
+    upload-dir: ${WGH_UPLOAD_DIR:./uploads}
+    max-single-file-mb: 50
+
+  skill:
+    # Skill 目录根路径（directory 模式从这里扫描/导入/写入）
+    base-path: ${WGH_SKILL_BASE_PATH:./skills}
+
+# ===== LangChain4j =====
+langchain4j:
+  open-ai:
+    chat-model:
+      api-key: ${OPENAI_API_KEY:demo}
+      base-url: ${OPENAI_BASE_URL:https://api.openai.com/v1}
+      timeout: 60s
+      log-requests: false
+      log-responses: false
+    streaming-chat-model:
+      api-key: ${OPENAI_API_KEY:demo}
+      base-url: ${OPENAI_BASE_URL:https://api.openai.com/v1}
+      timeout: 120s
+    embedding-model:
+      api-key: ${OPENAI_API_KEY:demo}
+      base-url: ${OPENAI_BASE_URL:https://api.openai.com/v1}
+      model-name: text-embedding-3-small
+      timeout: 30s
+
+# ===== Actuator (健康检查) =====
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always
+  health:
+    db:
+      enabled: true
+  metrics:
+    tags:
+      application: ${spring.application.name}
+
+# ===== Logback 级别 =====
+logging:
+  level:
+    root: INFO
+    com.wgh.rag: ${WGH_LOG_LEVEL:DEBUG}
+    com.baomidou.mybatisplus: INFO
+    dev.langchain4j: ${WGH_LLM_LOG:INFO}
+    org.postgresql: WARN
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"

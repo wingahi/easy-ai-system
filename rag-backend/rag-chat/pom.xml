@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>com.wgh</groupId>
+        <artifactId>rag-backend</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>rag-chat</artifactId>
+    <name>rag-chat</name>
+    <description>聊天模块 - RAG链路、记忆管理、工具调用</description>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.wgh</groupId>
+            <artifactId>rag-kb</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.wgh</groupId>
+            <artifactId>rag-tool</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j-reactor</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <optional>true</optional>
+        </dependency>
+    </dependencies>
+</project>

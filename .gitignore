@@ -1,0 +1,58 @@
+# ===== Maven =====
+rag-backend/**/target/
+rag-backend/**/*.class
+rag-backend/**/*.jar
+rag-backend/**/*.war
+
+# ===== IDE =====
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+.project
+.classpath
+.settings/
+
+# ===== Node =====
+rag-frontend/node_modules/
+rag-frontend/dist/
+rag-frontend/.vite/
+
+# ===== Logs =====
+*.log
+logs/
+rag-backend/logs/
+rag-backend/**/logs/
+rag-frontend/logs/
+
+# ===== Uploads & runtime data =====
+uploads/
+rag-backend/uploads/
+
+# ===== OS =====
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# ===== Env =====
+.env
+.env.local
+.env.*.local
+
+# ===== Sensitive =====
+*.pem
+*.key
+*.p12
+*.keystore
+
+# ===== Java =====
+*.jar
+*.class
+hs_err_pid*
+replay_pid*
+
+# ===== Skill runtime dirs (wgh.skill.base-path) =====
+rag-backend/rag-app/skills/
+rag-backend/skills/

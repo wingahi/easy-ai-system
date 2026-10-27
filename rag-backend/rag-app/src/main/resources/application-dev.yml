@@ -1,0 +1,44 @@
+## ============================================================
+## 开发环境配置 (dev)
+## 本地开发使用 PostgreSQL + pgvector，默认 localhost
+## ============================================================
+
+server:
+  port: 8080
+
+spring:
+  config:
+    activate:
+      on-profile: dev
+
+  datasource:
+    url: jdbc:postgresql://localhost:5432/${WGH_DB_NAME:wgh_rag}?currentSchema=public&stringtype=unspecified
+    username: ${WGH_DB_USERNAME:postgres}
+    password: ${WGH_DB_PASSWORD:123456}
+
+mybatis-plus:
+  configuration:
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+
+wgh:
+  pgvector:
+    default-dimension: 1536
+    create-table: true
+    skip-create-vector-extension: false     # dev 环境自动 CREATE EXTENSION vector
+    use-index: false
+    connect-on-startup: true
+    allow-fallback-to-in-memory: true         # pgvector 连不上不阻断启动
+
+  rag:
+    retrieve:
+      top-k: 5
+      min-score: 0.3
+
+logging:
+  level:
+    root: INFO
+    com.wgh.rag: DEBUG
+    dev.langchain4j: DEBUG
+    org.postgresql: DEBUG
+  file:
+    path: ./logs

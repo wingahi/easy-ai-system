@@ -1,0 +1,53 @@
+## ============================================================
+## 单元测试专用配置 (src/test/resources)
+## H2 内存数据库 + pgvector 降级到内存
+## ============================================================
+
+server:
+  port: 0   # 随机端口
+
+spring:
+  datasource:
+    driver-class-name: org.h2.Driver
+    url: jdbc:h2:mem:wgh_rag_test;DB_CLOSE_DELAY=-1;MODE=PostgreSQL
+    username: sa
+    password: 
+    hikari:
+      maximum-pool-size: 5
+      minimum-idle: 1
+  jpa:
+    hibernate:
+      ddl-auto: none
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:schema.sql
+      continue-on-error: false
+
+mybatis-plus:
+  configuration:
+    log-impl: org.apache.ibatis.logging.nologging.NoLoggingImpl
+
+wgh:
+  jwt:
+    secret: test-jwt-secret-key-must-be-at-least-256-bits-long-for-hs256-algorithm-test
+    expiration: 86400000
+  pgvector:
+    connect-on-startup: false
+    allow-fallback-to-in-memory: true
+  rag:
+    retrieve:
+      top-k: 3
+      min-score: 0.1
+    split:
+      max-length: 200
+      overlap-length: 20
+    context:
+      max-history-messages: 10
+      enable-compression: true
+
+logging:
+  level:
+    root: WARN
+    com.wgh.rag: WARN
+    dev.langchain4j: WARN
