@@ -7,7 +7,7 @@ import com.wgh.rag.common.result.ResultCode;
 import com.wgh.rag.kb.entity.KnowledgeBase;
 import com.wgh.rag.kb.entity.KnowledgeFile;
 import com.wgh.rag.kb.mapper.KnowledgeFileMapper;
-import com.wgh.rag.kb.parser.DocumentParser;
+import com.wgh.rag.kb.parser.DocumentParserDispatcher;
 import com.wgh.rag.kb.splitter.TextSplitter;
 import dev.langchain4j.data.document.Metadata;
 import dev.langchain4j.data.segment.TextSegment;
@@ -36,7 +36,7 @@ public class KnowledgeFileService {
 
     private final KnowledgeFileMapper fileMapper;
     private final KnowledgeBaseService kbService;
-    private final DocumentParser documentParser;
+    private final DocumentParserDispatcher documentParser;
     private final TextSplitter textSplitter;
     private final VectorStoreService vectorStoreService;
     private final ObjectMapper objectMapper;
