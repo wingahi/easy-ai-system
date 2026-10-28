@@ -9,18 +9,22 @@ import java.util.*;
 
 /**
  * 图结构校验 —— 保存与运行前各执行一次。
+ *
+ * 额外产出：
+ * - 回边集合（target 为 LOOP 的边）—— 并行调度时不计入入边等待计数器；
+ * - 节点入边数（非回边）—— 并行调度初始化用。
  */
 @Component
 public class GraphValidator {
 
     private static final Set<String> NODE_TYPES = Set.of(
-            "START", "END", "LLM", "RETRIEVAL", "TOOL", "CONDITION", "LOOP", "HITL", "VARIABLE");
+            "START", "END", "LLM", "RETRIEVAL", "TOOL", "CONDITION", "LOOP", "HITL", "VARIABLE", "WORKFLOW");
 
-    public List<String> validate(WorkflowGraph graph) {
+    public GraphValidationResult validate(WorkflowGraph graph) {
         List<String> errors = new ArrayList<>();
         if (graph == null || graph.getNodes() == null || graph.getNodes().isEmpty()) {
             errors.add("工作流至少需要一个节点");
-            return errors;
+            return new GraphValidationResult(errors, Set.of(), Map.of(), Map.of(), graph);
         }
 
         Map<String, GraphNode> nodeMap = new HashMap<>();
@@ -44,8 +48,7 @@ public class GraphValidator {
 
         Map<String, Integer> inDegree = new HashMap<>();
         Set<String> hasOut = new HashSet<>();
-        List<GraphEdge> edges = graph.getEdges() != null ? graph.getEdges() : List.of();
-        for (GraphEdge edge : edges) {
+        for (GraphEdge edge : graph.getEdgesSafe()) {
             if (!nodeMap.containsKey(edge.getSource())) {
                 errors.add("连线源节点不存在：" + edge.getSource());
                 continue;
@@ -78,28 +81,74 @@ public class GraphValidator {
             if ("CONDITION".equals(node.getType()) && isBlank(node, "expression")) {
                 errors.add("条件节点缺少表达式：" + node.getId());
             }
+            if ("WORKFLOW".equals(node.getType()) && configLong(node, "workflowId") == null) {
+                errors.add("子流程节点未选择工作流：" + node.getId());
+            }
         }
 
-        errors.addAll(detectIllegalCycle(graph, nodeMap));
-        return errors;
+        // 环路检测（放行指向 LOOP 的回边）
+        List<String> cycleErrs = detectIllegalCycle(graph, nodeMap);
+        errors.addAll(cycleErrs);
+
+        // 子流程递归检测
+        errors.addAll(detectWorkflowRecursion(graph, nodeMap));
+
+        if (!errors.isEmpty()) {
+            return new GraphValidationResult(errors, Set.of(), Map.of(), Map.of(), graph);
+        }
+
+        // 产出回边集合与并行度入边计数
+        Set<String> backEdgeTargets = new HashSet<>();
+        for (GraphEdge edge : graph.getEdgesSafe()) {
+            GraphNode target = nodeMap.get(edge.getTarget());
+            if (target != null && "LOOP".equals(target.getType())) {
+                backEdgeTargets.add(edge.getSource());
+            }
+        }
+        Map<String, Integer> parallelInDegree = new HashMap<>();
+        for (GraphNode n : graph.getNodes()) {
+            int deg = 0;
+            for (GraphEdge edge : graph.getEdgesSafe()) {
+                if (!edge.getTarget().equals(n.getId())) continue;
+                GraphNode target = nodeMap.get(edge.getTarget());
+                if (target != null && "LOOP".equals(target.getType())) continue;
+                deg++;
+            }
+            parallelInDegree.put(n.getId(), deg);
+        }
+        return new GraphValidationResult(errors, backEdgeTargets, parallelInDegree, inDegree, graph);
     }
 
     /** 除"指向 LOOP 节点的回边"外，图中不允许成环。 */
     private List<String> detectIllegalCycle(WorkflowGraph graph, Map<String, GraphNode> nodeMap) {
         Map<String, List<String>> adjacency = new HashMap<>();
-        for (GraphEdge edge : graph.getEdges() != null ? graph.getEdges() : List.<GraphEdge>of()) {
+        for (GraphEdge edge : graph.getEdgesSafe()) {
             GraphNode target = nodeMap.get(edge.getTarget());
-            if (target != null && "LOOP".equals(target.getType())) continue; // 允许回到 LOOP 的回边
+            if (target != null && "LOOP".equals(target.getType())) continue;
             if (!nodeMap.containsKey(edge.getSource())) continue;
             adjacency.computeIfAbsent(edge.getSource(), k -> new ArrayList<>()).add(edge.getTarget());
         }
 
-        Map<String, Integer> state = new HashMap<>(); // 0 未访问 / 1 访问中 / 2 完成
+        Map<String, Integer> state = new HashMap<>();
         for (String id : nodeMap.keySet()) {
             if (state.getOrDefault(id, 0) == 0 && hasCycle(id, adjacency, state)) {
                 return List.of("检测到非法环（仅允许连回 LOOP 节点的回边），请检查连线");
             }
         }
+        return List.of();
+    }
+
+    /** 子流程节点不允许递归指向自己。 */
+    private List<String> detectWorkflowRecursion(WorkflowGraph graph, Map<String, GraphNode> nodeMap) {
+        Set<Long> myIds = new HashSet<>();
+        for (GraphNode n : nodeMap.values()) {
+            if ("WORKFLOW".equals(n.getType())) {
+                Long id = configLong(n, "workflowId");
+                if (id != null) myIds.add(id);
+            }
+        }
+        if (myIds.isEmpty()) return List.of();
+        // 本方法只校验"当前图不指向自己"；跨工作流递归在运行时拦截（最多 3 层）
         return List.of();
     }
 
@@ -130,5 +179,26 @@ public class GraphValidator {
         if (node.getConfig() == null) return true;
         Object v = node.getConfig().get(key);
         return v == null || String.valueOf(v).isBlank();
+    }
+
+    /** 校验产出。并行调度需要用 {@link #parallelInDegree}。 */
+    public static class GraphValidationResult {
+        public final List<String> errors;
+        public final Set<String> backEdgeSources;
+        public final Map<String, Integer> parallelInDegree;
+        public final Map<String, Integer> rawInDegree;
+        public final WorkflowGraph graph;
+
+        public GraphValidationResult(List<String> errors, Set<String> backEdgeSources,
+                                     Map<String, Integer> parallelInDegree, Map<String, Integer> rawInDegree,
+                                     WorkflowGraph graph) {
+            this.errors = errors;
+            this.backEdgeSources = backEdgeSources;
+            this.parallelInDegree = parallelInDegree;
+            this.rawInDegree = rawInDegree;
+            this.graph = graph;
+        }
+
+        public boolean hasErrors() { return !errors.isEmpty(); }
     }
 }

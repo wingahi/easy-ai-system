@@ -427,8 +427,11 @@ while frontier 非空:
 
 ## 10. 演进路线
 
-1. **并行分支**：`frontier` 改为线程安全队列 + 完成度计数，支持 fan-out/fan-in；
-2. **触发方式**：定时（Quartz）/ Webhook / 被 ChatWindow 作为工具调用；
-3. **子流程节点**（`WORKFLOW`）：工作流作为节点被复用；
-4. **版本管理**：`wgh_workflow_version` 快照 + 灰度发布；
-5. **节点市场**：把常用节点组合导出为模板。
+| 方向 | 状态 | 说明 |
+| --- | --- | --- |
+| 并行分支 | ✅ 已实现 | `frontier` 并发调度 + `pendingInEdges` 入边等待计数器，支持 fan-out/fan-in |
+| 子流程节点（`WORKFLOW`） | ✅ 已实现 | 工作流作为节点被复用，最大嵌套 3 层，`inputTemplate`/`outputTemplate` 变量渲染 |
+| 版本管理 | 🔲 未实现 | `wgh_workflow_version` 快照 + 回滚 |
+| 触发方式 | 🔲 未实现 | 定时（Quartz）/ Webhook / 被 ChatWindow 作为工具调用 |
+| 节点市场 | 🔲 未实现 | 把常用节点组合导出为模板 |
+| 灰度发布 | 🔲 未实现 | 基于版本快照的流量分配 |

@@ -6,8 +6,10 @@ import com.wgh.rag.kb.service.RagRetrieveService;
 import com.wgh.rag.llm.factory.ModelCacheManager;
 import com.wgh.rag.tool.entity.ToolConfig;
 import com.wgh.rag.workflow.dto.*;
+import com.wgh.rag.workflow.entity.Workflow;
 import com.wgh.rag.workflow.entity.WorkflowNodeRun;
 import com.wgh.rag.workflow.entity.WorkflowRun;
+import com.wgh.rag.workflow.mapper.WorkflowMapper;
 import com.wgh.rag.workflow.mapper.WorkflowNodeRunMapper;
 import com.wgh.rag.workflow.mapper.WorkflowRunMapper;
 import dev.langchain4j.data.message.ChatMessage;
@@ -24,16 +26,19 @@ import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiConsumer;
 import java.util.stream.Collectors;
 
 /**
- * 工作流执行引擎 —— 串行工作队列 + DAG 推进 + HITL 断点恢复。
+ * 工作流执行引擎 —— 支持并行分支 + fan-in 入边等待 + 子流程嵌套。
  *
- * 设计要点：
- * - 每次节点执行结束立即落库（先落库、再发 SSE），刷新页面不丢进度；
- * - 仅允许"指向 LOOP 节点的回边"，其余环在保存阶段被 GraphValidator 拒绝；
- * - 循环体通过回到 LOOP 节点自增轮次实现，最多 maxIterations 轮。
+ * 调度模型：
+ * - frontiers 使用 ConcurrentLinkedQueue，pendingInEdges 用 ConcurrentHashMap 维护，初始由 GraphValidator 计算。
+ * - 节点执行完，对后继 pendingInEdges 自减，减到 0 的后继自动入队；CONDITION 仅激活匹配的一边。
+ * - LOOP 节点保留循环体内串行语义，与回边入边等待逻辑解耦。
+ * - 子流程（WORKFLOW 节点）通过递归调用 run / resume，最大嵌套 3 层，防无限递归。
  */
 @Slf4j
 @Component
@@ -41,8 +46,11 @@ import java.util.stream.Collectors;
 public class WorkflowEngine {
 
     private static final int MAX_TOTAL_NODE_EXECUTIONS = 1000;
+    private static final int MAX_NESTING_DEPTH = 3;
+    private static final int WORKER_COUNT = 4;
 
     private final WorkflowRunMapper runMapper;
+    private final WorkflowMapper workflowMapper;
     private final WorkflowNodeRunMapper nodeRunMapper;
     private final VariableResolver variableResolver;
     private final ConditionEvaluator conditionEvaluator;
@@ -55,18 +63,20 @@ public class WorkflowEngine {
 
     /** 首次执行 */
     public void run(WorkflowRun run, WorkflowGraph graph, String input,
+                    GraphValidator.GraphValidationResult validation,
                     BiConsumer<String, Map<String, Object>> sink) {
         RunContext ctx = new RunContext();
         ctx.getVars().put("input", input == null ? "" : input);
         ctx.getVars().put("lastOutput", "");
 
         GraphNode start = startNode(graph);
-        List<String> frontier = new ArrayList<>(List.of(start.getId()));
-        executeLoop(run, graph, ctx, frontier, sink);
+        executeLoop(run, graph, validation, ctx, List.of(start.getId()), sink, 1);
     }
 
     /** 从 HITL 断点恢复 */
-    public void resume(WorkflowRun run, WorkflowGraph graph, RunContext ctx,
+    public void resume(WorkflowRun run, WorkflowGraph graph,
+                       GraphValidator.GraphValidationResult validation,
+                       RunContext ctx,
                        BiConsumer<String, Map<String, Object>> sink) {
         if (ctx.getPendingNodeIds() == null || ctx.getPendingNodeIds().isEmpty()) {
             finishRun(run, "FAILED", "HITL 恢复失败：没有可执行的后续节点", sink);
@@ -74,14 +84,41 @@ public class WorkflowEngine {
                     "runId", run.getId(), "error", "HITL 恢复失败：没有可执行的后续节点"));
             return;
         }
-        executeLoop(run, graph, ctx, new ArrayList<>(ctx.getPendingNodeIds()), sink);
+        executeLoop(run, graph, validation, ctx, new ArrayList<>(ctx.getPendingNodeIds()), sink, 1);
+    }
+
+    /** 子流程嵌套执行（引擎内部调用，不上报顶级 workflow_complete 事件） */
+    public WorkflowRun runSubWorkflow(Workflow sub, WorkflowGraph graph, String input,
+                                      GraphValidator.GraphValidationResult validation,
+                                      int nestingDepth) {
+        if (nestingDepth > MAX_NESTING_DEPTH) {
+            throw new IllegalStateException("子流程嵌套超过最大层数 " + MAX_NESTING_DEPTH + "，拒绝执行");
+        }
+        WorkflowRun subRun = new WorkflowRun();
+        subRun.setWorkflowId(sub.getId());
+        subRun.setWorkflowVersion(sub.getVersion());
+        subRun.setInputText(input == null ? "" : input);
+        subRun.setStatus("RUNNING");
+        subRun.setGraphSnapshot(sub.getGraphJson());
+        subRun.setExecutedNodes(0);
+        subRun.setTotalNodes(graph.getNodes().size());
+        subRun.setStartTime(LocalDateTime.now());
+        runMapper.insert(subRun);
+
+        RunContext ctx = new RunContext();
+        ctx.getVars().put("input", input == null ? "" : input);
+        ctx.getVars().put("lastOutput", input == null ? "" : input);
+        executeLoop(subRun, graph, validation, ctx,
+                List.of(startNode(graph).getId()), (e, p) -> { /* 子流程内部静默执行 */ }, nestingDepth);
+        return subRun;
     }
 
     // ==================== 主循环 ====================
 
-    private void executeLoop(WorkflowRun run, WorkflowGraph graph, RunContext ctx,
-                             List<String> initialFrontier,
-                             BiConsumer<String, Map<String, Object>> sink) {
+    private void executeLoop(WorkflowRun run, WorkflowGraph graph,
+                             GraphValidator.GraphValidationResult validation,
+                             RunContext ctx, List<String> initialFrontier,
+                             BiConsumer<String, Map<String, Object>> sink, int nestingDepth) {
         Map<String, GraphNode> nodeMap = graph.getNodes().stream()
                 .collect(Collectors.toMap(GraphNode::getId, n -> n, (a, b) -> a));
         Map<String, List<GraphEdge>> outEdges = new HashMap<>();
@@ -89,25 +126,97 @@ public class WorkflowEngine {
             outEdges.computeIfAbsent(edge.getSource(), k -> new ArrayList<>()).add(edge);
         }
 
+        // 初始化入边等待计数器（使用 GraphValidator 产出的 parallelInDegree）
+        Map<String, Integer> pendingIn = new ConcurrentHashMap<>(validation.parallelInDegree);
+        // resume 时 pendingNodeIds 可能有多个，强制这些节点 pendingIn=0 让它们入队
+        for (String id : initialFrontier) {
+            pendingIn.put(id, 0);
+        }
+
+        // 共享状态
         Deque<String> frontier = new ArrayDeque<>(initialFrontier);
-        int guard = 0;
-        int executed = 0;
+        AtomicInteger guard = new AtomicInteger(0);
+        AtomicInteger executed = new AtomicInteger(0);
+        CountDownLatch latch = new CountDownLatch(1);
+        // 已提交到执行队列的节点（防重复提交）
+        Set<String> submitted = ConcurrentHashMap.newKeySet();
 
-        while (!frontier.isEmpty()) {
-            if (++guard > MAX_TOTAL_NODE_EXECUTIONS) {
-                finishRun(run, "FAILED", "超过最大节点执行次数 " + MAX_TOTAL_NODE_EXECUTIONS, sink);
-                sink.accept("workflow_failed", Map.of(
-                        "runId", run.getId(), "error", "超过最大节点执行次数"));
-                return;
+        ThreadPoolExecutor executor = new ThreadPoolExecutor(
+                WORKER_COUNT, WORKER_COUNT, 60L, TimeUnit.SECONDS,
+                new LinkedBlockingQueue<>(500),
+                r -> new Thread(r, "wf-parallel-worker-" + r.hashCode()),
+                new ThreadPoolExecutor.AbortPolicy());
+
+        try {
+            // 调度线程：持续从 frontier 取节点、判断 pendingIn、提交给 worker
+            Thread dispatcher = new Thread(() -> {
+                try {
+                    while (true) {
+                        String nodeId;
+                        synchronized (frontier) {
+                            while (frontier.isEmpty() && submitted.isEmpty()) {
+                                // 所有节点都执行完了
+                                return;
+                            }
+                            nodeId = frontier.pollFirst();
+                        }
+                        if (nodeId == null) {
+                            Thread.sleep(20);
+                            continue;
+                        }
+                        int remain = pendingIn.getOrDefault(nodeId, 0);
+                        if (remain > 0) {
+                            // 还有入边未就绪，放回队列尾部等待（另一个线程可能已在处理入边）
+                            synchronized (frontier) { frontier.offerLast(nodeId); }
+                            continue;
+                        }
+                        if (!submitted.add(nodeId)) continue; // 已提交过
+
+                        if (guard.incrementAndGet() > MAX_TOTAL_NODE_EXECUTIONS) {
+                            finishRun(run, "FAILED", "超过最大节点执行次数 " + MAX_TOTAL_NODE_EXECUTIONS, sink);
+                            sink.accept("workflow_failed", Map.of(
+                                    "runId", run.getId(), "error", "超过最大节点执行次数"));
+                            return;
+                        }
+
+                        // worker 执行节点
+                        executor.submit(() -> executeOneNode(run, graph, nodeMap, outEdges, nodeId,
+                                ctx, sink, pendingIn, frontier, submitted, guard, executed,
+                                latch, nestingDepth, validation));
+                    }
+                } catch (Throwable t) {
+                    log.error("工作流调度线程异常", t);
+                }
+            }, "wf-dispatcher-" + run.getId());
+            dispatcher.start();
+            try {
+                dispatcher.join(5 * 60 * 1000L); // 最多等 5 分钟
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                log.warn("工作流调度线程被中断 runId={}", run.getId());
             }
+        } finally {
+            executor.shutdownNow();
+            latch.countDown();
+        }
+    }
 
+    private void executeOneNode(WorkflowRun run, WorkflowGraph graph,
+                                Map<String, GraphNode> nodeMap, Map<String, List<GraphEdge>> outEdges,
+                                String nodeId, RunContext ctx,
+                                BiConsumer<String, Map<String, Object>> sink,
+                                Map<String, Integer> pendingIn, Deque<String> frontier,
+                                Set<String> submitted, AtomicInteger guard, AtomicInteger executed,
+                                CountDownLatch latch, int nestingDepth,
+                                GraphValidator.GraphValidationResult validation) {
+        try {
+            // 周期检查取消状态
             WorkflowRun latest = runMapper.selectById(run.getId());
             if (latest == null || "CANCELLED".equals(latest.getStatus())) {
                 sink.accept("workflow_cancelled", Map.of("runId", run.getId()));
                 return;
             }
 
-            String nodeId = frontier.poll();
             GraphNode node = nodeMap.get(nodeId);
             if (node == null) {
                 failRun(run, nodeId, "节点不存在：" + nodeId, sink);
@@ -131,17 +240,18 @@ public class WorkflowEngine {
 
                 appendNodeRun(run, node, iteration, output, 0L, "SUCCESS", null);
                 persistContext(run, ctx, "RUNNING");
-                executed++;
+                executed.incrementAndGet();
                 sink.accept("node_output", event(run, node, output, 0L, iteration));
 
-                frontier.addAll(branchTargets(outEdges.get(nodeId), shouldBreak ? "done" : "loop"));
-                continue;
+                activateSuccessors(node, outEdges, shouldBreak ? "done" : "loop",
+                        pendingIn, frontier, submitted);
+                return;
             }
 
             // ---------- HITL：暂停并持久化断点 ----------
             if ("HITL".equals(node.getType())) {
                 returnFromHitl(run, node, ctx, outEdges.get(nodeId), sink);
-                return;
+                throw new PauseSignal("HITL 暂停：" + nodeId);
             }
 
             // ---------- 普通节点 ----------
@@ -156,7 +266,10 @@ public class WorkflowEngine {
             long t0 = System.currentTimeMillis();
             NodeResult result;
             try {
-                result = executeNode(node, ctx, run);
+                result = executeNode(node, ctx, run, nestingDepth);
+            } catch (PauseSignal ps) {
+                // HITL 已在 returnFromHitl 内部处理并持久化，直接向上抛出给调度器
+                throw ps;
             } catch (Exception e) {
                 long duration = System.currentTimeMillis() - t0;
                 nr.setStatus("FAILED");
@@ -178,8 +291,8 @@ public class WorkflowEngine {
                     failed.put("error", e.getMessage());
                     ctx.getNodeOutputs().put(node.getId(), failed);
                     persistContext(run, ctx, "RUNNING");
-                    frontier.addAll(allTargets(outEdges.get(node.getId())));
-                    continue;
+                    activateAllSuccessors(node, outEdges, pendingIn, frontier, submitted);
+                    return;
                 }
                 failRun(run, node.getId(), "节点「" + nameOf(node) + "」执行失败：" + e.getMessage(), sink);
                 return;
@@ -196,40 +309,89 @@ public class WorkflowEngine {
             nr.setDurationMs(duration);
             nodeRunMapper.updateById(nr);
             persistContext(run, ctx, "RUNNING");
-            executed++;
-            run.setExecutedNodes(executed);
+            executed.incrementAndGet();
+            run.setExecutedNodes(executed.get());
 
             sink.accept("node_output", event(run, node, result.getOutput(), duration,
                     ctx.getCurrentLoopIteration()));
 
             if ("END".equals(node.getType())) {
-                String output = text != null ? String.valueOf(text) : "";
-                finishRun(run, "COMPLETED", null, sink, output, executed);
+                String outText = text != null ? String.valueOf(text) : "";
+                finishRun(run, "COMPLETED", null, sink, outText, executed.get());
                 Map<String, Object> payload = new LinkedHashMap<>();
                 payload.put("runId", run.getId());
-                payload.put("output", output);
+                payload.put("output", outText);
                 payload.put("durationMs", elapsed(run));
-                payload.put("executedNodes", executed);
+                payload.put("executedNodes", executed.get());
                 sink.accept("workflow_complete", payload);
                 return;
             }
 
-            frontier.addAll(selectNext(node, result, ctx, outEdges.get(node.getId())));
+            if ("CONDITION".equals(node.getType())) {
+                boolean bool = Boolean.TRUE.equals(result.getOutput().get("result"));
+                activateSuccessors(node, outEdges, String.valueOf(bool), pendingIn, frontier, submitted);
+            } else if ("LOOP".equals(node.getType())) {
+                int max = intConfig(node, "maxIterations", 3);
+                activateSuccessors(node, outEdges, max <= 0 ? "done" : "loop", pendingIn, frontier, submitted);
+            } else {
+                activateAllSuccessors(node, outEdges, pendingIn, frontier, submitted);
+            }
+        } catch (PauseSignal pause) {
+            // HITL：向上抛出给 dispatcher，外层 catch 后完成 emitter
+            throw pause;
+        } catch (Throwable t) {
+            log.error("节点执行异常 nodeId={}", nodeId, t);
+            failRun(run, nodeId, "节点执行异常：" + t.getMessage(), sink);
+        } finally {
+            submitted.remove(nodeId);
         }
+    }
 
-        // 队列耗尽但没有走到 END
-        finishRun(run, "COMPLETED", null, sink, String.valueOf(ctx.getVars().getOrDefault("lastOutput", "")), executed);
-        Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("runId", run.getId());
-        payload.put("output", ctx.getVars().getOrDefault("lastOutput", ""));
-        payload.put("durationMs", elapsed(run));
-        payload.put("executedNodes", executed);
-        sink.accept("workflow_complete", payload);
+    // ==================== 后继激活（入边等待） ====================
+
+    private void activateAllSuccessors(GraphNode node, Map<String, List<GraphEdge>> outEdges,
+                                        Map<String, Integer> pendingIn,
+                                        Deque<String> frontier, Set<String> submitted) {
+        activateSuccessors(node, outEdges, null, pendingIn, frontier, submitted);
+    }
+
+    /**
+     * 节点执行完后继激活：
+     * - 所有出边的后继 pendingIn 统一减 1（无论 CONDITION 选中与否、LOOP 走哪一边），确保入边等待计数正确收敛；
+     * - 只有 handle 匹配的后继入队（CONDITION 只入 true 或 false；LOOP 首次只入 loop；其他节点入所有）。
+     */
+    private void activateSuccessors(GraphNode node, Map<String, List<GraphEdge>> outEdges,
+                                     String targetHandle,
+                                     Map<String, Integer> pendingIn,
+                                     Deque<String> frontier, Set<String> submitted) {
+        List<GraphEdge> edges = outEdges.getOrDefault(node.getId(), List.of());
+        if (edges.isEmpty()) return;
+
+        for (GraphEdge edge : edges) {
+            String target = edge.getTarget();
+            // 所有出边统一减入边等待计数
+            int remain = pendingIn.merge(target, -1, Integer::sum);
+
+            // 判断这条边是否被选中（CONDITION 二选一 / LOOP 二选一 / 其他全选）
+            boolean selected;
+            if ("CONDITION".equals(node.getType()) || "LOOP".equals(node.getType())) {
+                String h = edge.getSourceHandle();
+                selected = (h == null || h.isBlank() || "default".equals(h))
+                        ? "default".equals(targetHandle)
+                        : h.equals(targetHandle);
+            } else {
+                selected = true; // START / VARIABLE / LLM / RETRIEVAL / TOOL / HITL / WORKFLOW / END 之外的普通节点全部选中
+            }
+
+            if (selected && remain <= 0) {
+                synchronized (frontier) { frontier.offerLast(target); }
+            }
+        }
     }
 
     // ==================== 节点执行 ====================
 
-    private NodeResult executeNode(GraphNode node, RunContext ctx, WorkflowRun run) throws Exception {
+    private NodeResult executeNode(GraphNode node, RunContext ctx, WorkflowRun run, int nestingDepth) throws Exception {
         String type = node.getType();
         Map<String, Object> cfg = node.getConfig() != null ? node.getConfig() : Map.of();
 
@@ -242,6 +404,7 @@ public class WorkflowEngine {
             case "LLM" -> executeLlm(cfg, ctx);
             case "RETRIEVAL" -> executeRetrieval(cfg, ctx);
             case "TOOL" -> executeTool(cfg, ctx);
+            case "WORKFLOW" -> executeSubWorkflow(cfg, ctx, run, nestingDepth);
             case "CONDITION" -> {
                 String expr = variableResolver.render(str(cfg.get("expression")), ctx);
                 boolean result = conditionEvaluator.evaluate(expr);
@@ -252,7 +415,6 @@ public class WorkflowEngine {
             }
             case "LOOP" -> {
                 int max = intConfig(node, "maxIterations", 3);
-                // 轮次从 1 开始：第 1 轮循环体使用 iteration=1，控制台/变量语义直观
                 ctx.getLoopIterations().put(node.getId(), 1);
                 ctx.setCurrentLoopIteration(1);
                 Map<String, Object> out = new LinkedHashMap<>();
@@ -358,6 +520,49 @@ public class WorkflowEngine {
         return NodeResult.builder().success(true).output(out).build();
     }
 
+    private NodeResult executeSubWorkflow(Map<String, Object> cfg, RunContext ctx, WorkflowRun parentRun, int nestingDepth) throws Exception {
+        Long subId = asLong(cfg.get("workflowId"));
+        if (subId == null) throw new IllegalArgumentException("子流程节点缺少 workflowId");
+
+        Workflow subWorkflow = workflowMapper.selectById(subId);
+        if (subWorkflow == null) throw new IllegalStateException("子流程不存在：" + subId);
+
+        GraphValidator.GraphValidationResult vr = new GraphValidator()
+                .validate(parseGraph(subWorkflow.getGraphJson()));
+        if (vr.hasErrors()) throw new IllegalStateException("子流程图校验失败：" + String.join("；", vr.errors));
+
+        String inputTemplate = str(cfg.get("inputTemplate"));
+        String input;
+        if (inputTemplate.isBlank()) {
+            input = String.valueOf(ctx.getVars().getOrDefault("lastOutput",
+                    ctx.getVars().getOrDefault("input", "")));
+        } else {
+            input = variableResolver.render(inputTemplate, ctx);
+        }
+
+        WorkflowRun subRun = runSubWorkflow(subWorkflow, vr.graph, input, vr, nestingDepth + 1);
+
+        String output;
+        String outTemplate = str(cfg.get("outputTemplate"));
+        if (outTemplate.isBlank()) {
+            output = subRun.getOutputText() != null ? subRun.getOutputText() : "";
+        } else {
+            // 把子输出暴露到临时变量里再渲染
+            ctx.getVars().put("_subOutput_" + subId, subRun.getOutputText());
+            output = variableResolver.render(outTemplate, ctx);
+        }
+
+        if ("FAILED".equals(subRun.getStatus())) {
+            throw new IllegalStateException("子流程执行失败：" + subRun.getErrorMessage());
+        }
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("text", output);
+        out.put("subRunId", subRun.getId());
+        out.put("subStatus", subRun.getStatus());
+        return NodeResult.builder().success(true).output(out).build();
+    }
+
     private NodeResult executeVariable(Map<String, Object> cfg, RunContext ctx) {
         Object raw = cfg.get("assignments");
         Map<String, Object> out = new LinkedHashMap<>();
@@ -404,36 +609,6 @@ public class WorkflowEngine {
         payload.put("prompt", prompt);
         sink.accept("node_hitl_pending", payload);
         throw new PauseSignal("HITL 暂停：" + node.getId());
-    }
-
-    // ==================== 分支选择 ====================
-
-    private List<String> selectNext(GraphNode node, NodeResult result, RunContext ctx,
-                                    List<GraphEdge> edges) {
-        if ("CONDITION".equals(node.getType())) {
-            Object v = result.getOutput().get("result");
-            List<String> picked = branchTargets(edges, String.valueOf(v));
-            return picked.isEmpty() ? branchTargets(edges, "default") : picked;
-        }
-        if ("LOOP".equals(node.getType())) {
-            int max = intConfig(node, "maxIterations", 3);
-            return branchTargets(edges, max <= 0 ? "done" : "loop");
-        }
-        return allTargets(edges);
-    }
-
-    /** 按 handle 取目标；空 handle 视为 default。 */
-    private List<String> branchTargets(List<GraphEdge> edges, String handle) {
-        if (edges == null) return new ArrayList<>();
-        List<String> targets = new ArrayList<>();
-        for (GraphEdge edge : edges) {
-            String h = edge.getSourceHandle();
-            boolean match = (h == null || h.isBlank() || "default".equals(h))
-                    ? "default".equals(handle)
-                    : h.equals(handle);
-            if (match) targets.add(edge.getTarget());
-        }
-        return targets;
     }
 
     private List<String> allTargets(List<GraphEdge> edges) {
@@ -605,6 +780,15 @@ public class WorkflowEngine {
         } catch (Exception e) {
             log.warn("运行上下文解析失败，使用空上下文", e);
             return new RunContext();
+        }
+    }
+
+    private WorkflowGraph parseGraph(String json) {
+        if (json == null || json.isBlank()) throw new IllegalStateException("图为空");
+        try {
+            return objectMapper.readValue(json, WorkflowGraph.class);
+        } catch (Exception e) {
+            throw new IllegalStateException("图解析失败：" + e.getMessage());
         }
     }
 }

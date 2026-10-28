@@ -124,7 +124,7 @@ public class WorkflowService {
 
     public List<String> validateGraph(Long id) {
         Workflow wf = getById(id);
-        return graphValidator.validate(parseGraph(wf.getGraphJson()));
+        return graphValidator.validate(parseGraph(wf.getGraphJson())).errors;
     }
 
     @Transactional
@@ -149,7 +149,8 @@ public class WorkflowService {
             throw new BusinessException("工作流已停用，无法运行");
         }
         WorkflowGraph graph = parseGraph(wf.getGraphJson());
-        assertValid(graph);
+        GraphValidator.GraphValidationResult vr = graphValidator.validate(graph);
+        assertValid(vr);
 
         WorkflowRun run = new WorkflowRun();
         run.setWorkflowId(wf.getId());
@@ -172,7 +173,7 @@ public class WorkflowService {
                         "workflowId", wf.getId(),
                         "workflowName", wf.getName(),
                         "totalNodes", graph.getNodes().size()));
-                engine.run(run, graph, input, sink);
+                engine.run(run, graph, input, vr, sink);
             } catch (PauseSignal pause) {
                 log.info("工作流 {} 在节点暂停，等待人工确认", run.getId());
             } catch (Exception e) {
@@ -226,13 +227,14 @@ public class WorkflowService {
         } catch (Exception e) {
             throw new BusinessException("运行图快照解析失败：" + e.getMessage());
         }
+        GraphValidator.GraphValidationResult vr = graphValidator.validate(graph);
 
         SseEmitter emitter = createEmitter(runId);
         BiConsumer<String, Map<String, Object>> sink = sinkFor(runId);
 
         workflowExecutor.execute(() -> {
             try {
-                engine.resume(run, graph, ctx, sink);
+                engine.resume(run, graph, vr, ctx, sink);
             } catch (PauseSignal pause) {
                 log.info("工作流 {} 再次暂停", runId);
             } catch (Exception e) {
@@ -383,9 +385,12 @@ public class WorkflowService {
     }
 
     private void assertValid(WorkflowGraph graph) {
-        List<String> errors = graphValidator.validate(graph);
-        if (!errors.isEmpty()) {
-            throw new BusinessException("工作流校验失败：" + String.join("；", errors));
+        assertValid(graphValidator.validate(graph));
+    }
+
+    private void assertValid(GraphValidator.GraphValidationResult vr) {
+        if (vr.hasErrors()) {
+            throw new BusinessException("工作流校验失败：" + String.join("；", vr.errors));
         }
     }
 
