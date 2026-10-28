@@ -13,6 +13,7 @@
 | 向量 | pgvector（PostgreSQL 内置向量扩展，复用 HikariCP 连接池） |
 | 工具 | LangChain4j Tool Calling · MCP（stdio / Streamable HTTP）· HTTP · 本地反射调用 · Skill |
 | Agent | 规划-执行-反思循环（Planner / StepExecutor / ReflectionEngine / AgentOrchestrator）+ HITL 人工确认 |
+| 工作流 | 自研 DAG 引擎：9 类节点、并行 fan-out/fan-in、子流程嵌套、版本快照、定时/Webhook 触发、模板市场 |
 | 鉴权 | JWT (HS256)，预留 OIDC 扩展 |
 | 评估 | MRR / NDCG 检索指标 + LLM-as-Judge (faithfulness / answer_relevancy) |
 
@@ -37,8 +38,15 @@ wgh-rag-system/
 │   │   ├── definition/       #   ToolDefinitionParser（OpenAI function JSON → ToolSpecification）
 │   │   ├── demo/             #   OrderQueryHandler（FUNCTION_CALLING 演示 handler）
 │   │   └── service/          #   ToolConfigService / SkillFileService
+│   ├── rag-workflow/         # 工作流可视化编排：DAG 引擎 + 9 类节点 + 并行 fan-out/fan-in + 版本/触发器/模板
+│   │   ├── engine/           #   WorkflowEngine（frontier 并发调度 + pendingInEdges fan-in 汇聚）
+│   │   ├── node/             #   9 类节点执行器（START/END/LLM/RETRIEVAL/TOOL/WORKFLOW/CONDITION/LOOP/HITL/VARIABLE）
+│   │   ├── trigger/          #   触发器调度（ThreadPoolTaskScheduler CRON + Webhook token）
+│   │   ├── template/         #   WorkflowTemplateRegistry（内置 3 个模板）
+│   │   ├── service/          #   WorkflowService / VersionService / TriggerService
+│   │   └── mapper/           #   Workflow / WorkflowRun / WorkflowNodeRun / WorkflowVersion / WorkflowTrigger
 │   ├── sql/                  # schema.sql（完整 DDL + 索引）+ data.sql（种子数据）+ init.sql（一键入口）
-│   ├── scripts/              # 端到端测试脚本（test-agent-e2e.sh / test-agent-hitl-e2e.sh）
+│   ├── scripts/              # 端到端测试脚本（test-agent-e2e.sh / test-agent-hitl-e2e.sh / test-workflow-e2e.sh）
 │   └── pom.xml
 └── rag-frontend/             # Vue 3 前端
     └── src/
@@ -50,7 +58,8 @@ wgh-rag-system/
         ├── views/chat/       # 调试对话 + 分享对话
         ├── views/chat-admin/ # 对话窗口管理
         ├── views/models/     # LLM / Embedding 模型配置
-        └── views/tools/      # 工具管理（含 SKILL 目录扫描 + 在线编辑 + 调试）
+        ├── views/tools/      # 工具管理（含 SKILL 目录扫描 + 在线编辑 + 调试）
+        └── views/workflow/   # 工作流编排：WorkflowList（列表 + 版本 + 触发器 + 运行历史 + 模板市场）/ WorkflowEditor（DAG 画布 + 节点配置 + 运行调试面板 + HITL 确认）
 ```
 
 ## 核心特性
@@ -185,6 +194,94 @@ wgh-rag-system/
 
 **前端表现**：调试页与分享页右侧均展示执行计划树（步骤时间线、状态、反思分数徽章、HITL 确认、取消/重试/跳过）。刷新页面后通过 `GET /api/agent/sessions/{sessionId}/plan` 恢复计划快照，并对 `RUNNING` 状态每 2 秒轮询直到终态，随后自动补拉消息列表。
 
+### 8. 工作流可视化编排
+
+与 Agent 互补：Agent 适合"目标明确、步骤未知"的开放任务，工作流适合"步骤固定、需要审核、需要复用"的业务 SOP（合同审查、工单分流、报告生成、审批流等）。
+
+#### 9 类节点能力
+
+| 节点 | 输入 | 输出 | 关键配置 |
+|------|------|------|---------|
+| START | 运行输入 | `{ text }` | — |
+| END | — | 模板渲染的最终输出 | `output` 模板（支持变量） |
+| LLM | system + user prompt | `{ text }` | `modelId`、`systemPrompt`、`prompt` |
+| RETRIEVAL | 查询词 | `{ text, sources[] }` | `kbIds[]`、`query`、`topK` |
+| TOOL | 工具参数（支持变量） | `{ text, success }` | `toolId`、`arguments{}` |
+| CONDITION | 表达式求值 | 走 true/false 分支 | `expression`（支持 `==`/`!=`/`>`/`<`/`contains`/`is_empty`） |
+| LOOP | 循环体最大轮次 | 走 loop/done 分支 | `maxIterations`、`breakCondition` |
+| HITL | 用户输入 | `{ text }` | `prompt` |
+| VARIABLE | 赋值映射 | 写入 `vars.<name>` | `assignments[{name, value}]` |
+
+#### 引擎核心：并行 fan-out/fan-in
+
+```
+frontier = [startNode]         // 就绪节点队列（线程池并发）
+pendingInEdges[target]--       // 入边等待计数器
+pendingInEdges[target] <= 0    // 所有上游完成才入队 → fan-in 汇聚
+```
+
+- CONDITION / LOOP 节点按 `sourceHandle`（`true`/`false`、`loop`/`done`）选择分支，未走的分支下游节点 `pendingInEdges` 不会被减到 0，自然跳过
+- 子流程 WORKFLOW 节点：调用另一个确定性 DAG，最大嵌套 3 层，内部节点静默执行不上报 SSE
+
+#### 变量引用
+
+统一 `{{ path }}` 语法，节点执行前渲染：
+
+| 表达式 | 含义 |
+|--------|------|
+| `{{input}}` | 本次运行输入 |
+| `{{vars.orderId}}` | 变量池中的变量 |
+| `{{n_llm_1.text}}` | 某节点输出的 `text` 字段 |
+| `{{n_rag_1.sources.0.fileName}}` | 数组下标访问 |
+| `{{loop.iteration}}` | 当前循环轮次（从 1 开始） |
+
+#### 版本管理
+
+- 每次保存自动快照到 `wgh_workflow_version`，只增不改
+- 回滚旧版本 = 基于该版本生成新版本（v1 回滚 → 生成 v5）
+- 版本列表弹窗显示"当前"绿色标签，当前版本的回滚按钮禁用
+
+#### 触发器
+
+| 类型 | 配置 | 运行时 |
+|------|------|--------|
+| **CRON** | 6 段表达式（秒 分 时 日 月 周） | `ThreadPoolTaskScheduler` 动态注册/注销，秒级触发 |
+| **Webhook** | 系统生成免密 token | `POST /api/workflows/webhook/{token}` 静默运行，统计 fireCount + lastFireTime |
+
+#### 模板市场
+
+`WorkflowTemplateRegistry` 内置 3 个开箱即用模板：
+
+| 模板 | 适用场景 |
+|------|---------|
+| 知识库问答 | 快速搭建"检索 → LLM → 结束"链路 |
+| 人工审批流 | HITL 节点确认 → 条件分支 → 批准/拒绝 |
+| 定期巡检流 | CRON 定时触发 → LLM 巡检 → 异常告警 |
+
+实例化走标准创建链路（图校验 + v1 快照），LLM 节点占位 `modelId` 自动填充为第一个启用模型，避免校验拦截。
+
+#### SSE 事件
+
+| 事件 | payload |
+|------|---------|
+| `workflow_start` | `{ runId, workflowId, workflowName, totalNodes }` |
+| `node_start` | `{ runId, nodeId, nodeType, nodeName, iteration }` |
+| `node_output` | `{ runId, nodeId, nodeName, output, durationMs }` |
+| `node_error` | `{ runId, nodeId, nodeName, error }` |
+| `node_hitl_pending` | `{ runId, nodeRunId, nodeId, nodeName, prompt }` |
+| `workflow_complete` | `{ runId, output, durationMs, executedNodes }` |
+| `workflow_failed` | `{ runId, nodeId, error }` |
+| `workflow_cancelled` | `{ runId }` |
+
+#### 与 Agent 的边界
+
+| 维度 | Agent | Workflow |
+|------|-------|----------|
+| 链路来源 | LLM 运行时动态生成计划 | 人工预先编排的固定 DAG |
+| 稳定性 | 每次运行结果可能不同 | 固定可复现、可审计 |
+| 适用 | 开放探索型任务 | 固定 SOP、需审核、需复用 |
+| 共性 | SSE 事件风格、先落库后推送、HITL 暂停续跑、刷新轮询恢复、独立线程池 | 同左（刻意对齐） |
+
 ## 快速开始
 
 ### 1. 启动 PostgreSQL + pgvector
@@ -238,7 +335,15 @@ npm run dev   # http://localhost:5173
 
 编辑聊天窗口 → 打开「🤖 Agent 自动规划执行」→ 配置最大步骤、Planner / Executor 模型、反思阈值、HITL 开关 → 保存。调试对话或分享页发送一个多步目标（如「查询北京天气并整理结果」），右侧会出现执行计划树，实时展示步骤状态与反思分数。
 
-### 7. 运行端到端测试
+### 7. 体验工作流编排
+
+进入主菜单「工作流编排」→ 点击右上角「模板市场」→ 选择「人工审批流」模板 → 命名后一键创建 → 自动跳转画布编辑器。
+
+在画布上拖入节点、连线、填写参数，点右侧「运行调试」标签页填写输入 → 点执行 → 实时观察节点轨迹面板（绿色=成功、红色=失败、橙色=暂停等待人工确认）。运行过程中遇 HITL 节点会弹窗等待你输入「同意」/「拒绝」继续流程。
+
+保存后版本号自动 +1，可在列表页点击「版本」按钮回滚到任意历史版本（自动生成新版本）。
+
+### 8. 运行端到端测试
 
 ```bash
 cd rag-backend
@@ -246,6 +351,8 @@ cd rag-backend
 bash scripts/test-agent-e2e.sh
 # HITL：暂停 → 确认续跑、窗口开关对照、暂停后取消
 bash scripts/test-agent-hitl-e2e.sh
+# 工作流编排：9 类节点 + fan-out/fan-in + 子流程 + 版本 + 触发器 + HITL
+bash scripts/test-workflow-e2e.sh
 ```
 
 脚本依赖后端 8080 运行中、`postgres-with-vector` 容器可访问（默认库 `wgh_rag`），执行前会自行登录并做健康检查。
@@ -292,6 +399,34 @@ bash scripts/test-agent-hitl-e2e.sh
 | POST | `/api/agent/plans/{planId}/cancel` | 取消计划（未执行步骤置为 SKIPPED） |
 | POST | `/api/agent/steps/{stepId}/retry` | 重试失败步骤 |
 | POST | `/api/agent/steps/{stepId}/skip` | 跳过步骤 |
+
+### 工作流编排
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET  | `/api/workflows` | 分页列表（`page`/`size`/`keyword`/`status`） |
+| GET  | `/api/workflows/list` | 全量启用工作流（下拉选择用） |
+| GET  | `/api/workflows/{id}` | 详情（含 graph_json） |
+| POST | `/api/workflows` | 新建（校验图） |
+| PUT  | `/api/workflows/{id}` | 保存（version+1，校验图 + 自动快照） |
+| POST | `/api/workflows/{id}/validate` | 仅校验图 |
+| DELETE | `/api/workflows/{id}` | 逻辑删除 |
+| POST | `/api/workflows/{id}/enable` / `/disable` | 启停 |
+| POST | `/api/workflows/{id}/run` | SSE 运行（body：`{ input }`） |
+| GET  | `/api/workflows/runs/{runId}/state` | 运行状态 + 节点记录（刷新恢复） |
+| POST | `/api/workflows/runs/{runId}/hitl-confirm` | 人工确认续跑（body：`{ userInput }`） |
+| POST | `/api/workflows/runs/{runId}/cancel` | 取消运行 |
+| GET  | `/api/workflows/{id}/runs` | 运行历史分页 |
+| GET  | `/api/workflows/runs/{runId}/nodes` | 节点级记录回放 |
+| GET  | `/api/workflows/{id}/versions` | 版本列表 |
+| GET  | `/api/workflows/{id}/versions/{version}` | 版本详情（含 graph_json） |
+| POST | `/api/workflows/{id}/rollback/{version}` | 回滚（基于旧版本生成新版本） |
+| GET  | `/api/workflows/{id}/triggers` | 触发器列表 |
+| POST | `/api/workflows/{id}/triggers` | 新增触发器（CRON 或 Webhook） |
+| POST | `/api/workflows/triggers/{id}/enable` / `/disable` | 启停触发器 |
+| DELETE | `/api/workflows/triggers/{id}` | 删除触发器 |
+| POST | `/api/workflows/webhook/{token}` | Webhook 免密触发（token 由系统生成） |
+| GET  | `/api/workflows/templates` | 模板列表 |
+| POST | `/api/workflows/templates/{templateId}/instantiate` | 模板实例化（自动填充占位 modelId） |
 
 ### 工具
 | 方法 | 路径 | 说明 |
@@ -352,6 +487,12 @@ bash scripts/test-agent-hitl-e2e.sh
 - **HITL 事件时序**：HITL 步骤在暂停前不会发 `step_start`，前端收到 `step_hitl_pending` 时若列表中不存在该步骤需按 payload 补建（含 DB 主键 `id`，否则确认接口 404）
 - **SSE 换行**：`content` 事件必须用 JSON 包装传输文本，避免换行符丢失
 - **pgvector 配置**：`PgVectorEmbeddingStore` 不要显式配置空的 metadata，使用默认 COMBINED_JSON 模式
+- **工作流前端路由**：`/workflows/:id/edit` 进入编辑器，列表页在 `/workflows`；刷新恢复逻辑需要跨页导航才能触发 `onMounted`（同一个 URL navigate 不重载）
+- **工作流 HITL 弹窗时机**：`syncRunState` 的 PAUSED 分支中 `hitlVisible = true` 必须包在 `nextTick()` 中，避开 el-dialog teleport 渲染竞争；增加 `:close-on-press-escape="false"` 防 ESC 误关
+- **工作流 SSE 事件驱动复位**：vite dev 代理不转发 SSE 终止帧（事件实时到达、连接挂起 pending），前端所有状态复位**必须以 SSE 事件驱动**，不能依赖 `await doStream()` resolve；开发代理独有，生产环境不影响
+- **工作流模板实例化**：LLM 节点占位 `modelId` 自动填充为第一个启用模型，避免校验拦截；子流程 WORKFLOW 节点递归最大 3 层，超过返回校验失败
+- **工作流触发器幂等**：CRON 触发器注册/注销通过 `CronTrigger.schedule` 动态操作，`destroy` 时从 scheduler 移除；Webhook token 由 `UUID.randomUUID` 生成，唯一索引保证不重复
+- **并行 Agent 共享浏览器**：browser_use agent 严禁并行派遣（共享浏览器实例会串扰导航），必须串行；每个 agent step 预算仅够 2-4 个操作步，复杂任务拆细分批 resume
 
 ## 功能完成清单
 
@@ -364,11 +505,12 @@ bash scripts/test-agent-hitl-e2e.sh
 | rag-llm（模型管理 + 多厂商工厂 + 缓存） | ✅ 完成 | DB 动态配置 + DASHSCOPE / DEEPSEEK / CUSTOM_OPENAI 兼容 + ModelCacheManager 热更新 |
 | rag-kb（知识库 CRUD + 上传 + 解析 + 切分 + 向量化 + 检索） | ✅ 完成 | PDF/DOCX/DOC/XLSX/XLS/CSV/TXT/MD 解析，7 种切分策略，pgvector 向量存储 |
 | rag-chat（会话/窗口 + 分层上下文压缩 + 流式 RAG + 评估 + 分享） | ✅ 完成 | 三层压缩含持久化复用；MRR/NDCG + LLM-as-Judge 双轨评估；会话隔离 + 分享 token |
-| rag-controller（REST API 层） | ✅ 完成 | Auth / Chat / KnowledgeBase / LlmModel / Agent / 分享 / 工具调试 全覆盖 |
+| rag-controller（REST API 层） | ✅ 完成 | Auth / Chat / KnowledgeBase / LlmModel / Agent / Workflow / 分享 / 工具调试 全覆盖 |
 | rag-tool（工具框架 + 4 类执行器 + Skill 文件服务） | ✅ 完成 | ToolExecutor SPI + HTTP/MCP/SKILL/FUNCTION_CALLING + 工具调试 + 目录扫描 + 同名判重 |
 | rag-agent（自动规划 + 反思 + HITL） | ✅ 完成 | Planner 步骤拆解 → StepExecutor 逐步执行 → Reflection 评分重试 → 编排持久化；窗口级开关；HITL 暂停/确认 |
+| rag-workflow（可视化编排引擎） | ✅ 完成 | 9 类 DAG 节点 + frontier 并行调度 + pendingInEdges fan-in 汇聚 + 子流程嵌套（3 层）+ 版本快照 + CRON/Webhook 触发器 + 3 个内置模板 |
 | Agent 端到端测试 | ✅ 完成 | `test-agent-e2e.sh`（18 项）+ `test-agent-hitl-e2e.sh`（16 项），覆盖 SSE / payload / 持久化 / REST / 降级 / 窗口开关对照 |
-| 工作流自动编排 | 📋 计划中 |  |
+| 工作流端到端测试 | ✅ 完成 | `test-workflow-e2e.sh`（67 项），覆盖 9 类节点 / fan-out fan-in / 子流程 / 版本快照 / 回滚 / CRON & Webhook 触发器 / HITL 暂停续跑 / 模板实例化 |
 
 ### 前端页面
 
@@ -384,6 +526,8 @@ bash scripts/test-agent-hitl-e2e.sh
 | Chat 模型配置 | ✅ 完成 | 多厂商动态添加 + 启用/禁用 |
 | Embedding 模型配置 | ✅ 完成 | 默认模型唯一约束 + 多厂商 |
 | 工具管理 | ✅ 完成 | 5 个 tab（全部 / Skill / MCP / HTTP / Function Calling）+ SKILL 目录合并列表 + 在线编辑 + 任意工具调试弹窗 |
+| 工作流管理 WorkflowList | ✅ 完成 | 分页列表 + 新建（含模板市场弹窗）+ 启停 + 逻辑删除 + 版本历史弹窗（回滚）+ 触发器管理 CRON/Webhook + 运行历史抽屉（展开节点级明细） |
+| 工作流编辑器 WorkflowEditor | ✅ 完成 | Vue Flow DAG 画布 + 9 类节点拖拽 + 条件/循环多 handle 连线 + 右侧配置抽屉（按节点类型动态表单）+ 运行调试面板（节点轨迹实时上色 + 最终输出）+ HITL 暂停弹窗 + 刷新恢复轮询 |
 
 ### 知识库文件格式
 
@@ -418,7 +562,7 @@ bash scripts/test-agent-hitl-e2e.sh
 
 | 项目 | 状态 | 说明 |
 |------|------|------|
-| SQL init（10 张表 + 25 个业务索引 + 种子数据） | ✅ 完成 | schema.sql 幂等 DDL（CREATE TABLE / INDEX 全部 IF NOT EXISTS）+ data.sql 种子 INSERT，所有历史 migration 已合入（含 `wgh_agent_plan` / `wgh_agent_step`） |
+| SQL init（15 张表 + 40+ 业务索引 + 种子数据） | ✅ 完成 | schema.sql 幂等 DDL（CREATE TABLE / INDEX 全部 IF NOT EXISTS）+ data.sql 种子 INSERT，所有历史 migration 已合入（含 `wgh_agent_plan` / `wgh_agent_step` / `wgh_workflow` / `wgh_workflow_run` / `wgh_workflow_node_run` / `wgh_workflow_version` / `wgh_workflow_trigger`） |
 | pgvector 向量扩展 | ✅ 完成 | 自动建表 + 可选 IVF 索引 |
 | 老库兼容修复 | ✅ 内置 | data.sql 末尾含幂等 SKILL executor_config 格式修复 UPDATE，新库空跑安全 |
 

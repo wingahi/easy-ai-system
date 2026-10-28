@@ -257,6 +257,9 @@ export const workflowTriggerCreate = (id, data) => request.post(`/workflows/${id
 export const workflowTriggerEnable = (tid) => request.post(`/workflows/triggers/${tid}/enable`)
 export const workflowTriggerDisable = (tid) => request.post(`/workflows/triggers/${tid}/disable`)
 export const workflowTriggerDelete = (tid) => request.delete(`/workflows/triggers/${tid}`)
+export const workflowTemplates = () => request.get('/workflows/templates')
+export const workflowInstantiate = (templateId, name) =>
+  request.post(`/workflows/templates/${templateId}/instantiate`, { name })
 
 /** 通用 SSE 读取（POST JSON） */
 function streamPost(url, body, onEvent, onDone, onError) {

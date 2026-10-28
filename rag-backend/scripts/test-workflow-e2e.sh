@@ -12,6 +12,7 @@
 #   T8 知识库检索节点（可选）：依赖已有文件的知识库与可用的 embedding 模型
 #   T9 版本管理：自动快照 / 版本列表 / 回滚生成新版本
 #   T10 定时 / Webhook 触发：CRON 自动触发、停用停止、Webhook 免登录触发
+#   T11 模板市场：内置模板列表、实例化（标准创建链路）、审批/巡检模板端到端运行、占位模型自动填充
 #
 # 依赖：backend 8080 运行中、postgres 容器 postgres-with-vector
 # 用法：bash scripts/test-workflow-e2e.sh
@@ -466,6 +467,93 @@ else
   DEL=$(curl -s -X DELETE "$SRV/api/workflows/triggers/$TID" -H "$AUTH" | python3 -c "import sys,json;print(json.load(sys.stdin)['code'])" 2>/dev/null)
   CNT=$(psqlq "SELECT COUNT(*) FROM wgh_workflow_trigger WHERE id=$TID AND deleted=0")
   [ "$DEL" = "200" ] && [ "$CNT" = "0" ] && ok "删除触发器成功（逻辑删除）" || ng "删除触发器异常：code=$DEL cnt=$CNT"
+fi
+
+# ---------- T11: 模板市场 ----------
+echo ""
+echo "[T11] 模板市场：内置模板列表 / 实例化 / 端到端运行"
+
+TPL_LIST=$(curl -s "$SRV/api/workflows/templates" -H "$AUTH" | python3 -c "
+import sys,json
+d=json.load(sys.stdin)['data']
+ids=sorted(t['templateId'] for t in d)
+print(len(d), ','.join(ids))" 2>/dev/null)
+[ "$TPL_LIST" = "3 approval,inspection,kb-qa" ] && ok "模板列表返回 3 个内置模板：$TPL_LIST" || ng "模板列表异常：$TPL_LIST"
+
+BAD_TPL=$(curl -s -X POST "$SRV/api/workflows/templates/no-such-template/instantiate" -H "$AUTH" \
+  -H 'Content-Type: application/json' -d '{"name":"x"}' | python3 -c "import sys,json;print(json.load(sys.stdin)['code'])" 2>/dev/null)
+[ "$BAD_TPL" != "200" ] && ok "无效模板标识被拒绝 code=${BAD_TPL}" || ng "无效模板未被拒绝"
+
+AWID=$(curl -s -X POST "$SRV/api/workflows/templates/approval/instantiate" -H "$AUTH" \
+  -H 'Content-Type: application/json' -d '{"name":"e2e-模板审批流"}' \
+  | python3 -c "import sys,json;print((json.load(sys.stdin).get('data') or {}).get('id',''))" 2>/dev/null)
+if [ -z "$AWID" ]; then
+  ng "实例化审批模板失败"
+else
+  ok "实例化审批模板 id=${AWID}"
+
+  AVER=$(curl -s "$SRV/api/workflows/$AWID" -H "$AUTH" | python3 -c "
+import sys,json
+d=json.load(sys.stdin)['data']
+print(d['version'], d['name'], d['description'].startswith('【模板：'))" 2>/dev/null)
+  [ "$AVER" = "1 e2e-模板审批流 True" ] && ok "实例化走标准创建链路（v1 + 自定义名称 + 模板描述前缀）" || ng "实例化结果异常：$AVER"
+
+  AVALID=$(curl -s -X POST "$SRV/api/workflows/$AWID/validate" -H "$AUTH" \
+    | python3 -c "import sys,json;print(len(json.load(sys.stdin)['data'] or []))" 2>/dev/null)
+  [ "$AVALID" = "0" ] && ok "审批模板图校验 0 错误" || ng "审批模板校验异常：$AVALID"
+
+  VCNT=$(psqlq "SELECT COUNT(*) FROM wgh_workflow_version WHERE workflow_id=$AWID AND deleted=0")
+  [ "$VCNT" = "1" ] && ok "实例化生成 v1 版本快照" || ng "版本快照异常：$VCNT"
+
+  run_wf "$AWID" "采购三台服务器" /tmp/wf_t11a.sse 60
+  [ "$(sse_count /tmp/wf_t11a.sse node_hitl_pending)" = "1" ] && ok "审批流运行到 HITL 暂停" || ng "审批流未触发 HITL"
+  ARUN=$(psqlq "SELECT max(id) FROM wgh_workflow_run WHERE workflow_id=$AWID")
+  AST=$(psqlq "SELECT status FROM wgh_workflow_run WHERE id=$ARUN")
+  [ "$AST" = "PAUSED" ] && ok "审批流状态 PAUSED" || ng "审批流状态=${AST}"
+
+  resume_wf "$ARUN" "同意" /tmp/wf_t11b.sse 60
+  AOUT=$(sse_field /tmp/wf_t11b.sse workflow_complete output | tail -1)
+  echo "$AOUT" | grep -q "已批准" && ok "确认同意后输出：$AOUT" || ng "审批通过输出异常：$AOUT"
+
+  run_wf "$AWID" "采购三台服务器" /tmp/wf_t11c.sse 60
+  ARUN2=$(psqlq "SELECT max(id) FROM wgh_workflow_run WHERE workflow_id=$AWID")
+  resume_wf "$ARUN2" "驳回，预算不足" /tmp/wf_t11d.sse 60
+  AOUT2=$(sse_field /tmp/wf_t11d.sse workflow_complete output | tail -1)
+  echo "$AOUT2" | grep -q "已驳回" && ok "确认驳回后输出：$AOUT2" || ng "审批驳回输出异常：$AOUT2"
+fi
+
+IWID=$(curl -s -X POST "$SRV/api/workflows/templates/inspection/instantiate" -H "$AUTH" \
+  -H 'Content-Type: application/json' -d '{}' \
+  | python3 -c "import sys,json;print((json.load(sys.stdin).get('data') or {}).get('id',''))" 2>/dev/null)
+if [ -z "$IWID" ]; then
+  ng "实例化巡检模板失败"
+else
+  ok "实例化巡检模板 id=${IWID}（默认名称）"
+  run_wf "$IWID" "" /tmp/wf_t11e.sse 60
+  IST=$(psqlq "SELECT status FROM wgh_workflow_run WHERE id=(SELECT max(id) FROM wgh_workflow_run WHERE workflow_id=$IWID)")
+  IOUT=$(sse_field /tmp/wf_t11e.sse workflow_complete output | tail -1)
+  [ "$IST" = "COMPLETED" ] && echo "$IOUT" | grep -q "巡检完成，共 3 项" \
+    && ok "巡检模板开箱运行完成：$IOUT" || ng "巡检模板运行异常：status=${IST} output=${IOUT}"
+fi
+
+QWID=$(curl -s -X POST "$SRV/api/workflows/templates/kb-qa/instantiate" -H "$AUTH" \
+  -H 'Content-Type: application/json' -d '{"name":"e2e-模板问答"}' \
+  | python3 -c "import sys,json;print((json.load(sys.stdin).get('data') or {}).get('id',''))" 2>/dev/null)
+if [ -z "$QWID" ]; then
+  MODEL_ID=$(psqlq "SELECT id FROM wgh_llm_model WHERE model_type='CHAT' AND status=1 AND deleted=0 ORDER BY id LIMIT 1")
+  [ -z "$MODEL_ID" ] && sk "无启用聊天模型，kb-qa 模板实例化按预期失败（校验拦截）" || ng "kb-qa 模板实例化失败"
+else
+  ok "实例化问答模板 id=${QWID}"
+  QMODEL=$(curl -s "$SRV/api/workflows/$QWID" -H "$AUTH" | python3 -c "
+import sys,json
+d=json.load(sys.stdin)['data']
+g=json.loads(d['graphJson'])
+llm=[n for n in g['nodes'] if n['type']=='LLM'][0]
+print(llm['config'].get('modelId'))" 2>/dev/null)
+  [ -n "$QMODEL" ] && [ "$QMODEL" != "None" ] && ok "LLM 占位模型已自动填充 modelId=${QMODEL}" || ng "LLM 模型占位符未填充：$QMODEL"
+  QVALID=$(curl -s -X POST "$SRV/api/workflows/$QWID/validate" -H "$AUTH" \
+    | python3 -c "import sys,json;print(len(json.load(sys.stdin)['data'] or []))" 2>/dev/null)
+  [ "$QVALID" = "0" ] && ok "问答模板图校验 0 错误" || ng "问答模板校验异常：$QVALID"
 fi
 
 # ---------- 汇总 ----------

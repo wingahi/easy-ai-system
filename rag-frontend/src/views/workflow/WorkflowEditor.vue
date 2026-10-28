@@ -219,11 +219,12 @@
     </div>
 
     <!-- HITL 确认 -->
-    <el-dialog v-model="hitlVisible" title="人工确认" width="520px" :close-on-click-modal="false">
+    <el-dialog v-model="hitlVisible" title="人工确认" width="520px"
+               :close-on-click-modal="false" :close-on-press-escape="false">
       <div class="hitl-prompt">{{ hitlPrompt || '流程需要人工确认后继续执行' }}</div>
       <el-input v-model="hitlInput" type="textarea" :rows="4" placeholder="输入确认内容（可为空）" style="margin-top:12px" />
       <template #footer>
-        <el-button @click="stopPolling">稍后处理</el-button>
+        <el-button @click="deferHitl">稍后处理</el-button>
         <el-button type="primary" :loading="confirming" @click="confirmHitl">确认并继续</el-button>
       </template>
     </el-dialog>
@@ -235,7 +236,7 @@ import '@vue-flow/core/dist/style.css'
 import '@vue-flow/core/dist/theme-default.css'
 import '@vue-flow/controls/dist/style.css'
 
-import { computed, markRaw, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, markRaw, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft, CircleCheck, Document, VideoPlay } from '@element-plus/icons-vue'
@@ -550,24 +551,38 @@ const startRun = async () => {
       running.value = false
       runError.value = err?.message || '运行失败'
     })
-  await streamHandle.doStream()
+  // 注意：不 await doStream —— 开发环境 vite 代理对 SSE 终止帧的转发不可靠，
+  // 所有运行状态一律以 SSE 事件驱动复位，避免流结束信号延迟导致 UI 卡死
+  streamHandle.doStream()
 }
 
-const confirmHitl = async () => {
+const confirmHitl = () => {
   confirming.value = true
   hitlVisible.value = false
   running.value = true
-  try {
-    streamHandle = streamWorkflowResume(currentRunId.value, hitlInput.value, handleEvent,
-      () => { running.value = false },
-      (err) => {
-        running.value = false
-        runError.value = err?.message || '继续执行失败'
-      })
-    await streamHandle.doStream()
-  } finally {
-    confirming.value = false
-  }
+  streamHandle = streamWorkflowResume(currentRunId.value, hitlInput.value,
+    (event, payload) => {
+      // 收到首个事件即视为后端已受理，解除按钮 loading（不依赖流结束信号）
+      confirming.value = false
+      handleEvent(event, payload)
+    },
+    () => {
+      confirming.value = false
+      running.value = false
+    },
+    (err) => {
+      confirming.value = false
+      running.value = false
+      runError.value = err?.message || '继续执行失败'
+    })
+  streamHandle.doStream()
+}
+
+/** 稍后处理：关闭确认弹窗，运行保持 PAUSED，重新进入页面时可从断点恢复确认 */
+const deferHitl = () => {
+  hitlVisible.value = false
+  stopPolling()
+  ElMessage.info('流程保持暂停，重新进入本页可继续确认')
 }
 
 const cancelRun = async () => {
@@ -744,7 +759,8 @@ const syncRunState = async (runId) => {
       } catch { /* 忽略 */ }
       hitlPrompt.value = prompt
       hitlInput.value = ''
-      hitlVisible.value = true
+      // 延迟到组件渲染稳定后再打开弹窗，避免挂载周期内 overlay 渲染错位（display:none）
+      nextTick(() => { hitlVisible.value = true })
     }
   }
   return state

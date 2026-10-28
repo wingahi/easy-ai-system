@@ -1,6 +1,6 @@
 # 工作流编排（Workflow Orchestration）系统设计
 
-> 版本：v1.0　｜　适用代码：`rag-workflow` 模块 + `WorkflowController` + 前端 `views/workflow`
+> 版本：v1.1　｜　适用代码：`rag-workflow` 模块 + `WorkflowController` + 前端 `views/workflow`　｜　日期：2026-10-28
 > 关联设计：[agent-design.md](./agent-design.md)
 
 ---
@@ -40,12 +40,12 @@ Agent 适合"目标明确、步骤未知"的开放任务，但对**步骤固定�
 7. **运行历史**：按工作流查询历史运行，可回放节点级记录。
 8. **失败策略**：节点失败默认终止运行；可配置"忽略错误继续"。
 
-### 1.4 非目标（本期不做）
+### 1.4 非目标（本期不做 → 后续已实现）
 
 - 多用户协作编辑 / 草稿冲突合并（用乐观锁版本号 `version` 兜底）
-- 运行时并行分支（本期串行调度，为后续并行预留）
-- 定时触发 / Webhook 触发 / 事件触发（仅手动触发起步）
-- 子工作流嵌套调用（节点协议已预留 `WORKFLOW` 类型扩展位）
+- ~~运行时并行分支~~ ✅ 已实现（frontier 并发调度 + pendingInEdges fan-in 汇聚）
+- ~~定时触发 / Webhook 触发 / 事件触发~~ ✅ 已实现（CRON 秒级调度 + Webhook token 免密调用）
+- ~~子工作流嵌套调用~~ ✅ 已实现（WORKFLOW 节点最大 3 层嵌套）
 
 ---
 
@@ -433,5 +433,5 @@ while frontier 非空:
 | 子流程节点（`WORKFLOW`） | ✅ 已实现 | 工作流作为节点被复用，最大嵌套 3 层，`inputTemplate`/`outputTemplate` 变量渲染 |
 | 版本管理 | ✅ 已实现 | `wgh_workflow_version` 快照表，保存/回滚均生成新版本（只增不改），版本列表 + 回滚接口 |
 | 触发方式 | ✅ 已实现（定时 / Webhook） | `wgh_workflow_trigger` 表 + `ThreadPoolTaskScheduler` 动态调度（6 段 CRON，秒级）；Webhook 凭路径 token 免登录调用，触发后静默运行并统计次数 |
-| 节点市场 | 🔲 未实现 | 把常用节点组合导出为模板 |
+| 节点市场 | ✅ 已实现（内置模板第一期） | `WorkflowTemplateRegistry` 内置 3 个模板（知识库问答 / 人工审批流 / 定期巡检流）；`GET /api/workflows/templates` + `POST /api/workflows/templates/{id}/instantiate`，实例化走标准创建链路（图校验 + v1 快照），LLM 占位模型自动填充为第一个启用模型；前端「模板市场」卡片弹窗一键创建 |
 | 灰度发布 | 🔲 未实现 | 基于版本快照的流量分配 |

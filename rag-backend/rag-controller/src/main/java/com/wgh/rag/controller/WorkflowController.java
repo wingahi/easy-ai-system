@@ -1,11 +1,17 @@
 package com.wgh.rag.controller;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.wgh.rag.common.result.PageResult;
 import com.wgh.rag.common.result.Result;
+import com.wgh.rag.llm.entity.LlmModel;
+import com.wgh.rag.llm.service.LlmModelService;
 import com.wgh.rag.workflow.entity.Workflow;
 import com.wgh.rag.workflow.entity.WorkflowRun;
 import com.wgh.rag.workflow.entity.WorkflowVersion;
 import com.wgh.rag.workflow.service.WorkflowService;
+import com.wgh.rag.workflow.template.WorkflowTemplateRegistry;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
@@ -26,6 +32,9 @@ import java.util.Map;
 public class WorkflowController {
 
     private final WorkflowService workflowService;
+    private final WorkflowTemplateRegistry templateRegistry;
+    private final LlmModelService llmModelService;
+    private final ObjectMapper objectMapper;
 
     // ==================== 定义 CRUD ====================
 
@@ -88,6 +97,59 @@ public class WorkflowController {
     public Result<Void> disable(@PathVariable Long id) {
         workflowService.setStatus(id, 0);
         return Result.success();
+    }
+
+    // ==================== 模板市场 ====================
+
+    @Operation(summary = "内置模板列表")
+    @GetMapping("/templates")
+    public Result<List<WorkflowTemplateRegistry.WorkflowTemplate>> templates() {
+        return Result.success(templateRegistry.list());
+    }
+
+    @Operation(summary = "从模板实例化工作流（走标准创建链路：图校验 + v1 版本快照）")
+    @PostMapping("/templates/{templateId}/instantiate")
+    public Result<Workflow> instantiate(@PathVariable String templateId,
+                                        @RequestBody(required = false) Map<String, Object> body) {
+        WorkflowTemplateRegistry.WorkflowTemplate template = templateRegistry.get(templateId);
+        String name = body != null && body.get("name") != null && !String.valueOf(body.get("name")).isBlank()
+                ? String.valueOf(body.get("name")).trim() : template.getName();
+        Workflow workflow = new Workflow();
+        workflow.setName(name);
+        workflow.setDescription("【模板：" + template.getName() + "】" + template.getDescription());
+        workflow.setGraphJson(fillTemplatePlaceholders(template.getGraphJson()));
+        return Result.success(workflowService.create(workflow));
+    }
+
+    /**
+     * 模板占位符填充：LLM 节点 modelId 为占位空值时，自动填入第一个启用的大模型，
+     * 保证模板开箱即可通过图校验；无可用模型时保持原样，由校验给出明确报错。
+     */
+    private String fillTemplatePlaceholders(String graphJson) {
+        try {
+            JsonNode root = objectMapper.readTree(graphJson);
+            JsonNode nodes = root.get("nodes");
+            if (nodes == null || !nodes.isArray()) {
+                return graphJson;
+            }
+            Long defaultModelId = null;
+            for (JsonNode node : nodes) {
+                if ("LLM".equals(node.path("type").asText())
+                        && node.path("config").path("modelId").isNull()) {
+                    if (defaultModelId == null) {
+                        List<LlmModel> enabled = llmModelService.listEnabledChatModels();
+                        if (enabled.isEmpty()) {
+                            return graphJson;
+                        }
+                        defaultModelId = enabled.get(0).getId();
+                    }
+                    ((ObjectNode) node.path("config")).put("modelId", defaultModelId);
+                }
+            }
+            return objectMapper.writeValueAsString(root);
+        } catch (Exception e) {
+            return graphJson;
+        }
     }
 
     // ==================== 版本管理 ====================

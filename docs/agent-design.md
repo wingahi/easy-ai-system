@@ -1,6 +1,7 @@
 # WGH RAG System — Agent 能力升级设计方案
 
-> 版本：v1.0 | 日期：2026-10-27 | 状态：设计阶段
+> 版本：v1.1 | 日期：2026-10-28 | 状态：Phase 1+2 已完成，Phase 3 评估更新
+> 关联设计：[workflow-design.md](./workflow-design.md)
 
 ---
 
@@ -611,6 +612,92 @@ Agent 模式启动
 | 4 | 动态 re-plan：步骤失败触发 Planner 重新生成剩余步骤 |
 | 5 | Agent 执行控制：暂停/恢复/终止/重试单步 API |
 
-### Phase 3 — Multi-Agent 协作（P2，延后评估）
+### Phase 3 — 真多 Agent 协作（架构评估完成，按需开发）
 
-评估 CrewAI Manager-Worker 范式是否适配业务（比如「金融分析师」+「报告撰写者」两个 Agent 协作），再决定是否引入。
+#### 当前系统的 Agent 本质
+
+**代码级结论**：当前 `AgentOrchestrator` 是**单 Agent 编排器**——Planner / StepExecutor / ReflectionEngine 是同一大 Agent 的内部组件，用不同 prompt 构造做不同阶段任务，**没有多个独立 Agent 对象、没有消息总线、没有 GroupChat 对话路由**。
+
+| 多 Agent 必备要素 | 当前是否具备 |
+|-----------------|-------------|
+| 多个独立 Agent 对象/类 | ❌ 仅 `AgentOrchestrator` |
+| Agent 间消息总线（send/broadcast/group chat） | ❌ 无 `sendMessage`/`GroupChat` |
+| Agent 各自独立 system prompt + 记忆 | ❌ 所有状态落库 `AgentPlan`/`AgentStep`，无独立对话历史 |
+| Agent 自主决策是否继续/终止 | ❌ 终止条件由 Orchestrator 硬编码 |
+| 工作流引擎 fan-out/fan-in | ⚠️ 是**确定性节点并行**，不是 Agent 对话 |
+
+#### 2026 主流多 Agent 框架心智模型
+
+| 框架 | 心智模型 | 协作机制 | 2026 状态 |
+|------|---------|---------|----------|
+| **LangGraph** | 有向状态图 | 显式 Edge 路由 + Send() fan-out/fan-in | 生产标准，90M+/月下载 |
+| **CrewAI** | 角色 Crew | Role/Goal/Backstory + Sequential/Hierarchical 调度 | 增长最快，47.8k stars |
+| **AutoGen → Microsoft Agent Framework** | 对话消息传递 | GroupChatManager 动态选下一个发言者 | AutoGen 已维护模式，MAF 1.0 GA 2026.4 |
+| **MAF (AutoGen 继任)** | Graph-based workflow | LangGraph 路线 + checkpointing + MCP/A2A 原生 | 已偏离 AutoGen 对话模型转向 LangGraph |
+
+核心洞察：**2026 年生产级多 Agent 框架正在从"对话驱动"向"状态图驱动"收敛**——LangGraph 和 Microsoft Agent Framework 都采用显式状态流转 + 条件路由。
+
+#### 是否有必要开发真多 Agent？
+
+| 场景 | 是否需要真多 Agent | 当前系统能否覆盖 |
+|------|-------------------|-----------------|
+| 多专家辩论（法务 Agent 说合规、合规 Agent 说风险、CEO Agent 说 ROI） | ✅ 需要 | ❌ 无法覆盖（开放讨论 + 角色独立 + 动态路由） |
+| 代码-测试-修复循环（Coder → Tester → Coder 直到通过） | ✅ 需要 | ❌ 无法覆盖（Agent 自主终止） |
+| 研究分工（Researcher → Analyst → Writer → Reviewer） | ✅ 需要 | ❌ 无法覆盖（角色独立记忆） |
+| 结构化业务流程（审批流、合同审查、发票处理） | ❌ 不需要 | ✅ 工作流 DAG 已覆盖 |
+| RAG 问答增强（检索 → LLM → 反思评分） | ❌ 不需要 | ✅ Agent Plan-and-Execute 已覆盖 |
+| 并行研究多源（N 个 Researcher 并行搜不同数据源） | ⚠️ 部分 | ⚠️ 工作流 fan-out 能做，但 Agent 不是独立的 |
+
+**建议**：**先不做**，除非出现以下业务信号：
+1. 真实用户明确需要"多专家辩论""代码-测试-修复循环""研究分工"这类对话式协作场景
+2. 开发投入可控——核心工作量约 3-5 周（AgentInstance 抽象 + MessageBus + GroupChat 路由 + 前端面板）
+
+#### 如确需开发：架构演进建议
+
+**不引入 CrewAI/AutoGen/LangGraph 的 Java port**（生态薄、维护成本高、与 Spring Boot 冲突），在现有 `rag-agent` 模块增量扩展：
+
+```
+AgentOrchestrator（已有，单 Agent 编排）
+  │
+  ├── [现有链路] Planner → StepExecutor → ...
+  │
+  └── [新增] MultiAgentRouter
+       │
+       ├── AgentInstance（新增：每个 Agent 对象）
+       │    ├── systemPrompt（独立）
+       │    ├── 独立工具白名单
+       │    ├── 独立对话历史（记忆）
+       │    └── 独立模型路由
+       │
+       ├── MessageBus（新增）
+       │    ├── send(to, message)
+       │    ├── broadcast(message)
+       │    └── subscribe(agentId, handler)
+       │
+       └── GroupChatManager（新增：对话路由）
+            ├── 下一个发言者决策
+            ├── 终止条件判断
+            └── HITL 对话链暂停
+```
+
+**增量实施路径**：
+
+| 阶段 | 能力 | 预估 |
+|------|------|------|
+| P0 核心抽象 | AgentInstance + MessageBus 原语，让当前单 Agent 也跑在新接口上 | 3-5 天 |
+| P1 角色分层模式 | CrewAI 风格：声明 role/goal，按顺序/层级调度 | 3-5 天 |
+| P2 对话式 GroupChat | AutoGen 风格：GroupChatManager 动态选下一个发言者、终止条件 | 5-7 天 |
+| P3 前端可视化 | 多 Agent 对话面板：气泡流、Agent 身份标识、消息路由动画 | 5-7 天 |
+
+**不做的事**：
+- 不要一开始就做完整 GroupChat——先做 P1 角色分层模式，覆盖 80% 多 Agent 场景
+- 不要把工作流引擎重写成 Agent 对话——DAG 确定性并行和 Agent 对话式协作是互补关系
+
+#### 与工作流引擎的边界
+
+| 维度 | 当前 Agent | 工作流引擎 | 真多 Agent（如开发） |
+|------|-----------|-----------|---------------------|
+| 链路来源 | LLM 运行时动态生成计划 | 人工预先编排的固定 DAG | 多 Agent 对话运行时协商 |
+| 稳定性 | 每次结果可能不同 | 固定可复现、可审计 | 可能不同但角色约束下较稳定 |
+| 适用 | 开放探索型任务 | 固定 SOP、需审核、需复用 | 专家协作、研究分工、代码迭代 |
+| 状态持久化 | AgentPlan/AgentStep | WorkflowRun/NodeRun/Version | 每个 Agent 独立对话历史 + 共享上下文 |

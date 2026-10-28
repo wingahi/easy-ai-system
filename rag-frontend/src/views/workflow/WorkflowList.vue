@@ -4,6 +4,7 @@
       <h2>工作流编排</h2>
       <div>
         <el-button :icon="Refresh" @click="load">刷新</el-button>
+        <el-button :icon="ShoppingBag" @click="openTemplates">模板市场</el-button>
         <el-button type="primary" :icon="Plus" @click="openCreate">新建工作流</el-button>
       </div>
     </div>
@@ -53,6 +54,24 @@
         layout="total, sizes, prev, pager, next"
         @size-change="load" @current-change="load" />
     </div>
+
+    <!-- 模板市场 -->
+    <el-dialog v-model="templateVisible" title="模板市场" width="880px">
+      <div class="template-grid" v-loading="templateLoading">
+        <div v-for="t in templates" :key="t.templateId" class="template-card">
+          <div class="template-head">
+            <span class="template-name">{{ t.name }}</span>
+            <el-tag size="small" type="warning">{{ t.category }}</el-tag>
+          </div>
+          <div class="template-desc">{{ t.description }}</div>
+          <div class="template-foot">
+            <span class="empty-hint">{{ nodeCount({ graphJson: t.graphJson }) }} 个节点</span>
+            <el-button type="primary" size="small" :loading="instantiatingId === t.templateId"
+                       @click="instantiate(t)">使用模板</el-button>
+          </div>
+        </div>
+      </div>
+    </el-dialog>
 
     <!-- 新建 -->
     <el-dialog v-model="createVisible" title="新建工作流" width="520px">
@@ -213,13 +232,13 @@
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
-import { Plus, Refresh } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { Plus, Refresh, ShoppingBag } from '@element-plus/icons-vue'
 import {
   workflowPage, workflowCreate, workflowDelete, workflowEnable, workflowDisable,
   workflowPageRuns, workflowRunNodes, workflowVersions, workflowRollback,
   workflowTriggers, workflowTriggerCreate, workflowTriggerEnable, workflowTriggerDisable,
-  workflowTriggerDelete
+  workflowTriggerDelete, workflowTemplates, workflowInstantiate
 } from '../../api'
 
 const router = useRouter()
@@ -326,6 +345,43 @@ const copyWebhook = async (row) => {
     ElMessage.success('Webhook 地址已复制')
   } catch {
     ElMessage.info(url)
+  }
+}
+
+// ==================== 模板市场 ====================
+const templateVisible = ref(false)
+const templates = ref([])
+const templateLoading = ref(false)
+const instantiatingId = ref('')
+
+const openTemplates = async () => {
+  templateVisible.value = true
+  templateLoading.value = true
+  try {
+    const res = await workflowTemplates()
+    templates.value = res.data || []
+  } finally {
+    templateLoading.value = false
+  }
+}
+
+const instantiate = async (t) => {
+  try {
+    const { value } = await ElMessageBox.prompt('基于该模板创建工作流，请输入名称', `使用模板 - ${t.name}`, {
+      confirmButtonText: '创建并编排',
+      cancelButtonText: '取消',
+      inputValue: t.name,
+      inputValidator: (v) => (v && v.trim() ? true : '请填写名称')
+    })
+    instantiatingId.value = t.templateId
+    const res = await workflowInstantiate(t.templateId, value.trim())
+    ElMessage.success('已从模板创建工作流')
+    templateVisible.value = false
+    router.push(`/workflows/${res.data.id}/edit`)
+  } catch {
+    // 用户取消或接口失败（拦截器已提示）
+  } finally {
+    instantiatingId.value = ''
   }
 }
 
@@ -459,4 +515,37 @@ onMounted(load)
   .node-error { color: #f56c6c; width: 100%; }
 }
 .empty-hint { color: #909399; font-size: 13px; }
+.template-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+  min-height: 120px;
+}
+.template-card {
+  border: 1px solid #e4e7ed;
+  border-radius: 8px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: box-shadow .2s;
+  &:hover { box-shadow: 0 2px 12px rgba(0, 0, 0, .08); }
+}
+.template-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  .template-name { font-weight: 600; font-size: 15px; }
+}
+.template-desc {
+  color: #606266;
+  font-size: 12px;
+  line-height: 1.6;
+  flex: 1;
+}
+.template-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
 </style>
