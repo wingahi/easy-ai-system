@@ -1,6 +1,6 @@
 # WGH RAG System
 
-一套可独立部署的 **Retrieval-Augmented Generation (RAG) 问答系统**，覆盖 **知识库管理 → 向量检索 → 工具调用 → 分层上下文压缩 → LLM 流式对话 → RAG 效果评估 → 分享会话** 完整链路。
+一套可独立部署的 **Retrieval-Augmented Generation (RAG) 问答系统**，覆盖 **知识库管理 → 向量检索 → 工具调用 → 分层上下文压缩 → Agent 自动规划执行 → LLM 流式对话 → RAG 效果评估 → 分享会话** 完整链路。
 
 ## 技术栈
 
@@ -12,6 +12,7 @@
 | LLM | LangChain4j 1.19.0 · OpenAI / DASHSCOPE / DeepSeek / 通义 等（OpenAI 兼容协议） |
 | 向量 | pgvector（PostgreSQL 内置向量扩展，复用 HikariCP 连接池） |
 | 工具 | LangChain4j Tool Calling · MCP（stdio / Streamable HTTP）· HTTP · 本地反射调用 · Skill |
+| Agent | 规划-执行-反思循环（Planner / StepExecutor / ReflectionEngine / AgentOrchestrator）+ HITL 人工确认 |
 | 鉴权 | JWT (HS256)，预留 OIDC 扩展 |
 | 评估 | MRR / NDCG 检索指标 + LLM-as-Judge (faithfulness / answer_relevancy) |
 
@@ -23,7 +24,11 @@ wgh-rag-system/
 │   ├── rag-app/              # 启动模块 + application*.yml + 集成测试
 │   ├── rag-common/           # Result/PageResult、JWT、异常、MyBatisPlus、SecurityConfig
 │   ├── rag-config/           # 自定义配置：RagProperties、PgVectorProperties
-│   ├── rag-controller/       # REST API 层（Auth / Chat / KnowledgeBase / LlmModel）
+│   ├── rag-controller/       # REST API 层（Auth / Chat / KnowledgeBase / LlmModel / Agent）
+│   ├── rag-agent/            # Agent 自动规划：Planner 规划 → StepExecutor 执行 → Reflection 反思 → 编排与持久化
+│   │   ├── planner/          #   Planner（目标拆解为有序步骤，标记 hitl / 依赖 / 所需工具）
+│   │   ├── reflection/       #   ReflectionEngine（LLM 打分 + 反馈，低于阈值触发重试）
+│   │   └── service/          #   AgentOrchestrator（执行调度、SSE 事件、暂停/恢复/取消/重试/跳过）
 │   ├── rag-kb/               # 知识库：上传 → 解析 → 切分 → 向量化 → 检索
 │   ├── rag-llm/              # LLM 模型管理：DB 动态配置 + 多厂商兼容 + 缓存工厂
 │   ├── rag-chat/             # 对话：会话/窗口管理、分层上下文压缩、流式 RAG、评估、分享
@@ -33,10 +38,12 @@ wgh-rag-system/
 │   │   ├── demo/             #   OrderQueryHandler（FUNCTION_CALLING 演示 handler）
 │   │   └── service/          #   ToolConfigService / SkillFileService
 │   ├── sql/                  # schema.sql（完整 DDL + 索引）+ data.sql（种子数据）+ init.sql（一键入口）
+│   ├── scripts/              # 端到端测试脚本（test-agent-e2e.sh / test-agent-hitl-e2e.sh）
 │   └── pom.xml
 └── rag-frontend/             # Vue 3 前端
     └── src/
         ├── api/index.js      # axios 封装 + SSE 流式
+        ├── components/       # AgentPlanTree（执行计划树：步骤状态 / 反思分数 / HITL 确认）
         ├── router/           # 路由 + 守卫（/share/:token 需登录）
         ├── views/login/      # 登录（支持 redirect 回跳）
         ├── views/kb/         # 知识库管理 + 检索测试
@@ -138,6 +145,46 @@ wgh-rag-system/
 - **分享链路**：窗口可开启 / 关闭分享，重新生成分享 token 旧链接立即失效；分享页要求登录（JWT），`userIdentifier` 取当前用户名，多用户共用一个分享链接时各自看到独立历史
 - **会话隔离**：管理端按 `default_user`、分享端按登录用户名隔离 `userIdentifier`，跨身份读不到对方会话
 
+### 7. Agent 自动规划执行
+
+窗口级可选能力（`agent_enabled=1`），开启后对话走 Agent 分支：先由 Planner 把目标拆成有序步骤，再逐步执行 + 反思，而非单轮 Tool Calling。
+
+```
+用户目标 → Planner 拆解（步骤 / 依赖 / 所需工具 / hitl 标记）
+         → 逐步执行 StepExecutor（可调用工具 + 检索知识库）
+         → ReflectionEngine 评分（0-10，低于阈值重试，最多 N 次）
+         → 全部通过 → 汇总最终答复 → 落库 + SSE 下发
+```
+
+**SSE 事件**（独立事件名，不包裹在单一 `agent_event` 中）：
+
+| 事件 | 载荷 | 说明 |
+|------|------|------|
+| `plan_created` / `plan_complete` / `plan_failed` | `planId` / `planSummary` / `totalSteps` | 计划生命周期 |
+| `plan_paused` / `plan_resumed` / `plan_cancelled` | `planId` / `reason` | HITL 暂停、恢复、取消 |
+| `plan_updated` | `steps` | 执行中动态重规划 |
+| `step_start` / `step_success` / `step_failed` | `stepId` / `stepIndex` / `stepTitle` / `latencyMs` / `toolCount` | 步骤执行 |
+| `step_reflection` | `stepId` / `score` / `pass` / `feedback` / `retryCount` | 反思评分 |
+| `step_hitl_pending` | `id` / `stepId` / `stepIndex` / `expectedInput` | 等待人工确认 |
+
+**HITL 人工确认**：Planner 会把**有副作用或不可逆**的操作标记 `hitl=true`（删除数据、发送邮件/通知、下单支付退款、改配置/权限变更等）。窗口开启 `agent_hitl_enabled=1` 时，这类步骤执行前暂停（`plan_paused`），用户在计划面板内联确认后才继续；只读查询类步骤不会暂停。
+
+**配置项**（`wgh.agent`，窗口级字段优先）：
+
+| 参数 | 默认 | 说明 |
+|------|------|------|
+| `enabled` | false | 全局开关（窗口 `agent_enabled` 覆盖） |
+| `max-steps` | 15 | 最大步骤数（窗口 `agent_max_steps` 覆盖） |
+| `max-tool-rounds-per-step` | 5 | 单步骤内工具调用轮数上限 |
+| `default-reflection-retries` | 3 | 反思重试次数（窗口 `agent_max_steps` 参与计算上限） |
+| `default-reflection-threshold` | 7.0 | 反思通过阈值（窗口 `agent_reflection_threshold` 覆盖） |
+| `reflection-enabled` | true | 反思循环总开关 |
+| `planner-prompt-version` | v1 | Planner Prompt 版本（bump 后旧计划缓存失效） |
+
+窗口侧字段：`agent_enabled` / `agent_max_steps` / `agent_planner_model_id` / `agent_executor_model_id` / `agent_critic_model_ids` / `agent_reflection_threshold` / `agent_hitl_enabled`。
+
+**前端表现**：调试页与分享页右侧均展示执行计划树（步骤时间线、状态、反思分数徽章、HITL 确认、取消/重试/跳过）。刷新页面后通过 `GET /api/agent/sessions/{sessionId}/plan` 恢复计划快照，并对 `RUNNING` 状态每 2 秒轮询直到终态，随后自动补拉消息列表。
+
 ## 快速开始
 
 ### 1. 启动 PostgreSQL + pgvector
@@ -187,6 +234,22 @@ npm run dev   # http://localhost:5173
 
 打开 **聊天窗口管理** → 编辑窗口 → 关联工具（按 SKILL / MCP / HTTP / Function Calling 分组显示）→ 保存 → 调试对话，发送一条会触发工具的提问（例如「查一下我的订单」「调用 echo 说 hi」「现在系统健康状况怎么样」），即可看到 `tool_call_start` / `tool_call_result` SSE 事件。
 
+### 6. 体验 Agent 自动规划
+
+编辑聊天窗口 → 打开「🤖 Agent 自动规划执行」→ 配置最大步骤、Planner / Executor 模型、反思阈值、HITL 开关 → 保存。调试对话或分享页发送一个多步目标（如「查询北京天气并整理结果」），右侧会出现执行计划树，实时展示步骤状态与反思分数。
+
+### 7. 运行端到端测试
+
+```bash
+cd rag-backend
+# Agent 主链路：SSE 事件 / payload 字段 / 持久化 / REST / 降级路径
+bash scripts/test-agent-e2e.sh
+# HITL：暂停 → 确认续跑、窗口开关对照、暂停后取消
+bash scripts/test-agent-hitl-e2e.sh
+```
+
+脚本依赖后端 8080 运行中、`postgres-with-vector` 容器可访问（默认库 `wgh_rag`），执行前会自行登录并做健康检查。
+
 ## 关键 API
 
 ### 鉴权
@@ -204,7 +267,7 @@ npm run dev   # http://localhost:5173
 ### 对话
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| POST | `/api/chat/windows/{id}/stream` | SSE 流式 RAG 对话（事件：start / retrieve / content / sources / accuracy / tool_call_start / tool_call_result / done） |
+| POST | `/api/chat/windows/{id}/stream` | SSE 流式 RAG 对话（事件：start / retrieve / content / sources / accuracy / tool_call_start / tool_call_result / done；窗口启用 Agent 时额外下发 plan_* / step_* 事件） |
 | GET  | `/api/chat/windows/{id}/sessions` | 当前用户在窗口下的会话列表 |
 | POST | `/api/chat/windows/{id}/sessions` | 显式新建会话 |
 | DELETE | `/api/chat/windows/{id}/sessions/{sessionId}` | 删除会话（连带逻辑删消息） |
@@ -217,8 +280,18 @@ npm run dev   # http://localhost:5173
 | POST | `/api/chat/windows/{id}/share/disable` | 关闭分享 |
 | POST | `/api/chat/windows/{id}/share/regenerate` | 重新生成分享 token（旧链接失效，历史会话保留） |
 | GET  | `/api/chat/share/{token}/window` | 通过 token 获取窗口信息（需登录） |
-| POST | `/api/chat/share/{token}/stream` | 分享侧 SSE 对话 |
+| POST | `/api/chat/share/{token}/stream` | 分享侧 SSE 对话（与调试页同链路，支持 Agent 事件） |
 | GET  | `/api/chat/share/{token}/sessions` | 当前登录用户在分享窗口下的会话列表 |
+
+### Agent 执行控制
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET  | `/api/agent/plans/{planId}/state` | 查询计划完整状态（含步骤列表） |
+| GET  | `/api/agent/sessions/{sessionId}/plan` | 按会话查最新计划（刷新页面恢复面板） |
+| POST | `/api/agent/steps/{stepId}/hitl-confirm` | HITL 确认，携带用户输入继续执行（结果补写回会话） |
+| POST | `/api/agent/plans/{planId}/cancel` | 取消计划（未执行步骤置为 SKIPPED） |
+| POST | `/api/agent/steps/{stepId}/retry` | 重试失败步骤 |
+| POST | `/api/agent/steps/{stepId}/skip` | 跳过步骤 |
 
 ### 工具
 | 方法 | 路径 | 说明 |
@@ -264,6 +337,7 @@ npm run dev   # http://localhost:5173
 | `rag-backend/rag-app/skills/` | Skill 磁盘目录（由 `wgh.skill.base-path` 解析而来） |
 | `rag-backend/uploads/` | 按知识库 ID 分子目录 |
 | `rag-backend/logs/` | 运行日志（SizeAndTimeBasedRollingPolicy） |
+| `rag-backend/scripts/` | 端到端测试脚本（Agent 主链路 / HITL） |
 | `rag-backend/eval/` | RAG 评估脚本和报告 |
 
 ## 工程约定（重要）
@@ -273,6 +347,9 @@ npm run dev   # http://localhost:5173
 - **Java 25 + Mockito**：`-Dnet.bytebuddy.experimental=true`
 - **逻辑删除**：所有删除操作走 `deleted` 字段，物理删除需明确需求
 - **变量遮蔽**：前端避免使用 `window`、`location` 等全局变量名作 ref 名（已在 `ChatPlayground.vue` 中踩过坑，访问全局对象请用 `globalThis.xxx`）
+- **Agent 字段映射**：`ChatWindow` 的 `agent_*` 字段需显式标注 `@TableField(value = "agent_xxx")`，否则 MyBatis-Plus 生成的 SELECT 不含这些列
+- **Agent 落库顺序**：Agent 分支必须「先落库、后下发 SSE」，客户端断连（刷新）不影响最终答复写入；流式回调内不要用未保护的 `sse.send`，失败只降级为 warn，避免误触发「降级为普通 RAG」
+- **HITL 事件时序**：HITL 步骤在暂停前不会发 `step_start`，前端收到 `step_hitl_pending` 时若列表中不存在该步骤需按 payload 补建（含 DB 主键 `id`，否则确认接口 404）
 - **SSE 换行**：`content` 事件必须用 JSON 包装传输文本，避免换行符丢失
 - **pgvector 配置**：`PgVectorEmbeddingStore` 不要显式配置空的 metadata，使用默认 COMBINED_JSON 模式
 
@@ -287,9 +364,11 @@ npm run dev   # http://localhost:5173
 | rag-llm（模型管理 + 多厂商工厂 + 缓存） | ✅ 完成 | DB 动态配置 + DASHSCOPE / DEEPSEEK / CUSTOM_OPENAI 兼容 + ModelCacheManager 热更新 |
 | rag-kb（知识库 CRUD + 上传 + 解析 + 切分 + 向量化 + 检索） | ✅ 完成 | PDF/DOCX/DOC/XLSX/XLS/CSV/TXT/MD 解析，7 种切分策略，pgvector 向量存储 |
 | rag-chat（会话/窗口 + 分层上下文压缩 + 流式 RAG + 评估 + 分享） | ✅ 完成 | 三层压缩含持久化复用；MRR/NDCG + LLM-as-Judge 双轨评估；会话隔离 + 分享 token |
-| rag-controller（REST API 层） | ✅ 完成 | Auth / Chat / KnowledgeBase / LlmModel / 分享 / 工具调试 全覆盖 |
+| rag-controller（REST API 层） | ✅ 完成 | Auth / Chat / KnowledgeBase / LlmModel / Agent / 分享 / 工具调试 全覆盖 |
 | rag-tool（工具框架 + 4 类执行器 + Skill 文件服务） | ✅ 完成 | ToolExecutor SPI + HTTP/MCP/SKILL/FUNCTION_CALLING + 工具调试 + 目录扫描 + 同名判重 |
-| Agent（自动规划） | 📋 计划中 | 当前为单次 Tool Calling 循环（最多 5 轮），未引入复杂规划 |
+| rag-agent（自动规划 + 反思 + HITL） | ✅ 完成 | Planner 步骤拆解 → StepExecutor 逐步执行 → Reflection 评分重试 → 编排持久化；窗口级开关；HITL 暂停/确认 |
+| Agent 端到端测试 | ✅ 完成 | `test-agent-e2e.sh`（18 项）+ `test-agent-hitl-e2e.sh`（16 项），覆盖 SSE / payload / 持久化 / REST / 降级 / 窗口开关对照 |
+| 工作流自动编排 | 📋 计划中 |  |
 
 ### 前端页面
 
@@ -299,9 +378,9 @@ npm run dev   # http://localhost:5173
 | 首页 | ✅ 完成 | 系统概览 |
 | 知识库管理 | ✅ 完成 | 列表 + 新建 + 文件上传 + 处理状态 |
 | 知识库搜索测试 | ✅ 完成 | 实时向量检索 + 召回/命中率指标 + 结果展示 |
-| 对话 Playground | ✅ 完成 | SSE 流式 + 来源展示 + 三率指标 + 工具调用事件 + 历史会话侧边栏 + 新建/删除会话 + 复制分享链接 |
-| 对话窗口管理 | ✅ 完成 | 评估方案 / Judge 模型 / 知识库绑定 / 工具按类型分组选择 / 分享开关联复制+重新生成 |
-| 分享对话 ShareChat | ✅ 完成 | 登录后访问 / 历史会话侧边栏 / 新建/删除会话 / 与 Playground 渲染一致 |
+| 对话 Playground | ✅ 完成 | SSE 流式 + 来源展示 + 三率指标 + 工具调用事件 + 历史会话侧边栏 + 新建/删除会话 + 复制分享链接 + Agent 执行计划树（实时步骤 / 反思分数 / HITL 确认 / 取消重试跳过 / 刷新恢复与轮询） |
+| 对话窗口管理 | ✅ 完成 | 评估方案 / Judge 模型 / 知识库绑定 / 工具按类型分组选择 / Agent 配置（开关、最大步骤、Planner/Executor 模型、反思阈值、HITL）/ 分享开关联复制+重新生成 |
+| 分享对话 ShareChat | ✅ 完成 | 登录后访问 / 历史会话侧边栏 / 新建/删除会话 / 与 Playground 渲染一致（含 Agent 执行计划树） |
 | Chat 模型配置 | ✅ 完成 | 多厂商动态添加 + 启用/禁用 |
 | Embedding 模型配置 | ✅ 完成 | 默认模型唯一约束 + 多厂商 |
 | 工具管理 | ✅ 完成 | 5 个 tab（全部 / Skill / MCP / HTTP / Function Calling）+ SKILL 目录合并列表 + 在线编辑 + 任意工具调试弹窗 |
@@ -339,7 +418,7 @@ npm run dev   # http://localhost:5173
 
 | 项目 | 状态 | 说明 |
 |------|------|------|
-| SQL init（8 张表 + 25 个业务索引 + 种子数据） | ✅ 完成 | schema.sql 幂等 DDL（CREATE TABLE / INDEX 全部 IF NOT EXISTS）+ data.sql 种子 INSERT，所有历史 migration 已合入 |
+| SQL init（10 张表 + 25 个业务索引 + 种子数据） | ✅ 完成 | schema.sql 幂等 DDL（CREATE TABLE / INDEX 全部 IF NOT EXISTS）+ data.sql 种子 INSERT，所有历史 migration 已合入（含 `wgh_agent_plan` / `wgh_agent_step`） |
 | pgvector 向量扩展 | ✅ 完成 | 自动建表 + 可选 IVF 索引 |
 | 老库兼容修复 | ✅ 内置 | data.sql 末尾含幂等 SKILL executor_config 格式修复 UPDATE，新库空跑安全 |
 
