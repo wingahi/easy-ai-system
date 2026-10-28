@@ -1,6 +1,7 @@
 package com.wgh.rag.agentmulti.groupchat;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.wgh.rag.agentmulti.constant.MultiAgentEvents;
 import com.wgh.rag.agentmulti.context.MultiAgentContext;
 import com.wgh.rag.agentmulti.dto.AgentInstance;
 import com.wgh.rag.agentmulti.dto.AgentInstanceResult;
@@ -74,14 +75,14 @@ public class GroupChatCoordinator {
 
                     run.setStatus("PAUSED");
                     service.saveRun(run);
-                    sse.send(emitter, "agent_hitl_pending", Map.of(
+                    sse.send(emitter, MultiAgentEvents.AGENT_HITL_PENDING, Map.of(
                             "runId", run.getRunId(),
                             "agentId", speaker.getAgentId(),
                             "prompt", hitlPrompt));
                     throw new MultiAgentRuntime.PauseSignal("HITL 暂停（GroupChat speaker=" + nextAgentId + "）");
                 }
 
-                sse.send(emitter, "agent_turn_start", Map.of(
+                sse.send(emitter, MultiAgentEvents.AGENT_TURN_START, Map.of(
                         "runId", run.getRunId(),
                         "agentId", speaker.getAgentId(),
                         "agentName", speaker.getName(),
@@ -99,7 +100,7 @@ public class GroupChatCoordinator {
                 ctx.put(speaker.getAgentId() + ".text", result.getOutput());
                 persistStep(run, speaker, result, round);
 
-                sse.send(emitter, "agent_turn_end", Map.of(
+                sse.send(emitter, MultiAgentEvents.AGENT_TURN_END, Map.of(
                         "runId", run.getRunId(),
                         "agentId", speaker.getAgentId(),
                         "round", round,
@@ -139,7 +140,7 @@ public class GroupChatCoordinator {
 
         run.setOutputText(finalAnswer);
         service.finishRun(run, "COMPLETED", null);
-        sse.send(emitter, "multi_agent_complete", Map.of(
+        sse.send(emitter, MultiAgentEvents.MULTI_AGENT_COMPLETE, Map.of(
                 "runId", run.getRunId(),
                 "output", finalAnswer,
                 "rounds", round,

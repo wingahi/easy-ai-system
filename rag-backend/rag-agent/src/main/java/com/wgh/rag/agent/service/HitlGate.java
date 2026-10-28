@@ -1,5 +1,6 @@
 package com.wgh.rag.agent.service;
 
+import com.wgh.rag.agent.constant.AgentEvents;
 import com.wgh.rag.agent.dto.PlanDTO.StepDTO;
 import com.wgh.rag.agent.entity.AgentPlan;
 import com.wgh.rag.agent.entity.AgentStep;
@@ -39,14 +40,14 @@ public class HitlGate {
     public void pauseAndNotify(AgentPlan plan, AgentStep dbStep, StepDTO stepDTO,
                                BiConsumer<String, Map<String, Object>> sse) {
         planLifecycleService.markHitlPendingTx(plan, dbStep, stepDTO);
-        eventPublisher.emit(sse, "step_hitl_pending", Map.of(
+        eventPublisher.emit(sse, AgentEvents.STEP_HITL_PENDING, Map.of(
                 "id", dbStep.getId(),
                 "stepId", stepDTO.getStepId(),
                 "stepIndex", dbStep.getStepIndex(),
                 "stepTitle", stepDTO.getTitle(),
                 "expectedInput", stepDTO.getExpectedInput(),
                 "description", stepDTO.getDescription()));
-        eventPublisher.emit(sse, "plan_paused", Map.of("planId", plan.getId(), "reason", "等待用户确认"));
+        eventPublisher.emit(sse, AgentEvents.PLAN_PAUSED, Map.of("planId", plan.getId(), "reason", "等待用户确认"));
         // 调用方线程退出，等待用户 hitl-confirm API
     }
 

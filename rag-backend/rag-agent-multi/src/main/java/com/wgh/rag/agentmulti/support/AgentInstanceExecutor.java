@@ -1,5 +1,6 @@
 package com.wgh.rag.agentmulti.support;
 
+import com.wgh.rag.agentmulti.constant.MultiAgentEvents;
 import com.wgh.rag.agentmulti.context.MultiAgentContext;
 import com.wgh.rag.agentmulti.dto.AgentInstance;
 import com.wgh.rag.agentmulti.dto.AgentInstanceResult;
@@ -56,7 +57,7 @@ public class AgentInstanceExecutor {
         List<AgentInstanceResult.ToolInvocation> toolInvocations = new ArrayList<>();
         List<AgentInstanceResult.RagSource> ragSources = new ArrayList<>();
 
-        sse.send(emitter, "agent_start", Map.of(
+        sse.send(emitter, MultiAgentEvents.AGENT_START, Map.of(
                 "runId", runId,
                 "agentId", agentId,
                 "agentName", agent != null ? agent.getName() : null,
@@ -104,7 +105,7 @@ public class AgentInstanceExecutor {
                             %s
                             """.formatted(enrichedInput, ragContext);
                 }
-                sse.send(emitter, "agent_rag", Map.of(
+                sse.send(emitter, MultiAgentEvents.AGENT_RAG, Map.of(
                         "runId", runId, "agentId", agentId, "kbCount", matches.size()));
             }
 
@@ -150,7 +151,7 @@ public class AgentInstanceExecutor {
                     String thoughtText = aiMessage.text();
                     List<ToolExecutionResultMessage> toolResults = new ArrayList<>();
                     for (ToolExecutionRequest req : toolCalls) {
-                        sse.send(emitter, "agent_tool_call_start", Map.of(
+                        sse.send(emitter, MultiAgentEvents.AGENT_TOOL_CALL_START, Map.of(
                                 "runId", runId, "agentId", agentId,
                                 "toolName", req.name(), "arguments", req.arguments()));
 
@@ -175,7 +176,7 @@ public class AgentInstanceExecutor {
                         toolInvocations.add(inv);
                         toolResults.add(result);
 
-                        sse.send(emitter, "agent_tool_call_result", Map.of(
+                        sse.send(emitter, MultiAgentEvents.AGENT_TOOL_CALL_RESULT, Map.of(
                                 "runId", runId, "agentId", agentId,
                                 "toolName", req.name(),
                                 "arguments", req.arguments(),
@@ -200,7 +201,7 @@ public class AgentInstanceExecutor {
             Boolean reflectionPass = null;
 
             if (agent.isEnableReflection()) {
-                sse.send(emitter, "agent_reflection", Map.of(
+                sse.send(emitter, MultiAgentEvents.AGENT_REFLECTION, Map.of(
                         "runId", runId, "agentId", agentId, "phase", "start"));
 
                 Long reflectModelId = agent.getReflectionModelId() != null
@@ -238,7 +239,7 @@ public class AgentInstanceExecutor {
 
                 reflectionPass = reflectionScore != null && reflectionScore >= agent.getReflectionThreshold();
 
-                sse.send(emitter, "agent_reflection", Map.of(
+                sse.send(emitter, MultiAgentEvents.AGENT_REFLECTION, Map.of(
                         "runId", runId, "agentId", agentId, "phase", "done",
                         "score", reflectionScore, "feedback", reflectionFeedback, "pass", reflectionPass));
 
@@ -270,7 +271,7 @@ public class AgentInstanceExecutor {
                     .durationMs(duration)
                     .build();
 
-            sse.send(emitter, "agent_done", Map.of(
+            sse.send(emitter, MultiAgentEvents.AGENT_DONE, Map.of(
                     "runId", runId, "agentId", agentId,
                     "output", result.getOutput(),
                     "toolCount", toolInvocations.size(),
@@ -288,7 +289,7 @@ public class AgentInstanceExecutor {
                     .ragSources(ragSources)
                     .durationMs(duration)
                     .build();
-            sse.send(emitter, "agent_done", Map.of(
+            sse.send(emitter, MultiAgentEvents.AGENT_DONE, Map.of(
                     "runId", runId, "agentId", agentId,
                     "error", e.getMessage(), "durationMs", duration));
             return result;

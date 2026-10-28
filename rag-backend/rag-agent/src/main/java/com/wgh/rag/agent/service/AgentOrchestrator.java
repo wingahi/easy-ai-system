@@ -2,6 +2,7 @@ package com.wgh.rag.agent.service;
 
 import com.wgh.rag.agent.StepExecutor;
 import com.wgh.rag.agent.config.AgentProperties;
+import com.wgh.rag.agent.constant.AgentEvents;
 import com.wgh.rag.agent.dto.AgentStepResult;
 import com.wgh.rag.agent.dto.PlanDTO;
 import com.wgh.rag.agent.dto.PlanDTO.StepDTO;
@@ -70,14 +71,14 @@ public class AgentOrchestrator {
         try {
             planDTO = planner.generate(plannerModelId, userGoal, toolNames, hasKb, maxSteps);
         } catch (AgentException e) {
-            eventPublisher.emit(sse, "plan_create_failed", Map.of("reason", e.getMessage()));
+            eventPublisher.emit(sse, AgentEvents.PLAN_CREATE_FAILED, Map.of("reason", e.getMessage()));
             throw e;
         }
 
         // 2. 持久化 plan + 所有 step
         AgentPlan plan = planLifecycleService.createPlanTx(sessionId, windowId, windowModelId, userGoal, planDTO);
         log.info("AgentPlan 已持久化: id={}, steps={}", plan.getId(), planDTO.getSteps().size());
-        eventPublisher.emit(sse, "plan_created", Map.of(
+        eventPublisher.emit(sse, AgentEvents.PLAN_CREATED, Map.of(
                 "planId", plan.getId(),
                 "planSummary", planDTO.getSummary(),
                 "totalSteps", planDTO.getSteps().size()));
@@ -86,7 +87,7 @@ public class AgentOrchestrator {
         List<StepDTO> orderedSteps = stepScheduler.topoSort(planDTO.getSteps());
         if (orderedSteps.isEmpty()) {
             planLifecycleService.markPlanComplete(plan, "COMPLETED");
-            eventPublisher.emit(sse, "plan_complete", Map.of("planId", plan.getId()));
+            eventPublisher.emit(sse, AgentEvents.PLAN_COMPLETE, Map.of("planId", plan.getId()));
             return AgentStepResult.builder().status("SUCCESS").finalText("").build();
         }
         planLifecycleService.persistSteps(orderedSteps, plan.getId());
@@ -141,7 +142,7 @@ public class AgentOrchestrator {
                 .map(s -> stepDtoById.get(s.getStepId()))
                 .filter(Objects::nonNull).toList();
 
-        eventPublisher.emit(sse, "plan_resumed", Map.of("planId", planId, "fromStepId", hitlStep.getStepId()));
+        eventPublisher.emit(sse, AgentEvents.PLAN_RESUMED, Map.of("planId", planId, "fromStepId", hitlStep.getStepId()));
 
         // 继续执行剩余步骤
         return executeSteps(plan, remainingStepDTOs, plan.getLlmModelId(),
@@ -156,7 +157,7 @@ public class AgentOrchestrator {
         AgentPlan plan = planLifecycleService.findPlan(planId);
         if (plan == null) return;
         planLifecycleService.cancelPlanAndSkipUnfinishedSteps(plan);
-        eventPublisher.emit(sse, "plan_cancelled", Map.of("planId", planId));
+        eventPublisher.emit(sse, AgentEvents.PLAN_CANCELLED, Map.of("planId", planId));
     }
 
     /** 重试单个 FAILED 步骤（仅当计划处于 PAUSED 状态时）。 */
@@ -202,7 +203,7 @@ public class AgentOrchestrator {
         step.setStatus("SKIPPED");
         planLifecycleService.updateStep(step);
         // 继续后续步骤：调用 resume-like 逻辑
-        eventPublisher.emit(sse, "step_skipped", Map.of("stepId", stepId, "reason", "manual skip"));
+        eventPublisher.emit(sse, AgentEvents.STEP_SKIPPED, Map.of("stepId", stepId, "reason", "manual skip"));
     }
 
     // ==================== 核心：逐步骤执行循环 ====================
@@ -254,7 +255,7 @@ public class AgentOrchestrator {
 
             // 5a. 更新状态 RUNNING
             planLifecycleService.markStepRunningTx(plan, dbStep);
-            eventPublisher.emit(sse, "step_start", Map.of(
+            eventPublisher.emit(sse, AgentEvents.STEP_START, Map.of(
                     "stepId", stepDTO.getStepId(),
                     "stepTitle", stepDTO.getTitle(),
                     "stepIndex", dbStep.getStepIndex()));
@@ -274,7 +275,7 @@ public class AgentOrchestrator {
             while (retries <= Math.max(0, reflectionMaxRetries)) {
                 if (retries > 0) {
                     log.info("Reflection 重试 第 {} 次 stepId={}", retries, stepDTO.getStepId());
-                    eventPublisher.emit(sse, "step_retry", Map.of("stepId", stepDTO.getStepId(), "retryCount", retries));
+                    eventPublisher.emit(sse, AgentEvents.STEP_RETRY, Map.of("stepId", stepDTO.getStepId(), "retryCount", retries));
                     planLifecycleService.updateRetryCountTx(dbStep, retries);
                 }
 
@@ -299,7 +300,7 @@ public class AgentOrchestrator {
                     String feedback = reflection.getValue();
                     log.info("Reflection: stepId={}, score={}, feedback={}", stepDTO.getStepId(), score, feedback);
 
-                    eventPublisher.emit(sse, "step_reflection", Map.of(
+                    eventPublisher.emit(sse, AgentEvents.STEP_REFLECTION, Map.of(
                             "stepId", stepDTO.getStepId(),
                             "score", score, "feedback", feedback,
                             "retryCount", retries,
@@ -325,7 +326,7 @@ public class AgentOrchestrator {
 
             // 5f. 发 SSE 事件 + 状态处理
             if ("SUCCESS".equals(finalStatus)) {
-                eventPublisher.emit(sse, "step_success", Map.of(
+                eventPublisher.emit(sse, AgentEvents.STEP_SUCCESS, Map.of(
                         "stepId", stepDTO.getStepId(),
                         "stepTitle", stepDTO.getTitle(),
                         "latencyMs", finalLatencyMs,
@@ -338,12 +339,12 @@ public class AgentOrchestrator {
                             .append(finalResultSummary).append("\n\n");
                 }
             } else if ("HITL_PENDING".equals(finalStatus)) {
-                eventPublisher.emit(sse, "plan_paused", Map.of("planId", plan.getId(), "reason", "步骤内 HITL"));
+                eventPublisher.emit(sse, AgentEvents.PLAN_PAUSED, Map.of("planId", plan.getId(), "reason", "步骤内 HITL"));
                 return null;
             } else {
                 // FAILED → 触发动态重规划
                 log.warn("步骤 FAILED: stepId={}, error={}", stepDTO.getStepId(), result.getErrorMessage());
-                eventPublisher.emit(sse, "step_failed", Map.of(
+                eventPublisher.emit(sse, AgentEvents.STEP_FAILED, Map.of(
                         "stepId", stepDTO.getStepId(),
                         "stepTitle", stepDTO.getTitle(),
                         "error", result.getErrorMessage(),
@@ -369,7 +370,7 @@ public class AgentOrchestrator {
                         // 更新 plan_json（追加 replanned 的 steps）
                         planLifecycleService.mergeStepsAndSaveTx(plan, replanned);
 
-                        eventPublisher.emit(sse, "plan_updated", Map.of(
+                        eventPublisher.emit(sse, AgentEvents.PLAN_UPDATED, Map.of(
                                 "planId", plan.getId(),
                                 "addedStepCount", replanned.getSteps().size(),
                                 "reason", "step_failed_replan"));
@@ -381,7 +382,7 @@ public class AgentOrchestrator {
                         log.error("动态重规划失败", replanEx);
                         // 重规划也失败 → 终止整个计划
                         planLifecycleService.failPlanTx(plan);
-                        eventPublisher.emit(sse, "plan_failed", Map.of(
+                        eventPublisher.emit(sse, AgentEvents.PLAN_FAILED, Map.of(
                                 "planId", plan.getId(),
                                 "reason", "step_failed_and_replan_failed",
                                 "failedStepId", stepDTO.getStepId()));
@@ -390,7 +391,7 @@ public class AgentOrchestrator {
                 } else {
                     // 无剩余待执行步骤 → 终止计划
                     planLifecycleService.failPlanTx(plan);
-                    eventPublisher.emit(sse, "plan_failed", Map.of(
+                    eventPublisher.emit(sse, AgentEvents.PLAN_FAILED, Map.of(
                             "planId", plan.getId(), "reason", "no_pending_after_failed"));
                     return null;
                 }
@@ -401,7 +402,7 @@ public class AgentOrchestrator {
         // 6. Plan 完成
         if ("RUNNING".equals(plan.getStatus())) {
             planLifecycleService.markPlanCompleteTx(plan, "COMPLETED");
-            eventPublisher.emit(sse, "plan_complete", Map.of(
+            eventPublisher.emit(sse, AgentEvents.PLAN_COMPLETE, Map.of(
                     "planId", plan.getId(),
                     "totalSteps", plan.getMaxSteps()));
         }

@@ -2,6 +2,7 @@ package com.wgh.rag.workflow.engine;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.wgh.rag.workflow.constant.WorkflowEvents;
 import com.wgh.rag.workflow.dto.*;
 import com.wgh.rag.workflow.engine.executor.NodeExecutionContext;
 import com.wgh.rag.workflow.engine.executor.NodeConfigSupport;
@@ -68,7 +69,7 @@ public class WorkflowEngine {
                        BiConsumer<String, Map<String, Object>> sink) {
         if (ctx.getPendingNodeIds() == null || ctx.getPendingNodeIds().isEmpty()) {
             finishRun(run, "FAILED", "HITL 恢复失败：没有可执行的后续节点", sink);
-            sink.accept("workflow_failed", Map.of(
+            sink.accept(WorkflowEvents.WORKFLOW_FAILED, Map.of(
                     "runId", run.getId(), "error", "HITL 恢复失败：没有可执行的后续节点"));
             return;
         }
@@ -162,7 +163,7 @@ public class WorkflowEngine {
 
                         if (guard.incrementAndGet() > MAX_TOTAL_NODE_EXECUTIONS) {
                             finishRun(run, "FAILED", "超过最大节点执行次数 " + MAX_TOTAL_NODE_EXECUTIONS, sink);
-                            sink.accept("workflow_failed", Map.of(
+                            sink.accept(WorkflowEvents.WORKFLOW_FAILED, Map.of(
                                     "runId", run.getId(), "error", "超过最大节点执行次数"));
                             return;
                         }
@@ -201,7 +202,7 @@ public class WorkflowEngine {
             // 周期检查取消状态
             WorkflowRun latest = runMapper.selectById(run.getId());
             if (latest == null || "CANCELLED".equals(latest.getStatus())) {
-                sink.accept("workflow_cancelled", Map.of("runId", run.getId()));
+                sink.accept(WorkflowEvents.WORKFLOW_CANCELLED, Map.of("runId", run.getId()));
                 return;
             }
 
@@ -229,7 +230,7 @@ public class WorkflowEngine {
                 appendNodeRun(run, node, iteration, output, 0L, "SUCCESS", null);
                 persistContext(run, ctx, "RUNNING");
                 executed.incrementAndGet();
-                sink.accept("node_output", event(run, node, output, 0L, iteration));
+                sink.accept(WorkflowEvents.NODE_OUTPUT, event(run, node, output, 0L, iteration));
 
                 activateSuccessors(node, outEdges, shouldBreak ? "done" : "loop",
                         pendingIn, frontier, submitted);
@@ -243,7 +244,7 @@ public class WorkflowEngine {
             }
 
             // ---------- 普通节点 ----------
-            sink.accept("node_start", Map.of(
+            sink.accept(WorkflowEvents.NODE_START, Map.of(
                     "runId", run.getId(),
                     "nodeId", node.getId(),
                     "nodeType", node.getType(),
@@ -271,7 +272,7 @@ public class WorkflowEngine {
                 errPayload.put("nodeId", node.getId());
                 errPayload.put("nodeName", nameOf(node));
                 errPayload.put("error", e.getMessage());
-                sink.accept("node_error", errPayload);
+                sink.accept(WorkflowEvents.NODE_ERROR, errPayload);
 
                 if ("CONTINUE".equalsIgnoreCase(node.getOnError())) {
                     log.warn("节点 {} 失败但配置为 CONTINUE，继续执行", node.getId(), e);
@@ -300,7 +301,7 @@ public class WorkflowEngine {
             executed.incrementAndGet();
             run.setExecutedNodes(executed.get());
 
-            sink.accept("node_output", event(run, node, result.getOutput(), duration,
+            sink.accept(WorkflowEvents.NODE_OUTPUT, event(run, node, result.getOutput(), duration,
                     ctx.getCurrentLoopIteration()));
 
             if ("END".equals(node.getType())) {
@@ -311,7 +312,7 @@ public class WorkflowEngine {
                 payload.put("output", outText);
                 payload.put("durationMs", elapsed(run));
                 payload.put("executedNodes", executed.get());
-                sink.accept("workflow_complete", payload);
+                sink.accept(WorkflowEvents.WORKFLOW_COMPLETE, payload);
                 return;
             }
 
@@ -410,7 +411,7 @@ public class WorkflowEngine {
         payload.put("nodeId", node.getId());
         payload.put("nodeName", nameOf(node));
         payload.put("prompt", prompt);
-        sink.accept("node_hitl_pending", payload);
+        sink.accept(WorkflowEvents.NODE_HITL_PENDING, payload);
         throw new PauseSignal("HITL 暂停：" + node.getId());
     }
 
@@ -468,7 +469,7 @@ public class WorkflowEngine {
         payload.put("runId", run.getId());
         payload.put("nodeId", nodeId);
         payload.put("error", error);
-        sink.accept("workflow_failed", payload);
+        sink.accept(WorkflowEvents.WORKFLOW_FAILED, payload);
     }
 
     private void finishRun(WorkflowRun run, String status, String error,

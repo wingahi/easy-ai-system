@@ -2,6 +2,7 @@ package com.wgh.rag.agentmulti.crew;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.wgh.rag.agentmulti.constant.MultiAgentEvents;
 import com.wgh.rag.agentmulti.context.MultiAgentContext;
 import com.wgh.rag.agentmulti.dto.AgentInstance;
 import com.wgh.rag.agentmulti.dto.AgentInstanceResult;
@@ -341,7 +342,7 @@ public class CrewCoordinator {
         }
         run.setOutputText(output);
         service.finishRun(run, "COMPLETED", null);
-        sse.send(emitter, "multi_agent_complete", Map.of(
+        sse.send(emitter, MultiAgentEvents.MULTI_AGENT_COMPLETE, Map.of(
                 "runId", run.getRunId(),
                 "output", output,
                 "durationMs", run.getDurationMs()));

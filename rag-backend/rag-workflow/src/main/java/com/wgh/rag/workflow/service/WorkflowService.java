@@ -4,9 +4,11 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.wgh.rag.common.event.DomainEventPublisher;
 import com.wgh.rag.common.exception.BusinessException;
 import com.wgh.rag.common.result.PageResult;
 import com.wgh.rag.common.result.ResultCode;
+import com.wgh.rag.workflow.constant.WorkflowEvents;
 import com.wgh.rag.workflow.dto.RunContext;
 import com.wgh.rag.workflow.dto.WorkflowGraph;
 import com.wgh.rag.workflow.engine.GraphValidator;
@@ -221,7 +223,7 @@ public class WorkflowService {
 
         workflowExecutor.execute(() -> {
             try {
-                sink.accept("workflow_start", Map.of(
+                DomainEventPublisher.emit(sink, WorkflowEvents.WORKFLOW_START, Map.of(
                         "runId", run.getId(),
                         "workflowId", wf.getId(),
                         "workflowName", wf.getName(),
@@ -232,7 +234,7 @@ public class WorkflowService {
             } catch (Exception e) {
                 log.error("工作流运行失败 runId={}", run.getId(), e);
                 markRunFailed(run.getId(), e.getMessage());
-                sink.accept("workflow_failed", Map.of(
+                DomainEventPublisher.emit(sink, WorkflowEvents.WORKFLOW_FAILED, Map.of(
                         "runId", run.getId(),
                         "error", e.getMessage() != null ? e.getMessage() : "未知错误"));
             } finally {
@@ -328,7 +330,7 @@ public class WorkflowService {
             } catch (Exception e) {
                 log.error("工作流恢复执行失败 runId={}", runId, e);
                 markRunFailed(runId, e.getMessage());
-                sink.accept("workflow_failed", Map.of(
+                DomainEventPublisher.emit(sink, WorkflowEvents.WORKFLOW_FAILED, Map.of(
                         "runId", runId, "error", e.getMessage() != null ? e.getMessage() : "未知错误"));
             } finally {
                 completeEmitter(runId);

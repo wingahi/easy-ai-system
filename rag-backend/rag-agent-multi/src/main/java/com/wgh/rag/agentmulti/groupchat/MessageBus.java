@@ -1,5 +1,6 @@
 package com.wgh.rag.agentmulti.groupchat;
 
+import com.wgh.rag.agentmulti.constant.MultiAgentEvents;
 import com.wgh.rag.agentmulti.dto.AgentInstance;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -124,7 +125,7 @@ public class MessageBus {
         // SSE
         if (emitter != null) {
             try {
-                emitter.send(SseEmitter.event().name("agent_message")
+                emitter.send(SseEmitter.event().name(MultiAgentEvents.AGENT_MESSAGE)
                         .data(new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(Map.of(
                                 "fromAgentId", fromAgentId,
                                 "role", msg.role,

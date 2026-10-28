@@ -1,6 +1,7 @@
 package com.wgh.rag.agentmulti.graph;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.wgh.rag.agentmulti.constant.MultiAgentEvents;
 import com.wgh.rag.agentmulti.context.MultiAgentContext;
 import com.wgh.rag.agentmulti.dto.AgentInstance;
 import com.wgh.rag.agentmulti.dto.AgentInstanceResult;
@@ -46,7 +47,7 @@ public class GraphCoordinator {
     public void execute(MultiAgentRun run, List<AgentInstance> agents,
                         DAGGraph graph, MultiAgentContext ctx, SseEmitter emitter) {
         if (graph == null || graph.getNodes() == null || graph.getNodes().isEmpty()) {
-            sse.send(emitter, "multi_agent_error", Map.of("runId", run.getRunId(), "error", "Graph 为空"));
+            sse.send(emitter, MultiAgentEvents.MULTI_AGENT_ERROR, Map.of("runId", run.getRunId(), "error", "Graph 为空"));
             return;
         }
 
@@ -158,7 +159,7 @@ public class GraphCoordinator {
 
                     run.setStatus("PAUSED");
                     service.saveRun(run);
-                    sse.send(emitter, "agent_hitl_pending", Map.of(
+                    sse.send(emitter, MultiAgentEvents.AGENT_HITL_PENDING, Map.of(
                             "runId", run.getRunId(), "nodeId", nodeId, "prompt", prompt));
                     throw new MultiAgentRuntime.PauseSignal("HITL 暂停：" + nodeId);
                 }
@@ -173,7 +174,7 @@ public class GraphCoordinator {
                     run.setOutputText(output);
                     run.setStatus("COMPLETED");
                     service.finishRun(run, "COMPLETED", null);
-                    sse.send(emitter, "multi_agent_complete", Map.of(
+                    sse.send(emitter, MultiAgentEvents.MULTI_AGENT_COMPLETE, Map.of(
                             "runId", run.getRunId(), "output", output, "durationMs", run.getDurationMs()));
                     terminate = true;
                 }
@@ -286,7 +287,7 @@ public class GraphCoordinator {
                     String prompt = ctx.render(node.getPrompt());
                     run.setStatus("PAUSED");
                     service.saveRun(run);
-                    sse.send(emitter, "agent_hitl_pending", Map.of("runId", run.getRunId(), "nodeId", nodeId, "prompt", prompt));
+                    sse.send(emitter, MultiAgentEvents.AGENT_HITL_PENDING, Map.of("runId", run.getRunId(), "nodeId", nodeId, "prompt", prompt));
                     throw new MultiAgentRuntime.PauseSignal("HITL 暂停：" + nodeId);
                 }
                 case "END" -> {
@@ -297,7 +298,7 @@ public class GraphCoordinator {
                     run.setOutputText(output);
                     run.setStatus("COMPLETED");
                     service.finishRun(run, "COMPLETED", null);
-                    sse.send(emitter, "multi_agent_complete", Map.of("runId", run.getRunId(), "output", output, "durationMs", run.getDurationMs()));
+                    sse.send(emitter, MultiAgentEvents.MULTI_AGENT_COMPLETE, Map.of("runId", run.getRunId(), "output", output, "durationMs", run.getDurationMs()));
                     terminate = true;
                 }
             }

@@ -46,6 +46,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.function.BiConsumer;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -404,6 +405,25 @@ class WorkflowEngineTest {
 
         assertThat(lastPayload("node_error").get("error")).isEqualTo("不支持的节点类型：UNKNOWN_X");
         assertThat(eventNames()).contains("workflow_failed");
+    }
+
+    // ==================== SSE 失败语义（现状钉住：传播影响流程，勿统一为仅告警） ====================
+
+    /** sink 抛异常会进入 catch(Throwable) → failRun：发送失败影响流程（与 Agent 模块"仅告警"语义不同，保留） */
+    @Test
+    void run_throwingSink_marksRunFailed() {
+        WorkflowGraph graph = graph(
+                List.of(node("s", "START"), node("e", "END")),
+                List.of(edge("s", "e")));
+        BiConsumer<String, Map<String, Object>> flaky = (name, payload) -> {
+            if ("node_start".equals(name)) throw new RuntimeException("客户端断开");
+        };
+
+        engine.run(newRun(), graph, "x", validate(graph), flaky);
+
+        WorkflowRun last = lastRunUpdate();
+        assertThat(last.getStatus()).isEqualTo("FAILED");
+        assertThat(last.getErrorMessage()).contains("客户端断开");
     }
 
     // ==================== 测试基建 ====================
