@@ -1,12 +1,11 @@
 package com.wgh.rag.agentmulti.context;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.wgh.rag.common.template.TemplateRenderer;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * 多 Agent 运行时上下文 —— 跨 Coordinator / Agent 执行传递数据、循环状态、pending 状态与对话历史。
@@ -16,8 +15,6 @@ import java.util.regex.Pattern;
  */
 @Slf4j
 public class MultiAgentContext {
-
-    private static final Pattern VAR = Pattern.compile("\\{\\{\\s*([\\w.\\-]+)\\s*\\}\\}");
 
     /** 运行时数据：agentId.text / agentId.summary / vars.xxx 等 */
     private final Map<String, Object> data = new ConcurrentHashMap<>();
@@ -128,21 +125,14 @@ public class MultiAgentContext {
      * path 解析优先级：
      * <ol>
      *   <li>vars.x — 从 vars 取</li>
-     *   <li>last / input — 特殊别名</li>
+     *   <li>last / input — 特殊别名（vars 优先，缺省兜底 data）</li>
      *   <li>loop.iteration / loop.xxx — 循环迭代</li>
      *   <li>agentId.text / agentId.xxx — 运行时 data</li>
      * </ol>
+     * 渲染核心统一委托 rag-common 的 {@link TemplateRenderer}，本类只保留多 Agent 侧的路径解析语义。
      */
     public String render(String template) {
-        if (template == null || template.isEmpty()) return template == null ? "" : template;
-        Matcher matcher = VAR.matcher(template);
-        StringBuilder sb = new StringBuilder();
-        while (matcher.find()) {
-            Object value = resolvePath(matcher.group(1));
-            matcher.appendReplacement(sb, Matcher.quoteReplacement(stringify(value)));
-        }
-        matcher.appendTail(sb);
-        return sb.toString();
+        return TemplateRenderer.render(template, this::resolvePath, this::stringify);
     }
 
     public Object resolvePath(String path) {
@@ -153,7 +143,7 @@ public class MultiAgentContext {
         switch (parts[0]) {
             case "vars" -> {
                 if (parts.length < 2) return null;
-                return traverse(vars.get(parts[1]), parts, 2);
+                return TemplateRenderer.traverse(vars.get(parts[1]), parts, 2);
             }
             case "input" -> {
                 Object v = vars.get("input");
@@ -171,7 +161,7 @@ public class MultiAgentContext {
             }
             default -> {
                 Object current = data.get(parts[0]);
-                return traverse(current, parts, 1);
+                return TemplateRenderer.traverse(current, parts, 1);
             }
         }
     }
@@ -179,26 +169,6 @@ public class MultiAgentContext {
     private Object currentLoopIteration() {
         Optional<Integer> max = loopIterations.values().stream().max(Integer::compare);
         return max.orElse(0);
-    }
-
-    @SuppressWarnings("unchecked")
-    private Object traverse(Object current, String[] parts, int from) {
-        for (int i = from; i < parts.length && current != null; i++) {
-            String key = parts[i];
-            if (current instanceof Map<?, ?> map) {
-                current = ((Map<String, Object>) map).get(key);
-            } else if (current instanceof List<?> list) {
-                try {
-                    int idx = Integer.parseInt(key);
-                    current = idx >= 0 && idx < list.size() ? list.get(idx) : null;
-                } catch (NumberFormatException e) {
-                    return null;
-                }
-            } else {
-                return null;
-            }
-        }
-        return current;
     }
 
     public String stringify(Object value) {
