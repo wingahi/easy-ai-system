@@ -23,6 +23,10 @@
             <artifactId>rag-tool</artifactId>
         </dependency>
         <dependency>
+            <groupId>com.wgh</groupId>
+            <artifactId>rag-agent</artifactId>
+        </dependency>
+        <dependency>
             <groupId>dev.langchain4j</groupId>
             <artifactId>langchain4j-reactor</artifactId>
         </dependency>

@@ -38,6 +38,7 @@
         <module>rag-kb</module>
         <module>rag-chat</module>
         <module>rag-tool</module>
+        <module>rag-agent</module>
         <module>rag-controller</module>
         <module>rag-app</module>
     </modules>
@@ -91,6 +92,11 @@
             <dependency>
                 <groupId>com.wgh</groupId>
                 <artifactId>rag-tool</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.wgh</groupId>
+                <artifactId>rag-agent</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>

@@ -35,6 +35,9 @@ public class ModelCacheManager {
      * 获取或创建 ChatModel
      */
     public ChatModel getChatModel(Long modelId) {
+        if (modelId == null) {
+            throw new IllegalArgumentException("modelId 不能为 null — 调用方需要指定一个有效的 LLM 模型 ID");
+        }
         return chatModelCache.computeIfAbsent(modelId, id -> {
             LlmModel config = llmModelMapper.selectById(id);
             if (config == null) {

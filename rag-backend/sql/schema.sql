@@ -172,6 +172,13 @@ CREATE TABLE IF NOT EXISTS wgh_chat_window (
   temperature DOUBLE PRECISION DEFAULT 0.7,
   evaluation_scheme VARCHAR(20) DEFAULT 'NONE',
   judge_model_ids VARCHAR(200),
+  agent_enabled SMALLINT DEFAULT 0,
+  agent_max_steps INT DEFAULT 15,
+  agent_planner_model_id BIGINT,
+  agent_executor_model_id BIGINT,
+  agent_critic_model_ids VARCHAR(200),
+  agent_reflection_threshold DOUBLE PRECISION DEFAULT 7.0,
+  agent_hitl_enabled SMALLINT DEFAULT 0,
   create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   create_by VARCHAR(50) DEFAULT 'system',
@@ -196,6 +203,13 @@ COMMENT ON COLUMN wgh_chat_window.max_history_messages IS '历史消息阈值（
 COMMENT ON COLUMN wgh_chat_window.temperature IS '生成温度 0-2';
 COMMENT ON COLUMN wgh_chat_window.evaluation_scheme IS 'RAG 评估方案：NONE / METRICS / LLM_JUDGE / BOTH';
 COMMENT ON COLUMN wgh_chat_window.judge_model_ids IS 'LLM-as-judge 模型 ID 列表（JSON 数组），为空则自动选 2 个不同 provider';
+COMMENT ON COLUMN wgh_chat_window.agent_enabled IS '是否启用 Agent 自动规划执行（0 否 / 1 是）';
+COMMENT ON COLUMN wgh_chat_window.agent_max_steps IS 'Agent 计划最大步骤数（默认 15）';
+COMMENT ON COLUMN wgh_chat_window.agent_planner_model_id IS 'Agent Planner 模型 ID（为空则继承 llm_model_id）';
+COMMENT ON COLUMN wgh_chat_window.agent_executor_model_id IS 'Agent Step Executor 模型 ID（为空则继承 llm_model_id）';
+COMMENT ON COLUMN wgh_chat_window.agent_critic_model_ids IS 'Agent Critic 模型 ID 列表（JSON 数组，反思评估用）';
+COMMENT ON COLUMN wgh_chat_window.agent_reflection_threshold IS '反思评分阈值（0-10，低于此分触发重试）';
+COMMENT ON COLUMN wgh_chat_window.agent_hitl_enabled IS '是否允许计划中 HITL（Human-In-The-Loop）节点（0 否 / 1 是）';
 COMMENT ON COLUMN wgh_chat_window.create_time IS '创建时间';
 COMMENT ON COLUMN wgh_chat_window.update_time IS '更新时间';
 COMMENT ON COLUMN wgh_chat_window.create_by IS '创建人';
@@ -337,4 +351,94 @@ COMMENT ON COLUMN wgh_tool.update_time IS '更新时间';
 COMMENT ON COLUMN wgh_tool.create_by IS '创建人';
 COMMENT ON COLUMN wgh_tool.update_by IS '更新人';
 COMMENT ON COLUMN wgh_tool.deleted IS '逻辑删除（0 未删除 / 1 已删除）';
+
+-- ============ Agent 计划 ============
+
+CREATE TABLE IF NOT EXISTS wgh_agent_plan (
+  id BIGSERIAL PRIMARY KEY,
+  session_id BIGINT NOT NULL,
+  chat_window_id BIGINT NOT NULL,
+  llm_model_id BIGINT NOT NULL,
+  status VARCHAR(20) DEFAULT 'PLANNING',
+  user_goal TEXT NOT NULL,
+  plan_json JSONB NOT NULL,
+  current_step_index INT DEFAULT 0,
+  max_steps INT DEFAULT 15,
+  total_tokens INT DEFAULT 0,
+  create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  finish_time TIMESTAMP,
+  create_by VARCHAR(50) DEFAULT 'system',
+  update_by VARCHAR(50) DEFAULT 'system',
+  deleted SMALLINT DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_agent_plan_session ON wgh_agent_plan(session_id);
+CREATE INDEX IF NOT EXISTS idx_agent_plan_status ON wgh_agent_plan(status);
+COMMENT ON TABLE wgh_agent_plan IS 'Agent 执行计划';
+COMMENT ON COLUMN wgh_agent_plan.session_id IS '关联的 chat_session';
+COMMENT ON COLUMN wgh_agent_plan.chat_window_id IS '关联的 chat_window';
+COMMENT ON COLUMN wgh_agent_plan.llm_model_id IS 'Planner 使用的 LLM 模型 ID';
+COMMENT ON COLUMN wgh_agent_plan.status IS '状态：PLANNING / RUNNING / PAUSED / COMPLETED / FAILED / CANCELLED';
+COMMENT ON COLUMN wgh_agent_plan.user_goal IS '用户原始输入（Agent 目标）';
+COMMENT ON COLUMN wgh_agent_plan.plan_json IS 'Planner 生成的计划 JSON（含 steps 列表、依赖关系、工具声明）';
+COMMENT ON COLUMN wgh_agent_plan.current_step_index IS '当前执行到的步骤序号（0-based）';
+COMMENT ON COLUMN wgh_agent_plan.max_steps IS '计划最大步骤数（兜底）';
+COMMENT ON COLUMN wgh_agent_plan.total_tokens IS '本次计划累计消耗 token';
+COMMENT ON COLUMN wgh_agent_plan.finish_time IS '计划完成/失败时间';
+COMMENT ON COLUMN wgh_agent_plan.create_time IS '创建时间';
+COMMENT ON COLUMN wgh_agent_plan.update_time IS '更新时间';
+COMMENT ON COLUMN wgh_agent_plan.deleted IS '逻辑删除';
+
+-- ============ Agent 步骤 ============
+
+CREATE TABLE IF NOT EXISTS wgh_agent_step (
+  id BIGSERIAL PRIMARY KEY,
+  plan_id BIGINT NOT NULL,
+  step_index INT NOT NULL,
+  step_id VARCHAR(32) NOT NULL,
+  title VARCHAR(200) NOT NULL,
+  description TEXT,
+  depends_on TEXT,
+  status VARCHAR(20) DEFAULT 'PENDING',
+  thought TEXT,
+  action_tool VARCHAR(100),
+  action_input TEXT,
+  observation TEXT,
+  reflection_score DOUBLE PRECISION,
+  reflection_feedback TEXT,
+  retry_count INT DEFAULT 0,
+  max_retries INT DEFAULT 3,
+  result_summary TEXT,
+  start_time TIMESTAMP,
+  end_time TIMESTAMP,
+  token_count INT DEFAULT 0,
+  create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  deleted SMALLINT DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_agent_step_plan ON wgh_agent_step(plan_id);
+CREATE INDEX IF NOT EXISTS idx_agent_step_status ON wgh_agent_step(status);
+COMMENT ON TABLE wgh_agent_step IS 'Agent 计划中的单个步骤';
+COMMENT ON COLUMN wgh_agent_step.plan_id IS '所属计划 ID';
+COMMENT ON COLUMN wgh_agent_step.step_index IS '计划内序号（0-based）';
+COMMENT ON COLUMN wgh_agent_step.step_id IS '计划 JSON 中的唯一 stepId（如 step_1）';
+COMMENT ON COLUMN wgh_agent_step.title IS '步骤标题（Planner 生成）';
+COMMENT ON COLUMN wgh_agent_step.description IS '详细说明';
+COMMENT ON COLUMN wgh_agent_step.depends_on IS '依赖的 step_id 列表（JSON 数组）';
+COMMENT ON COLUMN wgh_agent_step.status IS '状态：PENDING / READY / RUNNING / SUCCESS / FAILED / SKIPPED / HITL_PENDING';
+COMMENT ON COLUMN wgh_agent_step.thought IS 'LLM 的推理过程（最近一次）';
+COMMENT ON COLUMN wgh_agent_step.action_tool IS '调用的工具名（如有）';
+COMMENT ON COLUMN wgh_agent_step.action_input IS '工具调用输入';
+COMMENT ON COLUMN wgh_agent_step.observation IS '工具返回 / RAG 检索 / LLM 输出';
+COMMENT ON COLUMN wgh_agent_step.reflection_score IS '反思评估分数（0-10）';
+COMMENT ON COLUMN wgh_agent_step.reflection_feedback IS '反思反馈';
+COMMENT ON COLUMN wgh_agent_step.retry_count IS '已重试次数';
+COMMENT ON COLUMN wgh_agent_step.max_retries IS '最大重试次数';
+COMMENT ON COLUMN wgh_agent_step.result_summary IS '步骤产出摘要（传给后续步骤的已知事实）';
+COMMENT ON COLUMN wgh_agent_step.start_time IS '开始执行时间';
+COMMENT ON COLUMN wgh_agent_step.end_time IS '完成时间';
+COMMENT ON COLUMN wgh_agent_step.token_count IS '本步骤消耗 token';
+COMMENT ON COLUMN wgh_agent_step.create_time IS '创建时间';
+COMMENT ON COLUMN wgh_agent_step.update_time IS '更新时间';
+COMMENT ON COLUMN wgh_agent_step.deleted IS '逻辑删除';
 

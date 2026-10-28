@@ -12,6 +12,7 @@ import com.wgh.rag.chat.evaluation.RetrievalMetricsCalculator;
 import com.wgh.rag.chat.mapper.ChatMessageMapper;
 import com.wgh.rag.chat.mapper.ChatSessionMapper;
 import com.wgh.rag.chat.mapper.ChatWindowMapper;
+import com.wgh.rag.agent.service.AgentOrchestrator;
 import com.wgh.rag.common.exception.BusinessException;
 import com.wgh.rag.config.property.RagProperties;
 import com.wgh.rag.kb.service.RagRetrieveService;
@@ -62,6 +63,8 @@ public class RagChatService {
     private final JudgeModelSelector judgeModelSelector;
     private final ToolExecutionEngine toolExecutionEngine;
     private final ToolConfigService toolConfigService;
+    private final AgentOrchestrator agentOrchestrator;
+    private final com.wgh.rag.agent.config.AgentProperties agentProperties;
 
     /**
      * 流式聊天 - SSE
@@ -230,6 +233,87 @@ public class RagChatService {
         // 快照：流式模型的回调在异步线程执行，ThreadLocal 会失效，必须显式传递
         final Map<String, ToolConfig> toolRegistry = toolExecutionEngine.snapshotWindowTools();
         final Long windowModelId = window.getLlmModelId();
+
+        // ===== Agent 分支：窗口启用了 Agent 自动规划执行 =====
+        log.info("Agent 分支检查: windowId={}, agentEnabled={}, toolSpecsSize={}, hasKb={}",
+                window.getId(), window.getAgentEnabled(), toolSpecs.size(), hasKb);
+        if (Integer.valueOf(1).equals(window.getAgentEnabled())) {
+            try {
+                // SSE 事件回调：AgentOrchestrator.emit(eventName, data) → 拆成独立 SSE 事件名
+                java.util.function.BiConsumer<String, Map<String, Object>> sseEventSink = (eventName, data) -> {
+                    try {
+                        emitter.send(SseEmitter.event().name(eventName).data(data));
+                    } catch (Exception se) {
+                        // 客户端刷新/断开时 send 会抛 IOException 或 IllegalStateException，
+                        // 此时 Agent 仍应继续执行，最终结果会落库
+                        log.warn("Agent SSE 事件发送失败 [{}]: {}", eventName, se.getMessage());
+                    }
+                };
+
+                // Planner 需要知道的可用工具名列表
+                List<String> toolNames = toolSpecs.stream()
+                        .map(ToolSpecification::name).toList();
+
+                // Planner / Executor 专用模型（窗口未配则继承 llmModelId）
+                Long plannerModelId = window.getAgentPlannerModelId() != null
+                        ? window.getAgentPlannerModelId() : windowModelId;
+                Long executorModelId = window.getAgentExecutorModelId() != null
+                        ? window.getAgentExecutorModelId() : windowModelId;
+                // Reflection 参数
+                double reflectionThreshold = window.getAgentReflectionThreshold() != null
+                        ? window.getAgentReflectionThreshold() : agentProperties.getDefaultReflectionThreshold();
+                int reflectionMaxRetries = window.getAgentMaxSteps() != null
+                        ? Math.min(window.getAgentMaxSteps(), 5)
+                        : agentProperties.getDefaultReflectionRetries();
+                // HITL 由窗口级开关控制（agent_hitl_enabled）
+                boolean hitlEnabled = Integer.valueOf(1).equals(window.getAgentHitlEnabled());
+
+                com.wgh.rag.agent.dto.AgentStepResult agentResult = agentOrchestrator.orchestrate(
+                        session.getId(),
+                        window.getId(),
+                        executorModelId,
+                        plannerModelId,
+                        userMessage,
+                        toolNames,
+                        toolSpecs,
+                        toolRegistry,
+                        hasKb,
+                        kbIds,
+                        reflectionThreshold,
+                        reflectionMaxRetries,
+                        hitlEnabled,
+                        sseEventSink);
+
+                // ===== Agent 执行完成：先落库，再尽力下发 SSE =====
+                // 关键点：用户刷新页面会导致 SSE 客户端断开，不能因为发送失败丢掉 Agent 结果
+                String agentFinalText = agentResult != null && agentResult.getFinalText() != null
+                        ? agentResult.getFinalText() : "";
+                List<Map<String, Object>> sourceList = buildSourcesList(retrievedMatches);
+                Double agentAccuracy = hasKb
+                        ? calculateAccuracyRate(agentFinalText, retrievedMatches) : null;
+
+                if (!agentFinalText.isBlank()) {
+                    saveAssistantMessage(session, agentFinalText, sourceList, hitRate, agentAccuracy, null, null);
+                } else {
+                    log.warn("Agent 未产出最终文本（可能 HITL 暂停），跳过助手消息落库: session={}", session.getId());
+                }
+
+                safeSend(emitter, "sources", sourceList);
+                if (agentAccuracy != null) {
+                    safeSend(emitter, "accuracy", Map.of("accuracyRate", agentAccuracy));
+                }
+
+                Map<String, Object> doneData = new HashMap<>();
+                doneData.put("fullResponse", agentFinalText);
+                if (agentAccuracy != null) doneData.put("accuracyRate", agentAccuracy);
+                safeSend(emitter, "done", doneData);
+                safeComplete(emitter);
+                return; // Agent 路线结束，不再走下面的普通 RAG
+            } catch (Exception ex) {
+                log.warn("Agent 分支启动/执行失败，降级为普通 RAG: {}", ex.getMessage());
+                // 不 return，继续走下面的普通 RAG 路线
+            }
+        }
 
         // 5. 路线判断：无检索结果且无工具 → 直接返回兜底话术
         if (retrievedMatches.isEmpty() && toolSpecs.isEmpty()) {
@@ -591,6 +675,27 @@ public class RagChatService {
         return sb.toString();
     }
 
+    /**
+     * 安全下发 SSE 事件。客户端刷新/断开后 emitter 会抛 IOException 或 IllegalStateException，
+     * 这里只记录日志，不影响已经落库的业务结果。
+     */
+    private void safeSend(SseEmitter emitter, String eventName, Object data) {
+        try {
+            emitter.send(SseEmitter.event().name(eventName).data(data));
+        } catch (Exception e) {
+            log.warn("SSE 下发失败（客户端可能已断开）: event={}, reason={}", eventName, e.getMessage());
+        }
+    }
+
+    /** 安全关闭 SSE 流。 */
+    private void safeComplete(SseEmitter emitter) {
+        try {
+            emitter.complete();
+        } catch (Exception e) {
+            log.warn("SSE 关闭失败: {}", e.getMessage());
+        }
+    }
+
     private List<Map<String, Object>> buildSourcesList(List<EmbeddingMatch<TextSegment>> matches) {
         List<Map<String, Object>> sources = new ArrayList<>();
         for (EmbeddingMatch<TextSegment> match : matches) {
@@ -641,6 +746,14 @@ public class RagChatService {
             if (hits >= Math.max(1, (int) (phrases.size() * 0.08))) hitChunks++;
         }
         return (double) hitChunks / matches.size();
+    }
+
+    /** HITL 确认恢复执行后的最终答复补写（REST 通道没有 SSE，需要主动落库）。 */
+    public void appendAssistantMessage(Long sessionId, String content) {
+        if (sessionId == null || content == null || content.isBlank()) return;
+        ChatSession session = sessionMapper.selectById(sessionId);
+        if (session == null) return;
+        saveAssistantMessage(session, content, List.of(), null, null, null, null);
     }
 
     private com.wgh.rag.chat.entity.ChatMessage saveAssistantMessage(

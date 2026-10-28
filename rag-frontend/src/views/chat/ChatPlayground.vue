@@ -130,28 +130,54 @@
 
       <!-- 右侧信息面板 -->
       <div class="chat-info">
-        <h3>会话信息</h3>
-        <el-descriptions :column="1" border v-if="window">
-          <el-descriptions-item label="窗口">{{ window.name }}</el-descriptions-item>
-          <el-descriptions-item label="知识库">
-            <span v-if="parseKbs(window.knowledgeBaseIds).length">
-              已关联 {{ parseKbs(window.knowledgeBaseIds).length }} 个
-            </span>
-            <span v-else style="color:#c0c4cc">未关联</span>
-          </el-descriptions-item>
-          <el-descriptions-item label="分享">
-            <el-tag :type="window.shareEnabled ? 'success' : 'info'">
-              {{ window.shareEnabled ? '已开启' : '未开启' }}
-            </el-tag>
-          </el-descriptions-item>
-        </el-descriptions>
-        
-        <h3 style="margin-top:20px">当前状态</h3>
-        <div class="status-card" v-if="streaming">
+        <!-- Agent 计划树（当窗口启用 Agent 时） -->
+        <AgentPlanTree
+          v-if="window?.agentEnabled === 1"
+          :plan-id="agentPlan.planId"
+          :plan-status="agentPlan.status"
+          :user-goal="agentPlan.userGoal"
+          :steps="agentPlan.steps"
+          :active-step-id="agentPlan.activeStepId"
+          :reflection-threshold="agentPlan.reflectionThreshold"
+          @cancel-plan="onCancelPlan"
+          @retry-step="onRetryStep"
+          @skip-step="onSkipStep"
+          @refresh-plan="onRefreshPlan"
+          @hitl-confirm="onHitlConfirmFromTree"
+        />
+
+        <!-- 普通 RAG 会话信息 -->
+        <template v-if="window?.agentEnabled !== 1">
+          <h3>会话信息</h3>
+          <el-descriptions :column="1" border v-if="window">
+            <el-descriptions-item label="窗口">{{ window.name }}</el-descriptions-item>
+            <el-descriptions-item label="知识库">
+              <span v-if="parseKbs(window.knowledgeBaseIds).length">
+                已关联 {{ parseKbs(window.knowledgeBaseIds).length }} 个
+              </span>
+              <span v-else style="color:#c0c4cc">未关联</span>
+            </el-descriptions-item>
+            <el-descriptions-item label="分享">
+              <el-tag :type="window.shareEnabled ? 'success' : 'info'">
+                {{ window.shareEnabled ? '已开启' : '未开启' }}
+              </el-tag>
+            </el-descriptions-item>
+          </el-descriptions>
+        </template>
+
+        <!-- Agent 启用状态标识 -->
+        <div v-if="window?.agentEnabled === 1 && !agentPlan.planId" class="agent-banner">
+          🤖 本窗口已启用 Agent 自动规划执行<br/>
+          <span class="banner-tip">发送消息后 Agent 会自动拆解任务并规划执行步骤</span>
+        </div>
+
+        <h3 style="margin-top:16px">当前状态</h3>
+        <div class="status-card" :class="statusInfo.tone">
           <div class="status-item">
-            <span class="label">正在处理</span>
-            <el-icon class="rotating"><Loading /></el-icon>
+            <span class="label">{{ statusInfo.text }}</span>
+            <el-icon v-if="statusInfo.spinning" class="rotating"><Loading /></el-icon>
           </div>
+          <div v-if="statusInfo.detail" class="status-detail">{{ statusInfo.detail }}</div>
         </div>
       </div>
     </div>
@@ -159,12 +185,14 @@
 </template>
 
 <script setup>
-import { ref, nextTick, onMounted, onUnmounted } from 'vue'
+import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ArrowLeft, Link, Promotion, Plus, Document, Loading, Tools, Delete } from '@element-plus/icons-vue'
 import { marked } from 'marked'
-import { windowGet, streamChatApi, windowMessages, windowSessions, windowCreateSession, windowDeleteSession } from '../../api'
+import { windowGet, streamChatApi, windowMessages, windowSessions, windowCreateSession, windowDeleteSession,
+  agentGetPlanState, agentCancelPlan, agentRetryStep, agentSkipStep, agentGetPlanBySession } from '../../api'
+import AgentPlanTree from '../../components/AgentPlanTree.vue'
 
 const route = useRoute()
 const windowId = route.params.id
@@ -176,6 +204,60 @@ const streaming = ref(false)
 const currentSessionId = ref(null)
 const messagesRef = ref(null)
 let streamer = null
+let planPollTimer = null
+let planAbort = null
+
+// ============ Agent 计划状态 ============
+const agentPlan = ref({
+  planId: null,
+  status: '',
+  userGoal: '',
+  steps: [],
+  activeStepId: null,
+  reflectionThreshold: 7.0
+})
+
+// 右侧「当前状态」栏的文案与样式（无内容时也要有兜底展示）
+const statusInfo = computed(() => {
+  const plan = agentPlan.value
+  const steps = plan.steps || []
+  const activeStep = steps.find(s => s.stepId === plan.activeStepId || s.status === 'RUNNING')
+
+  if (streaming.value) {
+    return {
+      text: '正在处理',
+      detail: activeStep ? `当前步骤：${activeStep.title}` : '',
+      spinning: true,
+      tone: 'running'
+    }
+  }
+
+  switch (plan.status) {
+    case 'PLANNING':
+      return { text: '📝 正在规划执行步骤', spinning: true, tone: 'running' }
+    case 'RUNNING': {
+      const done = steps.filter(s => s.status === 'SUCCESS' || s.status === 'SKIPPED').length
+      return {
+        text: '⚡ Agent 执行中',
+        detail: `步骤 ${done}/${steps.length}` + (activeStep ? ` · 当前：${activeStep.title}` : ''),
+        spinning: true,
+        tone: 'running'
+      }
+    }
+    case 'PAUSED':
+      return { text: '✋ 等待人工确认（HITL）', spinning: false, tone: 'paused' }
+    case 'COMPLETED': {
+      const ok = steps.filter(s => s.status === 'SUCCESS' || s.status === 'SKIPPED').length
+      return { text: '✅ 已完成', detail: `成功 ${ok}/${steps.length} 个步骤`, spinning: false, tone: 'done' }
+    }
+    case 'FAILED':
+      return { text: '❌ 执行失败', detail: '可在上方步骤中重试或跳过', spinning: false, tone: 'failed' }
+    case 'CANCELLED':
+      return { text: '⛔ 已取消', spinning: false, tone: 'paused' }
+    default:
+      return { text: '空闲', detail: '', spinning: false, tone: 'idle' }
+  }
+})
 
 // 历史消息分页状态
 const historyPage = ref(1)
@@ -241,6 +323,7 @@ const load = async () => {
   window.value = res.data
   await loadSessions()
   await loadHistory()
+  await restoreAgentPlan()
 }
 
 // 加载左侧历史会话列表
@@ -263,6 +346,7 @@ const selectSession = async (s) => {
   currentSessionId.value = s.id
   messages.value = []
   await loadHistory()
+  await restoreAgentPlan()
 }
 
 // 新建会话：调用后端创建，选中后清空消息区
@@ -377,6 +461,13 @@ const send = async () => {
   if (!text || streaming.value) return
   input.value = ''
 
+  // 重置 Agent 计划状态（新对话）
+  stopPlanPolling()
+  agentPlan.value = {
+    planId: null, status: '', userGoal: '', steps: [], activeStepId: null,
+    reflectionThreshold: window.value?.agentReflectionThreshold ?? 7.0
+  }
+
   // 添加用户消息
   messages.value.push({ role: 'USER', content: text })
   
@@ -425,6 +516,108 @@ const handleEvent = (event, data, aiMsg) => {
         }
       }
       break
+
+    // ===== Agent 计划创建 =====
+    case 'plan_created':
+      agentPlan.value = {
+        planId: data.planId,
+        status: 'RUNNING',
+        userGoal: data.planSummary || '',
+        steps: [],
+        activeStepId: null,
+        reflectionThreshold: window.value?.agentReflectionThreshold ?? 7.0
+      }
+      break
+
+    // ===== Agent 计划完成/失败/取消 =====
+    case 'plan_complete':
+    case 'plan_failed':
+    case 'plan_cancelled':
+    case 'plan_paused':
+    case 'plan_resumed': {
+      const statusMap = {
+        plan_complete: 'COMPLETED', plan_failed: 'FAILED',
+        plan_cancelled: 'CANCELLED', plan_paused: 'PAUSED', plan_resumed: 'RUNNING'
+      }
+      agentPlan.value.status = statusMap[event] || event
+      agentPlan.value.activeStepId = null
+      break
+    }
+    case 'plan_updated':
+      // 动态重规划：刷新步骤列表（后端下发完整 steps 摘要时更新）
+      if (data.steps && Array.isArray(data.steps)) agentPlan.value.steps = data.steps
+      break
+    case 'plan_create_failed':
+      agentPlan.value.status = 'FAILED'
+      break
+
+    // ===== Agent 步骤事件 =====
+    case 'step_start': {
+      const idx = agentPlan.value.steps.findIndex(s => s.stepId === data.stepId)
+      const newStep = {
+        stepIndex: data.stepIndex, stepId: data.stepId, title: data.stepTitle,
+        status: 'RUNNING', reflectionScore: null, reflectionFeedback: '',
+        retryCount: 0, resultSummary: '', actionTool: null
+      }
+      if (idx >= 0) agentPlan.value.steps[idx] = { ...agentPlan.value.steps[idx], ...newStep, status: 'RUNNING' }
+      else agentPlan.value.steps.push(newStep)
+      agentPlan.value.activeStepId = data.stepId
+      break
+    }
+    case 'step_success': {
+      const step = agentPlan.value.steps.find(s => s.stepId === data.stepId)
+      if (step) {
+        step.status = 'SUCCESS'
+        step.actionTool = data.toolCount > 0 ? '已调用' : null
+        step.resultSummary = step.resultSummary || '✓ 步骤执行成功'
+      }
+      agentPlan.value.activeStepId = null
+      break
+    }
+    case 'step_failed': {
+      const step = agentPlan.value.steps.find(s => s.stepId === data.stepId)
+      if (step) { step.status = 'FAILED'; step.resultSummary = data.reason || '❌ 步骤执行失败' }
+      agentPlan.value.activeStepId = null
+      break
+    }
+    case 'step_hitl_pending': {
+      // 注意：HITL 步骤不会先发 step_start，前端列表里可能还没有它，需要按 payload 补建
+      const idx = agentPlan.value.steps.findIndex(s => s.stepId === data.stepId)
+      const hitlStep = {
+        id: data.id,
+        stepIndex: data.stepIndex,
+        stepId: data.stepId,
+        title: data.stepTitle,
+        description: data.description || '',
+        expectedInput: data.expectedInput || '',
+        status: 'HITL_PENDING',
+        reflectionScore: null,
+        reflectionFeedback: '',
+        retryCount: 0,
+        resultSummary: '',
+        actionTool: null
+      }
+      if (idx >= 0) agentPlan.value.steps[idx] = { ...agentPlan.value.steps[idx], ...hitlStep }
+      else agentPlan.value.steps.push(hitlStep)
+      agentPlan.value.status = 'PAUSED'
+      agentPlan.value.activeStepId = data.stepId
+      break
+    }
+    case 'step_reflection': {
+      const step = agentPlan.value.steps.find(s => s.stepId === data.stepId)
+      if (step) {
+        step.reflectionScore = data.score
+        step.reflectionFeedback = data.feedback || ''
+        step.retryCount = data.retryCount || 0
+      }
+      break
+    }
+    case 'step_retry': {
+      const step = agentPlan.value.steps.find(s => s.stepId === data.stepId)
+      if (step) step.retryCount = (step.retryCount || 0) + 1
+      break
+    }
+
     case 'sources':
       aiMsg.sources = dedupeSources(data)
       break
@@ -465,6 +658,11 @@ const handleEvent = (event, data, aiMsg) => {
       streaming.value = false
       aiMsg.streaming = false
       if (data.sessionId) currentSessionId.value = data.sessionId
+      // Agent 路线后端不逐 token 推送 content，只下发 done.fullResponse，这里兜底填充
+      if (!aiMsg.content && data.fullResponse) {
+        aiMsg.content = data.fullResponse
+        nextTick(scrollToBottom)
+      }
       // 刷新左侧会话列表（消息数/时间）
       loadSessions()
       break
@@ -519,8 +717,166 @@ const copyShareLink = async () => {
   else ElMessage.warning('复制失败，请手动复制: ' + url)
 }
 
-onMounted(load)
-onUnmounted(() => streamer?.abort())
+// ============ AgentPlanTree 事件处理 ============
+
+// 后端返回的 plan 状态 → 前端面板数据结构
+const applyPlanState = (state) => {
+  if (!state) return
+  const steps = (state.steps || []).map(s => ({
+    id: s.id,
+    stepIndex: s.stepIndex,
+    stepId: s.stepId,
+    title: s.title,
+    description: s.description,
+    status: s.status,
+    reflectionScore: s.reflectionScore,
+    reflectionFeedback: s.reflectionFeedback,
+    retryCount: s.retryCount,
+    resultSummary: s.resultSummary,
+    actionTool: s.actionTool || null
+  }))
+  agentPlan.value = {
+    planId: state.planId,
+    status: state.status,
+    userGoal: state.userGoal || '',
+    steps,
+    activeStepId: steps.find(s => s.status === 'RUNNING')?.stepId || null,
+    reflectionThreshold: window.value?.agentReflectionThreshold ?? 7.0
+  }
+}
+
+// 停止状态轮询
+const stopPlanPolling = () => {
+  if (planPollTimer) {
+    clearInterval(planPollTimer)
+    planPollTimer = null
+  }
+  // 中断在途请求，避免刷新/切换会话时产生 net::ERR_ABORTED
+  if (planAbort) {
+    planAbort.abort()
+    planAbort = null
+  }
+}
+
+const isPlanActive = (status) => status === 'RUNNING' || status === 'PLANNING'
+
+// 页面刷新后 SSE 已断开，用轮询持续刷新 Agent 执行进度
+const startPlanPolling = () => {
+  stopPlanPolling()
+  planPollTimer = setInterval(async () => {
+    const planId = agentPlan.value.planId
+    if (!planId) { stopPlanPolling(); return }
+    try {
+      planAbort = new AbortController()
+      const res = await agentGetPlanState(planId, planAbort.signal)
+      const state = res.data
+      if (!state) return
+      applyPlanState(state)
+      if (!isPlanActive(state.status)) {
+        stopPlanPolling()
+        // Agent 在后台执行完成：补拉消息列表，把最终答复显示到聊天区
+        if (!streaming.value) await loadHistory()
+        loadSessions()
+      }
+    } catch (e) {
+      // 主动取消（切换会话/刷新）不当作错误
+      if (e.name !== 'CanceledError' && e.name !== 'AbortError') {
+        console.warn('轮询 Agent 状态失败', e)
+      }
+    }
+  }, 2000)
+}
+
+// 从 sessionId 恢复历史 Plan 状态（页面刷新/切换会话时）
+const restoreAgentPlan = async () => {
+  stopPlanPolling()
+  if (window.value?.agentEnabled !== 1 || !currentSessionId.value) return
+  try {
+    planAbort = new AbortController()
+    const res = await agentGetPlanBySession(currentSessionId.value, planAbort.signal)
+    const data = res.data
+    if (data) {
+      applyPlanState(data)
+      // 刷新时 Agent 可能仍在后台执行 → 轮询直到终态
+      if (isPlanActive(data.status)) startPlanPolling()
+    } else {
+      // 没有历史 plan，重置
+      agentPlan.value = {
+        planId: null, status: '', userGoal: '', steps: [], activeStepId: null,
+        reflectionThreshold: window.value?.agentReflectionThreshold ?? 7.0
+      }
+    }
+  } catch (e) {
+    if (e.name !== 'CanceledError' && e.name !== 'AbortError') {
+      console.warn('恢复 Agent Plan 失败', e)
+    }
+  }
+}
+
+const onCancelPlan = async (planId) => {
+  try {
+    await agentCancelPlan(planId)
+    ElMessage.success('计划已取消')
+    agentPlan.value.status = 'CANCELLED'
+    if (streaming.value) { streamer?.abort(); streaming.value = false }
+  } catch (e) {
+    ElMessage.error('取消失败: ' + (e.message || ''))
+  }
+}
+
+const onRetryStep = async (step) => {
+  try {
+    await agentRetryStep(step.id)
+    ElMessage.success('已触发重试')
+    await onRefreshPlan(agentPlan.value.planId)
+  } catch (e) {
+    ElMessage.error('重试失败: ' + (e.message || ''))
+  }
+}
+
+const onSkipStep = async (step) => {
+  try {
+    await agentSkipStep(step.id)
+    ElMessage.success('已跳过该步骤')
+    await onRefreshPlan(agentPlan.value.planId)
+  } catch (e) {
+    ElMessage.error('跳过失败: ' + (e.message || ''))
+  }
+}
+
+const onRefreshPlan = async (planId) => {
+  try {
+    const res = await agentGetPlanState(planId)
+    applyPlanState(res.data)
+  } catch (e) {
+    console.warn('刷新计划失败', e)
+  }
+}
+
+const onHitlConfirmFromTree = async () => {
+  // AgentPlanTree 内部已调 agentHitlConfirm API（同步等待 resume 执行完）
+  // 这里刷新面板 + 补拉聊天消息（HITL 后续步骤的最终答复会落库）
+  if (agentPlan.value.planId) await onRefreshPlan(agentPlan.value.planId)
+  await loadHistory()
+  if (isPlanActive(agentPlan.value.status)) startPlanPolling()
+}
+
+// 刷新/关闭页面前主动中断 SSE 与轮询，避免浏览器记录 net::ERR_ABORTED
+const handleBeforeUnload = () => {
+  streamer?.abort()
+  stopPlanPolling()
+}
+
+onMounted(() => {
+  // 注意：本组件内 window 是响应式 ref，需用 globalThis 访问浏览器 window
+  globalThis.addEventListener('beforeunload', handleBeforeUnload)
+  load()
+})
+onUnmounted(() => {
+  globalThis.removeEventListener('beforeunload', handleBeforeUnload)
+  streamer?.abort()
+  stopPlanPolling()
+})
 </script>
 
 <style scoped lang="scss">
@@ -702,15 +1058,32 @@ onUnmounted(() => streamer?.abort())
 .chat-info {
   background: #fff;
   border-radius: 8px;
-  padding: 20px;
+  padding: 14px;
+  overflow-y: auto;
   h3 { margin: 0 0 12px; font-size: 14px; color: #606266; }
+}
+.agent-banner {
+  background: linear-gradient(135deg, #fdf6ec 0%, #faecd8 100%);
+  border: 1px solid #faecd8;
+  border-radius: 6px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  font-size: 12px;
+  color: #606266;
+  line-height: 1.6;
+  .banner-tip { color: #909399; font-size: 11px; }
 }
 .status-card {
   padding: 12px;
   background: #ecf5ff;
   border-radius: 6px;
   .status-item { display: flex; justify-content: space-between; align-items: center; }
+  .status-detail { margin-top: 6px; font-size: 12px; color: #606266; line-height: 1.5; }
   .rotating { animation: rotate 1s linear infinite; }
+  &.idle { background: #f5f7fa; }
+  &.done { background: #f0f9eb; }
+  &.failed { background: #fef0f0; }
+  &.paused { background: #fdf6ec; }
 }
 @keyframes rotate { to { transform: rotate(360deg); } }
 </style>

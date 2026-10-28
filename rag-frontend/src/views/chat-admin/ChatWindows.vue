@@ -16,6 +16,12 @@
         <el-table-column label="工具数" width="90">
           <template #default="{ row }">{{ parseKbs(row.toolIds).length }}</template>
         </el-table-column>
+        <el-table-column label="Agent" width="100">
+          <template #default="{ row }">
+            <el-tag v-if="row.agentEnabled === 1" type="warning" size="small">🤖 已启用</el-tag>
+            <el-tag v-else type="info" size="small">未启用</el-tag>
+          </template>
+        </el-table-column>
         <el-table-column label="分享" width="100">
           <template #default="{ row }">
             <el-tag v-if="row.shareEnabled" type="success">已开启</el-tag>
@@ -110,6 +116,44 @@
           <div style="font-size:12px;color:#909399;margin-top:4px;line-height:1.4">建议选择 2 个不同厂商模型以保证评估一致性</div>
         </el-form-item>
         <el-form-item label="温度"><el-slider v-model="form.temperature" :min="0" :max="2" :step="0.1" /></el-form-item>
+
+        <!-- ============ Agent 自动规划执行 ============ -->
+        <el-divider content-position="left">🤖 Agent 自动规划执行</el-divider>
+        <el-form-item label="启用 Agent">
+          <el-switch v-model="form.agentEnabled" :active-value="1" :inactive-value="0" />
+          <span style="font-size:12px;color:#909399;margin-left:12px">开启后，发送消息时 Agent 会自动拆解任务、规划步骤、调用工具并反思重试</span>
+        </el-form-item>
+
+        <template v-if="form.agentEnabled === 1">
+          <el-form-item label="最大步骤数">
+            <el-input-number v-model="form.agentMaxSteps" :min="2" :max="20" style="width:140px" />
+            <span style="font-size:12px;color:#909399;margin-left:12px">兜底上限，防止 Planner 输出过长计划</span>
+          </el-form-item>
+
+          <el-form-item label="Planner 模型">
+            <el-select v-model="form.agentPlannerModelId" clearable style="width:100%" placeholder="留空则继承主模型">
+              <el-option v-for="m in chatModels" :key="m.id" :label="`${m.name}`" :value="m.id" />
+            </el-select>
+            <div style="font-size:12px;color:#909399;margin-top:4px">负责拆解用户目标、生成执行计划</div>
+          </el-form-item>
+
+          <el-form-item label="Executor 模型">
+            <el-select v-model="form.agentExecutorModelId" clearable style="width:100%" placeholder="留空则继承主模型">
+              <el-option v-for="m in chatModels" :key="m.id" :label="`${m.name}`" :value="m.id" />
+            </el-select>
+            <div style="font-size:12px;color:#909399;margin-top:4px">负责每步执行时的 tool-calling 与推理</div>
+          </el-form-item>
+
+          <el-form-item label="反思评分阈值">
+            <el-slider v-model="form.agentReflectionThreshold" :min="0" :max="10" :step="0.5" show-input />
+            <div style="font-size:12px;color:#909399;margin-top:4px">步骤产出评分低于此值时触发反思重试（0-10 分）</div>
+          </el-form-item>
+
+          <el-form-item label="允许 HITL 节点">
+            <el-switch v-model="form.agentHitlEnabled" :active-value="1" :inactive-value="0" />
+            <span style="font-size:12px;color:#909399;margin-left:12px">允许 Planner 规划需要人工确认的步骤（审批、确认等）</span>
+          </el-form-item>
+        </template>
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
@@ -149,7 +193,10 @@ const selectedJudges = ref([])
 const form = reactive({
   name: '', description: '', llmModelId: null,
   knowledgeBaseIds: '[]', systemPrompt: '', temperature: 0.7, status: 1,
-  evaluationScheme: 'NONE', judgeModelIds: '[]', toolIds: '[]'
+  evaluationScheme: 'NONE', judgeModelIds: '[]', toolIds: '[]',
+  agentEnabled: 0, agentMaxSteps: 15, agentPlannerModelId: null,
+  agentExecutorModelId: null, agentCriticModelIds: '[]',
+  agentReflectionThreshold: 7.0, agentHitlEnabled: 0
 })
 const rules = {
   name: [{ required: true }],
@@ -209,7 +256,10 @@ const openDialog = (row) => {
     Object.assign(form, {
       name: '', description: '', llmModelId: null, knowledgeBaseIds: '[]',
       systemPrompt: '', temperature: 0.7, status: 1,
-      evaluationScheme: 'NONE', judgeModelIds: '[]', toolIds: '[]'
+      evaluationScheme: 'NONE', judgeModelIds: '[]', toolIds: '[]',
+      agentEnabled: 0, agentMaxSteps: 15, agentPlannerModelId: null,
+      agentExecutorModelId: null, agentCriticModelIds: '[]',
+      agentReflectionThreshold: 7.0, agentHitlEnabled: 0
     })
     selectedKbs.value = []
     selectedTools.value = []

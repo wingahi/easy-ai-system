@@ -80,4 +80,26 @@ public class ChatWindow extends BaseEntity {
      * LLM-as-judge 模型 ID 列表（JSON 数组），为空则自动选择 2 个不同 provider
      */
     private String judgeModelIds;
+
+    /** 是否启用 Agent 自动规划执行（0 否 / 1 是） */
+    @TableField(value = "agent_enabled")
+    private Integer agentEnabled;
+    /** Agent 计划最大步骤数（默认 15） */
+    @TableField(value = "agent_max_steps")
+    private Integer agentMaxSteps;
+    /** Agent Planner 模型 ID（为空则继承 llmModelId） */
+    @TableField(value = "agent_planner_model_id")
+    private Long agentPlannerModelId;
+    /** Agent Step Executor 模型 ID（为空则继承 llmModelId） */
+    @TableField(value = "agent_executor_model_id")
+    private Long agentExecutorModelId;
+    /** Agent Critic 模型 ID 列表（JSON 数组，反思评估用） */
+    @TableField(value = "agent_critic_model_ids")
+    private String agentCriticModelIds;
+    /** 反思评分阈值 0-10，低于此分触发重试 */
+    @TableField(value = "agent_reflection_threshold")
+    private Double agentReflectionThreshold;
+    /** 是否允许计划中 HITL 节点（0 否 / 1 是） */
+    @TableField(value = "agent_hitl_enabled")
+    private Integer agentHitlEnabled;
 }

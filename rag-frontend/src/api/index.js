@@ -130,9 +130,9 @@ export function streamChatApi(windowId, message, sessionId) {
       
       onDone?.()
     } catch (err) {
-      if (err.name !== 'AbortError') {
-        onError?.(err)
-      }
+      // 主动 abort / 页面刷新卸载导致的中断都视为正常结束，不回调错误（避免 ERR_ABORTED 报错）
+      if (controller.signal.aborted || err.name === 'AbortError') return
+      onError?.(err)
     }
   }
   
@@ -190,7 +190,9 @@ export function streamShareApi(shareToken, message, sessionId) {
       }
       onDone?.()
     } catch (err) {
-      if (err.name !== 'AbortError') onError?.(err)
+      // 主动 abort / 页面刷新卸载导致的中断都视为正常结束，不回调错误
+      if (controller.signal.aborted || err.name === 'AbortError') return
+      onError?.(err)
     }
   }
   
@@ -212,3 +214,23 @@ export const skillSaveContent = (data) => request.post('/chat/tools/skill/save',
 export const skillCreateDir = (data) => request.post('/chat/tools/skill/create-dir', data)
 export const skillDeleteDir = (dir) => request.delete('/chat/tools/skill/dir', { params: { dir } })
 export const skillImport = (data) => request.post('/chat/tools/skill/import', data)
+
+// ==================== Agent 执行控制 ====================
+// 查询 plan 当前完整状态（刷新页面恢复面板）
+// signal 可选：轮询时用于页面卸载前主动取消，避免 net::ERR_ABORTED
+export const agentGetPlanState = (planId, signal) =>
+  request.get(`/agent/plans/${planId}/state`, signal ? { signal } : undefined)
+// HITL 步骤：用户输入确认后继续执行
+export const agentHitlConfirm = (stepId, userInput) =>
+  request.post(`/agent/steps/${stepId}/hitl-confirm`, { userInput: userInput || '' })
+// 取消整个计划
+export const agentCancelPlan = (planId) => request.post(`/agent/plans/${planId}/cancel`)
+// 重试单个失败步骤
+export const agentRetryStep = (stepId) => request.post(`/agent/steps/${stepId}/retry`)
+// 跳过单个步骤
+export const agentSkipStep = (stepId) => request.post(`/agent/steps/${stepId}/skip`)
+// 刷新某个 plan 的状态（手动触发）
+export const agentRefreshPlan = (planId) => request.get(`/agent/plans/${planId}/state`)
+// 按 sessionId 查询最新 plan（页面刷新恢复面板用）
+export const agentGetPlanBySession = (sessionId, signal) =>
+  request.get(`/agent/sessions/${sessionId}/plan`, signal ? { signal } : undefined)
