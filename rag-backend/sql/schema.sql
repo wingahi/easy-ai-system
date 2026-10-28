@@ -626,3 +626,104 @@ COMMENT ON COLUMN wgh_workflow_node_run.create_by IS '创建人';
 COMMENT ON COLUMN wgh_workflow_node_run.update_by IS '更新人';
 COMMENT ON COLUMN wgh_workflow_node_run.deleted IS '逻辑删除（0 未删除 / 1 已删除）';
 
+-- ========== 多 Agent 运行实例 ==========
+CREATE TABLE IF NOT EXISTS wgh_m_agent_run (
+    id                  BIGSERIAL PRIMARY KEY,
+    run_id              VARCHAR(64) NOT NULL UNIQUE,
+    session_id          BIGINT NOT NULL,
+    chat_window_id      BIGINT NOT NULL,
+    execution_mode      VARCHAR(30) NOT NULL,
+    crew_config_json    JSONB NOT NULL,
+    agents_json         JSONB NOT NULL,
+    user_goal           TEXT NOT NULL,
+    input_text          TEXT,
+    output_text         TEXT,
+    status              VARCHAR(20) DEFAULT 'PLANNING',
+    current_round       INT DEFAULT 0,
+    max_rounds          INT DEFAULT 20,
+    dynamic_router_model_id BIGINT,
+    dynamic_router_prompt  TEXT,
+    termination_criteria TEXT,
+    summarizer_agent_id VARCHAR(32),
+    error_message       TEXT,
+    start_time          TIMESTAMP,
+    finish_time         TIMESTAMP,
+    duration_ms         BIGINT,
+    create_time         TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    update_time         TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    create_by           VARCHAR(50) DEFAULT 'system',
+    update_by           VARCHAR(50) DEFAULT 'system',
+    deleted             SMALLINT DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_m_ar_session  ON wgh_m_agent_run(session_id);
+CREATE INDEX IF NOT EXISTS idx_m_ar_mode     ON wgh_m_agent_run(execution_mode);
+CREATE INDEX IF NOT EXISTS idx_m_ar_status   ON wgh_m_agent_run(status);
+CREATE INDEX IF NOT EXISTS idx_m_ar_window   ON wgh_m_agent_run(chat_window_id, start_time);
+
+COMMENT ON TABLE wgh_m_agent_run IS '多 Agent 运行实例';
+COMMENT ON COLUMN wgh_m_agent_run.run_id IS '对外 UUID';
+COMMENT ON COLUMN wgh_m_agent_run.execution_mode IS 'CREW_SEQUENTIAL / CREW_HIERARCHICAL / CREW_PARALLEL / GRAPH_ROUTED / GROUP_CHAT_ROUND_ROBIN / GROUP_CHAT_DYNAMIC_ROUTER';
+COMMENT ON COLUMN wgh_m_agent_run.status IS 'PLANNING / RUNNING / PAUSED / COMPLETED / FAILED / CANCELLED';
+
+-- ========== Agent 执行记录 ==========
+CREATE TABLE IF NOT EXISTS wgh_m_agent_step (
+    id                  BIGSERIAL PRIMARY KEY,
+    run_id              BIGINT NOT NULL,
+    agent_id            VARCHAR(32) NOT NULL,
+    step_index          INT NOT NULL,
+    status              VARCHAR(20) DEFAULT 'PENDING',
+    role                VARCHAR(50),
+    input_context       JSONB,
+    output_text         TEXT,
+    tool_calls_json     JSONB,
+    rag_sources_json    JSONB,
+    reflection_score    DOUBLE PRECISION,
+    reflection_feedback TEXT,
+    thought             TEXT,
+    hitl_expected_input TEXT,
+    result_summary      TEXT,
+    round               INT DEFAULT 0,
+    start_time          TIMESTAMP,
+    end_time            TIMESTAMP,
+    duration_ms         BIGINT,
+    token_count         INT DEFAULT 0,
+    create_time         TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    update_time         TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    create_by           VARCHAR(50) DEFAULT 'system',
+    update_by           VARCHAR(50) DEFAULT 'system',
+    deleted             SMALLINT DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_m_as_run_agent ON wgh_m_agent_step(run_id, agent_id);
+CREATE INDEX IF NOT EXISTS idx_m_as_run_step  ON wgh_m_agent_step(run_id, step_index);
+CREATE INDEX IF NOT EXISTS idx_m_as_status    ON wgh_m_agent_step(status);
+CREATE INDEX IF NOT EXISTS idx_m_as_round     ON wgh_m_agent_step(run_id, round);
+
+COMMENT ON TABLE wgh_m_agent_step IS 'AgentInstance 执行记录';
+COMMENT ON COLUMN wgh_m_agent_step.status IS 'PENDING / RUNNING / SUCCESS / FAILED / SKIPPED / HITL_PENDING';
+COMMENT ON COLUMN wgh_m_agent_step.round IS 'GroupChat 对话轮次';
+
+-- ========== 可复用 Crew 配置 ==========
+CREATE TABLE IF NOT EXISTS wgh_m_agent_crew (
+    id                  BIGSERIAL PRIMARY KEY,
+    name                VARCHAR(100) NOT NULL,
+    description         VARCHAR(500),
+    execution_mode      VARCHAR(30) NOT NULL,
+    agents_json         JSONB NOT NULL,
+    graph_json          JSONB,
+    crew_config_json    JSONB,
+    group_chat_config_json JSONB,
+    status              SMALLINT DEFAULT 1,
+    create_time         TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    update_time         TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    create_by           VARCHAR(50) DEFAULT 'system',
+    update_by           VARCHAR(50) DEFAULT 'system',
+    deleted             SMALLINT DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_m_crew_mode   ON wgh_m_agent_crew(execution_mode);
+CREATE INDEX IF NOT EXISTS idx_m_crew_status ON wgh_m_agent_crew(status);
+
+COMMENT ON TABLE wgh_m_agent_crew IS '可复用的多 Agent Crew 配置模板';
+
