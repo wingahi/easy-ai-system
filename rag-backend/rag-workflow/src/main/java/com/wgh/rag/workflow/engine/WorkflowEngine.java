@@ -2,24 +2,15 @@ package com.wgh.rag.workflow.engine;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.wgh.rag.kb.service.RagRetrieveService;
-import com.wgh.rag.llm.factory.ModelCacheManager;
-import com.wgh.rag.tool.entity.ToolConfig;
 import com.wgh.rag.workflow.dto.*;
+import com.wgh.rag.workflow.engine.executor.NodeExecutionContext;
+import com.wgh.rag.workflow.engine.executor.NodeConfigSupport;
+import com.wgh.rag.workflow.engine.executor.NodeExecutorRegistry;
 import com.wgh.rag.workflow.entity.Workflow;
 import com.wgh.rag.workflow.entity.WorkflowNodeRun;
 import com.wgh.rag.workflow.entity.WorkflowRun;
-import com.wgh.rag.workflow.mapper.WorkflowMapper;
 import com.wgh.rag.workflow.mapper.WorkflowNodeRunMapper;
 import com.wgh.rag.workflow.mapper.WorkflowRunMapper;
-import dev.langchain4j.data.message.ChatMessage;
-import dev.langchain4j.data.message.SystemMessage;
-import dev.langchain4j.data.message.UserMessage;
-import dev.langchain4j.data.segment.TextSegment;
-import dev.langchain4j.model.chat.ChatModel;
-import dev.langchain4j.model.chat.request.ChatRequest;
-import dev.langchain4j.model.chat.response.ChatResponse;
-import dev.langchain4j.store.embedding.EmbeddingMatch;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -50,13 +41,10 @@ public class WorkflowEngine {
     private static final int WORKER_COUNT = 4;
 
     private final WorkflowRunMapper runMapper;
-    private final WorkflowMapper workflowMapper;
     private final WorkflowNodeRunMapper nodeRunMapper;
     private final VariableResolver variableResolver;
     private final ConditionEvaluator conditionEvaluator;
-    private final ModelCacheManager modelCacheManager;
-    private final RagRetrieveService ragRetrieveService;
-    private final ToolNodeInvoker toolNodeInvoker;
+    private final NodeExecutorRegistry nodeExecutorRegistry;
     private final ObjectMapper objectMapper;
 
     // ==================== 入口 ====================
@@ -226,7 +214,7 @@ public class WorkflowEngine {
             // ---------- 循环回边：仅自增轮次，不重复执行节点体 ----------
             if ("LOOP".equals(node.getType()) && ctx.getLoopIterations().containsKey(nodeId)) {
                 int prev = ctx.getLoopIterations().get(nodeId);
-                int max = intConfig(node, "maxIterations", 3);
+                int max = NodeConfigSupport.intConfig(node, "maxIterations", 3);
                 boolean shouldBreak = prev >= max || evalBreakCondition(node, ctx);
                 int iteration = prev;
                 if (!shouldBreak) {
@@ -331,7 +319,7 @@ public class WorkflowEngine {
                 boolean bool = Boolean.TRUE.equals(result.getOutput().get("result"));
                 activateSuccessors(node, outEdges, String.valueOf(bool), pendingIn, frontier, submitted);
             } else if ("LOOP".equals(node.getType())) {
-                int max = intConfig(node, "maxIterations", 3);
+                int max = NodeConfigSupport.intConfig(node, "maxIterations", 3);
                 activateSuccessors(node, outEdges, max <= 0 ? "done" : "loop", pendingIn, frontier, submitted);
             } else {
                 activateAllSuccessors(node, outEdges, pendingIn, frontier, submitted);
@@ -392,200 +380,15 @@ public class WorkflowEngine {
     // ==================== 节点执行 ====================
 
     private NodeResult executeNode(GraphNode node, RunContext ctx, WorkflowRun run, int nestingDepth) throws Exception {
-        String type = node.getType();
-        Map<String, Object> cfg = node.getConfig() != null ? node.getConfig() : Map.of();
-
-        return switch (type) {
-            case "START" -> {
-                Map<String, Object> out = new LinkedHashMap<>();
-                out.put("text", ctx.getVars().getOrDefault("input", ""));
-                yield NodeResult.builder().success(true).output(out).build();
-            }
-            case "LLM" -> executeLlm(cfg, ctx);
-            case "RETRIEVAL" -> executeRetrieval(cfg, ctx);
-            case "TOOL" -> executeTool(cfg, ctx);
-            case "WORKFLOW" -> executeSubWorkflow(cfg, ctx, run, nestingDepth);
-            case "CONDITION" -> {
-                String expr = variableResolver.render(str(cfg.get("expression")), ctx);
-                boolean result = conditionEvaluator.evaluate(expr);
-                Map<String, Object> out = new LinkedHashMap<>();
-                out.put("result", result);
-                out.put("expression", expr);
-                yield NodeResult.builder().success(true).output(out).build();
-            }
-            case "LOOP" -> {
-                int max = intConfig(node, "maxIterations", 3);
-                ctx.getLoopIterations().put(node.getId(), 1);
-                ctx.setCurrentLoopIteration(1);
-                Map<String, Object> out = new LinkedHashMap<>();
-                out.put("iteration", 1);
-                out.put("maxIterations", max);
-                yield NodeResult.builder().success(true).output(out).build();
-            }
-            case "VARIABLE" -> executeVariable(cfg, ctx);
-            case "END" -> {
-                String template = str(cfg.get("output"));
-                String text = template.isBlank()
-                        ? String.valueOf(ctx.getVars().getOrDefault("lastOutput", ""))
-                        : variableResolver.render(template, ctx);
-                Map<String, Object> out = new LinkedHashMap<>();
-                out.put("text", text);
-                yield NodeResult.builder().success(true).output(out).build();
-            }
-            default -> throw new IllegalStateException("不支持的节点类型：" + type);
-        };
-    }
-
-    private NodeResult executeLlm(Map<String, Object> cfg, RunContext ctx) {
-        Long modelId = asLong(cfg.get("modelId"));
-        if (modelId == null) throw new IllegalArgumentException("LLM 节点缺少 modelId");
-
-        String systemPrompt = variableResolver.render(str(cfg.get("systemPrompt")), ctx);
-        String prompt = variableResolver.render(str(cfg.get("prompt")), ctx);
-        if (prompt.isBlank()) prompt = String.valueOf(ctx.getVars().getOrDefault("lastOutput", ""));
-
-        List<ChatMessage> messages = new ArrayList<>();
-        if (!systemPrompt.isBlank()) messages.add(SystemMessage.from(systemPrompt));
-        messages.add(UserMessage.from(prompt));
-
-        ChatModel model = modelCacheManager.getChatModel(modelId);
-        ChatResponse response = model.chat(ChatRequest.builder().messages(messages).build());
-        String text = response.aiMessage() != null ? response.aiMessage().text() : "";
-
-        Map<String, Object> out = new LinkedHashMap<>();
-        out.put("text", text != null ? text : "");
-        return NodeResult.builder().success(true).output(out).build();
-    }
-
-    private NodeResult executeRetrieval(Map<String, Object> cfg, RunContext ctx) {
-        List<Long> kbIds = asLongList(cfg.get("kbIds"));
-        if (kbIds.isEmpty()) throw new IllegalArgumentException("知识库节点未选择知识库");
-        String query = variableResolver.render(str(cfg.get("query")), ctx);
-        if (query.isBlank()) query = String.valueOf(ctx.getVars().getOrDefault("input", ""));
-        int topK = asInt(cfg.get("topK"), 5);
-
-        List<EmbeddingMatch<TextSegment>> matches = ragRetrieveService.searchMultiple(kbIds, query);
-        if (matches == null) matches = List.of();
-        if (matches.size() > topK) matches = matches.subList(0, topK);
-
-        StringBuilder text = new StringBuilder();
-        List<Map<String, Object>> sources = new ArrayList<>();
-        int idx = 0;
-        for (EmbeddingMatch<TextSegment> match : matches) {
-            idx++;
-            String content = match.embedded() != null ? match.embedded().text() : "";
-            String fileName = null;
-            Integer chunkIndex = null;
-            if (match.embedded() != null && match.embedded().metadata() != null) {
-                fileName = match.embedded().metadata().getString("fileName");
-                chunkIndex = match.embedded().metadata().getInteger("chunkIndex");
-            }
-            text.append("【片段 ").append(idx).append("】")
-                    .append(fileName != null ? fileName : "未知来源")
-                    .append(chunkIndex != null ? "#" + chunkIndex : "")
-                    .append("\n").append(content).append("\n\n");
-
-            Map<String, Object> src = new LinkedHashMap<>();
-            src.put("fileName", fileName);
-            src.put("chunkIndex", chunkIndex);
-            src.put("score", match.score());
-            sources.add(src);
-        }
-
-        Map<String, Object> out = new LinkedHashMap<>();
-        out.put("text", text.toString().trim());
-        out.put("sources", sources);
-        out.put("count", sources.size());
-        return NodeResult.builder().success(true).output(out).build();
-    }
-
-    private NodeResult executeTool(Map<String, Object> cfg, RunContext ctx) throws Exception {
-        Long toolId = asLong(cfg.get("toolId"));
-        if (toolId == null) throw new IllegalArgumentException("工具节点缺少 toolId");
-
-        Object rawArgs = cfg.get("arguments");
-        Map<String, Object> args = new LinkedHashMap<>();
-        if (rawArgs instanceof Map<?, ?> map) {
-            for (Map.Entry<?, ?> entry : map.entrySet()) {
-                Object v = entry.getValue();
-                args.put(String.valueOf(entry.getKey()),
-                        v instanceof String s ? variableResolver.render(s, ctx) : v);
-            }
-        }
-
-        String text = toolNodeInvoker.invoke(toolId, args);
-        Map<String, Object> out = new LinkedHashMap<>();
-        out.put("text", text);
-        out.put("success", text == null || !text.startsWith("Error:"));
-        return NodeResult.builder().success(true).output(out).build();
-    }
-
-    private NodeResult executeSubWorkflow(Map<String, Object> cfg, RunContext ctx, WorkflowRun parentRun, int nestingDepth) throws Exception {
-        Long subId = asLong(cfg.get("workflowId"));
-        if (subId == null) throw new IllegalArgumentException("子流程节点缺少 workflowId");
-
-        Workflow subWorkflow = workflowMapper.selectById(subId);
-        if (subWorkflow == null) throw new IllegalStateException("子流程不存在：" + subId);
-
-        GraphValidator.GraphValidationResult vr = new GraphValidator()
-                .validate(parseGraph(subWorkflow.getGraphJson()));
-        if (vr.hasErrors()) throw new IllegalStateException("子流程图校验失败：" + String.join("；", vr.errors));
-
-        String inputTemplate = str(cfg.get("inputTemplate"));
-        String input;
-        if (inputTemplate.isBlank()) {
-            input = String.valueOf(ctx.getVars().getOrDefault("lastOutput",
-                    ctx.getVars().getOrDefault("input", "")));
-        } else {
-            input = variableResolver.render(inputTemplate, ctx);
-        }
-
-        WorkflowRun subRun = runSubWorkflow(subWorkflow, vr.graph, input, vr, nestingDepth + 1);
-
-        String output;
-        String outTemplate = str(cfg.get("outputTemplate"));
-        if (outTemplate.isBlank()) {
-            output = subRun.getOutputText() != null ? subRun.getOutputText() : "";
-        } else {
-            // 把子输出暴露到临时变量里再渲染
-            ctx.getVars().put("_subOutput_" + subId, subRun.getOutputText());
-            output = variableResolver.render(outTemplate, ctx);
-        }
-
-        if ("FAILED".equals(subRun.getStatus())) {
-            throw new IllegalStateException("子流程执行失败：" + subRun.getErrorMessage());
-        }
-
-        Map<String, Object> out = new LinkedHashMap<>();
-        out.put("text", output);
-        out.put("subRunId", subRun.getId());
-        out.put("subStatus", subRun.getStatus());
-        return NodeResult.builder().success(true).output(out).build();
-    }
-
-    private NodeResult executeVariable(Map<String, Object> cfg, RunContext ctx) {
-        Object raw = cfg.get("assignments");
-        Map<String, Object> out = new LinkedHashMap<>();
-        if (raw instanceof List<?> list) {
-            for (Object item : list) {
-                if (item instanceof Map<?, ?> map) {
-                    String name = String.valueOf(map.get("name"));
-                    Object value = map.get("value");
-                    String rendered = value instanceof String s ? variableResolver.render(s, ctx)
-                            : String.valueOf(value);
-                    ctx.getVars().put(name, rendered);
-                    out.put(name, rendered);
-                }
-            }
-        }
-        return NodeResult.builder().success(true).output(out).build();
+        return nodeExecutorRegistry.get(node.getType())
+                .execute(new NodeExecutionContext(node, ctx, run, nestingDepth));
     }
 
     // ==================== HITL ====================
 
     private void returnFromHitl(WorkflowRun run, GraphNode node, RunContext ctx,
                                 List<GraphEdge> edges, BiConsumer<String, Map<String, Object>> sink) {
-        String prompt = variableResolver.render(str(node.getConfig().get("prompt")), ctx);
+        String prompt = variableResolver.render(NodeConfigSupport.str(node.getConfig().get("prompt")), ctx);
 
         WorkflowNodeRun nr = new WorkflowNodeRun();
         nr.setRunId(run.getId());
@@ -723,46 +526,6 @@ public class WorkflowEngine {
                 ? node.getName() : node.getType() + "-" + node.getId();
     }
 
-    private String str(Object v) {
-        return v == null ? "" : String.valueOf(v);
-    }
-
-    private Long asLong(Object v) {
-        if (v == null) return null;
-        if (v instanceof Number n) return n.longValue();
-        try {
-            return Long.parseLong(String.valueOf(v).trim());
-        } catch (NumberFormatException e) {
-            return null;
-        }
-    }
-
-    private int asInt(Object v, int defaultValue) {
-        Long l = asLong(v);
-        return l == null ? defaultValue : l.intValue();
-    }
-
-    private int intConfig(GraphNode node, String key, int defaultValue) {
-        return asInt(node.getConfig() != null ? node.getConfig().get(key) : null, defaultValue);
-    }
-
-    private List<Long> asLongList(Object v) {
-        List<Long> ids = new ArrayList<>();
-        if (v == null) return ids;
-        if (v instanceof List<?> list) {
-            for (Object o : list) {
-                Long id = asLong(o);
-                if (id != null) ids.add(id);
-            }
-            return ids;
-        }
-        for (String part : String.valueOf(v).split(",")) {
-            Long id = asLong(part.trim());
-            if (id != null) ids.add(id);
-        }
-        return ids;
-    }
-
     private String toJson(Object value) {
         try {
             return objectMapper.writeValueAsString(value);
@@ -783,12 +546,4 @@ public class WorkflowEngine {
         }
     }
 
-    private WorkflowGraph parseGraph(String json) {
-        if (json == null || json.isBlank()) throw new IllegalStateException("图为空");
-        try {
-            return objectMapper.readValue(json, WorkflowGraph.class);
-        } catch (Exception e) {
-            throw new IllegalStateException("图解析失败：" + e.getMessage());
-        }
-    }
 }
