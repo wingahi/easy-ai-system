@@ -39,6 +39,11 @@
           <el-icon><SetUp /></el-icon>
           <template #title>工具管理</template>
         </el-menu-item>
+
+        <el-menu-item index="/workflows">
+          <el-icon><Share /></el-icon>
+          <template #title>工作流编排</template>
+        </el-menu-item>
       </el-menu>
     </el-aside>
 
@@ -85,7 +90,7 @@
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { 
-  FolderOpened, Cpu, ChatDotRound, SetUp, 
+  FolderOpened, Cpu, ChatDotRound, SetUp, Share,
   Fold, Expand, SwitchButton 
 } from '@element-plus/icons-vue'
 import { useUserStore } from '../stores/user'

@@ -442,3 +442,122 @@ COMMENT ON COLUMN wgh_agent_step.create_time IS '创建时间';
 COMMENT ON COLUMN wgh_agent_step.update_time IS '更新时间';
 COMMENT ON COLUMN wgh_agent_step.deleted IS '逻辑删除';
 
+-- ============ 工作流定义 ============
+
+CREATE TABLE IF NOT EXISTS wgh_workflow (
+  id BIGSERIAL PRIMARY KEY,
+  name VARCHAR(100) NOT NULL,
+  description VARCHAR(500),
+  status SMALLINT DEFAULT 1,
+  version INT DEFAULT 1,
+  graph_json JSONB NOT NULL,
+  create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  create_by VARCHAR(50) DEFAULT 'system',
+  update_by VARCHAR(50) DEFAULT 'system',
+  deleted SMALLINT DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_workflow_status_update ON wgh_workflow(status, update_time);
+COMMENT ON TABLE wgh_workflow IS '可视化工作流定义';
+COMMENT ON COLUMN wgh_workflow.id IS '主键';
+COMMENT ON COLUMN wgh_workflow.name IS '工作流名称';
+COMMENT ON COLUMN wgh_workflow.description IS '描述';
+COMMENT ON COLUMN wgh_workflow.status IS '状态（1 启用 / 0 停用）';
+COMMENT ON COLUMN wgh_workflow.version IS '版本号，每次保存 +1';
+COMMENT ON COLUMN wgh_workflow.graph_json IS '图定义 JSON：{ nodes: [...], edges: [...] }';
+COMMENT ON COLUMN wgh_workflow.create_time IS '创建时间';
+COMMENT ON COLUMN wgh_workflow.update_time IS '更新时间';
+COMMENT ON COLUMN wgh_workflow.create_by IS '创建人';
+COMMENT ON COLUMN wgh_workflow.update_by IS '更新人';
+COMMENT ON COLUMN wgh_workflow.deleted IS '逻辑删除（0 未删除 / 1 已删除）';
+
+-- ============ 工作流运行实例 ============
+
+CREATE TABLE IF NOT EXISTS wgh_workflow_run (
+  id BIGSERIAL PRIMARY KEY,
+  workflow_id BIGINT NOT NULL,
+  workflow_version INT,
+  input_text TEXT,
+  status VARCHAR(20) DEFAULT 'RUNNING',
+  output_text TEXT,
+  context_json JSONB,
+  graph_snapshot JSONB,
+  error_message TEXT,
+  executed_nodes INT DEFAULT 0,
+  total_nodes INT DEFAULT 0,
+  start_time TIMESTAMP,
+  finish_time TIMESTAMP,
+  duration_ms BIGINT DEFAULT 0,
+  create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  create_by VARCHAR(50) DEFAULT 'system',
+  update_by VARCHAR(50) DEFAULT 'system',
+  deleted SMALLINT DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_wf_run_workflow_start ON wgh_workflow_run(workflow_id, start_time);
+CREATE INDEX IF NOT EXISTS idx_wf_run_status ON wgh_workflow_run(status);
+COMMENT ON TABLE wgh_workflow_run IS '工作流运行实例';
+COMMENT ON COLUMN wgh_workflow_run.id IS '主键';
+COMMENT ON COLUMN wgh_workflow_run.workflow_id IS '所属工作流 ID';
+COMMENT ON COLUMN wgh_workflow_run.workflow_version IS '运行时的版本号快照';
+COMMENT ON COLUMN wgh_workflow_run.input_text IS '运行输入';
+COMMENT ON COLUMN wgh_workflow_run.status IS '状态：RUNNING / PAUSED / COMPLETED / FAILED / CANCELLED';
+COMMENT ON COLUMN wgh_workflow_run.output_text IS '最终输出';
+COMMENT ON COLUMN wgh_workflow_run.context_json IS '运行上下文（变量池 / 节点输出 / 待恢复节点）';
+COMMENT ON COLUMN wgh_workflow_run.graph_snapshot IS '运行时图快照，保证编辑后旧运行仍可恢复';
+COMMENT ON COLUMN wgh_workflow_run.error_message IS '失败原因';
+COMMENT ON COLUMN wgh_workflow_run.executed_nodes IS '已执行节点数';
+COMMENT ON COLUMN wgh_workflow_run.total_nodes IS '图节点总数';
+COMMENT ON COLUMN wgh_workflow_run.start_time IS '开始时间';
+COMMENT ON COLUMN wgh_workflow_run.finish_time IS '结束时间';
+COMMENT ON COLUMN wgh_workflow_run.duration_ms IS '总耗时（毫秒）';
+COMMENT ON COLUMN wgh_workflow_run.create_time IS '创建时间';
+COMMENT ON COLUMN wgh_workflow_run.update_time IS '更新时间';
+COMMENT ON COLUMN wgh_workflow_run.create_by IS '创建人';
+COMMENT ON COLUMN wgh_workflow_run.update_by IS '更新人';
+COMMENT ON COLUMN wgh_workflow_run.deleted IS '逻辑删除（0 未删除 / 1 已删除）';
+
+-- ============ 工作流节点执行记录 ============
+
+CREATE TABLE IF NOT EXISTS wgh_workflow_node_run (
+  id BIGSERIAL PRIMARY KEY,
+  run_id BIGINT NOT NULL,
+  node_id VARCHAR(64) NOT NULL,
+  node_type VARCHAR(30) NOT NULL,
+  node_name VARCHAR(100),
+  status VARCHAR(20) DEFAULT 'PENDING',
+  iteration INT DEFAULT 0,
+  input_json JSONB,
+  output_json JSONB,
+  error_message TEXT,
+  start_time TIMESTAMP,
+  end_time TIMESTAMP,
+  duration_ms BIGINT DEFAULT 0,
+  create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  create_by VARCHAR(50) DEFAULT 'system',
+  update_by VARCHAR(50) DEFAULT 'system',
+  deleted SMALLINT DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_wf_node_run_run ON wgh_workflow_node_run(run_id, id);
+CREATE INDEX IF NOT EXISTS idx_wf_node_run_status ON wgh_workflow_node_run(status);
+COMMENT ON TABLE wgh_workflow_node_run IS '工作流节点级执行记录';
+COMMENT ON COLUMN wgh_workflow_node_run.id IS '主键';
+COMMENT ON COLUMN wgh_workflow_node_run.run_id IS '所属运行 ID';
+COMMENT ON COLUMN wgh_workflow_node_run.node_id IS '图中节点 ID';
+COMMENT ON COLUMN wgh_workflow_node_run.node_type IS '节点类型';
+COMMENT ON COLUMN wgh_workflow_node_run.node_name IS '节点显示名';
+COMMENT ON COLUMN wgh_workflow_node_run.status IS '状态：PENDING / RUNNING / SUCCESS / FAILED / SKIPPED / HITL_PENDING';
+COMMENT ON COLUMN wgh_workflow_node_run.iteration IS '循环体第几次执行（非循环节点为 0）';
+COMMENT ON COLUMN wgh_workflow_node_run.input_json IS '渲染后的节点入参';
+COMMENT ON COLUMN wgh_workflow_node_run.output_json IS '节点出参';
+COMMENT ON COLUMN wgh_workflow_node_run.error_message IS '失败原因';
+COMMENT ON COLUMN wgh_workflow_node_run.start_time IS '开始时间';
+COMMENT ON COLUMN wgh_workflow_node_run.end_time IS '结束时间';
+COMMENT ON COLUMN wgh_workflow_node_run.duration_ms IS '耗时（毫秒）';
+COMMENT ON COLUMN wgh_workflow_node_run.create_time IS '创建时间';
+COMMENT ON COLUMN wgh_workflow_node_run.update_time IS '更新时间';
+COMMENT ON COLUMN wgh_workflow_node_run.create_by IS '创建人';
+COMMENT ON COLUMN wgh_workflow_node_run.update_by IS '更新人';
+COMMENT ON COLUMN wgh_workflow_node_run.deleted IS '逻辑删除（0 未删除 / 1 已删除）';
+

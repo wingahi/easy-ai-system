@@ -20,7 +20,9 @@ const routes = [
       { path: 'models/embedding', name: 'EmbeddingModels', component: () => import('../views/models/EmbeddingModels.vue'), meta: { title: '嵌入模型管理' } },
       { path: 'chat/windows', name: 'ChatWindows', component: () => import('../views/chat-admin/ChatWindows.vue'), meta: { title: '聊天窗口' } },
       { path: 'chat/windows/:id/playground', name: 'ChatPlayground', component: () => import('../views/chat/ChatPlayground.vue'), meta: { title: '调试对话' } },
-      { path: 'tools', name: 'Tools', component: () => import('../views/tools/ToolManagement.vue'), meta: { title: '工具管理' } }
+      { path: 'tools', name: 'Tools', component: () => import('../views/tools/ToolManagement.vue'), meta: { title: '工具管理' } },
+      { path: 'workflows', name: 'Workflows', component: () => import('../views/workflow/WorkflowList.vue'), meta: { title: '工作流编排' } },
+      { path: 'workflows/:id/edit', name: 'WorkflowEditor', component: () => import('../views/workflow/WorkflowEditor.vue'), meta: { title: '工作流编辑器' } }
     ]
   },
   { path: '/:pathMatch(.*)*', redirect: '/' }

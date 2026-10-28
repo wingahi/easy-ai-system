@@ -234,3 +234,90 @@ export const agentRefreshPlan = (planId) => request.get(`/agent/plans/${planId}/
 // 按 sessionId 查询最新 plan（页面刷新恢复面板用）
 export const agentGetPlanBySession = (sessionId, signal) =>
   request.get(`/agent/sessions/${sessionId}/plan`, signal ? { signal } : undefined)
+
+// ==================== 工作流编排 ====================
+export const workflowPage = (params) => request.get('/workflows', { params })
+export const workflowList = () => request.get('/workflows/list')
+export const workflowGet = (id) => request.get(`/workflows/${id}`)
+export const workflowCreate = (data) => request.post('/workflows', data)
+export const workflowUpdate = (id, data) => request.put(`/workflows/${id}`, data)
+export const workflowDelete = (id) => request.delete(`/workflows/${id}`)
+export const workflowValidate = (id) => request.post(`/workflows/${id}/validate`)
+export const workflowEnable = (id) => request.post(`/workflows/${id}/enable`)
+export const workflowDisable = (id) => request.post(`/workflows/${id}/disable`)
+export const workflowPageRuns = (id, params) => request.get(`/workflows/${id}/runs`, { params })
+export const workflowRunState = (runId, signal) =>
+  request.get(`/workflows/runs/${runId}/state`, signal ? { signal } : undefined)
+export const workflowRunNodes = (runId) => request.get(`/workflows/runs/${runId}/nodes`)
+export const workflowCancelRun = (runId) => request.post(`/workflows/runs/${runId}/cancel`)
+
+/** 通用 SSE 读取（POST JSON） */
+function streamPost(url, body, onEvent, onDone, onError) {
+  const token = localStorage.getItem('wgh_token')
+  const controller = new AbortController()
+
+  const doStream = async () => {
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify(body || {}),
+        signal: controller.signal
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+
+        let idx
+        while ((idx = buffer.indexOf('\n\n')) !== -1) {
+          const chunk = buffer.substring(0, idx)
+          buffer = buffer.substring(idx + 2)
+
+          let eventType = 'message'
+          let data = ''
+          for (const line of chunk.split('\n')) {
+            if (line.startsWith('event:')) eventType = line.substring(6).trim()
+            else if (line.startsWith('data:')) {
+              if (data) data += '\n'
+              data += line.substring(5)
+            }
+          }
+          if (data) {
+            try {
+              onEvent(eventType, JSON.parse(data))
+            } catch {
+              onEvent(eventType, data)
+            }
+          }
+        }
+      }
+      onDone?.()
+    } catch (err) {
+      if (controller.signal.aborted || err.name === 'AbortError') return
+      onError?.(err)
+    }
+  }
+
+  return { doStream, abort: () => controller.abort() }
+}
+
+/** 运行工作流（SSE） */
+export function streamWorkflowRun(workflowId, input, onEvent, onDone, onError) {
+  return streamPost(`/api/workflows/${workflowId}/run`, { input }, onEvent, onDone, onError)
+}
+
+/** HITL 确认后继续运行（SSE） */
+export function streamWorkflowResume(runId, userInput, onEvent, onDone, onError) {
+  return streamPost(`/api/workflows/runs/${runId}/hitl-confirm`, { userInput }, onEvent, onDone, onError)
+}
+
