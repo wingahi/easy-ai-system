@@ -1,139 +1,60 @@
 package com.wgh.rag.llm.factory;
 
-import com.wgh.rag.common.exception.BusinessException;
 import com.wgh.rag.llm.entity.EmbeddingModelConfig;
 import com.wgh.rag.llm.entity.LlmModel;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.StreamingChatModel;
-import dev.langchain4j.community.model.dashscope.QwenChatModel;
-import dev.langchain4j.community.model.dashscope.QwenEmbeddingModel;
-import dev.langchain4j.community.model.dashscope.QwenStreamingChatModel;
 import dev.langchain4j.model.embedding.EmbeddingModel;
-import dev.langchain4j.model.openai.OpenAiChatModel;
-import dev.langchain4j.model.openai.OpenAiEmbeddingModel;
-import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
-import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
-import java.time.Duration;
+import java.util.List;
 
 /**
- * LLM 模型动态工厂 - 根据数据库配置动态创建 ChatModel / EmbeddingModel
+ * LLM 模型动态工厂 - 根据数据库配置动态创建 ChatModel / EmbeddingModel。
+ * 路由与构建已下沉到 {@link ChatModelFactoryRegistry} + 各 provider 的 {@link ChatModelFactory}，
+ * 本类保留为兼容门面（公开方法与异常行为不变）。
  */
-@Slf4j
 @Component
 public class LlmModelFactory {
+
+    private final ChatModelFactoryRegistry factoryRegistry;
+
+    @Autowired
+    public LlmModelFactory(ChatModelFactoryRegistry factoryRegistry) {
+        this.factoryRegistry = factoryRegistry;
+    }
+
+    /**
+     * 无 Spring 上下文时的手动构造（如历史单元测试），内部装配全部内置 provider 工厂
+     */
+    public LlmModelFactory() {
+        this(new ChatModelFactoryRegistry(List.of(
+                new OpenAiModelFactory(),
+                new DeepSeekModelFactory(),
+                new CustomOpenAiModelFactory(),
+                new DashScopeModelFactory(),
+                new QwenModelFactory())));
+    }
 
     /**
      * 创建 ChatModel
      */
     public ChatModel createChatModel(LlmModel config) {
-        return switch (config.getProvider().toUpperCase()) {
-            case "OPENAI", "DEEPSEEK", "CUSTOM_OPENAI" -> createOpenAiStyleChatModel(config);
-            case "DASHSCOPE", "QWEN" -> createDashScopeChatModel(config);
-            default -> throw new BusinessException("不支持的LLM提供商: " + config.getProvider());
-        };
+        return factoryRegistry.get(config.getProvider()).build(config);
     }
 
     /**
      * 创建 StreamingChatModel（SSE 流式响应用）
      */
     public StreamingChatModel createStreamingChatModel(LlmModel config) {
-        return switch (config.getProvider().toUpperCase()) {
-            case "OPENAI", "DEEPSEEK", "CUSTOM_OPENAI" -> createOpenAiStyleStreamingChatModel(config);
-            case "DASHSCOPE", "QWEN" -> createDashScopeStreamingChatModel(config);
-            default -> throw new BusinessException("不支持的LLM提供商: " + config.getProvider());
-        };
+        return factoryRegistry.get(config.getProvider()).buildStreaming(config);
     }
 
     /**
      * 创建 EmbeddingModel
      */
     public EmbeddingModel createEmbeddingModel(EmbeddingModelConfig config) {
-        return switch (config.getProvider().toUpperCase()) {
-            case "OPENAI", "CUSTOM_OPENAI" -> createOpenAiStyleEmbeddingModel(config);
-            case "DASHSCOPE", "QWEN" -> createDashScopeEmbeddingModel(config);
-            default -> throw new BusinessException("不支持的嵌入模型提供商: " + config.getProvider());
-        };
-    }
-
-    // ============ OpenAI 风格 ============
-    
-    private ChatModel createOpenAiStyleChatModel(LlmModel config) {
-        var builder = OpenAiChatModel.builder()
-                .baseUrl(config.getBaseUrl())
-                .apiKey(config.getApiKey())
-                .modelName(config.getModelName())
-                .timeout(Duration.ofSeconds(60))
-                .logRequests(true)
-                .logResponses(true);
-        
-        if (config.getTemperature() != null) {
-            builder.temperature(config.getTemperature());
-        }
-        if (config.getMaxContextTokens() != null) {
-            builder.maxCompletionTokens(config.getMaxContextTokens());
-        }
-        
-        return builder.build();
-    }
-
-    private StreamingChatModel createOpenAiStyleStreamingChatModel(LlmModel config) {
-        var builder = OpenAiStreamingChatModel.builder()
-                .baseUrl(config.getBaseUrl())
-                .apiKey(config.getApiKey())
-                .modelName(config.getModelName())
-                .timeout(Duration.ofSeconds(120))
-                .logRequests(true)
-                .logResponses(true);
-        
-        if (config.getTemperature() != null) {
-            builder.temperature(config.getTemperature());
-        }
-        
-        return builder.build();
-    }
-
-    private EmbeddingModel createOpenAiStyleEmbeddingModel(EmbeddingModelConfig config) {
-        return OpenAiEmbeddingModel.builder()
-                .baseUrl(config.getBaseUrl())
-                .apiKey(config.getApiKey())
-                .modelName(config.getModelName())
-                .timeout(Duration.ofSeconds(30))
-                .logRequests(true)
-                .logResponses(true)
-                .build();
-    }
-
-    // ============ DashScope (通义) ============
-    
-    private ChatModel createDashScopeChatModel(LlmModel config) {
-        var builder = QwenChatModel.builder()
-                .apiKey(config.getApiKey())
-                .modelName(config.getModelName());
-        
-        if (config.getBaseUrl() != null) {
-            builder.baseUrl(config.getBaseUrl());
-        }
-        if (config.getTemperature() != null) {
-            builder.temperature(config.getTemperature().floatValue());
-        }
-        
-        return builder.build();
-    }
-
-    private StreamingChatModel createDashScopeStreamingChatModel(LlmModel config) {
-        return QwenStreamingChatModel.builder()
-                .apiKey(config.getApiKey())
-                .modelName(config.getModelName())
-                .baseUrl(config.getBaseUrl())
-                .build();
-    }
-
-    private EmbeddingModel createDashScopeEmbeddingModel(EmbeddingModelConfig config) {
-        return QwenEmbeddingModel.builder()
-                .apiKey(config.getApiKey())
-                .modelName(config.getModelName())
-                .build();
+        return factoryRegistry.getEmbeddingFactory(config.getProvider()).buildEmbedding(config);
     }
 }

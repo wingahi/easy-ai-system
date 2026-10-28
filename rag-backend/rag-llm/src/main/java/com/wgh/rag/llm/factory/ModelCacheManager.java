@@ -22,7 +22,7 @@ import java.util.concurrent.ConcurrentHashMap;
 @RequiredArgsConstructor
 public class ModelCacheManager {
 
-    private final LlmModelFactory llmModelFactory;
+    private final ChatModelFactoryRegistry modelFactoryRegistry;
     private final LlmModelMapper llmModelMapper;
     private final EmbeddingModelMapper embeddingModelMapper;
 
@@ -44,7 +44,7 @@ public class ModelCacheManager {
                 throw new IllegalArgumentException("LLM模型不存在: " + id);
             }
             log.info("创建 ChatModel: {} ({})", config.getName(), config.getModelName());
-            return llmModelFactory.createChatModel(config);
+            return modelFactoryRegistry.get(config.getProvider()).build(config);
         });
     }
 
@@ -58,7 +58,7 @@ public class ModelCacheManager {
                 throw new IllegalArgumentException("LLM模型不存在: " + id);
             }
             log.info("创建 StreamingChatModel: {} ({})", config.getName(), config.getModelName());
-            return llmModelFactory.createStreamingChatModel(config);
+            return modelFactoryRegistry.get(config.getProvider()).buildStreaming(config);
         });
     }
 
@@ -72,7 +72,7 @@ public class ModelCacheManager {
                 throw new IllegalArgumentException("嵌入模型不存在: " + id);
             }
             log.info("创建 EmbeddingModel: {} ({})", config.getName(), config.getModelName());
-            return llmModelFactory.createEmbeddingModel(config);
+            return modelFactoryRegistry.getEmbeddingFactory(config.getProvider()).buildEmbedding(config);
         });
     }
 
