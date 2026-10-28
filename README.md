@@ -1,6 +1,6 @@
-# WGH RAG System
+# Easy AI System
 
-一套可独立部署的 **Retrieval-Augmented Generation (RAG) 问答系统**，覆盖 **知识库管理 → 向量检索 → 工具调用 → 分层上下文压缩 → Agent 自动规划执行 → LLM 流式对话 → RAG 效果评估 → 分享会话** 完整链路。
+一款通用的 RAG、Agent、多 Agent 系统。本系统提供通用的 RAG、Agent、多 Agent 相关通用功能，适用于多种场景的功能需求；系统提供组件能力，前端通过配置方式将 RAG、Agent、多 Agent 进行组装，方便易用，适用常见的行业业务。覆盖 **知识库管理 → 向量检索 → 工具调用 → 分层上下文压缩 → Agent 自动规划执行 → LLM 流式对话 → RAG 效果评估 → 分享会话** 完整链路。
 
 ## 技术栈
 
