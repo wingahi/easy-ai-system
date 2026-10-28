@@ -131,12 +131,11 @@ class GroupChatManagerTest {
     }
 
     /**
-     * DynamicRouter：模型返回的 agentId 不在 agents 列表中。
-     * 按实现：仅校验 JSON 中 agentId 字段非 null，不校验是否存在于 agents 列表，直接返回 "a99"。
-     * 注意：此行为疑似缺陷（调用方拿到不存在的 agentId 可能 NPE），测试按实现断言，详见报告。
+     * DynamicRouter：模型幻觉返回不存在的 agentId（如 "a99"）时，
+     * 应校验存在性并降级 Round Robin，避免调用方拿到不存在的 agentId 导致 NPE。
      */
     @Test
-    void pickNextSpeaker_dynamicRouter_unknownAgentIdReturnedAsIs() {
+    void pickNextSpeaker_dynamicRouter_unknownAgentIdFallsBackToRoundRobin() {
         MultiAgentRun run = run("GROUP_CHAT_DYNAMIC_ROUTER", 0, 10);
         run.setDynamicRouterModelId(9L);
         when(modelCacheManager.getChatModel(9L)).thenReturn(chatModel);
@@ -147,7 +146,23 @@ class GroupChatManagerTest {
 
         String next = manager.pickNextSpeaker(run, agents, List.of(ChatMessage.user("开始")));
 
-        // 按实现断言：未做存在性校验，原样返回
-        assertThat(next).isEqualTo("a99");
+        // 修复后断言：幻觉 agentId 被拒绝，降级 Round Robin（round=0 → a1）
+        assertThat(next).isEqualTo("a1");
+    }
+
+    /** DynamicRouter：routerModelId 为 null 时 fallback 到第一个 agent 的 chatModelId（三元笔误回归） */
+    @Test
+    void pickNextSpeaker_dynamicRouter_nullRouterModelIdFallsBackToFirstAgentModel() {
+        MultiAgentRun run = run("GROUP_CHAT_DYNAMIC_ROUTER", 2, 10);
+        // 不设置 dynamicRouterModelId → 应使用 agents.get(0).chatModelId = 1L
+        when(modelCacheManager.getChatModel(1L)).thenReturn(chatModel);
+        when(chatModel.chat(any(ChatRequest.class))).thenReturn(
+                ChatResponse.builder()
+                        .aiMessage(AiMessage.from("{\"agentId\":\"a3\",\"reason\":\"审稿\"}"))
+                        .build());
+
+        String next = manager.pickNextSpeaker(run, agents, List.of(ChatMessage.user("开始")));
+
+        assertThat(next).isEqualTo("a3");
     }
 }

@@ -47,10 +47,8 @@ public class GroupChatManager {
             return agents.get(idx).getAgentId();
         }
 
-        // Dynamic Router —— 用 routerModelId 决策
-        Long routerModelId = run.getDynamicRouterModelId() != null
-                ? run.getDynamicRouterModelId() : run.getMaxRounds() != null ? run.getDynamicRouterModelId() : null;
-        // routerModelId 可能为 null：fallback 到第一个 agent.chatModelId
+        // Dynamic Router —— 用 routerModelId 决策；为 null 时 fallback 到第一个 agent.chatModelId
+        Long routerModelId = run.getDynamicRouterModelId();
         if (routerModelId == null) {
             routerModelId = agents.get(0).getChatModelId();
         }
@@ -100,7 +98,13 @@ public class GroupChatManager {
                 Map<String, Object> parsed = objectMapper.readValue(
                         raw.substring(left, right + 1), new TypeReference<>() {});
                 Object aid = parsed.get("agentId");
-                if (aid != null) return String.valueOf(aid);
+                if (aid != null) {
+                    String agentId = String.valueOf(aid);
+                    // 校验 agentId 真实存在，LLM 幻觉返回不存在的 id 时降级 Round Robin
+                    boolean exists = agents.stream().anyMatch(a -> agentId.equals(a.getAgentId()));
+                    if (exists) return agentId;
+                    log.warn("Dynamic Router 返回不存在的 agentId={}，fallback 到 Round Robin", agentId);
+                }
             }
         } catch (Exception e) {
             log.warn("Dynamic Router 解析失败，fallback 到 Round Robin", e);
