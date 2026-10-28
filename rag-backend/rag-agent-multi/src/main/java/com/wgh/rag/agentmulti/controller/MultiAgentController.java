@@ -4,20 +4,20 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wgh.rag.agentmulti.dto.AgentInstance;
+import com.wgh.rag.agentmulti.dto.RunCreateRequest;
 import com.wgh.rag.agentmulti.entity.MultiAgentCrew;
 import com.wgh.rag.agentmulti.entity.MultiAgentRun;
 import com.wgh.rag.agentmulti.entity.MultiAgentStep;
 import com.wgh.rag.agentmulti.mapper.MultiAgentCrewMapper;
-import com.wgh.rag.agentmulti.mapper.MultiAgentRunMapper;
 import com.wgh.rag.agentmulti.mapper.MultiAgentStepMapper;
 import com.wgh.rag.agentmulti.runtime.MultiAgentRuntime;
+import com.wgh.rag.agentmulti.service.MultiAgentService;
 import com.wgh.rag.common.result.Result;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
-import java.time.LocalDateTime;
 import java.util.*;
 
 /**
@@ -30,7 +30,7 @@ import java.util.*;
 public class MultiAgentController {
 
     private final MultiAgentRuntime runtime;
-    private final MultiAgentRunMapper runMapper;
+    private final MultiAgentService service;
     private final MultiAgentStepMapper stepMapper;
     private final MultiAgentCrewMapper crewMapper;
     private final ObjectMapper objectMapper;
@@ -40,55 +40,29 @@ public class MultiAgentController {
     /** 创建多 Agent 运行并返回 runId（SSE 需另开 /runs/{runId}/stream 或由前端自行订阅） */
     @PostMapping("/runs")
     public Result<Map<String, Object>> createRun(@RequestBody Map<String, Object> body) {
-        String sessionId = body.get("sessionId") != null ? String.valueOf(body.get("sessionId")) : null;
-        String chatWindowId = body.get("chatWindowId") != null ? String.valueOf(body.get("chatWindowId")) : null;
-        String executionMode = String.valueOf(body.getOrDefault("executionMode", "CREW_SEQUENTIAL"));
-        String crewId = body.get("crewId") != null ? String.valueOf(body.get("crewId")) : null;
+        // Controller 只做参数解析，装配逻辑在 MultiAgentService.createRun
+        RunCreateRequest req = new RunCreateRequest();
+        req.setRunId(runtime.newRunId());
+        req.setSessionId(body.get("sessionId") != null ? parseLong(String.valueOf(body.get("sessionId"))) : null);
+        req.setChatWindowId(body.get("chatWindowId") != null ? parseLong(String.valueOf(body.get("chatWindowId"))) : null);
+        req.setExecutionMode(String.valueOf(body.getOrDefault("executionMode", "CREW_SEQUENTIAL")));
+        req.setCrewId(body.get("crewId") != null ? parseLong(String.valueOf(body.get("crewId"))) : null);
         String input = body.get("input") != null ? String.valueOf(body.get("input")) : "";
-        String userGoal = body.get("userGoal") != null ? String.valueOf(body.get("userGoal")) : input;
-        String agentsJson = body.get("agentsJson") != null
+        req.setInput(input);
+        req.setUserGoal(body.get("userGoal") != null ? String.valueOf(body.get("userGoal")) : input);
+        req.setAgentsJson(body.get("agentsJson") != null
                 ? (body.get("agentsJson") instanceof String s ? s : toJson(body.get("agentsJson")))
-                : null;
-        String crewConfigJson = body.get("crewConfigJson") != null
+                : null);
+        req.setCrewConfigJson(body.get("crewConfigJson") != null
                 ? (body.get("crewConfigJson") instanceof String s ? s : toJson(body.get("crewConfigJson")))
-                : null;
+                : null);
+        req.setMaxRounds(body.get("maxRounds") != null ? ((Number) body.get("maxRounds")).intValue() : null);
 
-        String runId = runtime.newRunId();
-
-        // 若提供 crewId，从 Crew 模板补齐 agentsJson / crewConfigJson
-        MultiAgentRun run = new MultiAgentRun();
-        run.setRunId(runId);
-        run.setSessionId(sessionId != null ? parseLong(sessionId) : null);
-        run.setChatWindowId(chatWindowId != null ? parseLong(chatWindowId) : 0L);
-        run.setExecutionMode(executionMode);
-        run.setUserGoal(userGoal);
-        run.setInputText(input);
-        run.setStatus("PLANNING");
-        run.setCurrentRound(0);
-        run.setMaxRounds(body.get("maxRounds") != null ? ((Number) body.get("maxRounds")).intValue() : 10);
-        run.setStartTime(LocalDateTime.now());
-
-        if (crewId != null) {
-            MultiAgentCrew crew = crewMapper.selectById(parseLong(crewId));
-            if (crew != null) {
-                run.setCrewConfigJson(crew.getCrewConfigJson() != null ? crew.getCrewConfigJson() : crew.getGraphJson());
-                run.setAgentsJson(crew.getAgentsJson());
-                if (crew.getExecutionMode() != null) run.setExecutionMode(crew.getExecutionMode());
-            }
-        }
-
-        if (crewConfigJson != null) run.setCrewConfigJson(crewConfigJson);
-        if (agentsJson != null) run.setAgentsJson(agentsJson);
-
-        // 必须有默认值（DB NOT NULL）
-        if (run.getCrewConfigJson() == null) run.setCrewConfigJson("{}");
-        if (run.getAgentsJson() == null) run.setAgentsJson("[]");
-
-        runMapper.insert(run);
+        MultiAgentRun run = service.createRun(req);
 
         Map<String, Object> resp = new LinkedHashMap<>();
-        resp.put("runId", runId);
-        resp.put("status", "PLANNING");
+        resp.put("runId", run.getRunId());
+        resp.put("status", run.getStatus());
         return Result.success(resp);
     }
 

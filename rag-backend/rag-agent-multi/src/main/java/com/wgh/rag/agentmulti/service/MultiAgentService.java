@@ -1,8 +1,11 @@
 package com.wgh.rag.agentmulti.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.wgh.rag.agentmulti.dto.RunCreateRequest;
+import com.wgh.rag.agentmulti.entity.MultiAgentCrew;
 import com.wgh.rag.agentmulti.entity.MultiAgentRun;
 import com.wgh.rag.agentmulti.entity.MultiAgentStep;
+import com.wgh.rag.agentmulti.mapper.MultiAgentCrewMapper;
 import com.wgh.rag.agentmulti.mapper.MultiAgentRunMapper;
 import com.wgh.rag.agentmulti.mapper.MultiAgentStepMapper;
 import lombok.RequiredArgsConstructor;
@@ -26,6 +29,47 @@ public class MultiAgentService {
 
     private final MultiAgentRunMapper runMapper;
     private final MultiAgentStepMapper stepMapper;
+    private final MultiAgentCrewMapper crewMapper;
+
+    // ==================== Run 装配 ====================
+
+    /**
+     * 装配并持久化一个 MultiAgentRun。
+     * 规则：crewId 模板补齐（crewConfigJson 为空回退 graphJson，executionMode 模板优先）；
+     * 显式 agentsJson/crewConfigJson 覆盖模板；DB NOT NULL 字段兜底默认值。
+     */
+    public MultiAgentRun createRun(RunCreateRequest req) {
+        MultiAgentRun run = new MultiAgentRun();
+        run.setRunId(req.getRunId());
+        run.setSessionId(req.getSessionId());
+        run.setChatWindowId(req.getChatWindowId() != null ? req.getChatWindowId() : 0L);
+        run.setExecutionMode(req.getExecutionMode());
+        run.setUserGoal(req.getUserGoal());
+        run.setInputText(req.getInput());
+        run.setStatus("PLANNING");
+        run.setCurrentRound(0);
+        run.setMaxRounds(req.getMaxRounds() != null ? req.getMaxRounds() : 10);
+        run.setStartTime(LocalDateTime.now());
+
+        if (req.getCrewId() != null) {
+            MultiAgentCrew crew = crewMapper.selectById(req.getCrewId());
+            if (crew != null) {
+                run.setCrewConfigJson(crew.getCrewConfigJson() != null ? crew.getCrewConfigJson() : crew.getGraphJson());
+                run.setAgentsJson(crew.getAgentsJson());
+                if (crew.getExecutionMode() != null) run.setExecutionMode(crew.getExecutionMode());
+            }
+        }
+
+        if (req.getCrewConfigJson() != null) run.setCrewConfigJson(req.getCrewConfigJson());
+        if (req.getAgentsJson() != null) run.setAgentsJson(req.getAgentsJson());
+
+        // 必须有默认值（DB NOT NULL）
+        if (run.getCrewConfigJson() == null) run.setCrewConfigJson("{}");
+        if (run.getAgentsJson() == null) run.setAgentsJson("[]");
+
+        runMapper.insert(run);
+        return run;
+    }
 
     // ==================== Run 持久化 ====================
 
