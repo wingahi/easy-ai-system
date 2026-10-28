@@ -11,6 +11,7 @@
 #   T7 LLM 节点（可选）：依赖已启用且可用的聊天模型
 #   T8 知识库检索节点（可选）：依赖已有文件的知识库与可用的 embedding 模型
 #   T9 版本管理：自动快照 / 版本列表 / 回滚生成新版本
+#   T10 定时 / Webhook 触发：CRON 自动触发、停用停止、Webhook 免登录触发
 #
 # 依赖：backend 8080 运行中、postgres 容器 postgres-with-vector
 # 用法：bash scripts/test-workflow-e2e.sh
@@ -410,6 +411,61 @@ else
   run_wf "$VWID" "回滚验证" /tmp/wf_t9.sse 30
   OUT9=$(sse_field /tmp/wf_t9.sse workflow_complete output | tail -1)
   [ "$OUT9" = "回滚验证" ] && ok "回滚后的工作流可正常运行：$OUT9" || ng "回滚后运行异常：$OUT9"
+fi
+
+# ---------- T10: 定时 / Webhook 触发 ----------
+echo ""
+echo "[T10] 定时 / Webhook 触发"
+
+TWID=$(create_wf /tmp/wf_valid.json "e2e-触发流")
+if [ -z "$TWID" ]; then
+  ng "创建工作流失败"
+else
+  ok "创建工作流 id=$TWID"
+
+  BAD=$(curl -s -X POST "$SRV/api/workflows/$TWID/triggers" -H "$AUTH" -H 'Content-Type: application/json' \
+    -d '{"triggerType":"CRON","cronExpression":"not-a-cron"}' | python3 -c "import sys,json;print(json.load(sys.stdin)['code'])" 2>/dev/null)
+  [ "$BAD" != "200" ] && ok "非法 cron 表达式被拒绝 code=$BAD" || ng "非法 cron 未被拒绝"
+
+  TID=$(curl -s -X POST "$SRV/api/workflows/$TWID/triggers" -H "$AUTH" -H 'Content-Type: application/json' \
+    -d '{"triggerType":"CRON","cronExpression":"*/2 * * * * *","inputText":"定时触发"}' \
+    | python3 -c "import sys,json;print(json.load(sys.stdin)['data']['id'])" 2>/dev/null)
+  [ -n "$TID" ] && ok "创建 CRON 触发器 id=${TID}（每 2 秒）" || ng "创建 CRON 触发器失败"
+
+  sleep 7
+  FC=$(psqlq "SELECT fire_count FROM wgh_workflow_trigger WHERE id=$TID")
+  [ "${FC:-0}" -ge 2 ] && ok "CRON 已自动触发 $FC 次" || ng "CRON 触发次数异常：$FC"
+  RUNS=$(psqlq "SELECT COUNT(*) FROM wgh_workflow_run WHERE workflow_id=$TWID AND input_text='定时触发'")
+  [ "${RUNS:-0}" -ge 2 ] && ok "生成 $RUNS 条触发运行记录" || ng "触发运行记录异常：$RUNS"
+
+  curl -s -X POST "$SRV/api/workflows/triggers/$TID/disable" -H "$AUTH" > /dev/null
+  sleep 3
+  BEFORE=$(psqlq "SELECT fire_count FROM wgh_workflow_trigger WHERE id=$TID")
+  sleep 3
+  AFTER=$(psqlq "SELECT fire_count FROM wgh_workflow_trigger WHERE id=$TID")
+  [ "$BEFORE" = "$AFTER" ] && ok "停用后触发停止（$BEFORE 次保持不变）" || ng "停用后仍触发：$BEFORE → $AFTER"
+
+  WTOKEN=$(curl -s -X POST "$SRV/api/workflows/$TWID/triggers" -H "$AUTH" -H 'Content-Type: application/json' \
+    -d '{"triggerType":"WEBHOOK","inputText":"webhook默认输入"}' \
+    | python3 -c "import sys,json;print(json.load(sys.stdin)['data']['webhookToken'])" 2>/dev/null)
+  [ -n "$WTOKEN" ] && ok "创建 Webhook 触发器 token=${WTOKEN:0:8}..." || ng "创建 Webhook 触发器失败"
+
+  WRES=$(curl -s -X POST "$SRV/api/workflows/webhook/$WTOKEN" -H 'Content-Type: application/json' -d '{"input":"webhook覆盖输入"}')
+  WRID=$(echo "$WRES" | python3 -c "import sys,json;print(json.load(sys.stdin)['data']['runId'])" 2>/dev/null)
+  [ -n "$WRID" ] && ok "Webhook 免登录触发成功 runId=$WRID" || ng "Webhook 触发失败：$WRES"
+  sleep 2
+  WST=$(psqlq "SELECT status FROM wgh_workflow_run WHERE id=$WRID")
+  WIN=$(psqlq "SELECT input_text FROM wgh_workflow_run WHERE id=$WRID")
+  [ "$WST" = "COMPLETED" ] && [ "$WIN" = "webhook覆盖输入" ] \
+    && ok "Webhook 运行完成且输入被覆盖（${WIN}）" || ng "Webhook 运行异常：status=$WST input=$WIN"
+
+  NOTFOUND=$(curl -s -X POST "$SRV/api/workflows/webhook/no-such-token" -H 'Content-Type: application/json' -d '{}' \
+    | python3 -c "import sys,json;print(json.load(sys.stdin)['code'])" 2>/dev/null)
+  [ "$NOTFOUND" != "200" ] && ok "无效 token 被拒绝 code=$NOTFOUND" || ng "无效 token 未被拒绝"
+
+  DEL=$(curl -s -X DELETE "$SRV/api/workflows/triggers/$TID" -H "$AUTH" | python3 -c "import sys,json;print(json.load(sys.stdin)['code'])" 2>/dev/null)
+  CNT=$(psqlq "SELECT COUNT(*) FROM wgh_workflow_trigger WHERE id=$TID AND deleted=0")
+  [ "$DEL" = "200" ] && [ "$CNT" = "0" ] && ok "删除触发器成功（逻辑删除）" || ng "删除触发器异常：code=$DEL cnt=$CNT"
 fi
 
 # ---------- 汇总 ----------

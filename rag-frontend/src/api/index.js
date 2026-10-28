@@ -252,6 +252,11 @@ export const workflowRunNodes = (runId) => request.get(`/workflows/runs/${runId}
 export const workflowCancelRun = (runId) => request.post(`/workflows/runs/${runId}/cancel`)
 export const workflowVersions = (id) => request.get(`/workflows/${id}/versions`)
 export const workflowRollback = (id, version) => request.post(`/workflows/${id}/rollback/${version}`)
+export const workflowTriggers = (id) => request.get(`/workflows/${id}/triggers`)
+export const workflowTriggerCreate = (id, data) => request.post(`/workflows/${id}/triggers`, data)
+export const workflowTriggerEnable = (tid) => request.post(`/workflows/triggers/${tid}/enable`)
+export const workflowTriggerDisable = (tid) => request.post(`/workflows/triggers/${tid}/disable`)
+export const workflowTriggerDelete = (tid) => request.delete(`/workflows/triggers/${tid}`)
 
 /** 通用 SSE 读取（POST JSON） */
 function streamPost(url, body, onEvent, onDone, onError) {

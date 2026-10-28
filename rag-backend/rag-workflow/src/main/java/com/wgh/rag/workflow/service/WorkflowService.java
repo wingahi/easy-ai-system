@@ -243,6 +243,41 @@ public class WorkflowService {
         return emitter;
     }
 
+    /** 无 SSE 的静默运行（定时 / Webhook 触发使用），返回运行记录（异步执行中）。 */
+    public WorkflowRun runHeadless(Long workflowId, String input) {
+        Workflow wf = getById(workflowId);
+        if (wf.getStatus() != null && wf.getStatus() == 0) {
+            throw new BusinessException("工作流已停用，无法运行");
+        }
+        WorkflowGraph graph = parseGraph(wf.getGraphJson());
+        GraphValidator.GraphValidationResult vr = graphValidator.validate(graph);
+        assertValid(vr);
+
+        WorkflowRun run = new WorkflowRun();
+        run.setWorkflowId(wf.getId());
+        run.setWorkflowVersion(wf.getVersion());
+        run.setInputText(input == null ? "" : input);
+        run.setStatus("RUNNING");
+        run.setGraphSnapshot(wf.getGraphJson());
+        run.setExecutedNodes(0);
+        run.setTotalNodes(graph.getNodes().size());
+        run.setStartTime(LocalDateTime.now());
+        runMapper.insert(run);
+
+        BiConsumer<String, Map<String, Object>> sink = (event, payload) -> { /* 静默触发，无 SSE 订阅 */ };
+        workflowExecutor.execute(() -> {
+            try {
+                engine.run(run, graph, input, vr, sink);
+            } catch (PauseSignal pause) {
+                log.info("触发运行 {} 在 HITL 节点暂停，等待人工确认", run.getId());
+            } catch (Exception e) {
+                log.error("触发运行失败 runId={}", run.getId(), e);
+                markRunFailed(run.getId(), e.getMessage());
+            }
+        });
+        return run;
+    }
+
     /** HITL 确认后从断点续跑，返回新的 SSE 通道。 */
     public SseEmitter hitlConfirm(Long runId, String userInput) {
         WorkflowRun run = runMapper.selectById(runId);

@@ -500,6 +500,42 @@ COMMENT ON COLUMN wgh_workflow_version.create_by IS '创建人';
 COMMENT ON COLUMN wgh_workflow_version.update_by IS '更新人';
 COMMENT ON COLUMN wgh_workflow_version.deleted IS '逻辑删除（0 未删除 / 1 已删除）';
 
+-- ============ 工作流触发器 ============
+
+CREATE TABLE IF NOT EXISTS wgh_workflow_trigger (
+  id BIGSERIAL PRIMARY KEY,
+  workflow_id BIGINT NOT NULL,
+  trigger_type VARCHAR(20) NOT NULL,
+  cron_expression VARCHAR(50),
+  webhook_token VARCHAR(64),
+  input_text VARCHAR(1000),
+  status SMALLINT DEFAULT 1,
+  last_fire_time TIMESTAMP,
+  fire_count INT DEFAULT 0,
+  create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  create_by VARCHAR(50) DEFAULT 'system',
+  update_by VARCHAR(50) DEFAULT 'system',
+  deleted SMALLINT DEFAULT 0
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uk_wf_trigger_token ON wgh_workflow_trigger(webhook_token);
+CREATE INDEX IF NOT EXISTS idx_wf_trigger_wf ON wgh_workflow_trigger(workflow_id, status);
+COMMENT ON TABLE wgh_workflow_trigger IS '工作流触发器（CRON 定时 / WEBHOOK）';
+COMMENT ON COLUMN wgh_workflow_trigger.id IS '主键';
+COMMENT ON COLUMN wgh_workflow_trigger.workflow_id IS '所属工作流 ID';
+COMMENT ON COLUMN wgh_workflow_trigger.trigger_type IS '触发类型：CRON / WEBHOOK';
+COMMENT ON COLUMN wgh_workflow_trigger.cron_expression IS 'CRON 表达式（6 段：秒 分 时 日 月 周）';
+COMMENT ON COLUMN wgh_workflow_trigger.webhook_token IS 'Webhook 令牌（URL 路径即密钥，CRON 类型为空）';
+COMMENT ON COLUMN wgh_workflow_trigger.input_text IS '触发时的默认输入';
+COMMENT ON COLUMN wgh_workflow_trigger.status IS '状态（1 启用 / 0 停用）';
+COMMENT ON COLUMN wgh_workflow_trigger.last_fire_time IS '最近触发时间';
+COMMENT ON COLUMN wgh_workflow_trigger.fire_count IS '累计触发次数';
+COMMENT ON COLUMN wgh_workflow_trigger.create_time IS '创建时间';
+COMMENT ON COLUMN wgh_workflow_trigger.update_time IS '更新时间';
+COMMENT ON COLUMN wgh_workflow_trigger.create_by IS '创建人';
+COMMENT ON COLUMN wgh_workflow_trigger.update_by IS '更新人';
+COMMENT ON COLUMN wgh_workflow_trigger.deleted IS '逻辑删除（0 未删除 / 1 已删除）';
+
 -- ============ 工作流运行实例 ============
 
 CREATE TABLE IF NOT EXISTS wgh_workflow_run (

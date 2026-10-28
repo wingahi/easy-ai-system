@@ -40,6 +40,7 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(
                                 "/api/auth/**",
+                                "/api/workflows/webhook/**",
                                 "/doc.html",
                                 "/webjars/**",
                                 "/v3/api-docs/**",

@@ -29,11 +29,12 @@
         <el-table-column prop="updateTime" label="更新时间" width="180">
           <template #default="{ row }">{{ formatTime(row.updateTime) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="390" fixed="right">
+        <el-table-column label="操作" width="460" fixed="right">
           <template #default="{ row }">
             <div class="table-actions">
               <el-button link type="primary" @click="openEditor(row)">编排</el-button>
               <el-button link type="primary" @click="openVersions(row)">版本</el-button>
+              <el-button link type="primary" @click="openTriggers(row)">触发器</el-button>
               <el-button link type="primary" @click="openHistory(row)">运行历史</el-button>
               <el-button v-if="row.status === 1" link type="warning" @click="toggle(row, 0)">停用</el-button>
               <el-button v-else link type="success" @click="toggle(row, 1)">启用</el-button>
@@ -66,6 +67,73 @@
       <template #footer>
         <el-button @click="createVisible = false">取消</el-button>
         <el-button type="primary" :loading="creating" @click="create">创建并编排</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 触发器管理 -->
+    <el-dialog v-model="triggerVisible" :title="`触发器 - ${currentWorkflow?.name || ''}`" width="820px">
+      <div style="margin-bottom:12px;display:flex;justify-content:space-between;align-items:center">
+        <span class="empty-hint">CRON 为 6 段表达式（秒 分 时 日 月 周）；Webhook 创建后生成免密调用地址</span>
+        <el-button type="primary" size="small" :icon="Plus" @click="openTriggerCreate">新增触发器</el-button>
+      </div>
+      <el-table :data="triggers" v-loading="triggerLoading" stripe>
+        <el-table-column label="类型" width="90">
+          <template #default="{ row }">
+            <el-tag :type="row.triggerType === 'CRON' ? 'warning' : 'success'" size="small">{{ row.triggerType }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="配置" min-width="260">
+          <template #default="{ row }">
+            <code v-if="row.triggerType === 'CRON'">{{ row.cronExpression }}</code>
+            <template v-else>
+              <code style="word-break:break-all">/api/workflows/webhook/{{ row.webhookToken }}</code>
+              <el-button link type="primary" size="small" @click="copyWebhook(row)">复制</el-button>
+            </template>
+          </template>
+        </el-table-column>
+        <el-table-column prop="inputText" label="默认输入" min-width="110" show-overflow-tooltip />
+        <el-table-column label="状态" width="70">
+          <template #default="{ row }">
+            <el-tag :type="row.status === 1 ? 'success' : 'info'" size="small">{{ row.status === 1 ? '启用' : '停用' }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="触发统计" width="140">
+          <template #default="{ row }">
+            {{ row.fireCount || 0 }} 次
+            <div class="empty-hint" style="font-size:12px">{{ formatTime(row.lastFireTime) }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="120">
+          <template #default="{ row }">
+            <el-button v-if="row.status === 1" link type="warning" @click="toggleTrigger(row, 0)">停用</el-button>
+            <el-button v-else link type="success" @click="toggleTrigger(row, 1)">启用</el-button>
+            <el-popconfirm title="确认删除该触发器？" @confirm="removeTrigger(row)">
+              <template #reference><el-button link type="danger">删除</el-button></template>
+            </el-popconfirm>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-dialog>
+
+    <!-- 新增触发器 -->
+    <el-dialog v-model="triggerCreateVisible" title="新增触发器" width="480px" append-to-body>
+      <el-form :model="triggerForm" label-width="90px">
+        <el-form-item label="类型" required>
+          <el-radio-group v-model="triggerForm.triggerType">
+            <el-radio value="CRON">定时（CRON）</el-radio>
+            <el-radio value="WEBHOOK">Webhook</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item v-if="triggerForm.triggerType === 'CRON'" label="CRON" required>
+          <el-input v-model="triggerForm.cronExpression" placeholder="如 0 */5 * * * *（每 5 分钟）" />
+        </el-form-item>
+        <el-form-item label="默认输入">
+          <el-input v-model="triggerForm.inputText" placeholder="触发时作为 input 变量传入" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="triggerCreateVisible = false">取消</el-button>
+        <el-button type="primary" :loading="triggerCreating" @click="createTrigger">创建</el-button>
       </template>
     </el-dialog>
 
@@ -149,7 +217,9 @@ import { ElMessage } from 'element-plus'
 import { Plus, Refresh } from '@element-plus/icons-vue'
 import {
   workflowPage, workflowCreate, workflowDelete, workflowEnable, workflowDisable,
-  workflowPageRuns, workflowRunNodes, workflowVersions, workflowRollback
+  workflowPageRuns, workflowRunNodes, workflowVersions, workflowRollback,
+  workflowTriggers, workflowTriggerCreate, workflowTriggerEnable, workflowTriggerDisable,
+  workflowTriggerDelete
 } from '../../api'
 
 const router = useRouter()
@@ -192,6 +262,71 @@ const rollback = async (row) => {
   ElMessage.success(`已回滚到 v${row.version}，生成新版本 v${res.data.version}`)
   await openVersions(res.data)
   load()
+}
+
+const triggerVisible = ref(false)
+const triggers = ref([])
+const triggerLoading = ref(false)
+const triggerCreateVisible = ref(false)
+const triggerCreating = ref(false)
+const triggerForm = reactive({ triggerType: 'CRON', cronExpression: '', inputText: '' })
+
+const openTriggers = async (row) => {
+  currentWorkflow.value = row
+  triggerVisible.value = true
+  triggerLoading.value = true
+  try {
+    const res = await workflowTriggers(row.id)
+    triggers.value = res.data || []
+  } finally {
+    triggerLoading.value = false
+  }
+}
+
+const openTriggerCreate = () => {
+  triggerForm.triggerType = 'CRON'
+  triggerForm.cronExpression = ''
+  triggerForm.inputText = ''
+  triggerCreateVisible.value = true
+}
+
+const createTrigger = async () => {
+  if (triggerForm.triggerType === 'CRON' && !triggerForm.cronExpression.trim()) {
+    ElMessage.warning('请填写 CRON 表达式')
+    return
+  }
+  triggerCreating.value = true
+  try {
+    await workflowTriggerCreate(currentWorkflow.value.id, { ...triggerForm })
+    ElMessage.success('创建成功')
+    triggerCreateVisible.value = false
+    await openTriggers(currentWorkflow.value)
+  } finally {
+    triggerCreating.value = false
+  }
+}
+
+const toggleTrigger = async (row, status) => {
+  if (status === 1) await workflowTriggerEnable(row.id)
+  else await workflowTriggerDisable(row.id)
+  ElMessage.success('已更新状态')
+  openTriggers(currentWorkflow.value)
+}
+
+const removeTrigger = async (row) => {
+  await workflowTriggerDelete(row.id)
+  ElMessage.success('已删除')
+  openTriggers(currentWorkflow.value)
+}
+
+const copyWebhook = async (row) => {
+  const url = `${location.origin}/api/workflows/webhook/${row.webhookToken}`
+  try {
+    await navigator.clipboard.writeText(url)
+    ElMessage.success('Webhook 地址已复制')
+  } catch {
+    ElMessage.info(url)
+  }
 }
 
 const load = async () => {

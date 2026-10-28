@@ -432,6 +432,6 @@ while frontier 非空:
 | 并行分支 | ✅ 已实现 | `frontier` 并发调度 + `pendingInEdges` 入边等待计数器，支持 fan-out/fan-in |
 | 子流程节点（`WORKFLOW`） | ✅ 已实现 | 工作流作为节点被复用，最大嵌套 3 层，`inputTemplate`/`outputTemplate` 变量渲染 |
 | 版本管理 | ✅ 已实现 | `wgh_workflow_version` 快照表，保存/回滚均生成新版本（只增不改），版本列表 + 回滚接口 |
-| 触发方式 | 🔲 未实现 | 定时（Quartz）/ Webhook / 被 ChatWindow 作为工具调用 |
+| 触发方式 | ✅ 已实现（定时 / Webhook） | `wgh_workflow_trigger` 表 + `ThreadPoolTaskScheduler` 动态调度（6 段 CRON，秒级）；Webhook 凭路径 token 免登录调用，触发后静默运行并统计次数 |
 | 节点市场 | 🔲 未实现 | 把常用节点组合导出为模板 |
 | 灰度发布 | 🔲 未实现 | 基于版本快照的流量分配 |

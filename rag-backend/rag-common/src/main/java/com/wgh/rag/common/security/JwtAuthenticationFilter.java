@@ -34,6 +34,8 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private static final List<String> WHITE_LIST = Arrays.asList(
             "/api/auth/login",
             "/api/auth/captcha",
+            // 工作流 Webhook 触发入口：凭路径中的 token 鉴权，免登录
+            "/api/workflows/webhook/",
             "/doc.html",
             "/webjars/",
             "/v3/api-docs",
