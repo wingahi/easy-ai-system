@@ -43,6 +43,7 @@ class LlmNodeExecutorTest {
         return new LlmNodeExecutor(variableResolver, modelCacheManager);
     }
 
+    /** 缺少 modelId 时抛出"LLM 节点缺少 modelId"异常 */
     @Test
     void execute_missingModelId_throws() {
         GraphNode node = node(Map.of("prompt", "hi"));
@@ -52,6 +53,7 @@ class LlmNodeExecutorTest {
                 .hasMessage("LLM 节点缺少 modelId");
     }
 
+    /** 渲染系统与用户提示词，按系统/用户顺序组装消息并返回模型文本 */
     @Test
     void execute_rendersPromptsAndCallsModel() {
         when(modelCacheManager.getChatModel(7L)).thenReturn(chatModel);
@@ -74,6 +76,7 @@ class LlmNodeExecutorTest {
         assertThat(((UserMessage) captor.getValue().messages().get(1)).singleText()).isEqualTo("问：问题");
     }
 
+    /** prompt 为空时回退使用 lastOutput 作为唯一的用户消息 */
     @Test
     void execute_blankPrompt_fallsBackToLastOutput() {
         when(modelCacheManager.getChatModel(7L)).thenReturn(chatModel);

@@ -46,7 +46,7 @@ wgh-rag-system/
 │   │   ├── service/          #   WorkflowService / VersionService / TriggerService
 │   │   └── mapper/           #   Workflow / WorkflowRun / WorkflowNodeRun / WorkflowVersion / WorkflowTrigger
 │   ├── sql/                  # schema.sql（完整 DDL + 索引）+ data.sql（种子数据）+ init.sql（一键入口）
-│   ├── scripts/              # 端到端测试脚本（test-agent-e2e.sh / test-agent-hitl-e2e.sh / test-workflow-e2e.sh）
+│   ├── scripts/              # 测试脚本：e2e（agent / agent-hitl / workflow / multi-agent 冒烟）+ 压测 + 测试代码规范检查
 │   └── pom.xml
 └── rag-frontend/             # Vue 3 前端
     └── src/
@@ -347,15 +347,60 @@ npm run dev   # http://localhost:5173
 
 ```bash
 cd rag-backend
+# 单元测试：12 模块，374 项（含 Mockito / 策略类 / 编排器）
+mvn test
 # Agent 主链路：SSE 事件 / payload 字段 / 持久化 / REST / 降级路径
 bash scripts/test-agent-e2e.sh
 # HITL：暂停 → 确认续跑、窗口开关对照、暂停后取消
 bash scripts/test-agent-hitl-e2e.sh
 # 工作流编排：9 类节点 + fan-out/fan-in + 子流程 + 版本 + 触发器 + HITL
 bash scripts/test-workflow-e2e.sh
+# 多 Agent 协作：SSE 事件序列 / 终态 COMPLETED / 步骤持久化 / state 接口
+bash scripts/test-multi-agent-smoke.sh
+# 压力测试：登录 / 模型列表 / 窗口分页 / 工作流列表 / RAG 检索 / SSE 聊天 / 工作流执行
+bash scripts/test-stress.sh
 ```
 
-脚本依赖后端 8080 运行中、`postgres-with-vector` 容器可访问（默认库 `wgh_rag`），执行前会自行登录并做健康检查。
+脚本依赖后端 8080 运行中、`postgres-with-vector` 容器可访问（默认库 `wgh_rag`），执行前会自行登录并做健康检查；压力测试脚本额外依赖 `ab`（Apache Bench）。
+
+### 9. 测试代码规范检查（本地执行 / Gitee Go 接入）
+
+静态检查脚本 `rag-backend/scripts/check-test-conventions.py` 校验两条规则：
+
+1. `@Test` / `@ParameterizedTest` / `@RepeatedTest` / `@TestFactory` 方法名必须为纯 ASCII（英文），禁止中文命名；
+2. 每个测试方法上方必须紧邻中文注释（Javadoc 或 `//`，且至少包含一个中文字符）。
+
+**本地执行**
+
+```bash
+cd rag-backend
+python3 scripts/check-test-conventions.py             # 默认扫描 rag-backend
+python3 scripts/check-test-conventions.py --root .     # 自定义扫描根目录
+```
+
+- 退出码：`0` 通过；`1` 存在违规（逐条输出 `文件:行号` 与原因）；`2` 扫描根目录不存在。
+- 环境要求：Python 3.7+，无第三方依赖；Ubuntu 镜像已内置 `python3`。
+- GitHub 侧由 `.github/workflows/ci.yml` 自动执行，无需额外配置。
+
+**Gitee Go 接入**
+
+Gitee Go 流水线在仓库「流水线」页面配置。新建流水线后添加一个 Shell 步骤，内容与本地执行完全一致：
+
+```bash
+cd rag-backend
+python3 scripts/check-test-conventions.py --root .
+```
+
+若使用自定义 Docker 镜像且未内置 Python，先安装：`apt-get update && apt-get install -y python3`。
+
+**可选：提交前本地拦截**
+
+将以下内容加入 `.git/hooks/pre-commit`（需 `chmod +x`），可在 `git commit` 时提前拦截违规：
+
+```bash
+#!/usr/bin/env bash
+python3 rag-backend/scripts/check-test-conventions.py --root rag-backend || exit 1
+```
 
 ## 关键 API
 
@@ -472,13 +517,14 @@ bash scripts/test-workflow-e2e.sh
 | `rag-backend/rag-app/skills/` | Skill 磁盘目录（由 `wgh.skill.base-path` 解析而来） |
 | `rag-backend/uploads/` | 按知识库 ID 分子目录 |
 | `rag-backend/logs/` | 运行日志（SizeAndTimeBasedRollingPolicy） |
-| `rag-backend/scripts/` | 端到端测试脚本（Agent 主链路 / HITL） |
+| `rag-backend/scripts/` | 测试脚本：e2e（Agent / HITL / 工作流 / 多 Agent 冒烟）、压力测试、测试代码规范检查 |
 | `rag-backend/eval/` | RAG 评估脚本和报告 |
 
 ## 工程约定（重要）
 
 - **多模块编译**：`mvn spring-boot:run -pl rag-app` 必须加 `-am`，否则会读 `~/.m2` 旧 jar
 - **测试命名**：surefire excludes `**/*IntegrationTest.java`，集成测试用 `*ApiTest` / `*EngineTest` / `*Test` 命名
+- **测试代码规范**：测试方法名必须是纯 ASCII（英文，推荐 `方法_条件_期望`），每个测试方法上方必须有中文注释；由 `rag-backend/scripts/check-test-conventions.py` 静态校验，GitHub Actions 与 Gitee Go 接入见第 9 节
 - **Java 25 + Mockito**：`-Dnet.bytebuddy.experimental=true`
 - **逻辑删除**：所有删除操作走 `deleted` 字段，物理删除需明确需求
 - **变量遮蔽**：前端避免使用 `window`、`location` 等全局变量名作 ref 名（已在 `ChatPlayground.vue` 中踩过坑，访问全局对象请用 `globalThis.xxx`）
@@ -511,6 +557,10 @@ bash scripts/test-workflow-e2e.sh
 | rag-workflow（可视化编排引擎） | ✅ 完成 | 9 类 DAG 节点 + frontier 并行调度 + pendingInEdges fan-in 汇聚 + 子流程嵌套（3 层）+ 版本快照 + CRON/Webhook 触发器 + 3 个内置模板 |
 | Agent 端到端测试 | ✅ 完成 | `test-agent-e2e.sh`（18 项）+ `test-agent-hitl-e2e.sh`（16 项），覆盖 SSE / payload / 持久化 / REST / 降级 / 窗口开关对照 |
 | 工作流端到端测试 | ✅ 完成 | `test-workflow-e2e.sh`（67 项），覆盖 9 类节点 / fan-out fan-in / 子流程 / 版本快照 / 回滚 / CRON & Webhook 触发器 / HITL 暂停续跑 / 模板实例化 |
+| 多 Agent 冒烟 | ✅ 完成 | `test-multi-agent-smoke.sh`（12 项），覆盖 SSE 事件序列 / 终态 COMPLETED / 步骤持久化 / state 接口 |
+| 单元测试基线 | ✅ 完成 | 374 项全绿：common 11 / llm 36 / kb 25 / agent 23 / chat 24 / workflow 63 / agent-multi 56 / app 136 |
+| 压力测试 | ✅ 完成 | `test-stress.sh` 7 场景 8 项断言全通过（登录 3091 RPS、SSE 首字节 24-38ms） |
+| CI 静态检查 | ✅ 完成 | GitHub Actions 校验测试方法英文命名 + 中文注释；Gitee Go 复用同一脚本；报告见 `docs/test-report-20261028.md` |
 
 ### 前端页面
 

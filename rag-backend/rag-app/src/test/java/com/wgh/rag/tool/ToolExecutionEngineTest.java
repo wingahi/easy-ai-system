@@ -100,6 +100,7 @@ class ToolExecutionEngineTest {
     @DisplayName("loadWindowTools — 窗口级工具注册")
     class LoadWindowTools {
 
+        /** 正常加载工具后返回包含工具名的 ToolSpecification 列表 */
         @Test
         @DisplayName("正常加载 → 返回 ToolSpecification 列表")
         void loadWindowTools_ok() {
@@ -115,6 +116,7 @@ class ToolExecutionEngineTest {
             assertThat(specs.get(0).name()).isEqualTo("query_weather");
         }
 
+        /** status 不为 1 的工具在加载时被过滤掉 */
         @Test
         @DisplayName("status != 1 的工具被过滤")
         void loadWindowTools_filterDisabled() {
@@ -127,6 +129,7 @@ class ToolExecutionEngineTest {
             assertThat(specs).isEmpty();
         }
 
+        /** definition 为非法 JSON 时跳过该工具且不抛异常 */
         @Test
         @DisplayName("definition JSON 无效 → 跳过不崩溃")
         void loadWindowTools_invalidDefinition_skips() {
@@ -138,6 +141,7 @@ class ToolExecutionEngineTest {
             assertThat(specs).isEmpty();
         }
 
+        /** 传入空工具列表时返回空的 spec 列表 */
         @Test
         @DisplayName("空列表 → 返回空 spec")
         void loadWindowTools_empty() {
@@ -152,6 +156,7 @@ class ToolExecutionEngineTest {
     @DisplayName("execute — 分发到正确的 ToolExecutor")
     class Execute {
 
+        /** HTTP 类型工具分发到对应 executor 并带回请求参数 */
         @Test
         @DisplayName("HTTP 类型 → 分发到 HttpToolExecutor")
         void execute_http_dispatchedCorrectly() {
@@ -168,6 +173,7 @@ class ToolExecutionEngineTest {
             assertThat(result.text()).contains("Beijing");
         }
 
+        /** SKILL 类型工具分发到对应 executor */
         @Test
         @DisplayName("SKILL 类型 → 分发到 SkillToolExecutor")
         void execute_skill_dispatchedCorrectly() {
@@ -181,6 +187,7 @@ class ToolExecutionEngineTest {
             assertThat(result.text()).contains("[SKILL]");
         }
 
+        /** 未加载任何工具时执行返回以 Error: 开头并包含工具名的结果 */
         @Test
         @DisplayName("未知工具 → result 以 Error 开头")
         void execute_unknownTool_returnsError() {
@@ -192,6 +199,7 @@ class ToolExecutionEngineTest {
             assertThat(result.text()).contains("ghost_tool");
         }
 
+        /** 找不到对应 toolType 的 ToolExecutor 时抛出 IllegalStateException */
         @Test
         @DisplayName("找不到对应 toolType 的 ToolExecutor → 抛 IllegalStateException")
         void execute_missingExecutor_throws() {
@@ -213,6 +221,7 @@ class ToolExecutionEngineTest {
     @DisplayName("executeBatch — 批量执行")
     class ExecuteBatch {
 
+        /** 批量执行多个 tool call 并按顺序返回各自结果 */
         @Test
         @DisplayName("多个 tool calls 全部执行")
         void executeBatch_allExecuted() {
@@ -237,6 +246,7 @@ class ToolExecutionEngineTest {
     @DisplayName("窗口隔离 — ThreadLocal 每次 loadWindowTools 重置")
     class WindowIsolation {
 
+        /** 同一线程重新加载工具后只有新工具可用，旧工具不可用 */
         @Test
         @DisplayName("窗口 A 加载 weather，窗口 B 加载 skill → A 无法调用 skill")
         void windowIsolation_threadLocalResets() {
@@ -261,6 +271,7 @@ class ToolExecutionEngineTest {
             assertThat(r2.text()).startsWith("Error:");
         }
 
+        /** 清空窗口工具后所有工具都不可用 */
         @Test
         @DisplayName("clearWindowTools 后 → 所有工具都不可用")
         void clearWindowTools_resetsEverything() {
@@ -281,6 +292,7 @@ class ToolExecutionEngineTest {
     @DisplayName("executorConfig 解析")
     class ExecutorConfigParsing {
 
+        /** executorConfig 为 null 时当作空 map 处理并正常分发 */
         @Test
         @DisplayName("null executorConfig → 当作空 map 不崩溃")
         void execute_nullExecutorConfig_ok() {
@@ -294,6 +306,7 @@ class ToolExecutionEngineTest {
             assertThat(result.text()).contains("[HTTP]");
         }
 
+        /** executorConfig 为非 JSON 字符串时当作空 map 处理并正常分发 */
         @Test
         @DisplayName("executorConfig 非 JSON → 当作空 map")
         void execute_badExecutorConfig_ok() {

@@ -144,6 +144,7 @@ class HttpToolExecutorTest {
     @DisplayName("GET 请求")
     class GetRequests {
 
+        /** GET 请求把参数替换进 URL 模板并返回响应体内容 */
         @Test
         @DisplayName("URL 模板参数替换")
         void execute_get_urlTemplate() {
@@ -161,6 +162,7 @@ class HttpToolExecutorTest {
             assertThat(result.text()).contains("sunny");
         }
 
+        /** supportedToolType 返回 "HTTP" */
         @Test
         @DisplayName("支持 toolType 声明")
         void supportedToolType_returnsHttp() {
@@ -172,6 +174,7 @@ class HttpToolExecutorTest {
     @DisplayName("POST 请求")
     class PostRequests {
 
+        /** POST 请求把参数作为 JSON 请求体发送到服务端 */
         @Test
         @DisplayName("POST 请求体为 JSON")
         void execute_post_bodyAsJson() {
@@ -195,6 +198,7 @@ class HttpToolExecutorTest {
     @DisplayName("Headers")
     class HeadersTests {
 
+        /** 配置的自定义 headers 被原样发送到服务端 */
         @Test
         @DisplayName("自定义 headers 发送")
         void execute_withCustomHeaders() {
@@ -213,6 +217,7 @@ class HttpToolExecutorTest {
     @DisplayName("错误处理")
     class ErrorHandling {
 
+        /** 服务端返回 5xx 时不抛异常，结果中包含状态码 */
         @Test
         @DisplayName("HTTP 5xx → result 包含状态码 + Error 前缀")
         void execute_5xxError() {
@@ -227,6 +232,7 @@ class HttpToolExecutorTest {
             assertThat(result.text()).contains("503");
         }
 
+        /** 连接失败时结果以 Error: 开头 */
         @Test
         @DisplayName("网络异常 → result 包含 Error: 前缀")
         void execute_networkError() {
@@ -246,6 +252,7 @@ class HttpToolExecutorTest {
     @DisplayName("结果截断")
     class Truncation {
 
+        /** 超长响应被截断到约 4000 字符并追加 truncated 标记 */
         @Test
         @DisplayName("超长响应自动截断到 4000 字符")
         void execute_longResponse_truncated() {
@@ -265,6 +272,7 @@ class HttpToolExecutorTest {
     @DisplayName("参数解析")
     class ArgumentParsing {
 
+        /** 参数为非法 JSON 时按空 map 处理，执行不崩溃 */
         @Test
         @DisplayName("参数 JSON 格式错误 → 当作空 map 不崩溃")
         void execute_invalidArgumentsJson_doesNotCrash() {

@@ -435,3 +435,7 @@ while frontier 非空:
 | 触发方式 | ✅ 已实现（定时 / Webhook） | `wgh_workflow_trigger` 表 + `ThreadPoolTaskScheduler` 动态调度（6 段 CRON，秒级）；Webhook 凭路径 token 免登录调用，触发后静默运行并统计次数 |
 | 节点市场 | ✅ 已实现（内置模板第一期） | `WorkflowTemplateRegistry` 内置 3 个模板（知识库问答 / 人工审批流 / 定期巡检流）；`GET /api/workflows/templates` + `POST /api/workflows/templates/{id}/instantiate`，实例化走标准创建链路（图校验 + v1 快照），LLM 占位模型自动填充为第一个启用模型；前端「模板市场」卡片弹窗一键创建 |
 | 灰度发布 | 🔲 未实现 | 基于版本快照的流量分配 |
+
+---
+
+> **文档修订（2026-10-28）**：测试体系与质量门禁更新 —— 单元测试 374 项、功能 e2e 113 项、压测 7 场景 8/8 全绿；测试代码统一英文命名 + 中文注释并纳入 CI 静态检查。本次改动不涉及本文档描述的架构与接口设计变更，完整数据见 `docs/test-report-20261028.md`。

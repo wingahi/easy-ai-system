@@ -37,6 +37,7 @@ class ChunkingStrategyTest {
                 new CustomChunkingStrategy(paragraph));
     }
 
+    /** 章节、段落、长度策略的优先级依次为 1、2、3，排序后类型顺序固定。 */
     @Test
     @DisplayName("优先级 - 章节=1 段落=2 长度=3，替代硬编码顺序")
     void priorityOrder() {
@@ -54,6 +55,7 @@ class ChunkingStrategyTest {
                         Strategy.FAQ, Strategy.RECURSIVE, Strategy.CUSTOM);
     }
 
+    /** 每个策略类型恰有一个实现，注入顺序颠倒后各策略切分结果不变。 */
     @Test
     @DisplayName("注册分发 - 每个策略类型恰有一个实现，乱序注入行为一致")
     void dispatchIndependentOfInjectionOrder() {
@@ -77,6 +79,7 @@ class ChunkingStrategyTest {
         }
     }
 
+    /** 六个策略实现覆盖除 AUTO 外的全部策略类型。 */
     @Test
     @DisplayName("注册分发 - 六个策略实现覆盖全部非 AUTO 类型")
     void allNonAutoTypesCovered() {

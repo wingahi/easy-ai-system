@@ -21,6 +21,7 @@ import static org.mockito.Mockito.when;
 @DisplayName("文档解析分发器测试")
 class DocumentParserDispatcherTest {
 
+    /** 扩展名转小写后命中 supports 的解析器，仅委托该解析器处理。 */
     @Test
     @DisplayName("分发 - 命中 supports 的实现并委托解析（扩展名转小写）")
     void dispatchToSupportingParser() {
@@ -38,6 +39,7 @@ class DocumentParserDispatcherTest {
         verify(txt, never()).parse(any());
     }
 
+    /** 无解析器支持该扩展名时抛 BusinessException，消息保留原始大小写。 */
     @Test
     @DisplayName("未知格式 - 抛出 BusinessException，消息保留原始大小写")
     void unknownExtensionThrows() {
@@ -51,6 +53,7 @@ class DocumentParserDispatcherTest {
                 .hasMessageContaining("不支持的文件格式: HTML");
     }
 
+    /** 内置的八个解析器覆盖 pdf、txt、md、csv、xlsx、xls、docx、doc 全部格式。 */
     @Test
     @DisplayName("注册 - 内置解析器覆盖 pdf/txt/md/csv/xlsx/xls/docx/doc 八种格式")
     void builtinParsersSupportAllExtensions() {

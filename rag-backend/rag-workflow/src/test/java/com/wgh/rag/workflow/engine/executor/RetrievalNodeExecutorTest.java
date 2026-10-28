@@ -41,6 +41,7 @@ class RetrievalNodeExecutorTest {
         return new RetrievalNodeExecutor(variableResolver, ragRetrieveService);
     }
 
+    /** 未配置 kbIds 时抛出"知识库节点未选择知识库"异常 */
     @Test
     void execute_emptyKbIds_throws() {
         GraphNode node = node(Map.of("query", "q"));
@@ -50,6 +51,7 @@ class RetrievalNodeExecutorTest {
                 .hasMessage("知识库节点未选择知识库");
     }
 
+    /** query 为空时回退使用 vars.input 作为检索查询 */
     @Test
     void execute_blankQuery_fallsBackToInput() {
         when(ragRetrieveService.searchMultiple(anyList(), anyString())).thenReturn(List.of());
@@ -62,6 +64,7 @@ class RetrievalNodeExecutorTest {
         verify(ragRetrieveService).searchMultiple(eq(List.of(1L, 2L)), eq("默认查询"));
     }
 
+    /** 逗号字符串形式的 kbIds 被解析为 Long 列表 */
     @Test
     void execute_kbIdsAsCommaString_parses() {
         when(ragRetrieveService.searchMultiple(anyList(), anyString())).thenReturn(List.of());
@@ -72,6 +75,7 @@ class RetrievalNodeExecutorTest {
         verify(ragRetrieveService).searchMultiple(eq(List.of(3L, 4L)), eq("q"));
     }
 
+    /** topK 截断检索结果，拼接片段文本并组装 sources 元数据 */
     @Test
     void execute_topKTruncatesAndBuildsSources() {
         when(ragRetrieveService.searchMultiple(anyList(), anyString())).thenReturn(List.of(
@@ -94,6 +98,7 @@ class RetrievalNodeExecutorTest {
         assertThat(sources.get(1)).containsEntry("fileName", "b.pdf").containsEntry("chunkIndex", null);
     }
 
+    /** 检索返回 null 时输出空文本且 count 为 0 */
     @Test
     void execute_nullMatches_returnsEmpty() {
         when(ragRetrieveService.searchMultiple(anyList(), anyString())).thenReturn(null);

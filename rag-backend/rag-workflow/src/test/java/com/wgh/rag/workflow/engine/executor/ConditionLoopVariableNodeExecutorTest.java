@@ -27,6 +27,7 @@ class ConditionLoopVariableNodeExecutorTest {
 
     // ---------- CONDITION ----------
 
+    /** CONDITION 先渲染表达式再求值，条件成立时 result 为 true 并回填渲染后的表达式 */
     @Test
     void condition_rendersThenEvaluates_true() {
         RunContext ctx = new RunContext();
@@ -40,6 +41,7 @@ class ConditionLoopVariableNodeExecutorTest {
                 .containsEntry("expression", "ok == \"ok\"");
     }
 
+    /** 表达式不成立时 CONDITION 输出 result 为 false */
     @Test
     void condition_notMatching_false() {
         RunContext ctx = new RunContext();
@@ -53,6 +55,7 @@ class ConditionLoopVariableNodeExecutorTest {
 
     // ---------- LOOP ----------
 
+    /** LOOP 首次进入时把迭代计数初始化为 1 并写入上下文 */
     @Test
     void loop_firstEntry_initializesIteration() {
         RunContext ctx = new RunContext();
@@ -67,6 +70,7 @@ class ConditionLoopVariableNodeExecutorTest {
                 .containsEntry("maxIterations", 5);
     }
 
+    /** LOOP 未配置 maxIterations 时默认取 3 */
     @Test
     void loop_defaultMaxIterations_is3() {
         RunContext ctx = new RunContext();
@@ -78,6 +82,7 @@ class ConditionLoopVariableNodeExecutorTest {
 
     // ---------- VARIABLE ----------
 
+    /** VARIABLE 渲染赋值表达式后同时写入 vars 与节点输出（非字符串值被转成字符串） */
     @Test
     void variable_assignmentsRenderedAndWrittenToVars() {
         RunContext ctx = new RunContext();
@@ -92,6 +97,7 @@ class ConditionLoopVariableNodeExecutorTest {
         assertThat(result.getOutput()).containsEntry("x", "原始-后缀").containsEntry("n", "42");
     }
 
+    /** assignments 不是列表时 VARIABLE 节点输出为空 Map */
     @Test
     void variable_nonListAssignments_emptyOutput() {
         GraphNode node = node("v", "VARIABLE", Map.of("assignments", "not-a-list"));
@@ -101,6 +107,7 @@ class ConditionLoopVariableNodeExecutorTest {
         assertThat(result.getOutput()).isEmpty();
     }
 
+    /** VARIABLE 赋值可引用上游节点输出的路径变量 */
     @Test
     void variable_referencesNodeOutput() {
         RunContext ctx = new RunContext();

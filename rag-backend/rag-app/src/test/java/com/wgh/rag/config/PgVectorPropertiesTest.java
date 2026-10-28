@@ -13,6 +13,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @DisplayName("PgVectorProperties 配置测试")
 class PgVectorPropertiesTest {
 
+    /** 验证 PgVectorProperties 各配置字段的默认值符合预期。 */
     @Test
     @DisplayName("PgVectorProperties 默认值")
     void pgVectorProperties_defaultValues() {
@@ -27,6 +28,7 @@ class PgVectorPropertiesTest {
         assertThat(props.getAllowFallbackToInMemory()).isFalse();
     }
 
+    /** 验证 setter 能正确覆盖 PgVectorProperties 的默认值。 */
     @Test
     @DisplayName("PgVectorProperties setter 覆盖默认值")
     void pgVectorProperties_override() {
@@ -49,6 +51,7 @@ class PgVectorPropertiesTest {
         assertThat(props.getAllowFallbackToInMemory()).isTrue();
     }
 
+    /** 验证 RagProperties 的 retrieve、split、context 嵌套属性可正确设置与读取。 */
     @Test
     @DisplayName("RagProperties 嵌套属性 - retrieve / split / context")
     void ragProperties_nested() {

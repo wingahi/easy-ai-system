@@ -21,6 +21,7 @@ class LlmModelFactoryTest {
 
     private final LlmModelFactory factory = new LlmModelFactory();
 
+    /** 验证不支持的 provider 创建 ChatModel 时抛出 BusinessException 并提示「不支持」。 */
     @Test
     @DisplayName("不支持的 provider 抛 BusinessException")
     void unsupportedProvider_throwsException() {
@@ -33,6 +34,7 @@ class LlmModelFactoryTest {
                 .hasMessageContaining("不支持");
     }
 
+    /** 验证 OPENAI provider 能成功创建 ChatModel 实例。 */
     @Test
     @DisplayName("ChatModel - OPENAI provider 路由到 OpenAiChatModel.builder")
     void createChatModel_openai_route() {
@@ -48,6 +50,7 @@ class LlmModelFactoryTest {
         assertThat(model).isNotNull();
     }
 
+    /** 验证 DEEPSEEK provider 按 OpenAI 兼容方式创建 ChatModel 实例。 */
     @Test
     @DisplayName("ChatModel - DEEPSEEK provider (走 OpenAI 兼容)")
     void createChatModel_deepseek_route() {
@@ -61,6 +64,7 @@ class LlmModelFactoryTest {
         assertThat(model).isNotNull();
     }
 
+    /** 验证 CUSTOM_OPENAI provider 按自定义 OpenAI 兼容地址创建 ChatModel 实例。 */
     @Test
     @DisplayName("ChatModel - CUSTOM_OPENAI 自定义 OpenAI 兼容")
     void createChatModel_customOpenAi() {
@@ -74,6 +78,7 @@ class LlmModelFactoryTest {
         assertThat(model).isNotNull();
     }
 
+    /** 验证 OPENAI provider 能成功创建 StreamingChatModel 实例。 */
     @Test
     @DisplayName("StreamingChatModel - OPENAI 路由到 OpenAiStreamingChatModel")
     void createStreamingChatModel_openai() {
@@ -87,6 +92,7 @@ class LlmModelFactoryTest {
         assertThat(model).isNotNull();
     }
 
+    /** 验证 OPENAI provider 能成功创建 EmbeddingModel 实例。 */
     @Test
     @DisplayName("EmbeddingModel - OPENAI provider")
     void createEmbeddingModel_openai() {
@@ -100,6 +106,7 @@ class LlmModelFactoryTest {
         assertThat(model).isNotNull();
     }
 
+    /** 验证 DASHSCOPE provider 能成功创建 EmbeddingModel 实例。 */
     @Test
     @DisplayName("EmbeddingModel - DASHSCOPE provider")
     void createEmbeddingModel_dashscope() {
@@ -112,6 +119,7 @@ class LlmModelFactoryTest {
         assertThat(model).isNotNull();
     }
 
+    /** 验证不支持的 provider 创建 EmbeddingModel 时抛出 BusinessException。 */
     @Test
     @DisplayName("EmbeddingModel - 不支持的 provider 抛异常")
     void createEmbeddingModel_unsupported() {

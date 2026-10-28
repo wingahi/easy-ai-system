@@ -27,6 +27,7 @@ class FactExtractHandlerTest {
 
     private final FactExtractHandler handler = new FactExtractHandler();
 
+    /** 远期层为空返回 false，远期层有内容返回 true */
     @Test
     @DisplayName("远期层为空时不处理")
     void shouldHandle_falseWhenLongTermLayerEmpty() {
@@ -34,6 +35,7 @@ class FactExtractHandlerTest {
         assertThat(handler.shouldHandle(ctxWithRounds(4, 1, 2))).isTrue();
     }
 
+    /** 事实可复用时直接采用已保存内容，且不触发 LLM 调用 */
     @Test
     @DisplayName("已保存事实可复用时直接使用，不调 LLM")
     void handle_reusable_usesSaved() {
@@ -49,6 +51,7 @@ class FactExtractHandlerTest {
         verifyNoInteractions(chatModel);
     }
 
+    /** 缺少压缩模型时跳过事实提取，且不标记为降级 */
     @Test
     @DisplayName("无压缩模型时跳过提取，不标记降级")
     void handle_noModel_skips() {
@@ -61,6 +64,7 @@ class FactExtractHandlerTest {
         assertThat(ctx.isDegraded()).isFalse();
     }
 
+    /** LLM 正常返回时写入事实，且 prompt 包含关键事实提取要求与远期层内容 */
     @Test
     @DisplayName("LLM 提取事实，prompt 只留关键事实优先级")
     void handle_llmSuccess_extractsFacts() {
@@ -85,6 +89,7 @@ class FactExtractHandlerTest {
                 .contains("问题0"); // 远期层对话内容渲染进 prompt
     }
 
+    /** LLM 抛异常时标记降级并保持事实为空，交由编排方截断 */
     @Test
     @DisplayName("LLM 异常时标记降级，由编排方统一截断")
     void handle_llmThrows_marksDegraded() {

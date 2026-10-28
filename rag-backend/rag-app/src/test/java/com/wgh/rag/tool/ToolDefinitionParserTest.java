@@ -21,6 +21,7 @@ class ToolDefinitionParserTest {
     @DisplayName("基本解析")
     class BasicParse {
 
+        /** 解析标准 OpenAI type:function 格式，得到名称、描述与参数 schema */
         @Test
         @DisplayName("标准 OpenAI function 格式（type:function + function 包裹）")
         void parse_standardFunctionFormat() {
@@ -52,6 +53,7 @@ class ToolDefinitionParserTest {
             assertThat(spec.parameters().required()).containsExactly("city");
         }
 
+        /** 解析不含 type:function 包裹的直接 function 节点 */
         @Test
         @DisplayName("直接 function JSON（无 type:function 包裹）")
         void parse_directFunctionNode() {
@@ -76,6 +78,7 @@ class ToolDefinitionParserTest {
             assertThat(spec.parameters().required()).containsExactly("price", "discount");
         }
 
+        /** 无 parameters 的工具解析后 parameters 为 null */
         @Test
         @DisplayName("无 parameters 的工具（不需要参数）")
         void parse_noParameters() {
@@ -102,6 +105,7 @@ class ToolDefinitionParserTest {
     @DisplayName("参数类型映射")
     class TypeMapping {
 
+        /** integer、number、boolean、string 四种参数类型都能正确映射 */
         @Test
         @DisplayName("integer / number / boolean / string 全类型映射")
         void parse_allJsonTypes() {
@@ -131,6 +135,7 @@ class ToolDefinitionParserTest {
             assertThat(spec.parameters().required()).containsExactly("age");
         }
 
+        /** 带 enum 的 string 参数能被正常解析 */
         @Test
         @DisplayName("enum 类型特殊处理")
         void parse_enumType() {
@@ -160,6 +165,7 @@ class ToolDefinitionParserTest {
             assertThat(spec.parameters().properties()).containsKey("mode");
         }
 
+        /** 未识别的参数类型降级为 string 后仍能解析该参数 */
         @Test
         @DisplayName("未识别的 type 默认降级为 string")
         void parse_unknownType_defaultsToString() {
@@ -191,6 +197,7 @@ class ToolDefinitionParserTest {
     @DisplayName("异常处理")
     class ExceptionHandling {
 
+        /** definition 为非法 JSON 时抛出 IllegalArgumentException */
         @Test
         @DisplayName("JSON 格式错误 → 抛 IllegalArgumentException")
         void parse_invalidJson_throws() {
@@ -198,6 +205,7 @@ class ToolDefinitionParserTest {
                     .isInstanceOf(IllegalArgumentException.class);
         }
 
+        /** 入参为 null、空串或空白串时均抛出 IllegalArgumentException */
         @Test
         @DisplayName("null / 空字符串 → 抛 IllegalArgumentException")
         void parse_nullOrBlankJson_throws() {
@@ -216,6 +224,7 @@ class ToolDefinitionParserTest {
     @DisplayName("extractFunctionNode 工具方法")
     class ExtractFunctionNode {
 
+        /** extractFunctionNode 正确取出 function 节点中的 name 与 description */
         @Test
         @DisplayName("正确提取 function 节点")
         void extractFunctionNode_ok() {

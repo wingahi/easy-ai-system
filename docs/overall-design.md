@@ -400,3 +400,7 @@ ToolExecutionEngine.execute(request, toolRegistry)
 | pgvector | PostgreSQL 官方向量扩展，本系统向量存储的唯一实现（复用 HikariCP 连接池） |
 | PendingInEdges | fan-in 汇聚点的入边等待计数器，全部减到 0 才执行 |
 | nextTick | Vue 异步渲染队列，用于避开 el-dialog teleport 竞争导致的 HITL 弹窗 display:none 问题 |
+
+---
+
+> **文档修订（2026-10-28）**：测试体系与质量门禁更新 —— 单元测试 374 项、功能 e2e 113 项、压测 7 场景 8/8 全绿；测试代码统一英文命名 + 中文注释并纳入 CI 静态检查。本次改动不涉及本文档描述的架构与接口设计变更，完整数据见 `docs/test-report-20261028.md`。

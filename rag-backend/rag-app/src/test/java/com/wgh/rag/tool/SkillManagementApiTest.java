@@ -117,6 +117,7 @@ class SkillManagementApiTest {
 
     // ========== 1. REST API 层：建目录 → 写内容 → 读内容 ==========
 
+    /** REST 建目录、保存内容后再读取，验证默认文件名、front matter 解析与原文返回 */
     @Test
     @DisplayName("REST 全链路：create-dir → save → content 读取 + front matter 解析")
     void restApi_createSaveRead_roundtrip() throws Exception {
@@ -160,6 +161,7 @@ class SkillManagementApiTest {
                 .andExpect(jsonPath("$.data.content", containsString("---SYSTEM---")));
     }
 
+    /** GET dirs 扫描磁盘并列出已创建的 skill 目录与 basePath */
     @Test
     @DisplayName("GET dirs 列出磁盘上的 skill 目录")
     void scanDirs_listsCreatedSkill() throws Exception {
@@ -174,6 +176,7 @@ class SkillManagementApiTest {
                 .andExpect(jsonPath("$.data.basePath", is(skillBase.toString())));
     }
 
+    /** 目录参数包含 ../ 路径穿越时返回非 200 的业务错误码 */
     @Test
     @DisplayName("路径穿越防护：../../ 被拒绝")
     void pathTraversal_rejected() throws Exception {
@@ -184,6 +187,7 @@ class SkillManagementApiTest {
                 .andExpect(jsonPath("$.code", not(200)));
     }
 
+    /** 未携带 token 访问 skill 接口时返回 401 */
     @Test
     @DisplayName("无 token 访问 skill API → 401")
     void noToken_unauthorized() throws Exception {
@@ -193,6 +197,7 @@ class SkillManagementApiTest {
 
     // ========== 2. import：磁盘 → DB ==========
 
+    /** import 把磁盘 skill 落库为 SKILL 工具，executorConfig 由 front matter 自动构造 */
     @Test
     @DisplayName("import 把磁盘 skill 导入为 ToolConfig DB 记录（executorConfig 自动构造）")
     void importSkill_createsDbRecord() throws Exception {
@@ -230,6 +235,7 @@ class SkillManagementApiTest {
         assertThat(execCfg.path("includeResources").asBoolean()).isTrue();
     }
 
+    /** 同名 skill 重复导入时返回 duplicated=true 且不覆盖已有记录 */
     @Test
     @DisplayName("import：同名 skill 已存在时不创建/不更新，返回 duplicated=true 与已有记录")
     void importSkill_duplicated() throws Exception {
@@ -272,6 +278,7 @@ class SkillManagementApiTest {
 
     // ========== 3. 最高层：HTTP 建 skill → import 落库 → 引擎从 DB 加载 → 执行 → LLM ==========
 
+    /** 全栈链路：REST 建目录保存 → import 落库 → 引擎从 DB 加载执行 → LLM 收到渲染后 prompt 与继承模型 */
     @Test
     @DisplayName("全栈链路：REST 建目录/保存 → import 落库 → engine 从 DB 加载执行 → LLM 收到渲染后 prompt")
     void fullStack_restToDbToEngineToLlm() throws Exception {
@@ -327,6 +334,7 @@ class SkillManagementApiTest {
         }
     }
 
+    /** import 后通过 REST 修改磁盘内容，引擎下一次执行立即读到新版本 */
     @Test
     @DisplayName("全栈动态重载：import 后改磁盘文件，引擎下一次执行立即生效")
     void fullStack_diskEditVisibleToEngineImmediately() throws Exception {
@@ -363,6 +371,7 @@ class SkillManagementApiTest {
         }
     }
 
+    /** 通过 REST 删除 skill 目录后引擎执行返回「目录不存在」错误 */
     @Test
     @DisplayName("delete-dir 后引擎执行返回目录不存在错误")
     void deleteDir_engineReturnsLoadError() throws Exception {

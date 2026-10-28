@@ -20,12 +20,14 @@ class RecentKeepHandlerTest {
 
     private final RecentKeepHandler handler = new RecentKeepHandler();
 
+    /** shouldHandle 对任意上下文恒返回 true，因近期层始终需要保留 */
     @Test
     @DisplayName("shouldHandle 恒为 true（近期层总是保留）")
     void shouldHandle_alwaysTrue() {
         assertThat(handler.shouldHandle(new CompressionContext())).isTrue();
     }
 
+    /** 近期层按 user、ai 顺序展开为原文消息并保持原对象引用 */
     @Test
     @DisplayName("handle 按序展开近期轮次的 user/ai 原文")
     void handle_flattensRecentRounds() {
@@ -41,6 +43,7 @@ class RecentKeepHandlerTest {
         assertThat(recent.get(3)).isSameAs(ctx.getRounds().get(2).getAi());
     }
 
+    /** 最后一轮 ai 回复为空时，近期层只保留该轮 user 消息 */
     @Test
     @DisplayName("最后一轮 ai 为 null 时只保留 user 消息")
     void handle_lastRoundWithoutAi() {

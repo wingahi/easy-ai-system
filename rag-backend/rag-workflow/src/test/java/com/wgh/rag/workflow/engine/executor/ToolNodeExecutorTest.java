@@ -37,6 +37,7 @@ class ToolNodeExecutorTest {
         return new ToolNodeExecutor(variableResolver, toolNodeInvoker);
     }
 
+    /** 缺少 toolId 时抛出"工具节点缺少 toolId"异常 */
     @Test
     void execute_missingToolId_throws() {
         GraphNode node = node(Map.of());
@@ -46,6 +47,7 @@ class ToolNodeExecutorTest {
                 .hasMessage("工具节点缺少 toolId");
     }
 
+    /** 字符串参数渲染变量、非字符串参数原样保留，成功结果标记 success 为 true */
     @Test
     void execute_rendersStringArgsKeepsOthers() throws Exception {
         when(toolNodeInvoker.invoke(eq(3L), any())).thenReturn("ok");
@@ -62,6 +64,7 @@ class ToolNodeExecutorTest {
         assertThat(result.getOutput()).containsEntry("text", "ok").containsEntry("success", true);
     }
 
+    /** 工具返回 Error 开头的文本时标记 success 为 false */
     @Test
     void execute_errorText_marksUnsuccessful() throws Exception {
         when(toolNodeInvoker.invoke(eq(3L), any())).thenReturn("Error: 超时");

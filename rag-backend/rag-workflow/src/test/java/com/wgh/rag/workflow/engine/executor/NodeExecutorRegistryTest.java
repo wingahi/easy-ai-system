@@ -29,6 +29,7 @@ class NodeExecutorRegistryTest {
                 new EndNodeExecutor(variableResolver)));
     }
 
+    /** 9 种节点类型均能路由到对应的执行器实现 */
     @Test
     void get_routesAllSupportedTypes() {
         NodeExecutorRegistry registry = newRegistry();
@@ -44,6 +45,7 @@ class NodeExecutorRegistryTest {
         assertThat(registry.get("END")).isInstanceOf(EndNodeExecutor.class);
     }
 
+    /** 未知节点类型抛出与原 default 分支一致的"不支持的节点类型"异常 */
     @Test
     void get_unknownType_throwsSameAsBefore() {
         NodeExecutorRegistry registry = newRegistry();

@@ -1031,3 +1031,7 @@ const handleEvent = (event, payload) => {
 | GroupChat HITL Agent 无 hitlEnabled | 400 | 400 | HITL Agent 需要 hitlEnabled=true |
 | RUNNING 状态重复 cancel | 200 | 200 | 幂等 |
 | PAUSED 状态 hitl-confirm 但状态已变化 | 400 | 400 | run 状态不是 PAUSED，无法确认 |
+
+---
+
+> **文档修订（2026-10-28）**：测试体系与质量门禁更新 —— 单元测试 374 项、功能 e2e 113 项、压测 7 场景 8/8 全绿；测试代码统一英文命名 + 中文注释并纳入 CI 静态检查。本次改动不涉及本文档描述的架构与接口设计变更，完整数据见 `docs/test-report-20261028.md`。

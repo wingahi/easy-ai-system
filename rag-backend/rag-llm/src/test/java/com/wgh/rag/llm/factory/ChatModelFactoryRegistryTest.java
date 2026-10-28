@@ -27,6 +27,7 @@ class ChatModelFactoryRegistryTest {
 
     private final ChatModelFactoryRegistry registry = defaultRegistry();
 
+    /** 各 provider 通过注册表路由到对应的工厂实现。 */
     @Test
     @DisplayName("get - 各 provider 路由到对应工厂")
     void get_routesToProviderFactory() {
@@ -37,6 +38,7 @@ class ChatModelFactoryRegistryTest {
         assertThat(registry.get("QWEN")).isInstanceOf(QwenModelFactory.class);
     }
 
+    /** provider 名称大小写不影响工厂路由结果。 */
     @Test
     @DisplayName("get - provider 大小写不敏感")
     void get_caseInsensitive() {
@@ -45,6 +47,7 @@ class ChatModelFactoryRegistryTest {
         assertThat(registry.get("qwen")).isInstanceOf(QwenModelFactory.class);
     }
 
+    /** 未知 provider 查询工厂时抛 BusinessException 并提示不支持的提供商。 */
     @Test
     @DisplayName("get - 未知 provider 抛 BusinessException（消息同原逻辑）")
     void get_unknownProvider() {
@@ -53,6 +56,7 @@ class ChatModelFactoryRegistryTest {
                 .hasMessageContaining("不支持的LLM提供商: GOOGLE");
     }
 
+    /** 未知 provider 查询嵌入工厂时抛嵌入专用的 BusinessException 消息。 */
     @Test
     @DisplayName("getEmbeddingFactory - 未知 provider 抛 BusinessException（嵌入专用消息）")
     void getEmbeddingFactory_unknownProvider() {
@@ -61,6 +65,7 @@ class ChatModelFactoryRegistryTest {
                 .hasMessageContaining("不支持的嵌入模型提供商: XYZ");
     }
 
+    /** DEEPSEEK 能取到工厂，但其 buildEmbedding 抛不支持嵌入的异常。 */
     @Test
     @DisplayName("getEmbeddingFactory - DEEPSEEK 有工厂但 buildEmbedding 抛不支持异常")
     void getEmbeddingFactory_deepSeekEmbeddingUnsupported() {
@@ -75,6 +80,7 @@ class ChatModelFactoryRegistryTest {
                 .hasMessageContaining("不支持的嵌入模型提供商: DEEPSEEK");
     }
 
+    /** provider 为 null 时两种查询均抛 NullPointerException。 */
     @Test
     @DisplayName("get - provider 为 null 抛 NullPointerException（与原 toUpperCase 行为一致）")
     void get_nullProvider() {

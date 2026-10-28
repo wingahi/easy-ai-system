@@ -49,6 +49,7 @@ class WorkflowNodeExecutorTest {
         return new WorkflowNodeExecutor(variableResolver, workflowMapper, objectMapper, engineProvider);
     }
 
+    /** 配置缺少 workflowId 时抛出 IllegalArgumentException */
     @Test
     void execute_missingWorkflowId_throws() {
         GraphNode node = node(Map.of());
@@ -58,6 +59,7 @@ class WorkflowNodeExecutorTest {
                 .hasMessage("子流程节点缺少 workflowId");
     }
 
+    /** 子流程 ID 查不到记录时抛出"子流程不存在"异常 */
     @Test
     void execute_subWorkflowNotFound_throws() {
         when(workflowMapper.selectById(99L)).thenReturn(null);
@@ -68,6 +70,7 @@ class WorkflowNodeExecutorTest {
                 .hasMessage("子流程不存在：99");
     }
 
+    /** 子流程图为非法结构时抛出带"子流程图校验失败"信息的异常 */
     @Test
     void execute_invalidSubGraph_throwsValidationError() throws Exception {
         Workflow sub = subWorkflow(twoStartGraphJson());
@@ -79,6 +82,7 @@ class WorkflowNodeExecutorTest {
                 .hasMessageContaining("子流程图校验失败：");
     }
 
+    /** 未配置模板时以 lastOutput 作为子流程输入，并返回子流程输出、runId 与状态 */
     @Test
     void execute_blankTemplates_passesLastOutputAndReturnsSubOutput() throws Exception {
         when(workflowMapper.selectById(99L)).thenReturn(subWorkflow(validSubGraphJson()));
@@ -102,6 +106,7 @@ class WorkflowNodeExecutorTest {
                 .containsEntry("subStatus", "COMPLETED");
     }
 
+    /** 输入模板渲染后传给子流程，输出模板通过临时变量渲染出最终文本 */
     @Test
     void execute_outputTemplate_rendersViaTempVar() throws Exception {
         when(workflowMapper.selectById(99L)).thenReturn(subWorkflow(validSubGraphJson()));
@@ -124,6 +129,7 @@ class WorkflowNodeExecutorTest {
         assertThat(result.getOutput()).containsEntry("text", "包装[子输出]");
     }
 
+    /** 子流程状态为 FAILED 时抛出携带其错误信息的异常 */
     @Test
     void execute_failedSubRun_throws() throws Exception {
         when(workflowMapper.selectById(99L)).thenReturn(subWorkflow(validSubGraphJson()));

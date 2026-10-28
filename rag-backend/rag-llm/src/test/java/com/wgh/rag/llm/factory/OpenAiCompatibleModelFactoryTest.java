@@ -37,6 +37,7 @@ class OpenAiCompatibleModelFactoryTest {
         return config;
     }
 
+    /** 三个 OpenAI 兼容工厂的 supportedProvider 分别返回 OPENAI、DEEPSEEK、CUSTOM_OPENAI。 */
     @Test
     @DisplayName("supportedProvider 标识正确")
     void supportedProvider() {
@@ -45,6 +46,7 @@ class OpenAiCompatibleModelFactoryTest {
         assertThat(new CustomOpenAiModelFactory().supportedProvider()).isEqualTo("CUSTOM_OPENAI");
     }
 
+    /** 三个 OpenAI 兼容工厂的 build 均构建出 OpenAiChatModel。 */
     @Test
     @DisplayName("build - 构建 OpenAiChatModel（含 temperature/maxCompletionTokens 可选参数）")
     void build_openAiChatModel() {
@@ -53,6 +55,7 @@ class OpenAiCompatibleModelFactoryTest {
         assertThat(new CustomOpenAiModelFactory().build(chatConfig())).isInstanceOf(OpenAiChatModel.class);
     }
 
+    /** temperature 与 maxContextTokens 为 null 时仍能构建 OpenAiChatModel。 */
     @Test
     @DisplayName("build - temperature/maxContextTokens 为 null 时走默认分支仍可构建")
     void build_nullOptionalParams() {
@@ -63,6 +66,7 @@ class OpenAiCompatibleModelFactoryTest {
         assertThat(new OpenAiModelFactory().build(config)).isInstanceOf(OpenAiChatModel.class);
     }
 
+    /** 三个 OpenAI 兼容工厂的 buildStreaming 均构建出 OpenAiStreamingChatModel。 */
     @Test
     @DisplayName("buildStreaming - 构建 OpenAiStreamingChatModel")
     void buildStreaming_openAiStreamingChatModel() {
@@ -71,6 +75,7 @@ class OpenAiCompatibleModelFactoryTest {
         assertThat(new CustomOpenAiModelFactory().buildStreaming(chatConfig())).isInstanceOf(OpenAiStreamingChatModel.class);
     }
 
+    /** OPENAI 与 CUSTOM_OPENAI 工厂的 buildEmbedding 返回 OpenAiEmbeddingModel。 */
     @Test
     @DisplayName("buildEmbedding - OPENAI/CUSTOM_OPENAI 构建 OpenAiEmbeddingModel")
     void buildEmbedding_openAiEmbeddingModel() {
@@ -80,6 +85,7 @@ class OpenAiCompatibleModelFactoryTest {
                 .isInstanceOf(OpenAiEmbeddingModel.class);
     }
 
+    /** DeepSeek 工厂构建嵌入模型时抛 BusinessException 并提示不支持。 */
     @Test
     @DisplayName("buildEmbedding - DEEPSEEK 不支持嵌入，抛 BusinessException")
     void buildEmbedding_deepSeekUnsupported() {

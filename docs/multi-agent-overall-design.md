@@ -629,4 +629,8 @@ rag-agent-multi/
 | 动态重规划 | ❌ 固定 DAG | ❌ 固定 DAG | ✅ GroupChat 自然支持 | Planner（可选接入） |
 | 对话消息传递 | ❌ 无（变量引用） | ❌ 无（变量引用） | ✅ MessageBus.send/broadcast | **新增** |
 | 对话历史 | ❌ 各自独立 context | ❌ 各自独立 context | ✅ 共享 history 持久化 | **新增** |
-| 对话路由 | ❌ 固定 | ❌ 显式 Edge 路由 | ✅ GroupChatManager | **新增** |
+| 对话路由 | ❌ 固定 | ✅ 显式 Edge 路由 | ✅ GroupChatManager | **新增** |
+
+---
+
+> **文档修订（2026-10-28）**：测试体系与质量门禁更新 —— 单元测试 374 项、功能 e2e 113 项、压测 7 场景 8/8 全绿；测试代码统一英文命名 + 中文注释并纳入 CI 静态检查。本次改动不涉及本文档描述的架构与接口设计变更，完整数据见 `docs/test-report-20261028.md`。

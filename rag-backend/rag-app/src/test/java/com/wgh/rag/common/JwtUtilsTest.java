@@ -35,6 +35,7 @@ class JwtUtilsTest {
         }
     }
 
+    /** 验证生成的 Token 非空且符合 JWT 三段式结构。 */
     @Test
     @DisplayName("生成 Token - 不为空")
     void generateToken_notNull() {
@@ -43,6 +44,7 @@ class JwtUtilsTest {
         assertThat(token.split("\\.")).hasSize(3); // JWT 三段式
     }
 
+    /** 验证由 generateToken 生成的有效 Token 能通过校验。 */
     @Test
     @DisplayName("Token 验证 - 有效 Token")
     void validateToken_valid() {
@@ -50,12 +52,14 @@ class JwtUtilsTest {
         assertThat(jwtUtils.validateToken(token)).isTrue();
     }
 
+    /** 验证格式非法的字符串校验结果为 false。 */
     @Test
     @DisplayName("Token 验证 - 无效 Token 串")
     void validateToken_invalidFormat() {
         assertThat(jwtUtils.validateToken("not-a-jwt-token")).isFalse();
     }
 
+    /** 验证空串和 null 的 Token 校验均返回 false。 */
     @Test
     @DisplayName("Token 验证 - 空串")
     void validateToken_empty() {
@@ -63,6 +67,7 @@ class JwtUtilsTest {
         assertThat(jwtUtils.validateToken(null)).isFalse();
     }
 
+    /** 验证解析 Token 后 subject、userId、签发时间与过期时间均正确。 */
     @Test
     @DisplayName("Token 解析 - userId 和 username 正确")
     void parseToken_extractClaims() {
@@ -78,6 +83,7 @@ class JwtUtilsTest {
         assertThat(claims.getExpiration()).isNotNull();
     }
 
+    /** 验证 getUserIdFromToken 与 getUsernameFromToken 能正确提取用户信息。 */
     @Test
     @DisplayName("getUserIdFromToken / getUsernameFromToken")
     void extractMethods_work() {
@@ -86,6 +92,7 @@ class JwtUtilsTest {
         assertThat(jwtUtils.getUsernameFromToken(token)).isEqualTo("extract-user");
     }
 
+    /** 验证不同用户生成的 Token 互不相同。 */
     @Test
     @DisplayName("不同用户生成的 Token 不同")
     void differentUser_differentToken() {

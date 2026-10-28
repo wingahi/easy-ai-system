@@ -31,6 +31,7 @@ class McpToolExecutorTest {
         executor = new McpToolExecutor(mockManager);
     }
 
+    /** supportedToolType 返回 "MCP" */
     @Test
     void supportedToolType_returnsMCP() {
         assertThat(executor.supportedToolType()).isEqualTo("MCP");
@@ -42,6 +43,7 @@ class McpToolExecutorTest {
     @DisplayName("executorConfig 字段校验")
     class ConfigValidation {
 
+        /** http 传输缺少 serverUrl 时返回错误且不访问 McpClientManager */
         @Test
         void missingServerUrl_http_returnsError() {
             Map<String, Object> config = Map.of("transport", "http");
@@ -54,6 +56,7 @@ class McpToolExecutorTest {
             verifyNoInteractions(mockManager);
         }
 
+        /** serverUrl 为空白字符串时返回错误且不访问 McpClientManager */
         @Test
         void blankServerUrl_http_returnsError() {
             Map<String, Object> config = Map.of("serverUrl", "   ", "transport", "http");
@@ -66,6 +69,7 @@ class McpToolExecutorTest {
             verifyNoInteractions(mockManager);
         }
 
+        /** stdio 传输缺少 command 时返回错误且不访问 McpClientManager */
         @Test
         void missingCommand_stdio_returnsError() {
             Map<String, Object> config = Map.of("transport", "stdio");
@@ -78,6 +82,7 @@ class McpToolExecutorTest {
             verifyNoInteractions(mockManager);
         }
 
+        /** 不支持的 transport 类型返回错误且不访问 McpClientManager */
         @Test
         void invalidTransport_returnsError() {
             Map<String, Object> config = Map.of("serverUrl", "http://mcp.local", "transport", "grpc");
@@ -97,6 +102,7 @@ class McpToolExecutorTest {
     @DisplayName("McpClient 调用 + 结果转换")
     class McpCall {
 
+        /** http 传输调用 McpClient 执行工具并把结果文本、工具名回填到消息 */
         @Test
         void httpTransport_callsMcpClientAndReturnsText() {
             McpClient mockClient = mock(McpClient.class);
@@ -122,6 +128,7 @@ class McpToolExecutorTest {
             verify(mockClient).executeTool(req);
         }
 
+        /** stdio 传输携带 command 与 args 正常调用 McpClient */
         @Test
         void stdioTransport_callsMcpClient() {
             McpClient mockClient = mock(McpClient.class);
@@ -145,6 +152,7 @@ class McpToolExecutorTest {
             verify(mockManager).getOrCreateClient(config);
         }
 
+        /** MCP 返回 isError 结果时包装成带 Error: 前缀的错误消息 */
         @Test
         void mcpResultError_returnsErrorMessage() {
             McpClient mockClient = mock(McpClient.class);
@@ -165,6 +173,7 @@ class McpToolExecutorTest {
             assertThat(result.text()).contains("找不到文件");
         }
 
+        /** McpClient 抛异常时捕获并包装成带 Error: 前缀的错误消息 */
         @Test
         void mcpClientThrowsException_wrapsInError() {
             when(mockManager.getOrCreateClient(anyMap()))
@@ -180,6 +189,7 @@ class McpToolExecutorTest {
             assertThat(result.text()).contains("连接超时");
         }
 
+        /** 未指定 transport 时默认按 http 传输处理 */
         @Test
         void defaultTransportIsHttp_whenOmitted() {
             McpClient mockClient = mock(McpClient.class);

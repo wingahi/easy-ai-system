@@ -63,6 +63,7 @@ class ModelCacheManagerTest {
         return config;
     }
 
+    /** 传入 null 的 modelId 时 getChatModel 抛 IllegalArgumentException。 */
     @Test
     @DisplayName("getChatModel - modelId 为 null 抛 IllegalArgumentException")
     void getChatModel_nullId() {
@@ -71,6 +72,7 @@ class ModelCacheManagerTest {
                 .hasMessageContaining("modelId 不能为 null");
     }
 
+    /** 相同 id 重复取 ChatModel 命中缓存，返回同一实例且只查库一次。 */
     @Test
     @DisplayName("getChatModel - 同 id 命中缓存，DB 只查一次且返回同一实例")
     void getChatModel_cacheHit() {
@@ -83,6 +85,7 @@ class ModelCacheManagerTest {
         verify(llmModelMapper, times(1)).selectById(1L);
     }
 
+    /** 模型记录不存在时 getChatModel 抛 IllegalArgumentException。 */
     @Test
     @DisplayName("getChatModel - 模型不存在抛 IllegalArgumentException")
     void getChatModel_notFound() {
@@ -93,6 +96,7 @@ class ModelCacheManagerTest {
                 .hasMessageContaining("LLM模型不存在: 99");
     }
 
+    /** 相同 id 重复取流式模型命中缓存，返回同一实例且只查库一次。 */
     @Test
     @DisplayName("getStreamingChatModel - 同 id 命中缓存")
     void getStreamingChatModel_cacheHit() {
@@ -105,6 +109,7 @@ class ModelCacheManagerTest {
         verify(llmModelMapper, times(1)).selectById(2L);
     }
 
+    /** 驱逐缓存后再取 ChatModel 会重新查库并构建新实例。 */
     @Test
     @DisplayName("evictChatModel - 清除后重新查询 DB 并重建实例")
     void evictChatModel_rebuild() {
@@ -118,6 +123,7 @@ class ModelCacheManagerTest {
         verify(llmModelMapper, times(2)).selectById(3L);
     }
 
+    /** 嵌入模型同 id 命中缓存，驱逐后重新查库构建新实例。 */
     @Test
     @DisplayName("getEmbeddingModel - 同 id 命中缓存，evict 后重建")
     void embeddingModel_cacheAndEvict() {
@@ -133,6 +139,7 @@ class ModelCacheManagerTest {
         verify(embeddingModelMapper, times(2)).selectById(4L);
     }
 
+    /** 嵌入模型记录不存在时抛 IllegalArgumentException。 */
     @Test
     @DisplayName("getEmbeddingModel - 嵌入模型不存在抛 IllegalArgumentException")
     void getEmbeddingModel_notFound() {

@@ -25,11 +25,13 @@ class RagApplicationIntegrationTest {
     @Autowired
     private MockMvc mockMvc;
 
+    /** 验证 Spring 应用上下文能够正常加载。 */
     @Test
     @DisplayName("应用上下文加载成功")
     void contextLoads() {
     }
 
+    /** 验证 /actuator/health 接口返回 200 且响应包含 status 字段。 */
     @Test
     @DisplayName("健康检查 endpoint 可达")
     void healthCheck_endpoint() throws Exception {
@@ -38,6 +40,7 @@ class RagApplicationIntegrationTest {
                 .andExpect(jsonPath("$.status").exists());
     }
 
+    /** 验证未鉴权访问受保护接口 /api/kb 返回 401。 */
     @Test
     @DisplayName("未鉴权访问受保护接口 - 返回 401")
     void protectedEndpoint_unauthorized() throws Exception {
@@ -45,6 +48,7 @@ class RagApplicationIntegrationTest {
                 .andExpect(status().isUnauthorized());
     }
 
+    /** 验证 admin/admin 登录成功并返回 code=200 与非空 token。 */
     @Test
     @DisplayName("登录接口 - admin/admin 成功获取 token")
     void login_success() throws Exception {
@@ -61,6 +65,7 @@ class RagApplicationIntegrationTest {
                 .andExpect(jsonPath("$.data.token").isNotEmpty());
     }
 
+    /** 验证错误密码登录返回 HTTP 200 且响应 code=500。 */
     @Test
     @DisplayName("登录接口 - 错误密码")
     void login_wrongPassword() throws Exception {
@@ -75,6 +80,7 @@ class RagApplicationIntegrationTest {
                 .andExpect(jsonPath("$.code", is(500)));
     }
 
+    /** 验证访问不存在的分享链接无需鉴权，返回 HTTP 200 而非 401。 */
     @Test
     @DisplayName("分享接口不需要鉴权")
     void shareEndpoint_noAuth() throws Exception {

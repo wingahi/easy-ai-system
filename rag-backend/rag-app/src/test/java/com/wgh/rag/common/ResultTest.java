@@ -16,6 +16,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @DisplayName("统一响应测试")
 class ResultTest {
 
+    /** 验证无参 success() 返回 code=200、默认消息、data 为空且时间戳为正数。 */
     @Test
     @DisplayName("success() 无参 - 默认 code=200")
     void success_noArg_defaultCode() {
@@ -26,6 +27,7 @@ class ResultTest {
         assertThat(result.getTimestamp()).isPositive();
     }
 
+    /** 验证 success(data) 返回 code=200 并原样携带数据。 */
     @Test
     @DisplayName("success(data) - 数据正确返回")
     void success_withData() {
@@ -35,6 +37,7 @@ class ResultTest {
         assertThat(result.getData()).isEqualTo(data);
     }
 
+    /** 验证 fail(ResultCode) 使用枚举中的错误码与对应提示消息。 */
     @Test
     @DisplayName("fail(ResultCode) - 业务错误码")
     void fail_withResultCode() {
@@ -43,6 +46,7 @@ class ResultTest {
         assertThat(result.getMessage()).isEqualTo("资源不存在");
     }
 
+    /** 验证 fail(code, message) 使用自定义错误码与消息。 */
     @Test
     @DisplayName("fail(code, message) - 自定义错误")
     void fail_withCodeAndMessage() {
@@ -51,6 +55,7 @@ class ResultTest {
         assertThat(result.getMessage()).isEqualTo("自定义错误");
     }
 
+    /** 验证 fail(message) 返回 code=500 并携带自定义消息。 */
     @Test
     @DisplayName("fail(message) - 纯消息")
     void fail_withMessageOnly() {
@@ -59,6 +64,7 @@ class ResultTest {
         assertThat(result.getMessage()).isEqualTo("出错了");
     }
 
+    /** 验证 ResultCode 各关键枚举的错误码取值正确。 */
     @Test
     @DisplayName("ResultCode 枚举完整性")
     void resultCode_enumValues() {
@@ -72,6 +78,7 @@ class ResultTest {
         assertThat(ResultCode.LLM_CALL_FAILED.getCode()).isEqualTo(5001);
     }
 
+    /** 验证 PageResult 构造后 total、page、size 与 records 均正确。 */
     @Test
     @DisplayName("PageResult 分页结果")
     void pageResult_build() {

@@ -27,6 +27,7 @@ class TextSplitterTest {
 
     // ============ AUTO 路由 ============
 
+    /** 段落中问N：问答模式达到 10 处以上时 AUTO 路由到 FAQ，每问一答合成一个 chunk。 */
     @Test
     @DisplayName("AUTO - 问N：模式 ≥10 时路由到 FAQ，一问一答一个 chunk")
     void autoRoutesToFaq() {
@@ -44,6 +45,7 @@ class TextSplitterTest {
         assertThat(result.get(11)).startsWith("问12：");
     }
 
+    /** 章节标题占比超过 10% 时 AUTO 路由到 CHAPTER，按章节聚合正文。 */
     @Test
     @DisplayName("AUTO - 章节标题占比 >10% 时路由到 CHAPTER")
     void autoRoutesToChapter() {
@@ -65,6 +67,7 @@ class TextSplitterTest {
         assertThat(result.get(2)).contains("第三章 技术方案");
     }
 
+    /** 无 FAQ 与章节特征时 AUTO 回退 RECURSIVE，结果与显式 RECURSIVE 一致。 */
     @Test
     @DisplayName("AUTO - 无 FAQ/章节特征时路由到 RECURSIVE（与显式 RECURSIVE 结果一致）")
     void autoRoutesToRecursiveByDefault() {
@@ -81,6 +84,7 @@ class TextSplitterTest {
         assertThat(auto).isEqualTo(recursive);
     }
 
+    /** 输入为空时 AUTO 仍返回空列表。 */
     @Test
     @DisplayName("AUTO - 空输入路由 RECURSIVE 并返回空列表")
     void autoEmptyInput() {
@@ -90,6 +94,7 @@ class TextSplitterTest {
 
     // ============ CHAPTER ============
 
+    /** 多段普通文本中未识别出章节标题时 CHAPTER 回退为 PARAGRAPH 切分。 */
     @Test
     @DisplayName("CHAPTER - 未识别出章节且原文多段时回退 PARAGRAPH")
     void chapterFallsBackToParagraph() {
@@ -104,6 +109,7 @@ class TextSplitterTest {
         assertThat(chapter).isEqualTo(paragraph);
     }
 
+    /** 只有单段且无标题时不回退，直接返回原段落。 */
     @Test
     @DisplayName("CHAPTER - 单段落无标题时不回退，返回原段")
     void chapterSingleParagraphNoFallback() {
@@ -113,6 +119,7 @@ class TextSplitterTest {
         assertThat(result).containsExactly("只有一段普通文本，没有标题。");
     }
 
+    /** 中文章节标题需满足章节词后空格或冒号、整行不超过 40 字、不以助词结尾三个条件。 */
     @Test
     @DisplayName("CHAPTER - 中文章节标题三约束：章节词后须空格/冒号、整行≤40字、不以助词结尾")
     void chapterChineseTitleConstraints() {
@@ -146,6 +153,7 @@ class TextSplitterTest {
 
     // ============ FAQ ============
 
+    /** 未识别到问N：模式时 FAQ 回退 RECURSIVE，结果与显式 RECURSIVE 一致。 */
     @Test
     @DisplayName("FAQ - 识别失败（无问N模式）时回退 RECURSIVE")
     void faqFallsBackToRecursive() {
@@ -164,6 +172,7 @@ class TextSplitterTest {
 
     // ============ PARAGRAPH ============
 
+    /** PARAGRAPH 切分时后一个 chunk 以固定 overlap 长度的前文结尾开头。 */
     @Test
     @DisplayName("PARAGRAPH - 相邻 chunk 保留固定长度重叠（上一 chunk 末尾 overlap 字）")
     void paragraphSlidingWindowOverlap() {
@@ -180,6 +189,7 @@ class TextSplitterTest {
         assertThat(result.get(1)).contains("乙".repeat(40));
     }
 
+    /** 超过 maxLength 的段落会被再次切分，每个 chunk 长度均不超过上限。 */
     @Test
     @DisplayName("PARAGRAPH - 超长段落内部再切分，每块不超过 maxLength")
     void paragraphOversizedSplitByLength() {
@@ -194,6 +204,7 @@ class TextSplitterTest {
 
     // ============ RECURSIVE ============
 
+    /** RECURSIVE 切分后相邻 chunk 按 overlap 重叠，且单块长度不超过 maxLength。 */
     @Test
     @DisplayName("RECURSIVE - 相邻 chunk 按 overlap 重叠且不超 maxLength")
     void recursiveAdjacentChunkOverlap() {

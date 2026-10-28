@@ -37,6 +37,7 @@ class SkillToolExecutorTest {
 
     // ========== 基础检查 ==========
 
+    /** supportedToolType 返回 "SKILL" */
     @Test
     void supportedToolType_returnsSKILL() {
         assertThat(executor.supportedToolType()).isEqualTo("SKILL");
@@ -48,6 +49,7 @@ class SkillToolExecutorTest {
     @DisplayName("inline 模式（promptTemplate 直接写）")
     class InlineMode {
 
+        /** inline 模式按模板渲染 {{city}}，并把 subModelId 与渲染后 prompt 传给子模型 */
         @Test
         void basicInline_rendersTemplateAndCallsSubModel() {
             // GIVEN —— 先不匹配具体参数，验证 mock 能被调用
@@ -79,6 +81,7 @@ class SkillToolExecutorTest {
             assertThat(capturedPrompt.get()).isEqualTo("你是天气助手，北京 今天天气如何？");
         }
 
+        /** inline 模式未配置 subModelId 时，子模型返回的缺少字段错误原样透出 */
         @Test
         void inline_noSubModelId_returnsError() {
             // SkillToolExecutor 不拦截 null subModelId（交给 LlmClient 内部处理）
@@ -98,6 +101,7 @@ class SkillToolExecutorTest {
             assertThat(result.text()).contains("subModelId");
         }
 
+        /** inline 模式缺少 promptTemplate 时提前返回错误且不调用 LLM */
         @Test
         void inline_noPromptTemplate_returnsError() {
             Map<String, Object> config = Map.of(
@@ -114,6 +118,7 @@ class SkillToolExecutorTest {
             verify(mockLlmClient, never()).callSubModel(any(), anyString(), anyString());
         }
 
+        /** 参数为空字符串时按空参数处理，仍正常调用 LLM 并返回结果 */
         @Test
         void inline_emptyArguments_handlesGracefully() {
             when(mockLlmClient.callSubModel(eq(1L), anyString(), anyString())).thenReturn("你好！");
@@ -131,6 +136,7 @@ class SkillToolExecutorTest {
             assertThat(result.text()).isEqualTo("你好！");
         }
 
+        /** 参数为非法 JSON 时按空 map 处理，占位符不替换且执行不崩溃 */
         @Test
         void inline_invalidArgumentsJson_handlesGracefully() {
             // parseArguments 失败返回空 map → args.isEmpty()=true → userMessage=""
@@ -150,6 +156,7 @@ class SkillToolExecutorTest {
             assertThat(result.text()).isEqualTo("hi");
         }
 
+        /** 子模型返回错误文本时原样作为执行结果返回 */
         @Test
         void inline_llmError_returnsErrorMessage() {
             when(mockLlmClient.callSubModel(eq(1L), anyString(), anyString()))
@@ -175,6 +182,7 @@ class SkillToolExecutorTest {
     @DisplayName("{{var}} 模板渲染")
     class TemplateRendering {
 
+        /** 模板中多个 {{var}} 占位符均被对应参数值替换 */
         @Test
         void simpleVar_replacesPlaceholder() {
             AtomicReference<String> capturedPrompt = new AtomicReference<>();
@@ -194,6 +202,7 @@ class SkillToolExecutorTest {
             assertThat(capturedPrompt.get()).isEqualTo("地点=上海，日期=2025-01-01");
         }
 
+        /** 模板引用了参数中不存在的变量时，该占位符被替换为空串 */
         @Test
         void missingVar_returnsEmptyString() {
             AtomicReference<String> capturedPrompt = new AtomicReference<>();
@@ -214,6 +223,7 @@ class SkillToolExecutorTest {
             assertThat(capturedPrompt.get()).isEqualTo("A + ");
         }
 
+        /** 模板不含占位符时原样作为 prompt 传入 */
         @Test
         void noPlaceholder_templatePassesThrough() {
             AtomicReference<String> capturedPrompt = new AtomicReference<>();
@@ -247,6 +257,7 @@ class SkillToolExecutorTest {
             tempSkillDir = Files.createTempDirectory("skill-test-");
         }
 
+        /** directory 模式优先读取 SKILL.md，并渲染其中的 {{city}} 占位符 */
         @Test
         void loadsSKILLmd_first() throws IOException {
             Files.writeString(tempSkillDir.resolve("SKILL.md"), "# 天气查询\n{{city}} 今天如何？");
@@ -268,6 +279,7 @@ class SkillToolExecutorTest {
             assertThat(capturedPrompt.get()).contains("北京");
         }
 
+        /** 目录下没有 SKILL.md 时回退读取 prompt.md 并渲染占位符 */
         @Test
         void fallsBackToPromptMd_whenNoSKILLmd() throws IOException {
             Files.writeString(tempSkillDir.resolve("prompt.md"), "fallback prompt {{name}}");
@@ -289,6 +301,7 @@ class SkillToolExecutorTest {
             assertThat(capturedPrompt.get()).isEqualTo("fallback prompt World");
         }
 
+        /** directory 模式缺少 skillPath 时返回包含 skillPath 的错误 */
         @Test
         void missingSkillPath_returnsError() {
             Map<String, Object> config = Map.of(
@@ -304,6 +317,7 @@ class SkillToolExecutorTest {
             assertThat(result.text()).contains("skillPath");
         }
 
+        /** skillPath 指向不存在的目录时返回「目录不存在」错误 */
         @Test
         void nonexistentDirectory_returnsError() {
             Map<String, Object> config = Map.of(
@@ -319,6 +333,7 @@ class SkillToolExecutorTest {
             assertThat(result.text()).contains("目录不存在");
         }
 
+        /** 目录内没有任何 prompt 文件时返回提示缺少 SKILL.md 的错误 */
         @Test
         void directoryWithNoPromptFiles_returnsError() throws IOException {
             // 空目录
@@ -337,6 +352,7 @@ class SkillToolExecutorTest {
             assertThat(result.text()).contains("SKILL.md");
         }
 
+        /** 每次执行都重新从磁盘读取 SKILL.md，文件修改后下一次调用立即生效 */
         @Test
         void readsPromptOnEveryCall_dynamicFileLoading() throws IOException {
             // 验证"运行时实时加载" —— 文件改了立即生效
@@ -408,6 +424,7 @@ class SkillToolExecutorTest {
 
         // ---- 1. YAML front matter 提取 subModelId ----
 
+        /** 从 SKILL.md 的 YAML front matter 解析出 subModelId 与 description 作为 system prompt */
         @Test
         void yamlFrontMatter_extractsSubModelId() throws IOException {
             Files.writeString(tempSkillDir.resolve("SKILL.md"),
@@ -434,6 +451,7 @@ class SkillToolExecutorTest {
             assertThat(captured.get().systemPrompt()).contains("翻译助手");
         }
 
+        /** executorConfig 中显式配置的 subModelId 优先于 front matter 中的值 */
         @Test
         void executorConfigSubModelId_overridesFrontMatter() throws IOException {
             Files.writeString(tempSkillDir.resolve("SKILL.md"),
@@ -459,6 +477,7 @@ class SkillToolExecutorTest {
 
         // ---- 2. ---SYSTEM--- / ---USER--- 分隔符 ----
 
+        /** ---SYSTEM--- 与 ---USER--- 分隔符把 SKILL.md 拆成 system prompt 和 user message 两部分 */
         @Test
         void systemUserSeparator_splitsPromptIntoTwoParts() throws IOException {
             Files.writeString(tempSkillDir.resolve("SKILL.md"),
@@ -485,6 +504,7 @@ class SkillToolExecutorTest {
             assertThat(captured.get().userMessage()).isEqualTo("请查询 上海 的天气。");
         }
 
+        /** 只存在 ---USER--- 分隔符时，其前面的全部内容作为 system prompt */
         @Test
         void onlyUserSeparator_systemPartIsEverythingBefore() throws IOException {
             Files.writeString(tempSkillDir.resolve("SKILL.md"),
@@ -510,6 +530,7 @@ class SkillToolExecutorTest {
             assertThat(captured.get().userMessage()).isEqualTo("帮我 review 这段代码：var x = 1;");
         }
 
+        /** 没有分隔符时整篇内容作为 system prompt，user message 使用参数 Map 的字符串形式 */
         @Test
         void noSeparator_entireContentBecomesSystemPrompt() throws IOException {
             Files.writeString(tempSkillDir.resolve("SKILL.md"), "你是一个助手，回答 {{question}}");
@@ -531,6 +552,7 @@ class SkillToolExecutorTest {
 
         // ---- 3. references/ examples/ scripts/ 资源目录合并 ----
 
+        /** references/ 下的 md、txt 资源文件被合并追加到 system prompt */
         @Test
         void referencesDir_mdFilesAppendedToMainPrompt() throws IOException {
             // 主 prompt
@@ -573,6 +595,7 @@ class SkillToolExecutorTest {
                     .contains("hello → 你好");
         }
 
+        /** examples/ 与 references/ 下的资源都被合并进 system prompt */
         @Test
         void examplesDir_mergedAfterReferences() throws IOException {
             Path examples = Files.createDirectory(tempSkillDir.resolve("examples"));
@@ -599,6 +622,7 @@ class SkillToolExecutorTest {
                     .contains("示例 1");
         }
 
+        /** includeResources=false 时跳过资源合并，references 内容不会进入 prompt */
         @Test
         void includeResourcesFalse_skipsResourceMerge() throws IOException {
             Path refs = Files.createDirectory(tempSkillDir.resolve("references"));
@@ -623,6 +647,7 @@ class SkillToolExecutorTest {
 
         // ---- 4. subModelDefault 继承窗口默认模型 ----
 
+        /** front matter 中 subModelDefault=true 时继承窗口默认模型 ID */
         @Test
         void frontMatterSubModelDefaultTrue_inheritsWindowDefaultModelId() throws IOException {
             Files.writeString(tempSkillDir.resolve("SKILL.md"),
@@ -648,6 +673,7 @@ class SkillToolExecutorTest {
             assertThat(captured.get().systemPrompt()).isEqualTo("你好 小明");
         }
 
+        /** inline 模式下 subModelDefault=true 同样继承窗口默认模型 ID */
         @Test
         void subModelDefaultTrue_inline_inheritsWindowDefaultModelId() {
             // inline 模式的继承链也验证一下（和 directory 共用同一逻辑）
@@ -665,6 +691,7 @@ class SkillToolExecutorTest {
             assertThat(captured.get().modelId()).isEqualTo(7L);
         }
 
+        /** subModelDefault=true 但缺少窗口默认模型时返回「缺少子模型」错误且不调用 LLM */
         @Test
         void subModelDefaultTrue_withoutWindowDefault_returnsError() throws IOException {
             Files.writeString(tempSkillDir.resolve("SKILL.md"),
@@ -691,6 +718,7 @@ class SkillToolExecutorTest {
 
         // ---- 5. README.md fallback ----
 
+        /** 既无 SKILL.md 也无 prompt.md 时回退读取 README.md 并渲染 */
         @Test
         void readmeFallback_whenNoSKILLmdOrPromptmd() throws IOException {
             Files.writeString(tempSkillDir.resolve("README.md"), "Readme prompt {{v}}");
@@ -710,6 +738,7 @@ class SkillToolExecutorTest {
 
         // ---- 6. 完整组合场景（front matter + 分隔符 + resources + 模板） ----
 
+        /** 组合 front matter、分隔符、references 资源合并与模板渲染的完整场景 */
         @Test
         void fullScenario_combinesAllFeatures() throws IOException {
             // SKILL.md 带 front matter + 分隔符
@@ -760,6 +789,7 @@ class SkillToolExecutorTest {
 
     // ========== executorConfig 类型容错 ==========
 
+    /** subModelId 以字符串 "7" 配置时能正确解析为数字模型 ID */
     @Test
     void subModelIdAsString_parsesCorrectly() {
         AtomicReference<Long> capturedModelId = new AtomicReference<>();

@@ -26,6 +26,7 @@ class ContextCompressionServiceTest {
 
     // ============ 简单截断测试 ============
 
+    /** 验证消息数未超限时直接返回全部消息且 System 消息位于首位。 */
     @Test
     @DisplayName("compressHistory - 消息数不超限直接返回")
     void compressHistory_withinLimit() {
@@ -36,6 +37,7 @@ class ContextCompressionServiceTest {
         assertThat(result.get(0)).isInstanceOf(SystemMessage.class);
     }
 
+    /** 验证消息数超限时保留 System 消息与最近消息且总数不超过上限。 */
     @Test
     @DisplayName("compressHistory - 消息数超限，保留 System + 最近消息")
     void compressHistory_exceedLimit() {
@@ -49,6 +51,7 @@ class ContextCompressionServiceTest {
 
     // ============ Token 估算截断测试 ============
 
+    /** 验证 Token 预算充足时所有短消息都被完整保留。 */
     @Test
     @DisplayName("compressByToken - 短消息都能保留")
     void compressByToken_allFit() {
@@ -57,6 +60,7 @@ class ContextCompressionServiceTest {
         assertThat(result.size()).isEqualTo(11);
     }
 
+    /** 验证 Token 超限时消息被截断且首条仍为 System 消息。 */
     @Test
     @DisplayName("compressByToken - Token 估算截断")
     void compressByToken_needTruncation() {

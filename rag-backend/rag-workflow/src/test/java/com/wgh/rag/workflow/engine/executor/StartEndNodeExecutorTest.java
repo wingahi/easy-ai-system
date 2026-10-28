@@ -21,6 +21,7 @@ class StartEndNodeExecutorTest {
     private final StartNodeExecutor startExecutor = new StartNodeExecutor();
     private final EndNodeExecutor endExecutor = new EndNodeExecutor(variableResolver);
 
+    /** START 节点把 vars.input 原样作为 text 输出 */
     @Test
     void start_outputsInputAsText() {
         RunContext ctx = new RunContext();
@@ -32,6 +33,7 @@ class StartEndNodeExecutorTest {
         assertThat(result.getOutput()).containsEntry("text", "你好");
     }
 
+    /** 缺少 input 变量时 START 节点输出空文本 */
     @Test
     void start_missingInput_outputsEmpty() {
         NodeResult result = startExecutor.execute(context(node("s", "START"), new RunContext()));
@@ -39,6 +41,7 @@ class StartEndNodeExecutorTest {
         assertThat(result.getOutput()).containsEntry("text", "");
     }
 
+    /** END 未配置 output 模板时直接输出 vars.lastOutput */
     @Test
     void end_blankTemplate_usesLastOutput() {
         RunContext ctx = new RunContext();
@@ -49,6 +52,7 @@ class StartEndNodeExecutorTest {
         assertThat(result.getOutput()).containsEntry("text", "上游结果");
     }
 
+    /** END 按 output 模板渲染 {{input}} 等占位符 */
     @Test
     void end_template_rendersVariables() {
         RunContext ctx = new RunContext();
@@ -60,6 +64,7 @@ class StartEndNodeExecutorTest {
         assertThat(result.getOutput()).containsEntry("text", "你好，世界！");
     }
 
+    /** 既无 output 模板也无 lastOutput 时 END 输出空文本 */
     @Test
     void end_noOutputAndNoLastOutput_emptyText() {
         NodeResult result = endExecutor.execute(context(node("e", "END"), new RunContext()));

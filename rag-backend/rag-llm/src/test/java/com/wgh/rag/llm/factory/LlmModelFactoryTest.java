@@ -48,6 +48,7 @@ class LlmModelFactoryTest {
 
     // ==================== ChatModel ====================
 
+    /** OpenAI 风格的三种 provider 均构建出 OpenAiChatModel。 */
     @Test
     @DisplayName("ChatModel - OPENAI/DEEPSEEK/CUSTOM_OPENAI 均构建 OpenAiChatModel")
     void chatModel_openAiStyleProviders() {
@@ -56,6 +57,7 @@ class LlmModelFactoryTest {
         assertThat(factory.createChatModel(chatConfig("CUSTOM_OPENAI"))).isInstanceOf(OpenAiChatModel.class);
     }
 
+    /** DashScope 与 QWEN 别名均构建出 QwenChatModel。 */
     @Test
     @DisplayName("ChatModel - DASHSCOPE/QWEN 均构建 QwenChatModel")
     void chatModel_dashScopeProviders() {
@@ -63,6 +65,7 @@ class LlmModelFactoryTest {
         assertThat(factory.createChatModel(chatConfig("QWEN"))).isInstanceOf(QwenChatModel.class);
     }
 
+    /** provider 名称大小写不影响 ChatModel 实现的选择。 */
     @Test
     @DisplayName("ChatModel - provider 大小写不敏感")
     void chatModel_caseInsensitive() {
@@ -70,6 +73,7 @@ class LlmModelFactoryTest {
         assertThat(factory.createChatModel(chatConfig("DashScope"))).isInstanceOf(QwenChatModel.class);
     }
 
+    /** 不支持的 provider 构建 ChatModel 时抛 BusinessException 并带提供商信息。 */
     @Test
     @DisplayName("ChatModel - 不支持的 provider 抛 BusinessException")
     void chatModel_unsupportedProvider() {
@@ -82,6 +86,7 @@ class LlmModelFactoryTest {
 
     // ==================== StreamingChatModel ====================
 
+    /** OpenAI 风格 provider 构建流式模型时均返回 OpenAiStreamingChatModel。 */
     @Test
     @DisplayName("StreamingChatModel - OPENAI 风格 provider 构建 OpenAiStreamingChatModel")
     void streamingChatModel_openAiStyleProviders() {
@@ -90,6 +95,7 @@ class LlmModelFactoryTest {
         assertThat(factory.createStreamingChatModel(chatConfig("CUSTOM_OPENAI"))).isInstanceOf(OpenAiStreamingChatModel.class);
     }
 
+    /** DashScope 与 QWEN 别名构建流式模型时均返回 QwenStreamingChatModel。 */
     @Test
     @DisplayName("StreamingChatModel - DASHSCOPE/QWEN 构建 QwenStreamingChatModel")
     void streamingChatModel_dashScopeProviders() {
@@ -97,6 +103,7 @@ class LlmModelFactoryTest {
         assertThat(factory.createStreamingChatModel(chatConfig("QWEN"))).isInstanceOf(QwenStreamingChatModel.class);
     }
 
+    /** 不支持的 provider 构建流式模型时抛 BusinessException。 */
     @Test
     @DisplayName("StreamingChatModel - 不支持的 provider 抛 BusinessException")
     void streamingChatModel_unsupportedProvider() {
@@ -109,6 +116,7 @@ class LlmModelFactoryTest {
 
     // ==================== EmbeddingModel ====================
 
+    /** OPENAI 与 CUSTOM_OPENAI 构建嵌入模型时返回 OpenAiEmbeddingModel。 */
     @Test
     @DisplayName("EmbeddingModel - OPENAI/CUSTOM_OPENAI 构建 OpenAiEmbeddingModel")
     void embeddingModel_openAiStyleProviders() {
@@ -116,6 +124,7 @@ class LlmModelFactoryTest {
         assertThat(factory.createEmbeddingModel(embeddingConfig("CUSTOM_OPENAI"))).isInstanceOf(OpenAiEmbeddingModel.class);
     }
 
+    /** DashScope 与 QWEN 别名构建嵌入模型时返回 QwenEmbeddingModel。 */
     @Test
     @DisplayName("EmbeddingModel - DASHSCOPE/QWEN 构建 QwenEmbeddingModel")
     void embeddingModel_dashScopeProviders() {
@@ -123,6 +132,7 @@ class LlmModelFactoryTest {
         assertThat(factory.createEmbeddingModel(embeddingConfig("QWEN"))).isInstanceOf(QwenEmbeddingModel.class);
     }
 
+    /** DEEPSEEK 不支持嵌入模型，构建时抛 BusinessException。 */
     @Test
     @DisplayName("EmbeddingModel - DEEPSEEK 不支持嵌入，抛 BusinessException")
     void embeddingModel_deepSeekUnsupported() {
@@ -133,6 +143,7 @@ class LlmModelFactoryTest {
                 .hasMessageContaining("不支持的嵌入模型提供商: DEEPSEEK");
     }
 
+    /** 不支持的 provider 构建嵌入模型时抛 BusinessException。 */
     @Test
     @DisplayName("EmbeddingModel - 不支持的 provider 抛 BusinessException")
     void embeddingModel_unsupportedProvider() {

@@ -45,6 +45,7 @@ class CompressionChainOrderTest {
     @Mock
     private ChatModel chatModel;
 
+    /** 三级处理器 order 值依次递增：近期 < 中期 < 远期 */
     @Test
     @DisplayName("三级 handler order 值递增：近期 < 中期 < 远期")
     void orderValues_increase() {
@@ -52,6 +53,7 @@ class CompressionChainOrderTest {
         assertThat(new SummaryHandler().order()).isLessThan(new FactExtractHandler().order());
     }
 
+    /** 即使乱序注入，责任链仍按 order 升序执行且三级压缩结果合并为 11 条消息 */
     @Test
     @DisplayName("乱序注入时仍按 order 升序执行责任链")
     void chain_executesInOrderRegardlessOfInjectionOrder() {

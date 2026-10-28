@@ -47,6 +47,7 @@ class DocumentParserTest {
                 new XlsxParser(), new XlsParser(), new DocxParser(), new DocParser()));
     }
 
+    /** TXT 解析按空行分段，去除空白并过滤空段。 */
     @Test
     @DisplayName("TXT - 空行分段、去空白、空段过滤")
     void parseTxt() throws Exception {
@@ -58,6 +59,7 @@ class DocumentParserTest {
         assertThat(result).containsExactly("第一段内容。", "第二段内容。", "第三段内容。");
     }
 
+    /** MD 解析沿用与 TXT 相同的空行分段逻辑，标题行保留原样。 */
     @Test
     @DisplayName("MD - 与 TXT 相同的分段逻辑")
     void parseMd() throws Exception {
@@ -69,6 +71,7 @@ class DocumentParserTest {
         assertThat(result).containsExactly("# 标题", "正文段落。", "## 小节");
     }
 
+    /** CSV 解析每行生成一个条目并过滤空行。 */
     @Test
     @DisplayName("CSV - 每行一个条目，空行过滤")
     void parseCsv() throws Exception {
@@ -80,6 +83,7 @@ class DocumentParserTest {
         assertThat(result).containsExactly("name,age", "张三,18", "李四,20");
     }
 
+    /** XLSX 逐行输出为「cell1 | cell2」格式，数值以整数形式呈现。 */
     @Test
     @DisplayName("XLSX - 逐行 cell1 | cell2 格式，数值整数化")
     void parseXlsx() throws Exception {
@@ -102,6 +106,7 @@ class DocumentParserTest {
         assertThat(result).containsExactly("名称 | 18", "价格 | 9.5");
     }
 
+    /** XLS 逐行输出为「cell1 | cell2」格式。 */
     @Test
     @DisplayName("XLS - 逐行 cell1 | cell2 格式")
     void parseXls() throws Exception {
@@ -121,6 +126,7 @@ class DocumentParserTest {
         assertThat(result).containsExactly("城市 | 北京");
     }
 
+    /** DOCX 解析输出段落文本，表格单元格以「 | 」连接。 */
     @Test
     @DisplayName("DOCX - 段落 + 表格单元格以 ' | ' 连接")
     void parseDocx() throws Exception {
@@ -143,6 +149,7 @@ class DocumentParserTest {
         assertThat(result).containsExactly("第一段文字", "第二段文字", "左格 | 右格");
     }
 
+    /** PDF 解析能提取出页面文本并按空行分段。 */
     @Test
     @DisplayName("PDF - 提取文本并按空行分段")
     void parsePdf() throws Exception {
@@ -166,6 +173,7 @@ class DocumentParserTest {
         assertThat(String.join("\n", result)).contains("Hello").contains("World");
     }
 
+    /** 未知扩展名解析时抛 BusinessException，消息保留传入的原始大小写。 */
     @Test
     @DisplayName("未知格式 - 抛出 BusinessException，消息保留原始大小写")
     void parseUnknown() {

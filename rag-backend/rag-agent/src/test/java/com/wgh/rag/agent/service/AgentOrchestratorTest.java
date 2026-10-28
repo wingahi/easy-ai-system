@@ -150,8 +150,9 @@ class AgentOrchestratorTest {
 
     // ==================== 用例 ====================
 
+    /** 按拓扑序执行步骤，SSE 事件顺序正确，且每步结果先落库再发 SSE。 */
     @Test
-    void orchestrate_按拓扑序执行_事件有序_先落库再发SSE() {
+    void orchestrate_executesInTopologicalOrder_eventsOrderedAndPersistBeforeSse() {
         PlanDTO dto = planOf("测试计划",
                 step("s1", 0),
                 step("s2", 1, "s1"),
@@ -199,8 +200,9 @@ class AgentOrchestratorTest {
         verify(planner).generate(eq(3L), eq("用户目标"), eq(List.of()), eq(false), eq(15));
     }
 
+    /** 空计划不执行任何步骤，直接完成并只发 plan_created / plan_complete。 */
     @Test
-    void orchestrate_空计划_直接完成() {
+    void orchestrate_emptyPlan_completesDirectly() {
         PlanDTO dto = planOf("空计划");
         dto.setSteps(new ArrayList<>());
 
@@ -213,8 +215,9 @@ class AgentOrchestratorTest {
         assertThat(db.steps).isEmpty();
     }
 
+    /** Planner 抛异常时发出 plan_create_failed 事件并向上抛出异常，不落库计划。 */
     @Test
-    void orchestrate_Planner异常_发plan_create_failed并抛出() {
+    void orchestrate_plannerThrows_emitsPlanCreateFailedAndRethrows() {
         when(planner.generate(any(), any(), any(), anyBoolean(), anyInt()))
                 .thenThrow(new AgentException("LLM 超时"));
 
@@ -228,8 +231,9 @@ class AgentOrchestratorTest {
         assertThat(db.plans).isEmpty();
     }
 
+    /** 遇到 HITL 步骤时暂停计划，发出 step_hitl_pending 与 plan_paused 事件。 */
     @Test
-    void orchestrate_HITL步骤_暂停计划并等待确认() {
+    void orchestrate_hitlStep_pausesPlanAndWaitsForConfirm() {
         StepDTO hitlStep = step("s1", 0);
         hitlStep.setHitl(true);
         hitlStep.setExpectedInput("请确认是否继续");
@@ -258,8 +262,9 @@ class AgentOrchestratorTest {
         assertLogOrder("DB:plan_update:101:PAUSED", "SSE:plan_paused:plan=101");
     }
 
+    /** HITL 开关关闭时，HITL 步骤照常执行并完成计划。 */
     @Test
-    void orchestrate_HITL步骤但开关关闭_照常执行() {
+    void orchestrate_hitlStepButSwitchOff_executesNormally() {
         StepDTO hitlStep = step("s1", 0);
         hitlStep.setHitl(true);
 
@@ -272,8 +277,9 @@ class AgentOrchestratorTest {
         assertThat(db.plans.get(101L).getStatus()).isEqualTo("COMPLETED");
     }
 
+    /** HITL 确认后状态迁移为 SUCCESS 并继续执行后续步骤，非 PAUSED 状态拒绝 resume。 */
     @Test
-    void resume_HITL确认后_状态迁移并继续后续步骤() {
+    void resume_afterHitlConfirm_migratesStateAndContinuesRemainingSteps() {
         StepDTO hitlStep = step("s1", 0);
         hitlStep.setHitl(true);
         hitlStep.setExpectedInput("请确认是否继续");
@@ -312,8 +318,9 @@ class AgentOrchestratorTest {
                 .hasMessageContaining("非 PAUSED");
     }
 
+    /** 反思分数低于阈值时带反馈重试，达标后落库反思分数与重试次数。 */
     @Test
-    void orchestrate_反思低于阈值_带反馈重试_达标后落库分数() {
+    void orchestrate_reflectionBelowThreshold_retriesWithFeedbackAndPersistsScoreWhenPassed() {
         when(reflectionEngine.evaluate(anyString(), any(), any()))
                 .thenReturn(Map.entry(5.0, "需要改进"))
                 .thenReturn(Map.entry(8.0, "已达标"));
@@ -351,8 +358,9 @@ class AgentOrchestratorTest {
         assertThat(s1.getRetryCount()).isEqualTo(1);
     }
 
+    /** step_success 事件的 latencyMs 为步骤实际耗时，而非当前时间戳。 */
     @Test
-    void orchestrate_stepSuccess事件的latencyMs为步骤实际耗时() {
+    void orchestrate_stepSuccessEventLatencyMsIsActualStepDuration() {
         doAnswer(inv -> {
             Thread.sleep(60);
             return successResult("完成:" + inv.getArgument(7, String.class));
@@ -371,8 +379,9 @@ class AgentOrchestratorTest {
         assertThat(s1.getEndTime()).isNotNull();
     }
 
+    /** SSE 发送失败仅记录告警，不抛出、不降级，计划照常完成。 */
     @Test
-    void orchestrate_SSE发送失败_仅告警不影响执行() {
+    void orchestrate_sseSendFails_warnsOnlyWithoutAffectingExecution() {
         BiConsumer<String, Map<String, Object>> flakySse = (name, data) -> {
             if ("step_success".equals(name)) {
                 throw new RuntimeException("客户端已断开");
@@ -391,8 +400,9 @@ class AgentOrchestratorTest {
         assertThat(events).contains("plan_created", "plan_complete");
     }
 
+    /** 取消计划后未完成步骤标记为 SKIPPED，不存在的计划静默返回。 */
     @Test
-    void cancel_计划取消_未完成步骤标记SKIPPED() {
+    void cancel_planCancelled_marksUnfinishedStepsSkipped() {
         StepDTO hitlStep = step("s1", 0);
         hitlStep.setHitl(true);
         hitlStep.setExpectedInput("请确认是否继续");
@@ -412,8 +422,9 @@ class AgentOrchestratorTest {
         orchestrator.cancel(999L, null);
     }
 
+    /** 重试 FAILED 步骤时重置其状态并重新执行，成功后计划转为 COMPLETED。 */
     @Test
-    void retryStep_重置FAILED步骤并重新执行() {
+    void retryStep_resetsFailedStepAndReruns() {
         StepDTO s2 = step("s2", 1, "s1");
         doAnswer(inv -> {
             String query = inv.getArgument(7, String.class);
@@ -446,8 +457,9 @@ class AgentOrchestratorTest {
                 "step_start", "step_reflection", "step_success", "plan_complete");
     }
 
+    /** 步骤失败且仍有 PENDING 步骤时触发重规划，本轮继续执行原列表剩余步骤。 */
     @Test
-    void orchestrate_步骤失败且有剩余PENDING_触发重规划并保留原步骤继续() {
+    void orchestrate_stepFailsWithRemainingPending_triggersReplanAndKeepsOriginalSteps() {
         StepDTO s2 = step("s2", 1, "s1");
         doAnswer(inv -> {
             String query = inv.getArgument(7, String.class);
@@ -488,8 +500,9 @@ class AgentOrchestratorTest {
                 .containsExactlyInAnyOrder("s1", "s2b");
     }
 
+    /** 步骤失败且无剩余 PENDING 步骤时计划失败，发出 plan_failed 事件。 */
     @Test
-    void orchestrate_步骤失败且无剩余PENDING_计划失败() {
+    void orchestrate_stepFailsWithoutRemainingPending_planFails() {
         doAnswer(inv -> {
             db.executedQueries.add(inv.getArgument(7, String.class));
             return failedResult("执行异常");
@@ -506,8 +519,9 @@ class AgentOrchestratorTest {
         assertThat(plan.getFinishTime()).isNotNull();
     }
 
+    /** 跳过步骤后标记 SKIPPED 并发出 step_skipped 事件，不存在的步骤静默返回。 */
     @Test
-    void skipStep_标记跳过并通知() {
+    void skipStep_marksSkippedAndNotifies() {
         StepDTO hitlStep = step("s1", 0);
         hitlStep.setHitl(true);
         hitlStep.setExpectedInput("请确认是否继续");

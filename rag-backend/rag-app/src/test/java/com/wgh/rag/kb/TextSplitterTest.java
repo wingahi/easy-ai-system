@@ -29,6 +29,7 @@ class TextSplitterTest {
 
     // ============ 按段落分割 ============
 
+    /** 验证 PARAGRAPH 策略下多个超长段落各自被拆分且原文内容不丢失。 */
     @Test
     @DisplayName("PARAGRAPH - 多段超长段落各自被拆分")
     void splitByParagraph_multiple() {
@@ -47,6 +48,7 @@ class TextSplitterTest {
         assertThat(joined).contains("人工智能").contains("机器学习").contains("神经网络");
     }
 
+    /** 验证 PARAGRAPH 策略下多个短段落被滑窗合并为一段且内容完整。 */
     @Test
     @DisplayName("PARAGRAPH - 短段落滑窗合并（符合语义）")
     void splitByParagraph_shortMerged() {
@@ -63,6 +65,7 @@ class TextSplitterTest {
         assertThat(result.get(0)).contains("人工智能").contains("机器学习").contains("神经网络");
     }
 
+    /** 验证 PARAGRAPH 策略下空输入返回空列表。 */
     @Test
     @DisplayName("PARAGRAPH - 空输入返回空列表")
     void splitByParagraph_empty() {
@@ -70,6 +73,7 @@ class TextSplitterTest {
         assertThat(result).isEmpty();
     }
 
+    /** 验证 PARAGRAPH 策略下输入含有效段落与空串时不报错并返回非空结果。 */
     @Test
     @DisplayName("PARAGRAPH - null 元素处理")
     void splitByParagraph_withNull() {
@@ -80,6 +84,7 @@ class TextSplitterTest {
 
     // ============ 按章节分割 ============
 
+    /** 验证 CHAPTER 策略能按数字开头的章节标题切分出三个章节。 */
     @Test
     @DisplayName("CHAPTER - 数字开头章节标题识别")
     void splitByChapter_numberTitle() {
@@ -102,6 +107,7 @@ class TextSplitterTest {
         assertThat(result.get(2)).contains("深度学习进阶");
     }
 
+    /** 验证 CHAPTER 策略能按 Markdown # 标题切分出三个章节。 */
     @Test
     @DisplayName("CHAPTER - Markdown 标题识别")
     void splitByChapter_markdownTitle() {
@@ -117,6 +123,7 @@ class TextSplitterTest {
         assertThat(result).hasSize(3);
     }
 
+    /** 验证 CHAPTER 策略能按「第X章」中文章节标题切分出三个章节。 */
     @Test
     @DisplayName("CHAPTER - 中文章节标题识别")
     void splitByChapter_chineseTitle() {
@@ -134,6 +141,7 @@ class TextSplitterTest {
 
     // ============ 按长度分割 ============
 
+    /** 验证 LENGTH 策略下短文本不分割且原样返回。 */
     @Test
     @DisplayName("LENGTH - 短文本不分割")
     void splitByLength_shortText() {
@@ -142,6 +150,7 @@ class TextSplitterTest {
         assertThat(result.get(0)).isEqualTo("短文本内容");
     }
 
+    /** 验证 LENGTH 策略下超过 maxLength 的长文本被切成多块且每块长度受限。 */
     @Test
     @DisplayName("LENGTH - 长文本切分（> maxLength）")
     void splitByLength_longText() {
@@ -157,6 +166,7 @@ class TextSplitterTest {
         result.forEach(chunk -> assertThat(chunk.length()).isLessThanOrEqualTo(250));
     }
 
+    /** 验证 LENGTH 策略在 maxLength=50 时仍按句子边界切分并至少产出一块。 */
     @Test
     @DisplayName("LENGTH - 超长单段按句边界切分")
     void splitByLength_preserveSentence() {
@@ -173,6 +183,7 @@ class TextSplitterTest {
 
     // ============ 边界场景 ============
 
+    /** 验证除 CUSTOM 外的所有策略对单段短内容都只返回一段。 */
     @Test
     @DisplayName("所有策略 - 单段短内容只返回一段")
     void allStrategies_singleParagraph() {

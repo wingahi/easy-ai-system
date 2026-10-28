@@ -105,6 +105,7 @@ class SkillToolExecutorEngineTest {
     @DisplayName("全链路执行")
     class FullChain {
 
+        /** directory 模式 skill 经引擎全链路执行，模板渲染、模型 ID 与 system/user 拆分均正确 */
         @Test
         void directorySkill_throughEngine_rendersTemplateAndCallsLlm() throws IOException {
             Files.writeString(tempSkillDir.resolve("SKILL.md"),
@@ -130,6 +131,7 @@ class SkillToolExecutorEngineTest {
             assertThat(captured.get().userMessage()).isEqualTo("查询 北京 的天气");
         }
 
+        /** inline 模式 skill 经引擎正常分发并渲染 prompt */
         @Test
         void inlineSkill_throughEngine_works() {
             ToolConfig cfg = skillToolConfig("greeter",
@@ -144,6 +146,7 @@ class SkillToolExecutorEngineTest {
             assertThat(captured.get().systemPrompt()).isEqualTo("你好 世界");
         }
 
+        /** 多个 skill 按工具名分别路由到各自的 skillPath 与子模型 */
         @Test
         void multipleSkills_eachRoutedByToolName() throws IOException {
             Path dirA = Files.createDirectory(tempSkillDir.resolve("skill-a"));
@@ -176,6 +179,7 @@ class SkillToolExecutorEngineTest {
     @DisplayName("窗口默认模型继承")
     class WindowModelInheritance {
 
+        /** 引擎注入窗口默认模型后，front matter 中 subModelDefault=true 的 skill 继承该模型 ID */
         @Test
         void subModelDefaultTrue_inheritsWindowDefaultModelId() throws IOException {
             Files.writeString(tempSkillDir.resolve("SKILL.md"),
@@ -197,6 +201,7 @@ class SkillToolExecutorEngineTest {
             assertThat(captured.get().modelId()).isEqualTo(42L);
         }
 
+        /** 显式配置的 subModelId 优先于窗口默认模型 */
         @Test
         void explicitSubModelId_overridesWindowDefault() throws IOException {
             Files.writeString(tempSkillDir.resolve("SKILL.md"), "prompt {{input}}");
@@ -211,6 +216,7 @@ class SkillToolExecutorEngineTest {
             assertThat(captured.get().modelId()).isEqualTo(7L);
         }
 
+        /** 既无窗口默认模型也无显式 subModelId 时，经引擎返回「缺少子模型」错误且不调用 LLM */
         @Test
         void noWindowDefault_noExplicitId_returnsErrorThroughEngine() throws IOException {
             Files.writeString(tempSkillDir.resolve("SKILL.md"), "prompt");
@@ -226,6 +232,7 @@ class SkillToolExecutorEngineTest {
             assertThat(captured.get()).isNull();   // LLM 未被调用
         }
 
+        /** 同一线程切换窗口后重新加载工具，各自继承所属窗口的默认模型 ID */
         @Test
         void differentWindows_differentDefaultModels() throws IOException {
             Files.writeString(tempSkillDir.resolve("SKILL.md"),
@@ -257,6 +264,7 @@ class SkillToolExecutorEngineTest {
     @DisplayName("窗口隔离与注册过滤")
     class WindowIsolation {
 
+        /** 调用未注册的工具时返回错误，且错误信息中列出已注册工具名 */
         @Test
         void unknownTool_returnsErrorListingRegisteredTools() {
             ToolConfig cfg = skillToolConfig("known_tool", "{\"mode\":\"inline\",\"promptTemplate\":\"x\",\"subModelId\":1}");
@@ -269,6 +277,7 @@ class SkillToolExecutorEngineTest {
             assertThat(captured.get()).isNull();
         }
 
+        /** status=0 的禁用工具不会被注册，调用时返回不可用 */
         @Test
         void disabledTool_notRegistered() {
             ToolConfig cfg = skillToolConfig("disabled_tool", "{\"mode\":\"inline\",\"promptTemplate\":\"x\",\"subModelId\":1}");
@@ -281,6 +290,7 @@ class SkillToolExecutorEngineTest {
             assertThat(result.text()).contains("not available");
         }
 
+        /** 调用 clearWindowTools 后已注册工具全部失效 */
         @Test
         void clearWindowTools_resetsRegistration() {
             ToolConfig cfg = skillToolConfig("temp_tool", "{\"mode\":\"inline\",\"promptTemplate\":\"x\",\"subModelId\":1}");
@@ -293,6 +303,7 @@ class SkillToolExecutorEngineTest {
             assertThat(result.text()).contains("not available");
         }
 
+        /** 重新加载工具集会整体替换旧工具集，旧工具随即失效 */
         @Test
         void reload_replacesOldToolSet() throws IOException {
             Path dirA = Files.createDirectory(tempSkillDir.resolve("only-a"));
@@ -318,6 +329,7 @@ class SkillToolExecutorEngineTest {
     @DisplayName("definition 解析与 ToolSpecification 暴露")
     class DefinitionParsing {
 
+        /** loadWindowTools 返回的 ToolSpecification 含正确的名称、描述与参数定义 */
         @Test
         void loadWindowTools_returnsSpecWithNameAndDescription() throws IOException {
             Files.writeString(tempSkillDir.resolve("SKILL.md"), "prompt");
@@ -333,6 +345,7 @@ class SkillToolExecutorEngineTest {
             assertThat(specs.get(0).parameters()).isNotNull();
         }
 
+        /** definition 非法 JSON 的工具被跳过，其余合法工具仍正常注册与执行 */
         @Test
         void invalidDefinitionJson_skippedButDoesNotBreakOthers() {
             ToolConfig bad = skillToolConfig("bad_tool", "{\"mode\":\"inline\",\"promptTemplate\":\"x\",\"subModelId\":1}");
@@ -350,6 +363,7 @@ class SkillToolExecutorEngineTest {
             assertThat(result.text()).startsWith("LLM:");
         }
 
+        /** executorConfig 非法 JSON 时回退为空配置并返回错误而非崩溃 */
         @Test
         void invalidExecutorConfigJson_fallsBackToEmptyConfig() {
             ToolConfig cfg = skillToolConfig("broken_cfg", "这不是 JSON");
@@ -368,6 +382,7 @@ class SkillToolExecutorEngineTest {
     @DisplayName("磁盘动态重载")
     class DynamicReload {
 
+        /** 两次执行之间修改 SKILL.md，下一次执行读到新内容 */
         @Test
         void modifySkillFileBetweenExecutions_secondCallSeesNewContent() throws IOException {
             Path skillFile = tempSkillDir.resolve("SKILL.md");
@@ -388,6 +403,7 @@ class SkillToolExecutorEngineTest {
             assertThat(captured.get().systemPrompt()).isEqualTo("版本2 prompt b");
         }
 
+        /** 两次执行之间删除 skill 目录，下一次执行返回「目录不存在」错误 */
         @Test
         void deleteSkillDirBetweenExecutions_returnsLoadError() throws IOException {
             Path skillFile = tempSkillDir.resolve("SKILL.md");
@@ -415,6 +431,7 @@ class SkillToolExecutorEngineTest {
     @DisplayName("批量执行")
     class BatchExecution {
 
+        /** executeBatch 按顺序执行全部请求，未知工具返回不可用错误 */
         @Test
         void executeBatch_processesAllRequestsInOrder() throws IOException {
             Path dirA = Files.createDirectory(tempSkillDir.resolve("batch-a"));

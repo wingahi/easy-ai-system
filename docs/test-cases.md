@@ -20,6 +20,8 @@
 10. [触发器（CRON / Webhook）](#10-触发器cron--webhook)
 11. [端到端集成场景](#11-端到端集成场景)
 12. [多 Agent 协作框架（rag-agent-multi）](#12-多-agent-协作框架rag-agent-multi)
+13. [附录 A：测试环境速查](#附录-a测试环境速查)
+14. [附录 B：测试代码规范与自动化门禁](#附录-b测试代码规范与自动化门禁)
 
 ---
 
@@ -462,7 +464,7 @@
 
 ---
 
-## 附录：测试环境速查
+## 附录 A：测试环境速查
 
 ### 预置数据
 
@@ -481,6 +483,7 @@
 | test-agent-e2e.sh | stream + plan state + plan cancel | 18 | SSE 事件 / payload / 降级路径 | 反思重试、动态重规划、sessions/{id}/plan、step retry/skip |
 | test-agent-hitl-e2e.sh | stream + hitl-confirm + state | 16 | HITL 暂停续跑、窗口开关对照、取消、消息落库 | 暂停中取消、step_hitl_pending 无 id 补建 |
 | test-workflow-e2e.sh | 25 个 API（CRUD/validate/run/state/hitl/version/trigger/template） | 67 | 9 类节点/fan-out fan-in/子流程/版本回滚/CRON&Webhook/HITL/模板实例化 | 节点失败 onError 两种策略、变量引用数组下标、嵌套超限 4 层、fan-in 一个分支 FAILED 场景 |
+| test-multi-agent-smoke.sh | /api/agent-multi（run + state） | 12 | SSE 事件序列 / 终态 COMPLETED / 步骤持久化 / state 接口 | Crew 三种模式细节、GroupChat 路由、HITL 中断 |
 
 ### 黑盒测试方法映射
 
@@ -687,3 +690,15 @@
 | 集成边界 | 7 |
 | 性能并发 | 5 |
 | **合计** | **102** |
+
+---
+
+## 附录 B：测试代码规范与自动化门禁
+
+| 项 | 约定 |
+|----|------|
+| 方法命名 | `@Test` / `@ParameterizedTest` / `@RepeatedTest` / `@TestFactory` 方法必须为纯 ASCII 英文，推荐 `方法_条件_期望`；禁止中文命名 |
+| 方法注释 | 每个测试方法上方必须有中文注释（Javadoc 或 `//`），描述实际验证的行为 |
+| 静态检查 | `python3 rag-backend/scripts/check-test-conventions.py`，违规逐条输出 `文件:行号`，退出码 1 |
+| CI 门禁 | GitHub Actions `.github/workflows/ci.yml` 在 push / PR 时阻断；Gitee Go 复用同一脚本（接入说明见 README 第 9 节） |
+| 当前基线 | 380 个测试方法全部合规；surefire 执行 374 项全绿，功能 e2e 113 项全绿 |

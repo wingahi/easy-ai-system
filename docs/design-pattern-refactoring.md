@@ -210,3 +210,21 @@ public record DomainEvent(String name, Map<String,Object> payload, Instant ts) {
 2. **行为不变式**：所有现有 e2e 脚本必须保持绿色（test-workflow-e2e 67 项 / test-agent-e2e 18 项 / test-agent-hitl-e2e 16 项）
 3. **小步提交**：一个模式一个 commit，commit message 格式 `refactor(module): 模式名 — 问题 → 方案`
 4. **禁止顺手改**：重构提交中不夹带功能变更
+
+---
+
+## 5. 落地结果（2026-10-28）
+
+| 重构项 | 状态 | 验收 |
+|--------|------|------|
+| R1 节点执行器注册表（workflow） | ✅ 完成 | workflow e2e 67 项全绿 |
+| R2 Orchestrator 拆分（agent） | ✅ 完成 | agent e2e 18 项 + HITL 16 项全绿 |
+| R3 解析 / 切分策略化（kb） | ✅ 完成 | kb 单测 25 项 |
+| R4 模型工厂（llm） | ✅ 完成 | llm 单测 36 项 |
+| R5 压缩责任链（chat） | ✅ 完成 | chat 单测 24 项 |
+| R6 模板渲染统一（common） | ✅ 完成 | common 单测 11 项 |
+| R7 SSE DomainEventPublisher（agent / workflow / agent-multi） | ✅ 完成 | agent-multi 单测 56 项 + 冒烟 12 项 |
+| R8 RagProperties 配置分组 | ⏭ 跳过 | 用户决策：前提失效，不做 |
+| R9 Controller 下沉 | ✅ 完成 | 全模块编译通过 + 全量 e2e |
+
+**最终质量基线**：单元测试 374/374、功能 e2e 113/113、压测 8/8 全绿。测试代码统一英文命名 + 中文注释，并由 CI 静态检查（`rag-backend/scripts/check-test-conventions.py`）持续保障。完整数据见 `docs/test-report-20261028.md`。

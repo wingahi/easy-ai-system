@@ -32,6 +32,7 @@ class DashScopeModelFactoryTest {
         return config;
     }
 
+    /** DashScope 与 QWEN 两个工厂分别标识 DASHSCOPE 与 QWEN。 */
     @Test
     @DisplayName("supportedProvider 标识正确（QWEN 为 DASHSCOPE 别名）")
     void supportedProvider() {
@@ -39,6 +40,7 @@ class DashScopeModelFactoryTest {
         assertThat(new QwenModelFactory().supportedProvider()).isEqualTo("QWEN");
     }
 
+    /** baseUrl 为 null 时两个工厂均能构建出 QwenChatModel，走默认端点。 */
     @Test
     @DisplayName("build - 构建 QwenChatModel（baseUrl 为 null 时不设置，走默认端点）")
     void build_qwenChatModel() {
@@ -46,6 +48,7 @@ class DashScopeModelFactoryTest {
         assertThat(new QwenModelFactory().build(chatConfig())).isInstanceOf(QwenChatModel.class);
     }
 
+    /** 显式设置 baseUrl 时 DashScope 工厂同样构建出 QwenChatModel。 */
     @Test
     @DisplayName("build - 显式 baseUrl 时构建 QwenChatModel")
     void build_withBaseUrl() {
@@ -55,6 +58,7 @@ class DashScopeModelFactoryTest {
         assertThat(new DashScopeModelFactory().build(config)).isInstanceOf(QwenChatModel.class);
     }
 
+    /** temperature 为 null 时仍能构建 QwenChatModel。 */
     @Test
     @DisplayName("build - temperature 为 null 时走默认分支仍可构建")
     void build_nullTemperature() {
@@ -64,6 +68,7 @@ class DashScopeModelFactoryTest {
         assertThat(new DashScopeModelFactory().build(config)).isInstanceOf(QwenChatModel.class);
     }
 
+    /** 两个工厂构建流式模型时均返回 QwenStreamingChatModel，baseUrl 原样透传。 */
     @Test
     @DisplayName("buildStreaming - 构建 QwenStreamingChatModel（baseUrl 原样透传，含 null）")
     void buildStreaming_qwenStreamingChatModel() {
@@ -76,6 +81,7 @@ class DashScopeModelFactoryTest {
                 .isInstanceOf(QwenStreamingChatModel.class);
     }
 
+    /** 两个工厂构建嵌入模型时均返回 QwenEmbeddingModel。 */
     @Test
     @DisplayName("buildEmbedding - 构建 QwenEmbeddingModel")
     void buildEmbedding_qwenEmbeddingModel() {

@@ -68,6 +68,7 @@ class ContextCompressionServiceTest {
 
     // ==================== 触发条件 ====================
 
+    /** 消息数未超过上限时原样返回同一列表且不调用模型或存储 */
     @Test
     @DisplayName("消息数 ≤ maxHistory 时不触发压缩，原样返回")
     void withinLimit_returnsAsIs() {
@@ -77,6 +78,7 @@ class ContextCompressionServiceTest {
         verifyNoInteractions(llmModelService, modelCacheManager, chatSessionMapper);
     }
 
+    /** 对话轮次未超过近期窗口时仅做简单截断，保留 System 与最近消息 */
     @Test
     @DisplayName("对话轮次 ≤ 近期窗口时仅截断不压缩")
     void roundsWithinRecentWindow_fallbackTruncate() {
@@ -93,6 +95,7 @@ class ContextCompressionServiceTest {
 
     // ==================== 正常三级压缩 ====================
 
+    /** 超过上限时执行三级压缩，两次 LLM 生成摘要与事实，并把结果持久化到会话 */
     @Test
     @DisplayName(">20 条触发三级压缩：远期事实 + 中期摘要 + 近期原文，并持久化")
     void exceedLimit_fullLayeredCompression() {
@@ -133,6 +136,7 @@ class ContextCompressionServiceTest {
         verify(chatSessionMapper).update(isNull(), any(UpdateWrapper.class));
     }
 
+    /** 仅中期层非空时只调用一次 LLM 生成摘要，不产生远期事实 */
     @Test
     @DisplayName("仅中期层非空时只生成摘要，不提取远期事实")
     void onlyMidTerm_generatesSummaryOnly() {
@@ -151,6 +155,7 @@ class ContextCompressionServiceTest {
 
     // ==================== 降级策略 ====================
 
+    /** 无可用压缩模型时跳过 LLM，保留 System 与近期原文且不写库 */
     @Test
     @DisplayName("无压缩模型配置时降级：跳过 LLM 摘要，保留 System + 近期原文")
     void noCompressionModel_degrades() {
@@ -170,6 +175,7 @@ class ContextCompressionServiceTest {
         verify(chatSessionMapper, never()).update(any(), any());
     }
 
+    /** LLM 调用抛异常时降级为简单截断且不持久化压缩结果 */
     @Test
     @DisplayName("LLM API 异常时降级为简单截断")
     void llmException_fallbackTruncate() {
@@ -184,6 +190,7 @@ class ContextCompressionServiceTest {
         verify(chatSessionMapper, never()).update(any(), any());
     }
 
+    /** LLM 响应超过超时时间时降级为简单截断 */
     @Test
     @DisplayName("LLM 调用超时时降级为简单截断")
     void llmTimeout_fallbackTruncate() {
@@ -203,6 +210,7 @@ class ContextCompressionServiceTest {
 
     // ==================== 复用逻辑 ====================
 
+    /** 已保存结果的轮次范围与 prompt 版本均匹配时直接复用，不调模型也不写库 */
     @Test
     @DisplayName("范围与 prompt 版本匹配时复用已保存压缩结果，不调 LLM")
     void reusableCompression_skipsLlm() {
@@ -227,6 +235,7 @@ class ContextCompressionServiceTest {
         verify(chatSessionMapper, never()).update(any(), any());
     }
 
+    /** prompt 版本不匹配时忽略旧结果，重新调用 LLM 并保存新结果 */
     @Test
     @DisplayName("prompt 版本不匹配时重新生成压缩结果")
     void promptVersionMismatch_regenerates() {

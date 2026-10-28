@@ -27,6 +27,7 @@ class SummaryHandlerTest {
 
     private final SummaryHandler handler = new SummaryHandler();
 
+    /** 中期层为空返回 false，中期层有内容返回 true */
     @Test
     @DisplayName("中期层为空时不处理")
     void shouldHandle_falseWhenMidLayerEmpty() {
@@ -34,6 +35,7 @@ class SummaryHandlerTest {
         assertThat(handler.shouldHandle(ctxWithRounds(4, 0, 2))).isTrue();
     }
 
+    /** 摘要可复用时直接采用已保存内容，且不触发 LLM 调用 */
     @Test
     @DisplayName("已保存摘要可复用时直接使用，不调 LLM")
     void handle_reusable_usesSaved() {
@@ -49,6 +51,7 @@ class SummaryHandlerTest {
         verifyNoInteractions(chatModel);
     }
 
+    /** 缺少压缩模型时跳过摘要生成，且不标记为降级 */
     @Test
     @DisplayName("无压缩模型时跳过摘要，不标记降级")
     void handle_noModel_skips() {
@@ -61,6 +64,7 @@ class SummaryHandlerTest {
         assertThat(ctx.isDegraded()).isFalse();
     }
 
+    /** LLM 正常返回时写入摘要，且 prompt 包含保留优先级要求与中期层内容 */
     @Test
     @DisplayName("LLM 生成摘要，prompt 显式保留优先级")
     void handle_llmSuccess_generatesSummary() {
@@ -86,6 +90,7 @@ class SummaryHandlerTest {
                 .contains("问题0"); // 中期层对话内容渲染进 prompt
     }
 
+    /** LLM 抛异常时标记降级并保持摘要为空，交由编排方截断 */
     @Test
     @DisplayName("LLM 异常时标记降级，由编排方统一截断")
     void handle_llmThrows_marksDegraded() {
