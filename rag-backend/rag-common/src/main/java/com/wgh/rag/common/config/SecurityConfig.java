@@ -1,6 +1,7 @@
 package com.wgh.rag.common.config;
 
 import com.wgh.rag.common.security.JwtAuthenticationFilter;
+import jakarta.servlet.DispatcherType;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -38,6 +39,10 @@ public class SecurityConfig {
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 // 放行路径配置
                 .authorizeHttpRequests(auth -> auth
+                        // SSE 异步分发：鉴权已在初始 REQUEST 分发完成，
+                        // ASYNC/ERROR 分发时 JWT 过滤器（OncePerRequestFilter）不再执行，
+                        // 若不豁免会被 AuthorizationFilter 误判为匿名访问并打 ERROR 日志
+                        .dispatcherTypeMatchers(DispatcherType.ASYNC, DispatcherType.ERROR).permitAll()
                         .requestMatchers(
                                 "/api/auth/**",
                                 "/api/workflows/webhook/**",
