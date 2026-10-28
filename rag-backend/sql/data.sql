@@ -46,3 +46,17 @@ SET executor_config = jsonb_build_object(
 WHERE tool_type = 'SKILL'
   AND COALESCE(executor_config, '') NOT LIKE '%promptTemplate%'
   AND COALESCE(executor_config, '') NOT LIKE '%skillPath%';
+
+-- ============ 老库兼容修复：wgh_m_agent_step.run_id 类型修正 ============
+-- 历史版本该列被错误建为 BIGINT，而 wgh_m_agent_run.run_id 为 VARCHAR(64)（'mag-...' 形式），
+-- 导致步骤写入与 runs/{runId}/state、steps 查询全部失败。
+-- 新库 schema.sql 已直接建为 VARCHAR(64)；本语句仅在老库列类型仍为 bigint 时执行，幂等可重复。
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'wgh_m_agent_step' AND column_name = 'run_id' AND data_type = 'bigint'
+    ) THEN
+        ALTER TABLE wgh_m_agent_step ALTER COLUMN run_id TYPE VARCHAR(64) USING run_id::text;
+    END IF;
+END $$;

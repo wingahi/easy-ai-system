@@ -56,6 +56,12 @@ public class CrewCoordinator {
         CrewConfig crewCfg = parseCrewConfig(run.getCrewConfigJson());
         DAGGraph graph = crewCfg.graph;
 
+        // 无显式图定义时按 agents 顺序合成线性链，避免空跑却标记 COMPLETED
+        if ((graph == null || graph.getNodes() == null || graph.getNodes().isEmpty())
+                && agents != null && !agents.isEmpty()) {
+            graph = buildLinearGraph(agents);
+        }
+
         switch (mode) {
             case "CREW_SEQUENTIAL" -> runSequential(run, agents, graph, ctx, emitter);
             case "CREW_HIERARCHICAL" -> runHierarchical(run, agents, crewCfg, ctx, emitter);
@@ -342,10 +348,10 @@ public class CrewCoordinator {
         }
         run.setOutputText(output);
         service.finishRun(run, "COMPLETED", null);
-        sse.send(emitter, MultiAgentEvents.MULTI_AGENT_COMPLETE, Map.of(
+        sse.send(emitter, MultiAgentEvents.MULTI_AGENT_COMPLETE,
                 "runId", run.getRunId(),
                 "output", output,
-                "durationMs", run.getDurationMs()));
+                "durationMs", run.getDurationMs());
     }
 
     // ==================== 辅助 ====================
@@ -354,6 +360,23 @@ public class CrewCoordinator {
         Map<String, AgentInstance> m = new LinkedHashMap<>();
         for (AgentInstance a : agents) m.put(a.getAgentId(), a);
         return m;
+    }
+
+    /** 按 agents 列表顺序合成线性链图：agent-0 → agent-1 → ... */
+    private DAGGraph buildLinearGraph(List<AgentInstance> agents) {
+        List<GraphNode> nodes = new ArrayList<>();
+        List<GraphEdge> edges = new ArrayList<>();
+        String prev = null;
+        int i = 0;
+        for (AgentInstance a : agents) {
+            String nodeId = "agent-" + i++;
+            nodes.add(GraphNode.builder().id(nodeId).type("AGENT").agentId(a.getAgentId()).build());
+            if (prev != null) {
+                edges.add(GraphEdge.builder().source(prev).target(nodeId).build());
+            }
+            prev = nodeId;
+        }
+        return new DAGGraph(nodes, edges);
     }
 
     private String findManagerFallback(List<AgentInstance> agents) {

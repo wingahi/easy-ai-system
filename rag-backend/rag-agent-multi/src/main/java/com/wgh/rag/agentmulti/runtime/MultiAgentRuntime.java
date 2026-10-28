@@ -63,11 +63,11 @@ public class MultiAgentRuntime {
 
         List<AgentInstance> agents = parseAgents(run.getAgentsJson());
 
-        sse.send(emitter, MultiAgentEvents.MULTI_AGENT_START, Map.of(
+        sse.send(emitter, MultiAgentEvents.MULTI_AGENT_START,
                 "runId", run.getRunId(),
                 "executionMode", run.getExecutionMode(),
                 "agentCount", agents.size(),
-                "userGoal", run.getUserGoal()));
+                "userGoal", run.getUserGoal());
 
         // 状态置为 RUNNING
         run.setStatus("RUNNING");
@@ -109,8 +109,8 @@ public class MultiAgentRuntime {
             log.error("run {} 执行异常", run.getRunId(), e);
             MultiAgentRun latest = runMapper.selectById(run.getId());
             if (latest != null) finishRun(latest, "FAILED", e.getMessage());
-            sse.send(emitter, MultiAgentEvents.MULTI_AGENT_ERROR, Map.of(
-                    "runId", run.getRunId(), "error", e.getMessage()));
+            sse.send(emitter, MultiAgentEvents.MULTI_AGENT_ERROR,
+                    "runId", run.getRunId(), "error", e.getMessage());
         }
 
         return run.getRunId();
@@ -159,7 +159,7 @@ public class MultiAgentRuntime {
             log.error("run {} 恢复执行异常", run.getRunId(), e);
             MultiAgentRun latest = runMapper.selectById(run.getId());
             if (latest != null) finishRun(latest, "FAILED", e.getMessage());
-            sse.send(emitter, MultiAgentEvents.MULTI_AGENT_ERROR, Map.of("runId", runId, "error", e.getMessage()));
+            sse.send(emitter, MultiAgentEvents.MULTI_AGENT_ERROR, "runId", runId, "error", e.getMessage());
         }
 
         return run.getRunId();

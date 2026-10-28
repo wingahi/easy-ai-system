@@ -75,18 +75,18 @@ public class GroupChatCoordinator {
 
                     run.setStatus("PAUSED");
                     service.saveRun(run);
-                    sse.send(emitter, MultiAgentEvents.AGENT_HITL_PENDING, Map.of(
+                    sse.send(emitter, MultiAgentEvents.AGENT_HITL_PENDING,
                             "runId", run.getRunId(),
                             "agentId", speaker.getAgentId(),
-                            "prompt", hitlPrompt));
+                            "prompt", hitlPrompt);
                     throw new MultiAgentRuntime.PauseSignal("HITL 暂停（GroupChat speaker=" + nextAgentId + "）");
                 }
 
-                sse.send(emitter, MultiAgentEvents.AGENT_TURN_START, Map.of(
+                sse.send(emitter, MultiAgentEvents.AGENT_TURN_START,
                         "runId", run.getRunId(),
                         "agentId", speaker.getAgentId(),
                         "agentName", speaker.getName(),
-                        "round", round));
+                        "round", round);
 
                 // 用 bus 里该 agent 的历史拼对话上下文（简化：直接 userGoal 作为输入）
                 AgentInstanceResult result = agentExecutor.execute(
@@ -100,11 +100,11 @@ public class GroupChatCoordinator {
                 ctx.put(speaker.getAgentId() + ".text", result.getOutput());
                 persistStep(run, speaker, result, round);
 
-                sse.send(emitter, MultiAgentEvents.AGENT_TURN_END, Map.of(
+                sse.send(emitter, MultiAgentEvents.AGENT_TURN_END,
                         "runId", run.getRunId(),
                         "agentId", speaker.getAgentId(),
                         "round", round,
-                        "output", result.getOutput()));
+                        "output", result.getOutput());
 
                 round++;
                 run.setCurrentRound(round);
@@ -140,11 +140,11 @@ public class GroupChatCoordinator {
 
         run.setOutputText(finalAnswer);
         service.finishRun(run, "COMPLETED", null);
-        sse.send(emitter, MultiAgentEvents.MULTI_AGENT_COMPLETE, Map.of(
+        sse.send(emitter, MultiAgentEvents.MULTI_AGENT_COMPLETE,
                 "runId", run.getRunId(),
                 "output", finalAnswer,
                 "rounds", round,
-                "durationMs", run.getDurationMs()));
+                "durationMs", run.getDurationMs());
     }
 
     /** GroupChat 的 HITL 恢复 —— 把 userInput 广播成一条用户消息再继续 */

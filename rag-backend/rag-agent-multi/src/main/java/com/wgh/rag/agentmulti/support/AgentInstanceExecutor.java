@@ -57,12 +57,12 @@ public class AgentInstanceExecutor {
         List<AgentInstanceResult.ToolInvocation> toolInvocations = new ArrayList<>();
         List<AgentInstanceResult.RagSource> ragSources = new ArrayList<>();
 
-        sse.send(emitter, MultiAgentEvents.AGENT_START, Map.of(
+        sse.send(emitter, MultiAgentEvents.AGENT_START,
                 "runId", runId,
                 "agentId", agentId,
                 "agentName", agent != null ? agent.getName() : null,
                 "role", agent != null ? agent.getRole() : null,
-                "input", input));
+                "input", input);
 
         try {
             if (agent == null) {
@@ -151,9 +151,9 @@ public class AgentInstanceExecutor {
                     String thoughtText = aiMessage.text();
                     List<ToolExecutionResultMessage> toolResults = new ArrayList<>();
                     for (ToolExecutionRequest req : toolCalls) {
-                        sse.send(emitter, MultiAgentEvents.AGENT_TOOL_CALL_START, Map.of(
+                        sse.send(emitter, MultiAgentEvents.AGENT_TOOL_CALL_START,
                                 "runId", runId, "agentId", agentId,
-                                "toolName", req.name(), "arguments", req.arguments()));
+                                "toolName", req.name(), "arguments", req.arguments());
 
                         long tStart = System.currentTimeMillis();
                         ToolExecutionResultMessage result;
@@ -176,13 +176,13 @@ public class AgentInstanceExecutor {
                         toolInvocations.add(inv);
                         toolResults.add(result);
 
-                        sse.send(emitter, MultiAgentEvents.AGENT_TOOL_CALL_RESULT, Map.of(
+                        sse.send(emitter, MultiAgentEvents.AGENT_TOOL_CALL_RESULT,
                                 "runId", runId, "agentId", agentId,
                                 "toolName", req.name(),
                                 "arguments", req.arguments(),
                                 "result", result.text(),
                                 "success", inv.isSuccess(),
-                                "latencyMs", tLatency));
+                                "latencyMs", tLatency);
                     }
                     messages.addAll(toolResults);
                     continue;
@@ -239,9 +239,9 @@ public class AgentInstanceExecutor {
 
                 reflectionPass = reflectionScore != null && reflectionScore >= agent.getReflectionThreshold();
 
-                sse.send(emitter, MultiAgentEvents.AGENT_REFLECTION, Map.of(
+                sse.send(emitter, MultiAgentEvents.AGENT_REFLECTION,
                         "runId", runId, "agentId", agentId, "phase", "done",
-                        "score", reflectionScore, "feedback", reflectionFeedback, "pass", reflectionPass));
+                        "score", reflectionScore, "feedback", reflectionFeedback, "pass", reflectionPass);
 
                 // 低于阈值重试一次 —— 把 feedback 作为额外提示拼到 user message 前面
                 if (!Boolean.TRUE.equals(reflectionPass)) {
@@ -271,12 +271,12 @@ public class AgentInstanceExecutor {
                     .durationMs(duration)
                     .build();
 
-            sse.send(emitter, MultiAgentEvents.AGENT_DONE, Map.of(
+            sse.send(emitter, MultiAgentEvents.AGENT_DONE,
                     "runId", runId, "agentId", agentId,
                     "output", result.getOutput(),
                     "toolCount", toolInvocations.size(),
                     "ragCount", ragSources.size(),
-                    "durationMs", duration));
+                    "durationMs", duration);
 
             return result;
 
@@ -289,9 +289,9 @@ public class AgentInstanceExecutor {
                     .ragSources(ragSources)
                     .durationMs(duration)
                     .build();
-            sse.send(emitter, MultiAgentEvents.AGENT_DONE, Map.of(
+            sse.send(emitter, MultiAgentEvents.AGENT_DONE,
                     "runId", runId, "agentId", agentId,
-                    "error", e.getMessage(), "durationMs", duration));
+                    "error", e.getMessage(), "durationMs", duration);
             return result;
         }
     }

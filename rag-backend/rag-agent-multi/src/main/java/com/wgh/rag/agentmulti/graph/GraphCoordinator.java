@@ -159,8 +159,8 @@ public class GraphCoordinator {
 
                     run.setStatus("PAUSED");
                     service.saveRun(run);
-                    sse.send(emitter, MultiAgentEvents.AGENT_HITL_PENDING, Map.of(
-                            "runId", run.getRunId(), "nodeId", nodeId, "prompt", prompt));
+                    sse.send(emitter, MultiAgentEvents.AGENT_HITL_PENDING,
+                            "runId", run.getRunId(), "nodeId", nodeId, "prompt", prompt);
                     throw new MultiAgentRuntime.PauseSignal("HITL 暂停：" + nodeId);
                 }
                 case "END" -> {

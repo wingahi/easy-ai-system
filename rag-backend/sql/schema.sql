@@ -669,7 +669,7 @@ COMMENT ON COLUMN wgh_m_agent_run.status IS 'PLANNING / RUNNING / PAUSED / COMPL
 -- ========== Agent 执行记录 ==========
 CREATE TABLE IF NOT EXISTS wgh_m_agent_step (
     id                  BIGSERIAL PRIMARY KEY,
-    run_id              BIGINT NOT NULL,
+    run_id              VARCHAR(64) NOT NULL,
     agent_id            VARCHAR(32) NOT NULL,
     step_index          INT NOT NULL,
     status              VARCHAR(20) DEFAULT 'PENDING',

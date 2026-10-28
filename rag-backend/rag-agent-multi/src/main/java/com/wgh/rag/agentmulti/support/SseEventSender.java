@@ -47,6 +47,20 @@ public class SseEventSender {
         }
     }
 
+    /**
+     * 便捷重载：以 kv 对形式构造 payload，容忍 null 值。
+     * （Map.of 遇 null 值直接抛 NPE，事件字段允许为空的场景必须走此入口。）
+     */
+    public void send(SseEmitter emitter, String eventName, Object... kv) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        if (kv != null) {
+            for (int i = 0; i + 1 < kv.length; i += 2) {
+                payload.put(String.valueOf(kv[i]), kv[i + 1]);
+            }
+        }
+        send(emitter, eventName, (Object) payload);
+    }
+
     /** 发送注释（保持连接心跳用） */
     public void sendComment(SseEmitter emitter, String comment) {
         if (emitter == null) return;

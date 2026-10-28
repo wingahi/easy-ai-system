@@ -73,4 +73,25 @@ class SseEventSenderTest {
                 .doesNotThrowAnyException();
         verify(emitter, never()).completeWithError(any());
     }
+
+    /** kv 重载：value 为 null 不抛 NPE（Map.of 遇 null 直接 NPE，曾导致 run 秒败） */
+    @Test
+    void send_kvOverload_toleratesNullValues() throws IOException {
+        SseEmitter emitter = mock(SseEmitter.class);
+
+        assertThatCode(() -> sender.send(emitter, "agent_start",
+                "runId", "r1", "agentName", null, "role", null))
+                .doesNotThrowAnyException();
+        verify(emitter).send(any(SseEmitter.SseEventBuilder.class));
+    }
+
+    /** kv 重载：奇数个参数时末尾孤 key 被忽略（不抛异常、不越界） */
+    @Test
+    void send_kvOverload_oddArgsIgnoresTrailingKey() throws IOException {
+        SseEmitter emitter = mock(SseEmitter.class);
+
+        assertThatCode(() -> sender.send(emitter, "agent_start", "runId", "r1", "lonelyKey"))
+                .doesNotThrowAnyException();
+        verify(emitter).send(any(SseEmitter.SseEventBuilder.class));
+    }
 }
