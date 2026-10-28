@@ -471,6 +471,35 @@ COMMENT ON COLUMN wgh_workflow.create_by IS '创建人';
 COMMENT ON COLUMN wgh_workflow.update_by IS '更新人';
 COMMENT ON COLUMN wgh_workflow.deleted IS '逻辑删除（0 未删除 / 1 已删除）';
 
+-- ============ 工作流版本快照 ============
+
+CREATE TABLE IF NOT EXISTS wgh_workflow_version (
+  id BIGSERIAL PRIMARY KEY,
+  workflow_id BIGINT NOT NULL,
+  version INT NOT NULL,
+  name VARCHAR(100) NOT NULL,
+  description VARCHAR(500),
+  graph_json JSONB NOT NULL,
+  create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  create_by VARCHAR(50) DEFAULT 'system',
+  update_by VARCHAR(50) DEFAULT 'system',
+  deleted SMALLINT DEFAULT 0
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uk_wf_version_wf_ver ON wgh_workflow_version(workflow_id, version);
+COMMENT ON TABLE wgh_workflow_version IS '工作流版本快照（每次保存生成一条，回滚亦生成新版本）';
+COMMENT ON COLUMN wgh_workflow_version.id IS '主键';
+COMMENT ON COLUMN wgh_workflow_version.workflow_id IS '所属工作流 ID';
+COMMENT ON COLUMN wgh_workflow_version.version IS '版本号（与 wgh_workflow.version 对齐）';
+COMMENT ON COLUMN wgh_workflow_version.name IS '保存时的名称快照';
+COMMENT ON COLUMN wgh_workflow_version.description IS '保存时的描述快照';
+COMMENT ON COLUMN wgh_workflow_version.graph_json IS '保存时的图定义快照';
+COMMENT ON COLUMN wgh_workflow_version.create_time IS '创建时间';
+COMMENT ON COLUMN wgh_workflow_version.update_time IS '更新时间';
+COMMENT ON COLUMN wgh_workflow_version.create_by IS '创建人';
+COMMENT ON COLUMN wgh_workflow_version.update_by IS '更新人';
+COMMENT ON COLUMN wgh_workflow_version.deleted IS '逻辑删除（0 未删除 / 1 已删除）';
+
 -- ============ 工作流运行实例 ============
 
 CREATE TABLE IF NOT EXISTS wgh_workflow_run (

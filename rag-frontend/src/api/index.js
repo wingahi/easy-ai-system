@@ -250,6 +250,8 @@ export const workflowRunState = (runId, signal) =>
   request.get(`/workflows/runs/${runId}/state`, signal ? { signal } : undefined)
 export const workflowRunNodes = (runId) => request.get(`/workflows/runs/${runId}/nodes`)
 export const workflowCancelRun = (runId) => request.post(`/workflows/runs/${runId}/cancel`)
+export const workflowVersions = (id) => request.get(`/workflows/${id}/versions`)
+export const workflowRollback = (id, version) => request.post(`/workflows/${id}/rollback/${version}`)
 
 /** 通用 SSE 读取（POST JSON） */
 function streamPost(url, body, onEvent, onDone, onError) {

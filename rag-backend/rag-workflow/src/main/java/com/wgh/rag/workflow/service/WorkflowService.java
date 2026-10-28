@@ -15,9 +15,11 @@ import com.wgh.rag.workflow.engine.WorkflowEngine;
 import com.wgh.rag.workflow.entity.Workflow;
 import com.wgh.rag.workflow.entity.WorkflowNodeRun;
 import com.wgh.rag.workflow.entity.WorkflowRun;
+import com.wgh.rag.workflow.entity.WorkflowVersion;
 import com.wgh.rag.workflow.mapper.WorkflowMapper;
 import com.wgh.rag.workflow.mapper.WorkflowNodeRunMapper;
 import com.wgh.rag.workflow.mapper.WorkflowRunMapper;
+import com.wgh.rag.workflow.mapper.WorkflowVersionMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.MediaType;
@@ -40,6 +42,7 @@ import java.util.stream.Collectors;
 public class WorkflowService {
 
     private final WorkflowMapper workflowMapper;
+    private final WorkflowVersionMapper versionMapper;
     private final WorkflowRunMapper runMapper;
     private final WorkflowNodeRunMapper nodeRunMapper;
     private final GraphValidator graphValidator;
@@ -51,6 +54,7 @@ public class WorkflowService {
     private final Map<Long, SseEmitter> emitters = new ConcurrentHashMap<>();
 
     public WorkflowService(WorkflowMapper workflowMapper,
+                           WorkflowVersionMapper versionMapper,
                            WorkflowRunMapper runMapper,
                            WorkflowNodeRunMapper nodeRunMapper,
                            GraphValidator graphValidator,
@@ -58,6 +62,7 @@ public class WorkflowService {
                            ObjectMapper objectMapper,
                            @Qualifier("workflowExecutor") ThreadPoolTaskExecutor workflowExecutor) {
         this.workflowMapper = workflowMapper;
+        this.versionMapper = versionMapper;
         this.runMapper = runMapper;
         this.nodeRunMapper = nodeRunMapper;
         this.graphValidator = graphValidator;
@@ -103,6 +108,7 @@ public class WorkflowService {
         workflow.setVersion(1);
         workflow.setGraphJson(toJson(graph));
         workflowMapper.insert(workflow);
+        snapshotVersion(workflow);
         return workflow;
     }
 
@@ -119,6 +125,7 @@ public class WorkflowService {
         if (payload.getStatus() != null) existing.setStatus(payload.getStatus());
         existing.setUpdateTime(LocalDateTime.now());
         workflowMapper.updateById(existing);
+        snapshotVersion(existing);
         return existing;
     }
 
@@ -138,6 +145,52 @@ public class WorkflowService {
         wf.setStatus(status);
         wf.setUpdateTime(LocalDateTime.now());
         workflowMapper.updateById(wf);
+    }
+
+    // ==================== 版本管理 ====================
+
+    /** 保存当前定义为一条版本快照（版本只增不改，回滚也会生成新版本）。 */
+    private void snapshotVersion(Workflow wf) {
+        WorkflowVersion v = new WorkflowVersion();
+        v.setWorkflowId(wf.getId());
+        v.setVersion(wf.getVersion());
+        v.setName(wf.getName());
+        v.setDescription(wf.getDescription());
+        v.setGraphJson(wf.getGraphJson());
+        versionMapper.insert(v);
+    }
+
+    /** 版本列表（按版本号倒序） */
+    public List<WorkflowVersion> listVersions(Long workflowId) {
+        getById(workflowId);
+        return versionMapper.selectList(new LambdaQueryWrapper<WorkflowVersion>()
+                .eq(WorkflowVersion::getWorkflowId, workflowId)
+                .orderByDesc(WorkflowVersion::getVersion));
+    }
+
+    /** 单个版本详情 */
+    public WorkflowVersion getVersion(Long workflowId, Integer version) {
+        WorkflowVersion v = versionMapper.selectOne(new LambdaQueryWrapper<WorkflowVersion>()
+                .eq(WorkflowVersion::getWorkflowId, workflowId)
+                .eq(WorkflowVersion::getVersion, version));
+        if (v == null) throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "版本不存在");
+        return v;
+    }
+
+    /** 回滚到指定版本：恢复名称/描述/图定义，版本号 +1 并生成新快照。 */
+    @Transactional
+    public Workflow rollback(Long workflowId, Integer version) {
+        Workflow existing = getById(workflowId);
+        WorkflowVersion snapshot = getVersion(workflowId, version);
+
+        existing.setName(snapshot.getName());
+        existing.setDescription(snapshot.getDescription());
+        existing.setGraphJson(snapshot.getGraphJson());
+        existing.setVersion(existing.getVersion() == null ? 1 : existing.getVersion() + 1);
+        existing.setUpdateTime(LocalDateTime.now());
+        workflowMapper.updateById(existing);
+        snapshotVersion(existing);
+        return existing;
     }
 
     // ==================== 运行 ====================

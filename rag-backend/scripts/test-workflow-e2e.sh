@@ -10,6 +10,7 @@
 #   T6 取消：暂停状态下取消运行 → CANCELLED，待确认节点标记 SKIPPED
 #   T7 LLM 节点（可选）：依赖已启用且可用的聊天模型
 #   T8 知识库检索节点（可选）：依赖已有文件的知识库与可用的 embedding 模型
+#   T9 版本管理：自动快照 / 版本列表 / 回滚生成新版本
 #
 # 依赖：backend 8080 运行中、postgres 容器 postgres-with-vector
 # 用法：bash scripts/test-workflow-e2e.sh
@@ -371,6 +372,44 @@ JSON
   else
     sk "检索节点未执行成功（知识库 ${KB_ID}，embedding 模型可能不可用），status=${ST8}"
   fi
+fi
+
+# ---------- T9: 版本管理（快照 / 列表 / 回滚） ----------
+echo ""
+echo "[T9] 版本管理：快照 / 列表 / 回滚"
+
+VWID=$(create_wf /tmp/wf_valid.json "e2e-版本流")
+if [ -z "$VWID" ]; then
+  ng "创建工作流失败"
+else
+  ok "创建工作流 id=$VWID"
+
+  CNT=$(psqlq "SELECT COUNT(*) FROM wgh_workflow_version WHERE workflow_id=$VWID AND deleted=0")
+  [ "$CNT" = "1" ] && ok "创建即生成 v1 快照" || ng "v1 快照数异常：$CNT"
+
+  update_wf "$VWID" /tmp/wf_valid.json > /dev/null
+  update_wf "$VWID" /tmp/wf_valid.json > /dev/null
+  VER=$(curl -s "$SRV/api/workflows/$VWID" -H "$AUTH" | python3 -c "import sys,json;print(json.load(sys.stdin)['data']['version'])" 2>/dev/null)
+  [ "$VER" = "3" ] && ok "两次更新后版本号=3" || ng "版本号异常：$VER"
+
+  CNT=$(psqlq "SELECT COUNT(*) FROM wgh_workflow_version WHERE workflow_id=$VWID AND deleted=0")
+  [ "$CNT" = "3" ] && ok "累计 3 条版本快照" || ng "快照数异常：$CNT"
+
+  LIST=$(curl -s "$SRV/api/workflows/$VWID/versions" -H "$AUTH" | python3 -c "import sys,json;d=json.load(sys.stdin)['data'];print(len(d),d[0]['version'])" 2>/dev/null)
+  [ "$LIST" = "3 3" ] && ok "版本列表接口：3 条且按版本倒序" || ng "版本列表异常：$LIST"
+
+  D1=$(curl -s "$SRV/api/workflows/$VWID/versions/1" -H "$AUTH" | python3 -c "import sys,json;print(json.load(sys.stdin)['data']['name'])" 2>/dev/null)
+  [ "$D1" = "e2e-版本流" ] && ok "v1 快照详情保留原始名称" || ng "v1 详情异常：$D1"
+
+  RB=$(curl -s -X POST "$SRV/api/workflows/$VWID/rollback/1" -H "$AUTH" | python3 -c "import sys,json;d=json.load(sys.stdin)['data'];print(d['version'],d['name'])" 2>/dev/null)
+  [ "$RB" = "4 e2e-版本流" ] && ok "回滚到 v1：生成 v4 且名称恢复" || ng "回滚异常：$RB"
+
+  CNT=$(psqlq "SELECT COUNT(*) FROM wgh_workflow_version WHERE workflow_id=$VWID AND deleted=0")
+  [ "$CNT" = "4" ] && ok "回滚后累计 4 条快照（只增不改）" || ng "回滚后快照数异常：$CNT"
+
+  run_wf "$VWID" "回滚验证" /tmp/wf_t9.sse 30
+  OUT9=$(sse_field /tmp/wf_t9.sse workflow_complete output | tail -1)
+  [ "$OUT9" = "回滚验证" ] && ok "回滚后的工作流可正常运行：$OUT9" || ng "回滚后运行异常：$OUT9"
 fi
 
 # ---------- 汇总 ----------

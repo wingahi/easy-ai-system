@@ -29,10 +29,11 @@
         <el-table-column prop="updateTime" label="更新时间" width="180">
           <template #default="{ row }">{{ formatTime(row.updateTime) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="330" fixed="right">
+        <el-table-column label="操作" width="390" fixed="right">
           <template #default="{ row }">
             <div class="table-actions">
               <el-button link type="primary" @click="openEditor(row)">编排</el-button>
+              <el-button link type="primary" @click="openVersions(row)">版本</el-button>
               <el-button link type="primary" @click="openHistory(row)">运行历史</el-button>
               <el-button v-if="row.status === 1" link type="warning" @click="toggle(row, 0)">停用</el-button>
               <el-button v-else link type="success" @click="toggle(row, 1)">启用</el-button>
@@ -66,6 +67,34 @@
         <el-button @click="createVisible = false">取消</el-button>
         <el-button type="primary" :loading="creating" @click="create">创建并编排</el-button>
       </template>
+    </el-dialog>
+
+    <!-- 版本历史 -->
+    <el-dialog v-model="versionVisible" :title="`版本历史 - ${currentWorkflow?.name || ''}`" width="680px">
+      <el-table :data="versions" v-loading="versionLoading" stripe>
+        <el-table-column label="版本" width="110">
+          <template #default="{ row }">
+            v{{ row.version }}
+            <el-tag v-if="row.version === currentWorkflow?.version" type="success" size="small" style="margin-left:4px">当前</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="name" label="名称" min-width="140" show-overflow-tooltip />
+        <el-table-column label="节点数" width="80">
+          <template #default="{ row }">{{ nodeCount(row) }}</template>
+        </el-table-column>
+        <el-table-column label="保存时间" width="170">
+          <template #default="{ row }">{{ formatTime(row.createTime) }}</template>
+        </el-table-column>
+        <el-table-column label="操作" width="90">
+          <template #default="{ row }">
+            <el-popconfirm :title="`确认回滚到 v${row.version}？将基于该版本生成新版本`" @confirm="rollback(row)">
+              <template #reference>
+                <el-button link type="warning" :disabled="row.version === currentWorkflow?.version">回滚</el-button>
+              </template>
+            </el-popconfirm>
+          </template>
+        </el-table-column>
+      </el-table>
     </el-dialog>
 
     <!-- 运行历史 -->
@@ -120,7 +149,7 @@ import { ElMessage } from 'element-plus'
 import { Plus, Refresh } from '@element-plus/icons-vue'
 import {
   workflowPage, workflowCreate, workflowDelete, workflowEnable, workflowDisable,
-  workflowPageRuns, workflowRunNodes
+  workflowPageRuns, workflowRunNodes, workflowVersions, workflowRollback
 } from '../../api'
 
 const router = useRouter()
@@ -141,6 +170,29 @@ const runs = ref([])
 const runLoading = ref(false)
 const nodeRuns = reactive({})
 const nodeLoadingId = ref(null)
+
+const versionVisible = ref(false)
+const versions = ref([])
+const versionLoading = ref(false)
+
+const openVersions = async (row) => {
+  currentWorkflow.value = row
+  versionVisible.value = true
+  versionLoading.value = true
+  try {
+    const res = await workflowVersions(row.id)
+    versions.value = res.data || []
+  } finally {
+    versionLoading.value = false
+  }
+}
+
+const rollback = async (row) => {
+  const res = await workflowRollback(currentWorkflow.value.id, row.version)
+  ElMessage.success(`已回滚到 v${row.version}，生成新版本 v${res.data.version}`)
+  await openVersions(res.data)
+  load()
+}
 
 const load = async () => {
   loading.value = true

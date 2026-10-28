@@ -4,6 +4,7 @@ import com.wgh.rag.common.result.PageResult;
 import com.wgh.rag.common.result.Result;
 import com.wgh.rag.workflow.entity.Workflow;
 import com.wgh.rag.workflow.entity.WorkflowRun;
+import com.wgh.rag.workflow.entity.WorkflowVersion;
 import com.wgh.rag.workflow.service.WorkflowService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -87,6 +88,26 @@ public class WorkflowController {
     public Result<Void> disable(@PathVariable Long id) {
         workflowService.setStatus(id, 0);
         return Result.success();
+    }
+
+    // ==================== 版本管理 ====================
+
+    @Operation(summary = "版本历史列表")
+    @GetMapping("/{id}/versions")
+    public Result<List<WorkflowVersion>> versions(@PathVariable Long id) {
+        return Result.success(workflowService.listVersions(id));
+    }
+
+    @Operation(summary = "版本详情")
+    @GetMapping("/{id}/versions/{version}")
+    public Result<WorkflowVersion> versionDetail(@PathVariable Long id, @PathVariable Integer version) {
+        return Result.success(workflowService.getVersion(id, version));
+    }
+
+    @Operation(summary = "回滚到指定版本（生成新版本快照）")
+    @PostMapping("/{id}/rollback/{version}")
+    public Result<Workflow> rollback(@PathVariable Long id, @PathVariable Integer version) {
+        return Result.success(workflowService.rollback(id, version));
     }
 
     // ==================== 运行 ====================
