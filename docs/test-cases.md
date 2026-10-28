@@ -2,7 +2,7 @@
 
 > 版本：v1.0　｜　日期：2026-10-28　｜　测试方法：黑盒 + 灰盒（已知 API 面）
 > 分类：正常功能 / 边界条件 / 异常场景
-> 覆盖模块：鉴权 · 知识库 · 模型 · 聊天 · Agent · 工作流 · 工具 · 上下文压缩 · 评估 · 分享 · 触发器
+> 覆盖模块：鉴权 · 知识库 · 模型 · 聊天 · Agent · 工作流 · 工具 · 上下文压缩 · 评估 · 分享 · 触发器 · 多 Agent 协作
 
 ---
 
@@ -19,6 +19,7 @@
 9. [工具框架（4 类执行器 + Skill）](#9-工具框架4-类执行器--skill)
 10. [触发器（CRON / Webhook）](#10-触发器cron--webhook)
 11. [端到端集成场景](#11-端到端集成场景)
+12. [多 Agent 协作框架（rag-agent-multi）](#12-多-agent-协作框架rag-agent-multi)
 
 ---
 
@@ -491,3 +492,198 @@
 | 状态迁移 | 7.3 HITL（RUNNING → PAUSED → RUNNING / CANCELLED）、8.6 HITL 恢复 |
 | 错误推测 | 1 安全注入、Tool-14 不可变 Map、Cmp-06 LLM 降级 |
 | 场景法 | 11 端到端集成（E2E-01 ~ E2E-15） |
+
+---
+
+## 12. 多 Agent 协作框架（rag-agent-multi）
+
+> 覆盖范围：Crew CRUD · Run 生命周期 · Crew 三种模式（Sequential/Hierarchical/Parallel）· Graph 状态图路由（CONDITION/LOOP/HITL）· GroupChat（RoundRobin/DynamicRouter）· SSE 事件 · HITL · 持久化 · 集成边界
+> API 前缀：`/api/agent-multi`｜数据表：`wgh_m_agent_run` / `wgh_m_agent_step` / `wgh_m_agent_crew`
+
+### 12.1 Crew 配置 CRUD
+
+| 编号 | 分类 | 用例 | 操作步骤 | 预期结果 |
+|------|------|------|---------|---------|
+| MA-C-01 | 正常 | 创建 Crew（SEQUENTIAL） | POST /crews 带 name/executionMode/agentsJson/crewConfigJson | code=200，返回 id；list 可见 |
+| MA-C-02 | 正常 | 创建 Crew（GROUP_CHAT_DYNAMIC_ROUTER） | executionMode=GROUP_CHAT_DYNAMIC_ROUTER + groupChatConfigJson | code=200 |
+| MA-C-03 | 正常 | Crew 分页列表 | GET /crews?page=1&size=10 | 分页结构正确（total/records） |
+| MA-C-04 | 正常 | Crew 详情查询 | GET /crews/{id} | 返回完整 JSON 字段 |
+| MA-C-05 | 正常 | 更新 Crew | PUT /crews/{id} 改 name | updateTime 更新，版本字段生效 |
+| MA-C-06 | 正常 | 删除 Crew（逻辑删除） | DELETE /crews/{id} → list | 列表不再出现；DB deleted=1 |
+| MA-C-07 | 边界 | agentsJson 为空数组 | agentsJson="[]" | 校验失败（422）或创建成功但 run 时校验拦截 |
+| MA-C-08 | 边界 | 单 Agent Crew | agentsJson 只含 1 个 Agent | 允许创建（退化为单 Agent）或明确拒绝 |
+| MA-C-09 | 边界 | 名称超长 200 字符 | name=200 字符 | 截断或友好拒绝，无 DB 异常 |
+| MA-C-10 | 异常 | agentsJson 非法 JSON | agentsJson="{invalid" | 400 参数错误，无 500 堆栈 |
+| MA-C-11 | 异常 | 删除不存在的 Crew | DELETE /crews/99999 | 404 或幂等成功 |
+| MA-C-12 | 异常 | executionMode 非法值 | executionMode="HACK_MODE" | 400 校验失败 |
+| MA-C-13 | 安全 | agentsJson 注入 SQL 片段 | role=`x'; DROP TABLE--` | 纯文本存储，无 SQL 执行 |
+
+### 12.2 Run 生命周期
+
+| 编号 | 分类 | 用例 | 操作步骤 | 预期结果 |
+|------|------|------|---------|---------|
+| MA-R-01 | 正常 | 创建 Run（内联 agentsJson） | POST /runs {sessionId, chatWindowId, executionMode, userGoal} | code=200，返回 runId（mag-xxx），status=PLANNING |
+| MA-R-02 | 正常 | 创建 Run（引用 crewId 模板） | POST /runs {crewId} | 自动补齐 agentsJson/crewConfigJson/executionMode |
+| MA-R-03 | 正常 | 查询 Run 状态 | GET /runs/{runId}/state | 返回 run + steps 数组 |
+| MA-R-04 | 正常 | 取消 RUNNING 的 Run | POST /runs/{runId}/cancel | status→CANCELLED，未执行 steps→SKIPPED，SSE multi_agent_cancelled |
+| MA-R-05 | 正常 | Run 完成终态 | 等全部 Agent 执行完 | status=COMPLETED，outputText 非空，durationMs>0 |
+| MA-R-06 | 边界 | 空 userGoal 创建 Run | userGoal="" | 400 校验失败或默认取 input |
+| MA-R-07 | 边界 | maxRounds=1 | maxRounds=1（GroupChat） | 一轮后即终止 |
+| MA-R-08 | 边界 | maxRounds 超上限 50 | maxRounds=100 | 截断为上限或 400 |
+| MA-R-09 | 异常 | 查询不存在的 runId | GET /runs/ghost-999/state | 404 |
+| MA-R-10 | 异常 | 取消已 COMPLETED 的 Run | POST cancel | 幂等成功（状态不变） |
+| MA-R-11 | 异常 | 缺 chatWindowId | 不传 chatWindowId | 400（DB NOT NULL 约束前置校验，不报 500） |
+| MA-R-12 | 异常 | 缺 crewConfigJson 且 agentsJson 为空 | 两者都缺 | 400 明确错误信息 |
+| MA-R-13 | 状态机 | PLANNING→RUNNING→COMPLETED 迁移 | 全程观察 status 字段 | 不跳变、不倒退 |
+| MA-R-14 | 状态机 | PAUSED 状态 hitl-confirm 后 RUNNING | hitl-confirm {userInput} | PAUSED→RUNNING，继续执行 |
+
+### 12.3 Crew — Sequential 串行模式
+
+| 编号 | 分类 | 用例 | 操作步骤 | 预期结果 |
+|------|------|------|---------|---------|
+| MA-S-01 | 正常 | 2 Agent 串行执行 | researcher → writer 链 | SSE agent_start/done 按序到达；DB steps step_index 递增 |
+| MA-S-02 | 正常 | 上游输出传递到下游 | a1.output 含"量子"→ a2 的 prompt 渲染 `{{a1.text}}` | a2 的 input_context 中含 a1 输出文本 |
+| MA-S-03 | 正常 | 末节点输出为最终答复 | END 节点前最后一个 AGENT 输出 | run.outputText = 末 Agent 输出 |
+| MA-S-04 | 边界 | 某 Agent 无工具无 RAG | toolIds=[], kbIds=null | 纯 LLM 对话，正常返回 |
+| MA-S-05 | 异常 | 中间 Agent LLM 失败 | a1 的模型 API Key 失效 | run.status=FAILED，errorMessage 含原因，后续 Agent 标记 SKIPPED |
+| MA-S-06 | 异常 | 图中含环（a1→a2→a1） | 非法 DAG | validate 拦截 422 或执行时检测死循环终止 |
+
+### 12.4 Crew — Hierarchical 层级模式
+
+| 编号 | 分类 | 用例 | 操作步骤 | 预期结果 |
+|------|------|------|---------|---------|
+| MA-H-01 | 正常 | Manager 分配 + Worker 执行 + 汇总 | managerAgentId + 2 worker | manager 先执行产出分配；workers 执行；manager 二次汇总为 output |
+| MA-H-02 | 正常 | Manager 输出 JSON 子任务解析 | manager 返回 `[{"agent":"w1","task":"..."}]` | 正确解析并调度对应 worker |
+| MA-H-03 | 边界 | Manager 分配不存在的 agentId | manager 返回 agent="ghost" | 该子任务标记 FAILED，不影响其他 worker |
+| MA-H-04 | 异常 | managerAgentId 不在 agents 列表 | 配置 managerAgentId="not-exist" | 400 校验失败 |
+| MA-H-05 | 异常 | Manager LLM 输出非法 JSON | manager 返回非 JSON | 降级为顺序执行全部 worker 或 FAILED 带明确信息 |
+
+### 12.5 Crew — Parallel 并行模式
+
+| 编号 | 分类 | 用例 | 操作步骤 | 预期结果 |
+|------|------|------|---------|---------|
+| MA-P-01 | 正常 | 3 Agent fan-out + fan-in 汇聚 | START→{a1,a2,a3}→collector | 三者并发执行（start_time 重叠）；collector 等全部完成后执行 |
+| MA-P-02 | 正常 | 汇聚节点拿到全部上游输出 | collector 模板 `{{a1.text}} {{a2.text}} {{a3.text}}` | 三个变量全部渲染 |
+| MA-P-03 | 边界 | 1 个并行分支失败 | a2 模型超时 | run 按配置：STOP→整体 FAILED；CONTINUE→collector 仍执行，a2 输出为空串/错误标记 |
+| MA-P-04 | 边界 | 并行度超过线程池 | 10 个并行分支（pool max=8） | 排队执行，不丢任务 |
+| MA-P-05 | 异常 | 两个 Agent 同时写同名 context key | a1/a2 都输出到 `result` | 后写覆盖或按 agentId 隔离，行为明确且无 ConcurrentModificationException |
+
+### 12.6 Graph — 状态图路由模式
+
+| 编号 | 分类 | 用例 | 操作步骤 | 预期结果 |
+|------|------|------|---------|---------|
+| MA-G-01 | 正常 | CONDITION true 分支 | expression=`{{coder.text}} contains "PASS"`，coder 输出含 PASS | 走 sourceHandle=true 的边 |
+| MA-G-02 | 正常 | CONDITION false 分支 | 输出不含 PASS | 走 false 边到 LOOP |
+| MA-G-03 | 正常 | LOOP 循环 3 轮后 done | maxIterations=3 | 循环体执行 3 次，loop.iteration 计数正确 |
+| MA-G-04 | 正常 | LOOP breakCondition 提前退出 | breakCondition=`{{tester.text}} contains "PASS"` 第 2 轮满足 | 第 2 轮后走 done 边 |
+| MA-G-05 | 正常 | HITL 节点暂停→确认→续跑 | HITL prompt 审批 | SSE agent_hitl_pending → status=PAUSED → confirm 后续跑 |
+| MA-G-06 | 边界 | LOOP maxIterations=1 | 最小循环 | 执行 1 次即 done |
+| MA-G-07 | 边界 | LOOP maxIterations=20（上限） | 最大循环 | 正常执行 20 轮上限后强制 done |
+| MA-G-08 | 边界 | CONDITION 引用不存在的变量 | `{{ghost.text}} contains "x"` | 渲染为空串，按 is_empty/false 处理，不抛 NPE |
+| MA-G-09 | 异常 | CONDITION 缺 true 或 false 出边 | 图校验 | validate 返回 422 明确指出 |
+| MA-G-10 | 异常 | LOOP 无 loop/done 出口 | 图校验 | 422 拦截 |
+| MA-G-11 | 异常 | 表达式语法非法 | expression="{{a} invalid" | ConditionEvaluator 返回 false 或 400，不 crash |
+| MA-G-12 | 状态机 | HITL 暂停期间刷新页面后恢复 | 暂停→刷新→GET state | steps 状态完整恢复，前端可继续确认 |
+
+### 12.7 GroupChat — RoundRobin 轮询模式
+
+| 编号 | 分类 | 用例 | 操作步骤 | 预期结果 |
+|------|------|------|---------|---------|
+| MA-Q-01 | 正常 | 3 Agent 固定轮询 3 轮 | agents=[a1,a2,a3], maxRounds=3 | 发言顺序 a1→a2→a3 重复；SSE agent_turn_start/end 带 round 递增 |
+| MA-Q-02 | 正常 | 对话历史隔离视角 | a2 收到的 history | 包含 a1 的发言（broadcast 追加到各 Agent history） |
+| MA-Q-03 | 正常 | TERMINATE 提前终止 | 某 Agent 回复含 "TERMINATE" | 当前轮后 shouldTerminate=true，进入汇总 |
+| MA-Q-04 | 正常 | Summarizer 汇总最终答复 | 指定 summarizerAgentId | outputText 为 summarizer 输出 |
+| MA-Q-05 | 边界 | maxRounds 达到上限终止 | maxRounds=5，无 TERMINATE | 恰执行 5 轮后终止，outputText 非空 |
+| MA-Q-06 | 边界 | 无 summarizer 配置 | summarizerAgentId=null | 取最后一条 agent_message 作为 output |
+| MA-Q-07 | 异常 | 某轮 Agent LLM 超时 | a2 超时 | 该轮标记 FAILED，继续下一轮或整体 FAILED（按策略明确） |
+| MA-Q-08 | 异常 | 连续空回复 | 3 轮所有 Agent 输出为空 | 触发终止条件（防死循环） |
+
+### 12.8 GroupChat — DynamicRouter LLM 动态路由模式
+
+| 编号 | 分类 | 用例 | 操作步骤 | 预期结果 |
+|------|------|------|---------|---------|
+| MA-D-01 | 正常 | Router 选择合适发言者 | router prompt + 对话历史 | pickNextSpeaker 返回合法 agentId，SSE agent_turn_start 含 routerReason |
+| MA-D-02 | 正常 | Router JSON 解析 | router 返回 `{"agentId":"analyst","reason":"..."}` | 正确解析 agentId |
+| MA-D-03 | 边界 | Router 返回不存在的 agentId | router 返回 ghost | 降级为 RoundRobin 或重试一次，不 crash |
+| MA-D-04 | 边界 | Router 返回非 JSON | router 输出散文 | 正则/降级兜底提取，失败则 RoundRobin |
+| MA-D-05 | 异常 | dynamicRouterModelId 为空 | 未配置路由模型 | 回退到第一个 Agent 的模型，或 400 提示 |
+| MA-D-06 | 异常 | Router 模型 API 失败 | 路由模型 Key 失效 | 降级 RoundRobin 并完成对话，日志有 WARN |
+
+### 12.9 SSE 事件协议（多 Agent 专属 17 类）
+
+| 编号 | 分类 | 用例 | 操作步骤 | 预期结果 |
+|------|------|------|---------|---------|
+| MA-E-01 | 正常 | multi_agent_start | 创建 Run 后 | payload 含 runId/executionMode/agentCount/userGoal |
+| MA-E-02 | 正常 | agent_start/agent_done 配对 | 每个 Agent 执行 | 每个 agent_start 必有对应 agent_done 或 agent_failed |
+| MA-E-03 | 正常 | agent_tool_call_start/result | Agent 内 ReAct 工具调用 | toolName/input/resultText/durationMs 齐全 |
+| MA-E-04 | 正常 | agent_rag 事件 | Agent 绑定 kbIds | chunks 数组含 kbName/fileName/score |
+| MA-E-05 | 正常 | agent_reflection 事件 | enableReflection=true | score(0-10)/pass/feedback 齐全 |
+| MA-E-06 | 正常 | agent_message（GroupChat） | broadcast 时 | fromAgentId/content/timestamp 齐全，前端气泡可渲染 |
+| MA-E-07 | 正常 | multi_agent_complete | 全部完成 | finalAnswer/totalRounds/totalDurationMs 齐全 |
+| MA-E-08 | 边界 | 事件 payload JSON 单行无换行 | 抓原始 SSE 流 | data: 为单行 JSON（换行在 JSON 内转义） |
+| MA-E-09 | 边界 | 客户端中途断开 SSE | 执行中 abort | 后端仅 WARN 日志，主流程不中断、不报错事件 |
+| MA-E-10 | 异常 | multi_agent_failed | Agent 全部失败 | payload 含 error 和 failedAgentId |
+
+### 12.10 HITL（多 Agent 统一）
+
+| 编号 | 分类 | 用例 | 操作步骤 | 预期结果 |
+|------|------|------|---------|---------|
+| MA-T-01 | 正常 | Crew 中 Agent hitlRequired=true 暂停 | 执行到该 Agent | SSE agent_hitl_pending + status=PAUSED + step status=HITL_PENDING |
+| MA-T-02 | 正常 | confirm 后续跑 | POST hitl-confirm {userInput:"同意"} | status→RUNNING，userInput 注入该 Agent 上下文 |
+| MA-T-03 | 正常 | GroupChat 中 HITL Agent 轮次暂停 | 轮到 hitl Agent | 对话循环退出等待，confirm 后从同一轮继续（round 不重跳） |
+| MA-T-04 | 边界 | 暂停中取消 Run | PAUSED + cancel | status→CANCELLED，confirm 接口再调返回 400 |
+| MA-T-05 | 边界 | 重复 confirm | 同一 Run 连续 confirm 两次 | 第二次幂等或 400（状态已非 PAUSED） |
+| MA-T-06 | 异常 | 非 PAUSED 状态调 confirm | RUNNING 时 confirm | 400「run 状态不是 PAUSED」 |
+
+### 12.11 持久化与恢复
+
+| 编号 | 分类 | 用例 | 操作步骤 | 预期结果 |
+|------|------|------|---------|---------|
+| MA-B-01 | 正常 | 每个 Agent 执行落库 wgh_m_agent_step | 执行 3 Agent Crew | 3 条 step 记录，字段齐全（output/toolCalls/durationMs/tokenCount） |
+| MA-B-02 | 正常 | Run 完成后统计字段 | 查询 run | startTime/finishTime/durationMs 齐全且 durationMs = finish-start |
+| MA-B-03 | 正常 | 服务重启后查询历史 Run | 重启 Spring Boot → GET state | 历史数据完整可查 |
+| MA-B-04 | 边界 | RUNNING 状态服务宕机重启 | 执行中 kill → 重启 | 该 Run 保持 RUNNING 或自动标记 FAILED（行为明确，不允许幽灵 RUNNING 永久挂起） |
+| MA-B-05 | 异常 | steps 表 run_id 外键孤儿 | 手工删 run 留 steps | 查询接口不 crash（JOIN 容错或级联逻辑删除） |
+
+### 12.12 集成边界（与现有模块共存）
+
+| 编号 | 分类 | 用例 | 操作步骤 | 预期结果 |
+|------|------|------|---------|---------|
+| MA-I-01 | 正常 | 单 Agent AgentOrchestrator 不受影响 | 原 /api/agent/stream 执行 | 行为与引入 rag-agent-multi 前完全一致 |
+| MA-I-02 | 正常 | 工作流引擎不受影响 | 原 /api/workflows/{id}/run 执行 | 67 项 workflow e2e 全部仍通过 |
+| MA-I-03 | 正常 | 多 Agent 内调用 RAG | Agent kbIds 绑定知识库 | RagRetrieveService 正常召回，agent_rag 事件上报 |
+| MA-I-04 | 正常 | 多 Agent 内调用工具 | Agent toolIds 绑定 HTTP 工具 | ToolExecutionEngine 正常执行，tool_call 事件上报 |
+| MA-I-05 | 正常 | Agent 独立模型路由 | a1 用 qwen / a2 用 deepseek | 各自走各自模型（ModelCacheManager 隔离），token 计数分开 |
+| MA-I-06 | 边界 | Agent 模型被禁用后执行 | 中途禁用 a1 的模型 | 执行到 a1 时 FAILED 带明确信息，不影响已完成步骤数据 |
+| MA-I-07 | 异常 | rag-agent-multi 模块 Bean 冲突 | 启动日志检查 | 无 BeanDefinitionOverride / 循环依赖错误 |
+
+### 12.13 性能与并发（基础）
+
+| 编号 | 分类 | 用例 | 操作步骤 | 预期结果 |
+|------|------|------|---------|---------|
+| MA-N-01 | 性能 | 10 并发创建 Run | 10 线程同时 POST /runs | 全部成功，runId 唯一无冲突 |
+| MA-N-02 | 性能 | 单 Run 5 Agent 串行总耗时 | 掐表 | ≈ 各 Agent 耗时之和 + 编排开销 <15% |
+| MA-N-03 | 性能 | Parallel 模式 4 分支提速 | 对比串行 | 总耗时 ≈ 最慢分支耗时（±20%），非四者之和 |
+| MA-N-04 | 边界 | 同一 Crew 模板并发实例化 | 10 个 Run 引用同一 crewId | 配置只读无脏写 |
+| MA-N-05 | 异常 | 线程池满负荷 | 连续提交 20 个 Parallel Run | 排队执行不丢任务，无 RejectedExecutionException 泄露给前端 |
+
+---
+
+### 多 Agent 用例统计
+
+| 分类 | 数量 |
+|------|------|
+| Crew CRUD | 13 |
+| Run 生命周期 | 14 |
+| Crew Sequential | 6 |
+| Crew Hierarchical | 5 |
+| Crew Parallel | 5 |
+| Graph 路由 | 12 |
+| GroupChat RoundRobin | 8 |
+| GroupChat DynamicRouter | 6 |
+| SSE 事件 | 10 |
+| HITL | 6 |
+| 持久化恢复 | 5 |
+| 集成边界 | 7 |
+| 性能并发 | 5 |
+| **合计** | **102** |
