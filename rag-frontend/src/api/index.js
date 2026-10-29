@@ -331,3 +331,86 @@ export function streamWorkflowResume(runId, userInput, onEvent, onDone, onError)
   return streamPost(`/api/workflows/runs/${runId}/hitl-confirm`, { userInput }, onEvent, onDone, onError)
 }
 
+// ==================== 多 Agent 协作 ====================
+
+// Crew（可复用多 Agent 配置模板）
+export const multiAgentCrewList = () => request.get('/agent-multi/crews')
+export const multiAgentCrewGet = (id) => request.get(`/agent-multi/crews/${id}`)
+export const multiAgentCrewCreate = (data) => request.post('/agent-multi/crews', data)
+export const multiAgentCrewUpdate = (id, data) => request.put(`/agent-multi/crews/${id}`, data)
+export const multiAgentCrewDelete = (id) => request.delete(`/agent-multi/crews/${id}`)
+export const multiAgentCrewValidate = (id) => request.post(`/agent-multi/crews/${id}/validate`)
+
+// 运行控制
+export const multiAgentCreateRun = (data) => request.post('/agent-multi/runs', data)
+export const multiAgentRunState = (runId, signal) =>
+  request.get(`/agent-multi/runs/${runId}/state`, signal ? { signal } : undefined)
+export const multiAgentRunSteps = (runId) => request.get(`/agent-multi/runs/${runId}/steps`)
+export const multiAgentCancelRun = (runId) => request.post(`/agent-multi/runs/${runId}/cancel`)
+
+/** 通用 SSE 读取（GET，带 JWT） */
+function streamGetRaw(url, onEvent, onDone, onError) {
+  const token = localStorage.getItem('wgh_token')
+  const controller = new AbortController()
+
+  const doStream = async () => {
+    try {
+      const res = await fetch(url, {
+        method: 'GET',
+        headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        signal: controller.signal
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+
+        let idx
+        while ((idx = buffer.indexOf('\n\n')) !== -1) {
+          const chunk = buffer.substring(0, idx)
+          buffer = buffer.substring(idx + 2)
+
+          let eventType = 'message'
+          let data = ''
+          for (const line of chunk.split('\n')) {
+            if (line.startsWith('event:')) eventType = line.substring(6).trim()
+            else if (line.startsWith('data:')) {
+              if (data) data += '\n'
+              data += line.substring(5)
+            }
+          }
+          if (data) {
+            try {
+              onEvent(eventType, JSON.parse(data))
+            } catch {
+              onEvent(eventType, data)
+            }
+          }
+        }
+      }
+      onDone?.()
+    } catch (err) {
+      if (controller.signal.aborted || err.name === 'AbortError') return
+      onError?.(err)
+    }
+  }
+
+  return { doStream, abort: () => controller.abort() }
+}
+
+/** 启动多 Agent 运行（SSE，GET） */
+export function streamMultiAgentRun(runId, onEvent, onDone, onError) {
+  return streamGetRaw(`/api/agent-multi/runs/${runId}/stream`, onEvent, onDone, onError)
+}
+
+/** 多 Agent HITL 确认后续跑（SSE，POST） */
+export function streamMultiAgentHitl(runId, userInput, onEvent, onDone, onError) {
+  return streamPost(`/api/agent-multi/runs/${runId}/hitl-confirm`, { userInput }, onEvent, onDone, onError)
+}
+

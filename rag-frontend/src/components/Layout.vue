@@ -44,6 +44,15 @@
           <el-icon><Share /></el-icon>
           <template #title>工作流编排</template>
         </el-menu-item>
+
+        <el-sub-menu index="multi-agent">
+          <template #title>
+            <el-icon><Connection /></el-icon>
+            <span>多 Agent 协作</span>
+          </template>
+          <el-menu-item index="/multi-agent/crews">Crew 管理</el-menu-item>
+          <el-menu-item index="/multi-agent/playground">运行调试</el-menu-item>
+        </el-sub-menu>
       </el-menu>
     </el-aside>
 
@@ -90,7 +99,7 @@
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { 
-  FolderOpened, Cpu, ChatDotRound, SetUp, Share,
+  FolderOpened, Cpu, ChatDotRound, SetUp, Share, Connection,
   Fold, Expand, SwitchButton 
 } from '@element-plus/icons-vue'
 import { useUserStore } from '../stores/user'

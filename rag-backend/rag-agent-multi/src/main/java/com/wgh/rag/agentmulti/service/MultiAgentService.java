@@ -41,7 +41,8 @@ public class MultiAgentService {
     public MultiAgentRun createRun(RunCreateRequest req) {
         MultiAgentRun run = new MultiAgentRun();
         run.setRunId(req.getRunId());
-        run.setSessionId(req.getSessionId());
+        // session_id / chat_window_id 在库中为 NOT NULL —— 独立运行调试时无会话，兜底 0
+        run.setSessionId(req.getSessionId() != null ? req.getSessionId() : 0L);
         run.setChatWindowId(req.getChatWindowId() != null ? req.getChatWindowId() : 0L);
         run.setExecutionMode(req.getExecutionMode());
         run.setUserGoal(req.getUserGoal());
@@ -49,6 +50,10 @@ public class MultiAgentService {
         run.setStatus("PLANNING");
         run.setCurrentRound(0);
         run.setMaxRounds(req.getMaxRounds() != null ? req.getMaxRounds() : 10);
+        run.setDynamicRouterModelId(req.getDynamicRouterModelId());
+        run.setDynamicRouterPrompt(req.getDynamicRouterPrompt());
+        run.setTerminationCriteria(req.getTerminationCriteria());
+        run.setSummarizerAgentId(req.getSummarizerAgentId());
         run.setStartTime(LocalDateTime.now());
 
         if (req.getCrewId() != null) {

@@ -22,7 +22,9 @@ const routes = [
       { path: 'chat/windows/:id/playground', name: 'ChatPlayground', component: () => import('../views/chat/ChatPlayground.vue'), meta: { title: '调试对话' } },
       { path: 'tools', name: 'Tools', component: () => import('../views/tools/ToolManagement.vue'), meta: { title: '工具管理' } },
       { path: 'workflows', name: 'Workflows', component: () => import('../views/workflow/WorkflowList.vue'), meta: { title: '工作流编排' } },
-      { path: 'workflows/:id/edit', name: 'WorkflowEditor', component: () => import('../views/workflow/WorkflowEditor.vue'), meta: { title: '工作流编辑器' } }
+      { path: 'workflows/:id/edit', name: 'WorkflowEditor', component: () => import('../views/workflow/WorkflowEditor.vue'), meta: { title: '工作流编辑器' } },
+      { path: 'multi-agent/crews', name: 'MultiAgentCrews', component: () => import('../views/multi-agent/MultiAgentCrews.vue'), meta: { title: '多 Agent 协作' } },
+      { path: 'multi-agent/playground', name: 'MultiAgentPlayground', component: () => import('../views/multi-agent/MultiAgentPlayground.vue'), meta: { title: '多 Agent 运行调试' } }
     ]
   },
   { path: '/:pathMatch(.*)*', redirect: '/' }

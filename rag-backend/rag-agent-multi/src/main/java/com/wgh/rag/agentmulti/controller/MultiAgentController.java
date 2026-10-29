@@ -57,6 +57,14 @@ public class MultiAgentController {
                 ? (body.get("crewConfigJson") instanceof String s ? s : toJson(body.get("crewConfigJson")))
                 : null);
         req.setMaxRounds(body.get("maxRounds") != null ? ((Number) body.get("maxRounds")).intValue() : null);
+        req.setDynamicRouterModelId(body.get("dynamicRouterModelId") != null
+                ? parseLong(String.valueOf(body.get("dynamicRouterModelId"))) : null);
+        req.setDynamicRouterPrompt(body.get("dynamicRouterPrompt") != null
+                ? String.valueOf(body.get("dynamicRouterPrompt")) : null);
+        req.setTerminationCriteria(body.get("terminationCriteria") != null
+                ? String.valueOf(body.get("terminationCriteria")) : null);
+        req.setSummarizerAgentId(body.get("summarizerAgentId") != null
+                ? String.valueOf(body.get("summarizerAgentId")) : null);
 
         MultiAgentRun run = service.createRun(req);
 

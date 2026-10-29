@@ -59,8 +59,10 @@ public class GroupChatCoordinator {
                 AgentInstance speaker = bus.getAgent(nextAgentId);
                 if (speaker == null) break;
 
-                // HITL
-                if (speaker.isHitlRequired()) {
+                // HITL —— 续跑时命中已确认的 speaker 则放行一次（否则确认后会立即再次暂停，形成死循环）
+                String approvedAgentId = String.valueOf(ctx.getVars("hitlApprovedAgent"));
+                boolean approvedOnce = speaker.getAgentId().equals(approvedAgentId);
+                if (speaker.isHitlRequired() && !approvedOnce) {
                     String hitlPrompt = speaker.getHitlPrompt() != null
                             ? speaker.getHitlPrompt()
                             : "请确认或补充输入给 " + speaker.getName();
@@ -96,6 +98,7 @@ public class GroupChatCoordinator {
 
                 bus.broadcast(speaker.getAgentId(),
                         MessageBus.ChatMessage.assistant(speaker.getAgentId(), result.getOutput()));
+                if (approvedOnce) ctx.setVars("hitlApprovedAgent", "");
 
                 ctx.put(speaker.getAgentId() + ".text", result.getOutput());
                 persistStep(run, speaker, result, round);
@@ -150,6 +153,16 @@ public class GroupChatCoordinator {
     /** GroupChat 的 HITL 恢复 —— 把 userInput 广播成一条用户消息再继续 */
     public void resume(MultiAgentRun run, List<AgentInstance> agents,
                        MultiAgentContext ctx, String userInput, SseEmitter emitter) {
+        // 找到上一次暂停的 speaker 并放行一次，同时把待确认 step 置为 SUCCESS
+        MultiAgentStep pausedStep = null;
+        for (MultiAgentStep s : service.listSteps(run.getRunId())) {
+            if ("HITL_PENDING".equals(s.getStatus())) pausedStep = s;
+        }
+        if (pausedStep != null) {
+            ctx.setVars("hitlApprovedAgent", pausedStep.getAgentId());
+            pausedStep.setStatus("SUCCESS");
+            service.updateStep(pausedStep);
+        }
         MessageBus bus = new MessageBus(agents, emitter);
         // 广播用户回复
         bus.broadcast("user", MessageBus.ChatMessage.user(userInput));

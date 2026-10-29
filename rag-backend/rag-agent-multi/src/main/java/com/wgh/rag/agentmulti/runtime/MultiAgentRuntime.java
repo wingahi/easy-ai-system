@@ -155,6 +155,9 @@ public class MultiAgentRuntime {
                 }
                 default -> throw new IllegalStateException("未知 executionMode: " + run.getExecutionMode());
             }
+        } catch (PauseSignal pause) {
+            // 续跑过程中再次命中 HITL —— 保持 PAUSED，不能标记 FAILED
+            log.info("run {} 续跑再次进入 HITL 暂停: {}", run.getRunId(), pause.getMessage());
         } catch (Exception e) {
             log.error("run {} 恢复执行异常", run.getRunId(), e);
             MultiAgentRun latest = runMapper.selectById(run.getId());

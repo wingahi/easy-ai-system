@@ -149,6 +149,8 @@ public class GraphCoordinator {
                     step.setStepIndex(stepIdx++);
                     step.setStatus("HITL_PENDING");
                     step.setHitlExpectedInput(prompt);
+                    // 记录暂停节点，供 resume 定位后继（ctx 内存状态在 resume 时已重建；列类型为 JSONB）
+                    step.setInputContext(toNodeContext(nodeId));
                     step.setStartTime(LocalDateTime.now());
                     service.insertStep(step);
 
@@ -167,7 +169,8 @@ public class GraphCoordinator {
                     String outTemplate = node.getConfig() != null ? String.valueOf(node.getConfig().getOrDefault("output", "")) : "";
                     String output;
                     if (outTemplate.isBlank()) {
-                        output = String.valueOf(ctx.getOrDefault("lastOutput", ""));
+                        // AGENT 节点写入的是 vars.lastOutput，这里统一走 resolvePath("last") 读取
+                        output = ctx.stringify(ctx.resolvePath("last"));
                     } else {
                         output = ctx.render(outTemplate);
                     }
@@ -203,8 +206,24 @@ public class GraphCoordinator {
             ctx.setVars("lastOutput", userInput);
         }
 
-        // 找到 PAUSED step，取后继作为新的 frontier
+        // 从持久化的 HITL_PENDING step 取暂停节点，恢复其后继作为 frontier。
+        // （resume 时 ctx 是新建的，内存里的 pendingAgents 已丢失，不能作为唯一依据）
         Set<String> allTargets = new LinkedHashSet<>();
+        MultiAgentStep pausedStep = null;
+        for (MultiAgentStep s : service.listSteps(run.getRunId())) {
+            if ("HITL_PENDING".equals(s.getStatus())) pausedStep = s;
+        }
+        if (pausedStep != null && pausedStep.getInputContext() != null
+                && !pausedStep.getInputContext().isBlank()) {
+            String pausedNodeId = parseNodeContext(pausedStep.getInputContext());
+            if (pausedNodeId != null) {
+                for (GraphEdge edge : graph.getEdges() != null ? graph.getEdges() : List.<GraphEdge>of()) {
+                    if (pausedNodeId.equals(edge.getSource())) allTargets.add(edge.getTarget());
+                }
+            }
+            pausedStep.setStatus("SUCCESS");
+            service.updateStep(pausedStep);
+        }
         for (Set<String> s : ctx.pendingAgents().values()) allTargets.addAll(s);
 
         // 没有 pending 就从头走
@@ -285,6 +304,20 @@ public class GraphCoordinator {
                 }
                 case "HITL" -> {
                     String prompt = ctx.render(node.getPrompt());
+                    MultiAgentStep step = new MultiAgentStep();
+                    step.setRunId(run.getRunId());
+                    step.setAgentId("HITL");
+                    step.setStepIndex(stepIdx++);
+                    step.setStatus("HITL_PENDING");
+                    step.setHitlExpectedInput(prompt);
+                    step.setInputContext(toNodeContext(nodeId));
+                    step.setStartTime(LocalDateTime.now());
+                    service.insertStep(step);
+
+                    for (GraphEdge edge : outEdges.getOrDefault(nodeId, List.of())) {
+                        ctx.getPendingAgents(nodeId).add(edge.getTarget());
+                    }
+
                     run.setStatus("PAUSED");
                     service.saveRun(run);
                     sse.send(emitter, MultiAgentEvents.AGENT_HITL_PENDING, Map.of("runId", run.getRunId(), "nodeId", nodeId, "prompt", prompt));
@@ -293,7 +326,7 @@ public class GraphCoordinator {
                 case "END" -> {
                     String outTemplate = node.getConfig() != null ? String.valueOf(node.getConfig().getOrDefault("output", "")) : "";
                     String output = outTemplate.isBlank()
-                            ? String.valueOf(ctx.getOrDefault("lastOutput", ""))
+                            ? ctx.stringify(ctx.resolvePath("last"))
                             : ctx.render(outTemplate);
                     run.setOutputText(output);
                     run.setStatus("COMPLETED");
@@ -311,6 +344,25 @@ public class GraphCoordinator {
     }
 
     // ==================== 辅助 ====================
+
+    /** HITL step.inputContext 存暂停节点 ID（JSONB 列要求合法 JSON） */
+    private String toNodeContext(String nodeId) {
+        try {
+            return objectMapper.writeValueAsString(Map.of("nodeId", nodeId));
+        } catch (Exception e) {
+            log.warn("HITL 节点上下文序列化失败 nodeId={}", nodeId);
+            return null;
+        }
+    }
+
+    private String parseNodeContext(String inputContext) {
+        try {
+            String nodeId = objectMapper.readTree(inputContext).path("nodeId").asText(null);
+            return nodeId == null || nodeId.isBlank() ? null : nodeId;
+        } catch (Exception e) {
+            return null;
+        }
+    }
 
     private Map<String, AgentInstance> indexAgents(List<AgentInstance> agents) {
         Map<String, AgentInstance> m = new LinkedHashMap<>();

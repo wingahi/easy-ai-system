@@ -6,7 +6,10 @@
         <h2>{{ window?.name }} - 调试对话</h2>
         <el-button type="primary" :icon="Plus" @click="newSession">新建会话</el-button>
       </div>
-      <el-button v-if="window?.shareToken" :icon="Link" @click="copyShareLink">复制分享链接</el-button>
+      <div style="display:flex;gap:8px">
+        <el-button :icon="Connection" @click="openMultiAgent">多 Agent 协作</el-button>
+        <el-button v-if="window?.shareToken" :icon="Link" @click="copyShareLink">复制分享链接</el-button>
+      </div>
     </div>
 
     <div class="chat-layout">
@@ -186,15 +189,16 @@
 
 <script setup>
 import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { ArrowLeft, Link, Promotion, Plus, Document, Loading, Tools, Delete } from '@element-plus/icons-vue'
+import { ArrowLeft, Link, Promotion, Plus, Document, Loading, Tools, Delete, Connection } from '@element-plus/icons-vue'
 import { marked } from 'marked'
 import { windowGet, streamChatApi, windowMessages, windowSessions, windowCreateSession, windowDeleteSession,
   agentGetPlanState, agentCancelPlan, agentRetryStep, agentSkipStep, agentGetPlanBySession } from '../../api'
 import AgentPlanTree from '../../components/AgentPlanTree.vue'
 
 const route = useRoute()
+const router = useRouter()
 const windowId = route.params.id
 const window = ref(null)
 const messages = ref([])
@@ -706,6 +710,14 @@ const copyText = async (text) => {
   try { ok = document.execCommand('copy') } catch { /* ignore */ }
   document.body.removeChild(ta)
   return ok
+}
+
+// 跳转多 Agent 运行调试（携带当前窗口与会话上下文）
+const openMultiAgent = () => {
+  router.push({
+    path: '/multi-agent/playground',
+    query: { windowId, sessionId: currentSessionId.value || undefined }
+  })
 }
 
 const copyShareLink = async () => {

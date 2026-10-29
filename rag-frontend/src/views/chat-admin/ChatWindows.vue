@@ -33,10 +33,11 @@
             <el-tag :type="row.status === 1 ? 'success' : 'danger'">{{ row.status === 1 ? '启用' : '停用' }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="470" fixed="right">
+        <el-table-column label="操作" width="540" fixed="right">
           <template #default="{ row }">
             <div class="table-actions">
               <el-button link type="primary" @click="playground(row)">调试对话</el-button>
+              <el-button link type="primary" @click="multiAgent(row)">多 Agent</el-button>
               <el-button link type="primary" @click="copyShareLink(row)" :disabled="!row.shareEnabled">复制链接</el-button>
               <el-popconfirm title="确认重新生成分享链接？旧链接将立即失效，历史会话仍会保留。" width="240"
                              confirm-button-type="warning" confirm-button-text="重新生成" cancel-button-text="取消"
@@ -323,6 +324,7 @@ const regenerateShareLink = async (row) => {
   load()
 }
 const playground = (row) => router.push(`/chat/windows/${row.id}/playground`)
+const multiAgent = (row) => router.push({ path: '/multi-agent/playground', query: { windowId: row.id } })
 
 onMounted(async () => { await Promise.all([load(), loadOptions()]) })
 </script>

@@ -32,4 +32,16 @@ public class RunCreateRequest {
 
     /** 为 null 时装配为 10 */
     private Integer maxRounds;
+
+    /** GroupChat：LLM 动态路由模型 ID（可空） */
+    private Long dynamicRouterModelId;
+
+    /** GroupChat：动态路由 prompt（可空） */
+    private String dynamicRouterPrompt;
+
+    /** GroupChat：终止条件表达式（可空） */
+    private String terminationCriteria;
+
+    /** GroupChat：最终汇总 Agent ID（可空） */
+    private String summarizerAgentId;
 }
