@@ -4,6 +4,9 @@ import { useUserStore } from '../stores/user'
 const routes = [
   { path: '/login', name: 'Login', component: () => import('../views/login/Login.vue') },
 
+  // 工作流分享运行页（需登录；分享态运行启用 safeMode 只读工具白名单）
+  { path: '/share/workflow/:token', name: 'ShareWorkflow', component: () => import('../views/workflow/ShareWorkflow.vue'), meta: { title: '分享工作流', requiresAuth: true } },
+
   // 分享页面（需登录；登录后历史会话按当前用户名 + windowId 查询，与 shareToken 解耦）
   { path: '/share/:token', name: 'ShareChat', component: () => import('../views/chat/ShareChat.vue'), meta: { title: '分享对话', requiresAuth: true } },
   

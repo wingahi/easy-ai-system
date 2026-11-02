@@ -27,16 +27,32 @@
             </el-tag>
           </template>
         </el-table-column>
+        <el-table-column label="分享" width="90">
+          <template #default="{ row }">
+            <el-tag v-if="row.shareEnabled" type="success" size="small">已开启</el-tag>
+            <el-tag v-else type="info" size="small">未开启</el-tag>
+          </template>
+        </el-table-column>
         <el-table-column prop="updateTime" label="更新时间" width="180">
           <template #default="{ row }">{{ formatTime(row.updateTime) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="460" fixed="right">
+        <el-table-column label="操作" width="640" fixed="right">
           <template #default="{ row }">
             <div class="table-actions">
               <el-button link type="primary" @click="openEditor(row)">编排</el-button>
               <el-button link type="primary" @click="openVersions(row)">版本</el-button>
               <el-button link type="primary" @click="openTriggers(row)">触发器</el-button>
               <el-button link type="primary" @click="openHistory(row)">运行历史</el-button>
+              <el-button link type="primary" @click="toggleShare(row)">
+                {{ row.shareEnabled ? '关闭分享' : '开启分享' }}
+              </el-button>
+              <el-button link type="primary" @click="copyShareLink(row)" :disabled="!row.shareEnabled">复制链接</el-button>
+              <el-popconfirm title="确认重新生成分享链接？旧链接将立即失效。" width="240"
+                             @confirm="regenerateShareLink(row)">
+                <template #reference>
+                  <el-button link type="warning" :disabled="!row.shareEnabled">重新生成</el-button>
+                </template>
+              </el-popconfirm>
               <el-button v-if="row.status === 1" link type="warning" @click="toggle(row, 0)">停用</el-button>
               <el-button v-else link type="success" @click="toggle(row, 1)">启用</el-button>
               <el-popconfirm title="确认删除该工作流？" @confirm="remove(row)">
@@ -238,7 +254,8 @@ import {
   workflowPage, workflowCreate, workflowDelete, workflowEnable, workflowDisable,
   workflowPageRuns, workflowRunNodes, workflowVersions, workflowRollback,
   workflowTriggers, workflowTriggerCreate, workflowTriggerEnable, workflowTriggerDisable,
-  workflowTriggerDelete, workflowTemplates, workflowInstantiate
+  workflowTriggerDelete, workflowTemplates, workflowInstantiate,
+  workflowShareEnable, workflowShareDisable, workflowShareRegenerate
 } from '../../api'
 
 const router = useRouter()
@@ -443,6 +460,34 @@ const toggle = async (row, status) => {
   if (status === 1) await workflowEnable(row.id)
   else await workflowDisable(row.id)
   ElMessage.success('已更新状态')
+  load()
+}
+
+// ==================== 分享运行页 ====================
+
+const toggleShare = async (row) => {
+  try {
+    if (row.shareEnabled) await workflowShareDisable(row.id)
+    else await workflowShareEnable(row.id)
+    ElMessage.success(row.shareEnabled ? '已关闭分享' : '已开启分享')
+  } finally {
+    load()
+  }
+}
+
+const copyShareLink = async (row) => {
+  const url = `${location.origin}/share/workflow/${row.shareToken}`
+  try {
+    await navigator.clipboard.writeText(url)
+    ElMessage.success('分享链接已复制')
+  } catch {
+    ElMessage.info(url)
+  }
+}
+
+const regenerateShareLink = async (row) => {
+  await workflowShareRegenerate(row.id)
+  ElMessage.success('已重新生成分享链接，旧链接已失效')
   load()
 }
 

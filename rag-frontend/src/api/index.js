@@ -361,6 +361,39 @@ export function streamShareWorkflowHitl(shareToken, runId, sessionId, userInput,
 export const shareWorkflowCancel = (shareToken, runId, params) =>
   request.post(`/chat/share/${shareToken}/workflow-runs/${runId}/cancel`, null, { params })
 
+// ==================== 工作流分享运行页（阶段 B） ====================
+
+/** 管理端：开启分享运行页 */
+export const workflowShareEnable = (id) => request.post(`/workflows/${id}/share/enable`)
+
+/** 管理端：关闭分享运行页 */
+export const workflowShareDisable = (id) => request.post(`/workflows/${id}/share/disable`)
+
+/** 管理端：重新生成分享链接（旧链接立即失效） */
+export const workflowShareRegenerate = (id) => request.post(`/workflows/${id}/share/regenerate`)
+
+/** 分享运行页：工作流元信息 */
+export const workflowShareInfo = (shareToken) => request.get(`/workflows/share/${shareToken}`)
+
+/** 分享运行页：SSE 运行（safeMode 只读工具白名单） */
+export function streamWorkflowShareRun(shareToken, input, onEvent, onDone, onError) {
+  return streamPost(`/api/workflows/share/${shareToken}/run`, { input }, onEvent, onDone, onError)
+}
+
+/** 分享运行页：查询运行状态（刷新恢复） */
+export const workflowShareRunState = (shareToken, runId, signal) =>
+  request.get(`/workflows/share/${shareToken}/runs/${runId}/state`, signal ? { signal } : undefined)
+
+/** 分享运行页：HITL 人工确认并续跑（SSE） */
+export function streamWorkflowShareHitl(shareToken, runId, userInput, onEvent, onDone, onError) {
+  return streamPost(`/api/workflows/share/${shareToken}/runs/${runId}/hitl-confirm`,
+    { userInput }, onEvent, onDone, onError)
+}
+
+/** 分享运行页：取消运行 */
+export const workflowShareCancel = (shareToken, runId) =>
+  request.post(`/workflows/share/${shareToken}/runs/${runId}/cancel`)
+
 // ==================== 多 Agent 协作 ====================
 
 // Crew（可复用多 Agent 配置模板）

@@ -149,6 +149,65 @@ public class WorkflowService {
         workflowMapper.updateById(wf);
     }
 
+    // ==================== 分享运行页 ====================
+
+    /** 开启分享：工作流必须为启用状态；首次开启时生成访问令牌。 */
+    @Transactional
+    public Workflow enableShare(Long id) {
+        Workflow wf = getById(id);
+        if (wf.getStatus() != null && wf.getStatus() == 0) {
+            throw new BusinessException("工作流已停用，无法开启分享");
+        }
+        wf.setShareEnabled(true);
+        if (wf.getShareToken() == null || wf.getShareToken().isBlank()) {
+            wf.setShareToken(UUID.randomUUID().toString().replace("-", ""));
+        }
+        wf.setUpdateTime(LocalDateTime.now());
+        workflowMapper.updateById(wf);
+        return wf;
+    }
+
+    /** 关闭分享：链接立即失效（令牌保留，重新开启后恢复原链接）。 */
+    @Transactional
+    public Workflow disableShare(Long id) {
+        Workflow wf = getById(id);
+        wf.setShareEnabled(false);
+        wf.setUpdateTime(LocalDateTime.now());
+        workflowMapper.updateById(wf);
+        return wf;
+    }
+
+    /** 重新生成分享令牌：旧链接立即失效。 */
+    @Transactional
+    public Workflow regenerateShareToken(Long id) {
+        Workflow wf = getById(id);
+        if (!Boolean.TRUE.equals(wf.getShareEnabled())) {
+            throw new BusinessException(ResultCode.OPERATION_NOT_ALLOWED, "工作流未开启分享，无法重新生成链接");
+        }
+        wf.setShareToken(UUID.randomUUID().toString().replace("-", ""));
+        wf.setUpdateTime(LocalDateTime.now());
+        workflowMapper.updateById(wf);
+        return wf;
+    }
+
+    /** 根据分享令牌查找可用工作流（分享运行页用）：需开启分享且工作流处于启用状态。 */
+    public Workflow getByShareToken(String shareToken) {
+        Workflow wf = workflowMapper.selectOne(new LambdaQueryWrapper<Workflow>()
+                .eq(Workflow::getShareToken, shareToken)
+                .eq(Workflow::getShareEnabled, true)
+                .eq(Workflow::getStatus, 1));
+        if (wf == null) throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "分享链接已失效或工作流已关闭分享");
+        return wf;
+    }
+
+    /** 校验运行记录属于指定工作流（分享接口的越权防护，不暴露他人运行）。 */
+    public void assertRunOfWorkflow(Long workflowId, Long runId) {
+        WorkflowRun run = runMapper.selectById(runId);
+        if (run == null || !workflowId.equals(run.getWorkflowId())) {
+            throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "运行记录不存在");
+        }
+    }
+
     // ==================== 版本管理 ====================
 
     /** 保存当前定义为一条版本快照（版本只增不改，回滚也会生成新版本）。 */
@@ -199,6 +258,14 @@ public class WorkflowService {
 
     /** 启动一次运行，返回 SSE 通道。 */
     public SseEmitter run(Long workflowId, String input) {
+        return run(workflowId, input, false);
+    }
+
+    /**
+     * 启动一次运行（可指定安全模式），返回 SSE 通道。
+     * safeMode=true 时工具节点拒绝有写操作副作用的 HTTP / MCP 调用（分享运行页使用）。
+     */
+    public SseEmitter run(Long workflowId, String input, boolean safeMode) {
         Workflow wf = getById(workflowId);
         WorkflowGraph graph = parseGraph(wf.getGraphJson());
         GraphValidator.GraphValidationResult vr = graphValidator.validate(graph);
@@ -216,7 +283,7 @@ public class WorkflowService {
                         "workflowId", wf.getId(),
                         "workflowName", wf.getName(),
                         "totalNodes", graph.getNodes().size()));
-                engine.run(run, graph, input, vr, sink);
+                engine.run(run, graph, input, vr, safeMode, sink);
             } catch (PauseSignal pause) {
                 log.info("工作流 {} 在节点暂停，等待人工确认", run.getId());
             } catch (Exception e) {

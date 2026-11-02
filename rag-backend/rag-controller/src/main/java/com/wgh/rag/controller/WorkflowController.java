@@ -19,6 +19,7 @@ import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -216,5 +217,76 @@ public class WorkflowController {
     @GetMapping("/runs/{runId}/nodes")
     public Result<List<Map<String, Object>>> nodeRuns(@PathVariable Long runId) {
         return Result.success(workflowService.listNodeRuns(runId));
+    }
+
+    // ==================== 分享运行页（管理端开关） ====================
+
+    @Operation(summary = "开启分享运行页")
+    @PostMapping("/{id}/share/enable")
+    public Result<Workflow> shareEnable(@PathVariable Long id) {
+        return Result.success(workflowService.enableShare(id));
+    }
+
+    @Operation(summary = "关闭分享运行页")
+    @PostMapping("/{id}/share/disable")
+    public Result<Workflow> shareDisable(@PathVariable Long id) {
+        return Result.success(workflowService.disableShare(id));
+    }
+
+    @Operation(summary = "重新生成分享链接（旧链接立即失效）")
+    @PostMapping("/{id}/share/regenerate")
+    public Result<Workflow> shareRegenerate(@PathVariable Long id) {
+        return Result.success(workflowService.regenerateShareToken(id));
+    }
+
+    // ==================== 分享运行页（登录用户凭分享链接访问，safeMode 只读工具白名单） ====================
+
+    @Operation(summary = "分享运行页：工作流元信息（不含图定义）")
+    @GetMapping("/share/{shareToken}")
+    public Result<Map<String, Object>> shareInfo(@PathVariable String shareToken) {
+        Workflow wf = workflowService.getByShareToken(shareToken);
+        Map<String, Object> meta = new LinkedHashMap<>();
+        meta.put("id", wf.getId());
+        meta.put("name", wf.getName());
+        meta.put("description", wf.getDescription());
+        meta.put("version", wf.getVersion());
+        return Result.success(meta);
+    }
+
+    @Operation(summary = "分享运行页：SSE 运行（safeMode）")
+    @PostMapping(value = "/share/{shareToken}/run", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter shareRun(@PathVariable String shareToken,
+                               @RequestBody(required = false) Map<String, Object> body) {
+        Workflow wf = workflowService.getByShareToken(shareToken);
+        String input = body != null && body.get("input") != null ? String.valueOf(body.get("input")) : "";
+        return workflowService.run(wf.getId(), input, true);
+    }
+
+    @Operation(summary = "分享运行页：查询运行状态（刷新恢复）")
+    @GetMapping("/share/{shareToken}/runs/{runId}/state")
+    public Result<Map<String, Object>> shareRunState(@PathVariable String shareToken, @PathVariable Long runId) {
+        Workflow wf = workflowService.getByShareToken(shareToken);
+        workflowService.assertRunOfWorkflow(wf.getId(), runId);
+        return Result.success(workflowService.getRunState(runId));
+    }
+
+    @Operation(summary = "分享运行页：HITL 人工确认并续跑（SSE）")
+    @PostMapping(value = "/share/{shareToken}/runs/{runId}/hitl-confirm", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter shareHitlConfirm(@PathVariable String shareToken, @PathVariable Long runId,
+                                       @RequestBody(required = false) Map<String, Object> body) {
+        Workflow wf = workflowService.getByShareToken(shareToken);
+        workflowService.assertRunOfWorkflow(wf.getId(), runId);
+        String userInput = body != null && body.get("userInput") != null
+                ? String.valueOf(body.get("userInput")) : "";
+        return workflowService.hitlConfirm(runId, userInput);
+    }
+
+    @Operation(summary = "分享运行页：取消运行")
+    @PostMapping("/share/{shareToken}/runs/{runId}/cancel")
+    public Result<Void> shareCancel(@PathVariable String shareToken, @PathVariable Long runId) {
+        Workflow wf = workflowService.getByShareToken(shareToken);
+        workflowService.assertRunOfWorkflow(wf.getId(), runId);
+        workflowService.cancel(runId);
+        return Result.success();
     }
 }

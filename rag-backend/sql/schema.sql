@@ -455,12 +455,17 @@ CREATE TABLE IF NOT EXISTS wgh_workflow (
   status SMALLINT DEFAULT 1,
   version INT DEFAULT 1,
   graph_json JSONB NOT NULL,
+  share_token VARCHAR(64),
+  share_enabled SMALLINT DEFAULT 0,
   create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   create_by VARCHAR(50) DEFAULT 'system',
   update_by VARCHAR(50) DEFAULT 'system',
   deleted SMALLINT DEFAULT 0
 );
+ALTER TABLE wgh_workflow ADD COLUMN IF NOT EXISTS share_token VARCHAR(64);
+ALTER TABLE wgh_workflow ADD COLUMN IF NOT EXISTS share_enabled SMALLINT DEFAULT 0;
+CREATE INDEX IF NOT EXISTS idx_workflow_share_token ON wgh_workflow(share_token);
 CREATE INDEX IF NOT EXISTS idx_workflow_status_update ON wgh_workflow(status, update_time);
 COMMENT ON TABLE wgh_workflow IS '可视化工作流定义';
 COMMENT ON COLUMN wgh_workflow.id IS '主键';
@@ -469,6 +474,8 @@ COMMENT ON COLUMN wgh_workflow.description IS '描述';
 COMMENT ON COLUMN wgh_workflow.status IS '状态（1 启用 / 0 停用）';
 COMMENT ON COLUMN wgh_workflow.version IS '版本号，每次保存 +1';
 COMMENT ON COLUMN wgh_workflow.graph_json IS '图定义 JSON：{ nodes: [...], edges: [...] }';
+COMMENT ON COLUMN wgh_workflow.share_token IS '分享访问令牌（UUID 无横线），为空表示未生成';
+COMMENT ON COLUMN wgh_workflow.share_enabled IS '是否开启分享运行页（0 否 / 1 是），分享态运行启用 safeMode 只读工具白名单';
 COMMENT ON COLUMN wgh_workflow.create_time IS '创建时间';
 COMMENT ON COLUMN wgh_workflow.update_time IS '更新时间';
 COMMENT ON COLUMN wgh_workflow.create_by IS '创建人';

@@ -27,4 +27,12 @@ public class Workflow extends BaseEntity {
 
     /** 图定义 JSON：{ "nodes": [...], "edges": [...] } */
     private String graphJson;
+
+    /** 分享访问令牌（UUID 无横线），为空表示未生成 */
+    @TableField(value = "share_token")
+    private String shareToken;
+
+    /** 是否开启分享运行页（分享态运行启用 safeMode 只读工具白名单） */
+    @TableField(value = "share_enabled")
+    private Boolean shareEnabled;
 }
