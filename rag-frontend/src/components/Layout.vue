@@ -60,6 +60,12 @@
           <el-icon><DataAnalysis /></el-icon>
           <template #title>审计与统计</template>
         </el-menu-item>
+
+        <el-menu-item index="/open-access">
+          <el-icon><Link /></el-icon>
+          <template #title>开放平台</template>
+          <span class="menu-hint">分享 / Widget / API</span>
+        </el-menu-item>
       </el-menu>
     </el-aside>
 
@@ -107,7 +113,7 @@ import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { 
   FolderOpened, Cpu, ChatDotRound, SetUp, Share, Connection,
-  Fold, Expand, SwitchButton, DataAnalysis 
+  Fold, Expand, SwitchButton, DataAnalysis, Link
 } from '@element-plus/icons-vue'
 import { useUserStore } from '../stores/user'
 

@@ -524,3 +524,97 @@ export const kbFileTags = (fileId) => request.get(`/kb/files/${fileId}/tags`)
 export const kbFileSetTags = (fileId, tagIds) => request.put(`/kb/files/${fileId}/tags`, { tagIds })
 export const kbFileVersions = (fileId) => request.get(`/kb/files/${fileId}/versions`)
 export const kbFileRollback = (fileId, version) => request.post(`/kb/files/${fileId}/rollback/${version}`)
+
+// ===== 免登录分享（公开接口，无需 JWT） =====
+
+/** 访客标识：localStorage 持久化，用于隔离匿名会话 */
+export function getVisitorId() {
+  let id = localStorage.getItem('wgh_visitor_id')
+  if (!id) {
+    id = 'v' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36)
+    localStorage.setItem('wgh_visitor_id', id)
+  }
+  return id
+}
+
+const publicShareConfig = (password) => ({
+  headers: {
+    'X-Visitor-Id': getVisitorId(),
+    ...(password ? { 'X-Share-Password': password } : {})
+  }
+})
+
+export const publicShareInfo = (token, password) =>
+  request.get(`/public/share/${token}`, publicShareConfig(password))
+export const publicShareUnlock = (token, password) =>
+  request.post(`/public/share/${token}/unlock`, null, publicShareConfig(password))
+export const publicShareSessions = (token, password) =>
+  request.get(`/public/share/${token}/sessions`, publicShareConfig(password))
+export const publicShareCreateSession = (token, password) =>
+  request.post(`/public/share/${token}/sessions`, null, publicShareConfig(password))
+export const publicShareDeleteSession = (token, sessionId, password) =>
+  request.delete(`/public/share/${token}/sessions/${sessionId}`, publicShareConfig(password))
+export const publicShareMessages = (token, params, password) =>
+  request.get(`/public/share/${token}/messages`, { params, ...publicShareConfig(password) })
+export const publicShareKbSearch = (token, data, password) =>
+  request.post(`/public/share/${token}/kb/search`, data, publicShareConfig(password))
+
+/** 分享页匿名 SSE 问答 */
+export function streamPublicShareChat(token, message, sessionId, password, imageUrls) {
+  const controller = new AbortController()
+  const doStream = async (onEvent, onDone, onError) => {
+    try {
+      const res = await fetch(`/api/public/share/${token}/stream`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Visitor-Id': getVisitorId(),
+          ...(password ? { 'X-Share-Password': password } : {})
+        },
+        body: JSON.stringify({ message, sessionId, ...(imageUrls?.length ? { imageUrls } : {}) }),
+        signal: controller.signal
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        let idx
+        while ((idx = buffer.indexOf('\n\n')) !== -1) {
+          const chunk = buffer.substring(0, idx)
+          buffer = buffer.substring(idx + 2)
+          let eventType = 'message'
+          let data = ''
+          for (const line of chunk.split('\n')) {
+            if (line.startsWith('event:')) eventType = line.substring(6).trim()
+            else if (line.startsWith('data:')) {
+              if (data) data += '\n'
+              data += line.substring(5)
+            }
+          }
+          if (data) {
+            try { onEvent(eventType, JSON.parse(data)) } catch { onEvent(eventType, data) }
+          }
+        }
+      }
+      onDone?.()
+    } catch (err) {
+      if (controller.signal.aborted || err.name === 'AbortError') return
+      onError?.(err)
+    }
+  }
+  return { doStream, abort: () => controller.abort() }
+}
+
+// ===== 管理端：分享链接 / 开放 API Key =====
+export const shareLinkPage = (params) => request.get('/admin/share-links', { params })
+export const shareLinkCreate = (data) => request.post('/admin/share-links', data)
+export const shareLinkRevoke = (id) => request.post(`/admin/share-links/${id}/revoke`)
+
+export const apiKeyPage = (params) => request.get('/admin/api-keys', { params })
+export const apiKeyCreate = (data) => request.post('/admin/api-keys', data)
+export const apiKeyRevoke = (id) => request.post(`/admin/api-keys/${id}/revoke`)
+export const apiKeyCallLogs = (id, params) => request.get(`/admin/api-keys/${id}/call-logs`, { params })

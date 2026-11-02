@@ -7,8 +7,8 @@ const routes = [
   // 工作流分享运行页（需登录；分享态运行启用 safeMode 只读工具白名单）
   { path: '/share/workflow/:token', name: 'ShareWorkflow', component: () => import('../views/workflow/ShareWorkflow.vue'), meta: { title: '分享工作流', requiresAuth: true } },
 
-  // 分享页面（需登录；登录后历史会话按当前用户名 + windowId 查询，与 shareToken 解耦）
-  { path: '/share/:token', name: 'ShareChat', component: () => import('../views/chat/ShareChat.vue'), meta: { title: '分享对话', requiresAuth: true } },
+  // 免登录分享页（token 范围/有效期/密码由后端校验）
+  { path: '/share/:token', name: 'ShareChat', component: () => import('../views/chat/PublicShareChat.vue'), meta: { title: '分享对话', requiresAuth: false } },
   
   // 管理端布局
   {
@@ -30,7 +30,8 @@ const routes = [
       { path: 'workflows/:id/edit', name: 'WorkflowEditor', component: () => import('../views/workflow/WorkflowEditor.vue'), meta: { title: '工作流编辑器' } },
       { path: 'multi-agent/crews', name: 'MultiAgentCrews', component: () => import('../views/multi-agent/MultiAgentCrews.vue'), meta: { title: '多 Agent 协作' } },
       { path: 'multi-agent/playground', name: 'MultiAgentPlayground', component: () => import('../views/multi-agent/MultiAgentPlayground.vue'), meta: { title: '多 Agent 运行调试' } },
-      { path: 'admin/stats', name: 'AdminStats', component: () => import('../views/admin/AdminStats.vue'), meta: { title: '审计与统计' } }
+      { path: 'admin/stats', name: 'AdminStats', component: () => import('../views/admin/AdminStats.vue'), meta: { title: '审计与统计' } },
+      { path: 'open-access', name: 'OpenAccess', component: () => import('../views/open/PublicAccess.vue'), meta: { title: '开放平台' } }
     ]
   },
   { path: '/:pathMatch(.*)*', redirect: '/' }
@@ -46,6 +47,12 @@ router.beforeEach((to, from, next) => {
   const userStore = useUserStore()
 
   if (to.path.startsWith('/login')) {
+    next()
+    return
+  }
+
+  // 免登录分享页：不需要登录（后端按 token 校验有效期/密码/范围）
+  if (to.path.startsWith('/share/') && to.meta?.requiresAuth === false) {
     next()
     return
   }

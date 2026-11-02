@@ -1035,3 +1035,68 @@ COMMENT ON COLUMN wgh_llm_model.route_priority IS '同组内优先级（升序�
 ALTER TABLE wgh_chat_window ADD COLUMN IF NOT EXISTS model_route_group VARCHAR(50);
 COMMENT ON COLUMN wgh_chat_window.model_route_group IS '指定模型路由组（优先于 llm_model_id：非空则走 ModelRouter 选链路）';
 
+-- ============ 免登录分享 / Widget / 开放 API ============
+
+CREATE TABLE IF NOT EXISTS wgh_share_link (
+  id            BIGSERIAL PRIMARY KEY,
+  token         VARCHAR(64) NOT NULL UNIQUE,
+  name          VARCHAR(100),
+  scope         VARCHAR(20) NOT NULL,
+  target_id     BIGINT NOT NULL,
+  expires_at    TIMESTAMP,
+  password_hash VARCHAR(128),
+  max_uses      INT DEFAULT 0,
+  use_count     INT DEFAULT 0,
+  revoked       SMALLINT NOT NULL DEFAULT 0,
+  created_by    VARCHAR(64),
+  create_time   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  update_time   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  create_by     VARCHAR(64),
+  update_by     VARCHAR(64),
+  deleted       SMALLINT NOT NULL DEFAULT 0
+);
+COMMENT ON TABLE wgh_share_link IS '免登录分享链接（有效期/密码/范围/次数/吊销）';
+COMMENT ON COLUMN wgh_share_link.scope IS 'WINDOW=匿名问答 / SESSION=只读会话记录 / KB=只读知识库检索';
+COMMENT ON COLUMN wgh_share_link.target_id IS 'WINDOW: chat_window_id；SESSION: chat_session_id；KB: knowledge_base_id';
+COMMENT ON COLUMN wgh_share_link.max_uses IS '最大使用次数，0 表示不限';
+CREATE INDEX IF NOT EXISTS idx_share_link_token ON wgh_share_link(token);
+CREATE INDEX IF NOT EXISTS idx_share_link_target ON wgh_share_link(scope, target_id);
+
+CREATE TABLE IF NOT EXISTS wgh_api_key (
+  id             BIGSERIAL PRIMARY KEY,
+  key_prefix     VARCHAR(16),
+  key_hash       VARCHAR(128) NOT NULL UNIQUE,
+  name           VARCHAR(100),
+  scopes         VARCHAR(200),
+  expires_at     TIMESTAMP,
+  revoked        SMALLINT NOT NULL DEFAULT 0,
+  created_by     VARCHAR(64),
+  last_used_time TIMESTAMP,
+  create_time    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  update_time    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  create_by      VARCHAR(64),
+  update_by      VARCHAR(64),
+  deleted        SMALLINT NOT NULL DEFAULT 0
+);
+COMMENT ON TABLE wgh_api_key IS '开放 API Key（仅存 SHA-256 哈希，明文创建时返回一次）';
+COMMENT ON COLUMN wgh_api_key.scopes IS '权限范围，逗号分隔：chat:write,kb:read,usage:read；* 表示全部';
+CREATE INDEX IF NOT EXISTS idx_api_key_hash ON wgh_api_key(key_hash);
+
+CREATE TABLE IF NOT EXISTS wgh_api_call_log (
+  id            BIGSERIAL PRIMARY KEY,
+  api_key_id    BIGINT,
+  api_key_name  VARCHAR(100),
+  username      VARCHAR(64),
+  method        VARCHAR(10),
+  path          VARCHAR(300),
+  status_code   INT,
+  duration_ms   BIGINT,
+  ip            VARCHAR(64),
+  create_time   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  update_time   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  create_by     VARCHAR(64),
+  update_by     VARCHAR(64),
+  deleted       SMALLINT NOT NULL DEFAULT 0
+);
+COMMENT ON TABLE wgh_api_call_log IS '开放 API 调用日志（谁、接口、状态码、耗时）';
+CREATE INDEX IF NOT EXISTS idx_api_call_log_key ON wgh_api_call_log(api_key_id, create_time);

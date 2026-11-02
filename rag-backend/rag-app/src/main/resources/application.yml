@@ -105,6 +105,14 @@ wgh:
     upload-dir: ${WGH_UPLOAD_DIR:./uploads}
     max-single-file-mb: 50
 
+  # ===== 免登录分享 / Widget / 开放 API =====
+  public-access:
+    share-max-expire-days: 30          # 分享链接有效期上限（天）
+    share-default-expire-days: 7       # 未指定有效期时的默认天数
+    share-rate-limit-per-minute: 20    # 分享入口每分钟请求上限（按 token + IP）
+    api-rate-limit-per-minute: 60      # 开放 API 每分钟请求上限（按 API Key）
+    max-images-per-request: 4          # 分享/开放 API 单次提问图片数量上限
+
   skill:
     # Skill 目录根路径（directory 模式从这里扫描/导入/写入）
     base-path: ${WGH_SKILL_BASE_PATH:./skills}

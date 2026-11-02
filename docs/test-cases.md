@@ -731,3 +731,64 @@
 | FMT-16 | 接口 | 同上 | 上传 GBK txt → 预览 → 重新切片 | 编码 GBK、切片正常；重新切片不报错 | 仅手工 | — |
 | FMT-17 | 回归 | 准备 pdf/docx/doc/xls/xlsx/csv/txt/md 各 1 份 | 逐格式上传并预览 | 既有 8 种格式行为与改造前一致 | 单元 | `DocumentParserTest`（8 项） |
 
+---
+
+## 15. 免登录分享 / 嵌入 Widget / 开放 API
+
+> 特性组：阶段 H。后端 `com.wgh.rag.publicaccess`；前端 `PublicShareChat.vue`、`PublicAccess.vue`、`public/widget.js`。
+> 自动化：`PublicAccessUnitTest`（18 项，`mvn -o -pl rag-app -am test -Dtest=PublicAccessUnitTest -Dsurefire.failIfNoSpecifiedTests=false` 全绿）。
+> 设计说明见 `docs/design-public-access.md`；HTTP 层用例为「仅手工」（需后端 8080 + 前端 5173）。
+
+### 15.1 分享链接
+
+| 编号 | 分类 | 前置条件 | 用例 / 步骤 | 预期结果 | 覆盖类型 | 自动化落点 |
+|------|------|---------|------------|---------|---------|-----------|
+| SHARE-01 | 单元 | 数据库无 token 记录 | `resolveActive("not-exist")` | 抛业务异常「分享链接无效」 | 单元 | `PublicAccessUnitTest#invalidToken` |
+| SHARE-02 | 单元 | 链接 `revoked=1` | `resolveActive` | 抛「分享链接已被吊销」 | 单元 | `#revokedLink` |
+| SHARE-03 | 单元 | `expires_at` 已过去 | `resolveActive` | 抛「分享链接已过期」 | 单元 | `#expiredLink` |
+| SHARE-04 | 单元 | `max_uses=5`、`use_count=5` | `resolveActive` | 抛 429「分享链接访问次数已用尽」 | 单元 | `#usesExhausted` |
+| SHARE-05 | 单元 | 链接有密码，请求未带密码 | `requirePassword(link, null)` | 抛「该分享链接需要访问密码」 | 单元 | `#passwordRequired` |
+| SHARE-06 | 单元 | 链接有密码，密码错误 | `requirePassword(link, "wrong")` | 抛「访问密码错误」 | 单元 | `#passwordWrong` |
+| SHARE-07 | 单元 | 链接有密码，密码正确 | `requirePassword` + `matchesPassword` | 通过；错误密码返回 false | 单元 | `#passwordCorrect` |
+| SHARE-08 | 单元 | 链接 scope=KB，请求按 WINDOW 访问 | `requireScope` | 抛权限不足，提示「不支持该操作」 | 单元 | `#scopeMismatch` |
+| SHARE-09 | 单元 | 有效期超过上限（31 天） | `create` | 拒绝并提示「有效期超过上限」 | 单元 | `#createExpiryTooLong` |
+| SHARE-10 | 单元 | scope 小写 `window` | `create` | scope 归一 `WINDOW`；token 以 `s_` 开头；默认有效期≈7 天；`useCount=0`、`revoked=false` | 单元 | `#createWindowLink` |
+| SHARE-11 | 单元 | scope=KB、target 不存在 | `create` | 抛「知识库不存在」 | 单元 | `#createKbNotFound` |
+| SHARE-12 | 单元 | 并用次数扣减更新影响 0 行（并发竞争） | `consumeUse` | 抛 429 | 单元 | `#consumeUseConflict` |
+| SHARE-13 | 接口 | 已登录 admin，存在聊天窗口 | 「开放平台」→ 创建 WINDOW 分享（7 天、无密码）→ 复制链接 → 无痕窗口打开 | 免登录直接进入对话页，可提问并收到 SSE 回复 | 仅手工 | `PublicAccess.vue` / `PublicShareChat.vue` |
+| SHARE-14 | 接口 | 存在 SESSION 分享 | 无痕窗口打开链接 | 只展示目标会话历史消息，无输入框，标记「只读分享」 | 仅手工 | `PublicShareChat.vue` |
+| SHARE-15 | 接口 | 存在 KB 分享 | 无痕窗口打开链接，输入关键词检索 | 返回命中片段（知识库/文档/内容/score），无问答输入 | 仅手工 | `PublicShareChat.vue` |
+| SHARE-16 | 接口 | 创建时填写访问密码 | 打开链接 | 弹「该分享需要访问密码」；错误密码提示「访问密码错误」；正确密码进入 | 仅手工 | `PublicShareChat.vue#unlock` |
+| SHARE-17 | 接口 | 已吊销 / 已过期 / 次数用尽 | 打开链接 | 页面展示对应明确错误（吊销/过期/次数用尽），不进入对话 | 仅手工 | `PublicShareChat.vue#loadError` |
+| SHARE-18 | 接口 | WINDOW 分享，配额耗尽 | 匿名发送消息 | 页面提示可读的配额信息而非静默结束 | 仅手工 | `streamPublicShareChat` 错误分支 |
+| SHARE-19 | 接口 | 同一分享链接 | 1 分钟内 >20 次请求 | 返回 429「请求过于频繁」 | 仅手工 | `PublicAccessRateLimiter` |
+| SHARE-20 | 回归 | 登录态访问 `/share/{token}` | 直接打开 | 仍按 token 校验，不要求登录、不回跳登录页 | 仅手工 | `router/index.js` 免登录守卫 |
+
+### 15.2 开放 API
+
+| 编号 | 分类 | 前置条件 | 用例 / 步骤 | 预期结果 | 覆盖类型 | 自动化落点 |
+|------|------|---------|------------|---------|---------|-----------|
+| OPEN-01 | 单元 | 无 scope 列表 | `create(name, [], ...)` | 抛「至少需要指定一个权限范围」 | 单元 | `PublicAccessUnitTest#createApiKeyWithoutScope` |
+| OPEN-02 | 单元 | 正常创建 | `create(...)` | 明文以 `wgh_sk_` 开头；`keyPrefix`=明文前 12 位；存储为 SHA-256；scopes 逗号拼接 | 单元 | `#createApiKey` |
+| OPEN-03 | 单元 | Key 不存在 / 已吊销 / 已过期 | `verify` | 分别抛「API Key 无效」「已被吊销」、`TOKEN_EXPIRED` | 单元 | `#verifyApiKeyErrors` |
+| OPEN-04 | 单元 | scope=`*` / scope=`kb:read` | `requireScope(key, "chat:write")` | `*` 通过；缺失抛权限不足且提示 `chat:write` | 单元 | `#requireScope` |
+| OPEN-05 | 单元 | 相同明文 | `sha256` 两次 | 结果稳定且长度 64 | 单元 | `#sha256Stable` |
+| OPEN-06 | 接口 | 已登录 admin | 创建 Key（勾选 `chat:write`）→ 复制明文 → 用 curl 调 `/api/open/v1/me` | 返回 Key 信息（无哈希）；列表中无明文 | 仅手工 | `PublicAccess.vue` |
+| OPEN-07 | 接口 | 有 `chat:write` 的 Key | `POST /api/open/v1/chat/stream`（有效 windowId，不传 sessionId） | SSE 正常返回；自动创建 `api_<keyId>` 会话；配额计数增加 | 仅手工 | `OpenApiController#stream` |
+| OPEN-08 | 接口 | Key 仅 `kb:read` | 调 `/api/open/v1/chat/stream` | 403，提示缺少 `chat:write` | 仅手工 | `ApiKeyAuthenticationFilter` |
+| OPEN-09 | 接口 | 任意有效 Key | 调 `/api/open/v1/kb/search` | 返回命中片段；`topK` 生效 | 仅手工 | `OpenApiController#kbSearch` |
+| OPEN-10 | 接口 | 任意有效 Key | 调 `/api/open/v1/usage` | 返回当日用量、调用总数、最近 20 条日志 | 仅手工 | `OpenApiController#usage` |
+| OPEN-11 | 接口 | 已吊销 Key / 过期 Key | 任意 `/api/open/v1/**` | 401/403 + JSON 错误体，不进入业务 | 仅手工 | `ApiKeyAuthenticationFilter` |
+| OPEN-12 | 接口 | 有效 Key | 1 分钟内 >60 次 | 返回 429 | 仅手工 | `PublicAccessRateLimiter` |
+| OPEN-13 | 接口 | 有效 Key | 调用后查看「调用日志」 | 记录 Key、方法、路径、状态码、耗时、IP | 仅手工 | `ApiCallLogService#record` |
+| OPEN-14 | 回归 | 无 Key 直接访问 `/api/open/v1/me` | curl | 401，且不会被 JWT 过滤器二次拦截（返回 JSON 而非空 401） | 仅手工 | `PublicAccessSecurityConfig` |
+
+### 15.3 Widget
+
+| 编号 | 分类 | 前置条件 | 用例 / 步骤 | 预期结果 | 覆盖类型 | 自动化落点 |
+|------|------|---------|------------|---------|---------|-----------|
+| WID-01 | 接口 | 有效分享 token、前端 5173 | 打开 `/widget-demo.html?token=<token>` | 页面渲染 iframe，可完成匿名问答 | 仅手工 | `public/widget-demo.html` |
+| WID-02 | 接口 | 任意第三方页面 | 引入 `widget.js` 并配置 `data-token/data-base/data-container/data-height` | 在指定容器注入 iframe（宽 100%、圆角、阴影）；iframe 内样式不受宿主影响 | 仅手工 | `public/widget.js` |
+| WID-03 | 接口 | 宿主页面使用深色背景/自定义 CSS | 同上 | iframe 内分享页样式不被宿主 CSS 覆盖（iframe 独立文档隔离） | 仅手工 | `widget.js` / `PublicShareChat.vue` `embed` 样式 |
+| WID-04 | 接口 | 无 token 或 token 无效 | 打开 demo 页 | 提示需填写 token / 分享页展示「分享链接无效」 | 仅手工 | `widget-demo.html` |
+

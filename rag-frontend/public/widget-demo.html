@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WGH RAG Widget 嵌入演示</title>
+  <style>
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f5f7fa; color: #303133; }
+    .wrap { max-width: 1080px; margin: 24px auto; padding: 0 16px; }
+    .card { background: #fff; border-radius: 12px; padding: 20px 24px; box-shadow: 0 2px 12px rgba(0,0,0,.05); margin-bottom: 16px; }
+    h1 { font-size: 20px; margin: 0 0 8px; }
+    p { color: #606266; font-size: 14px; line-height: 1.7; margin: 6px 0; }
+    code { background: #f0f2f5; padding: 2px 6px; border-radius: 4px; font-size: 12px; }
+    pre { background: #1d1e1f; color: #e6e6e6; padding: 14px; border-radius: 8px; overflow: auto; font-size: 12px; line-height: 1.6; }
+    .bar { display: flex; gap: 8px; margin-top: 12px; }
+    input { flex: 1; padding: 9px 12px; border: 1px solid #dcdfe6; border-radius: 6px; font-size: 13px; }
+    button { padding: 9px 18px; border: 0; border-radius: 6px; background: #409eff; color: #fff; cursor: pointer; font-size: 13px; }
+    button:hover { background: #337ecc; }
+    #widget-mount { min-height: 120px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>WGH RAG 嵌入式问答 Widget</h1>
+      <p>本页演示第三方页面通过 JS 片段注入 iframe。请在管理端「开放平台 → 免登录分享」创建一个
+        <code>WINDOW</code> 范围的分享链接，把 token 粘贴到下方输入框后点击「加载 Widget」。</p>
+      <p>也可以直接在地址栏使用 <code>?token=xxx</code> 打开本页自动加载。</p>
+      <div class="bar">
+        <input id="token" placeholder="粘贴分享 token（形如 s_xxxxxxxx）" />
+        <button id="load">加载 Widget</button>
+      </div>
+      <pre id="code">&lt;div id="wgh-widget"&gt;&lt;/div&gt;
+&lt;script src="http://localhost:5173/widget.js"
+        data-token="YOUR_TOKEN"
+        data-base="http://localhost:5173"
+        data-container="wgh-widget"
+        data-height="640px"&gt;&lt;/script&gt;</pre>
+    </div>
+
+    <div class="card">
+      <div id="widget-mount"></div>
+      <p style="margin-top:12px;color:#909399">提示：跨域嵌入时，需在 RAG 服务端配置 CSP <code>frame-ancestors</code>
+        允许第三方域名；本项目 dev 环境默认允许 localhost。</p>
+    </div>
+  </div>
+
+  <script>
+    function loadWidget(token) {
+      if (!token) { alert('请先填写分享 token'); return }
+      var mount = document.getElementById('widget-mount')
+      mount.innerHTML = ''
+      var holder = document.createElement('div')
+      holder.id = 'wgh-widget'
+      mount.appendChild(holder)
+
+      var s = document.createElement('script')
+      s.src = '/widget.js'
+      s.setAttribute('data-token', token)
+      s.setAttribute('data-base', location.origin)
+      s.setAttribute('data-container', 'wgh-widget')
+      s.setAttribute('data-height', '640px')
+      document.body.appendChild(s)
+
+      document.getElementById('code').textContent =
+        '<div id="wgh-widget"></div>\n' +
+        '<script src="' + location.origin + '/widget.js"\n' +
+        '        data-token="' + token + '"\n' +
+        '        data-base="' + location.origin + '"\n' +
+        '        data-container="wgh-widget"\n' +
+        '        data-height="640px"></script>'
+    }
+
+    document.getElementById('load').onclick = function () {
+      loadWidget(document.getElementById('token').value.trim())
+    }
+    document.getElementById('token').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') loadWidget(this.value.trim())
+    })
+
+    var params = new URLSearchParams(location.search)
+    var token = params.get('token')
+    if (token) {
+      document.getElementById('token').value = token
+      loadWidget(token)
+    }
+  </script>
+</body>
+</html>

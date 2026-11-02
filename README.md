@@ -246,7 +246,7 @@ wgh-rag-system/
 | 7 | **工作流作为聊天窗口执行模式** | Dify（应用绑定工作流） | ✅ 已完成 | `RagChatService` 分流 + `ChatWorkflowService` / `ChatWindows.vue` WORKFLOW 执行模式 / `wgh_chat_window.workflow_id` |
 | 8 | **工作流独立发布 / 分享页** | Dify Web App / Coze 渠道 | ✅ 已完成 | `WorkflowService` share 逻辑 / `ShareWorkflow.vue` 分享运行页 + HITL / `wgh_workflow.share_token` |
 | 9 | **工作流 AGENT 节点** | Dify / Coze | 📋 计划中 | 节点白名单暂无 `AGENT`，工作流内无法直接复用 Agent 能力 |
-| 10 | **免登录分享 / 嵌入 Widget / 开放 API** | Dify / Coze / FastGPT | 📋 计划中 | 现分享页需登录；无 iframe 嵌入、JS SDK、API Key 开放调用 |
+| 10 | **免登录分享 / 嵌入 Widget / 开放 API** | Dify / Coze / FastGPT | ✅ 已完成 | `ShareLinkService` + `ApiKeyService` + `PublicShareController` / `OpenApiController` + 独立安全链 `PublicAccessSecurityConfig` / `PublicShareChat.vue` 免登录分享页、`PublicAccess.vue` 管理端、`widget.js` 嵌入脚本 + `widget-demo.html` / `wgh_share_link`、`wgh_api_key`、`wgh_api_call_log`（Widget 为简化实现：iframe + 同源脚本，不含跨域 postMessage 通信） |
 | 11 | **多用户与权限体系** | Dify / FastGPT | 📋 计划中 | 当前仅 `admin` 单账号 JWT，无租户、RBAC、知识库/文档级权限 |
 | 12 | **审计日志 / 配额限流 / 成本统计** | 企业级产品通用 | ✅ 已完成 | `@Audit` AOP + `QuotaService` + `ModelPriceService` / `AdminStats.vue` + `ChatPlayground` 成本显示 / `wgh_audit_log`、`wgh_quota_usage`、`wgh_model_price` |
 | 13 | **语义缓存** | Dify（Redis 缓存） | ✅ 已完成 | `SemanticCacheService` + `RagChatService` 前置拦截 / `ChatWindows.vue` 开关 + `ChatPlayground` cacheHit 标识 / `wgh_semantic_cache` + 独立 pgvector 表 |
