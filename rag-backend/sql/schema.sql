@@ -196,6 +196,8 @@ CREATE TABLE IF NOT EXISTS wgh_chat_window (
   rerank_enabled SMALLINT DEFAULT 0,
   rerank_model_id BIGINT,
   hybrid_enabled SMALLINT DEFAULT 0,
+  query_transform_mode VARCHAR(20) DEFAULT 'NONE',
+  rewrite_model_id BIGINT,
   create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   create_by VARCHAR(50) DEFAULT 'system',
@@ -206,6 +208,8 @@ ALTER TABLE wgh_chat_window ADD COLUMN IF NOT EXISTS workflow_id BIGINT;
 ALTER TABLE wgh_chat_window ADD COLUMN IF NOT EXISTS rerank_enabled SMALLINT DEFAULT 0;
 ALTER TABLE wgh_chat_window ADD COLUMN IF NOT EXISTS rerank_model_id BIGINT;
 ALTER TABLE wgh_chat_window ADD COLUMN IF NOT EXISTS hybrid_enabled SMALLINT DEFAULT 0;
+ALTER TABLE wgh_chat_window ADD COLUMN IF NOT EXISTS query_transform_mode VARCHAR(20) DEFAULT 'NONE';
+ALTER TABLE wgh_chat_window ADD COLUMN IF NOT EXISTS rewrite_model_id BIGINT;
 CREATE INDEX IF NOT EXISTS idx_cw_workflow_id ON wgh_chat_window(workflow_id);
 CREATE INDEX IF NOT EXISTS idx_cw_share_token ON wgh_chat_window(share_token);
 CREATE INDEX IF NOT EXISTS idx_cw_share_enabled ON wgh_chat_window(share_enabled);
@@ -236,6 +240,8 @@ COMMENT ON COLUMN wgh_chat_window.workflow_id IS '绑定的工作流 ID（非空
 COMMENT ON COLUMN wgh_chat_window.rerank_enabled IS '是否启用 Rerank 重排序（0 否 / 1 是）';
 COMMENT ON COLUMN wgh_chat_window.rerank_model_id IS 'Rerank 模型 ID（指向 wgh_llm_model 中 model_type=RERANK 的记录）';
 COMMENT ON COLUMN wgh_chat_window.hybrid_enabled IS '是否启用混合检索（向量 + pg_trgm 关键词，RRF 融合）（0 否 / 1 是）';
+COMMENT ON COLUMN wgh_chat_window.query_transform_mode IS '查询变换模式：NONE / REWRITE / MULTI_QUERY / HYDE';
+COMMENT ON COLUMN wgh_chat_window.rewrite_model_id IS '查询变换执行模型 ID（CHAT 类型；为空则复用窗口聊天模型）';
 COMMENT ON COLUMN wgh_chat_window.create_time IS '创建时间';
 COMMENT ON COLUMN wgh_chat_window.update_time IS '更新时间';
 COMMENT ON COLUMN wgh_chat_window.create_by IS '创建人';

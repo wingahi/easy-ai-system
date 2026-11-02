@@ -77,6 +77,12 @@
                 <el-tag size="small" type="primary" v-if="msg.metrics.hybridApplied">
                   混合检索 · 关键词命中 {{ msg.metrics.keywordHitCount }}
                 </el-tag>
+                <el-tooltip v-if="msg.metrics.transformedQueries?.length" placement="top"
+                            :content="msg.metrics.transformedQueries.join('\n')">
+                  <el-tag size="small" type="warning">
+                    查询变换 {{ msg.metrics.transformedQueries.length }} 条 · {{ msg.metrics.transformLatencyMs }}ms
+                  </el-tag>
+                </el-tooltip>
                 <el-tag size="small" type="success" v-if="msg.metrics.accuracyRate != null">
                   正确率 {{ (msg.metrics.accuracyRate * 100).toFixed(1) }}%
                 </el-tag>
@@ -572,7 +578,8 @@ const handleEvent = (event, data, aiMsg) => {
           ...(data.recallRate != null ? { recallRate: data.recallRate } : {}),
           ...(data.hitRate != null ? { hitRate: data.hitRate } : {}),
           ...(data.rerankApplied ? { rerankApplied: true, rerankLatencyMs: data.rerankLatencyMs } : {}),
-          ...(data.hybridApplied ? { hybridApplied: true, keywordHitCount: data.keywordHitCount } : {})
+          ...(data.hybridApplied ? { hybridApplied: true, keywordHitCount: data.keywordHitCount } : {}),
+          ...(data.transformedQueries?.length ? { transformedQueries: data.transformedQueries, transformLatencyMs: data.transformLatencyMs } : {})
         }
       }
       break

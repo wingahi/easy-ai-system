@@ -137,6 +137,20 @@
             暂无启用的重排序模型，请先在「模型管理 → 重排序模型」中配置
           </div>
         </el-form-item>
+        <el-form-item label="查询变换">
+          <el-select v-model="form.queryTransformMode" style="width:100%">
+            <el-option label="关闭" value="NONE" />
+            <el-option label="查询改写（REWRITE）" value="REWRITE" />
+            <el-option label="多查询扩展（MULTI_QUERY）" value="MULTI_QUERY" />
+            <el-option label="假设性答案（HYDE）" value="HYDE" />
+          </el-select>
+          <span style="font-size:12px;color:#909399;margin-top:4px">REWRITE 改写为规范查询；MULTI_QUERY 生成 3 个变体多路召回；HYDE 用假设答案的向量检索。失败/超时自动降级原查询</span>
+        </el-form-item>
+        <el-form-item v-if="form.queryTransformMode && form.queryTransformMode !== 'NONE'" label="变换模型">
+          <el-select v-model="form.rewriteModelId" clearable style="width:100%" placeholder="默认复用窗口聊天模型">
+            <el-option v-for="m in chatModels" :key="m.id" :label="`${m.name} (${m.modelName})`" :value="m.id" />
+          </el-select>
+        </el-form-item>
 
         <!-- ============ 执行模式 ============ -->
         <el-divider content-position="left">⚙️ 执行模式</el-divider>
@@ -240,6 +254,7 @@ const form = reactive({
   knowledgeBaseIds: '[]', systemPrompt: '', temperature: 0.7, status: 1,
   evaluationScheme: 'NONE', judgeModelIds: '[]', toolIds: '[]', workflowId: null,
   rerankEnabled: false, rerankModelId: null, hybridEnabled: false,
+  queryTransformMode: 'NONE', rewriteModelId: null,
   agentEnabled: 0, agentMaxSteps: 15, agentPlannerModelId: null,
   agentExecutorModelId: null, agentCriticModelIds: '[]',
   agentReflectionThreshold: 7.0, agentHitlEnabled: 0
@@ -299,6 +314,7 @@ const openDialog = (row) => {
   editing.value = row || null
   if (row) {
     Object.assign(form, row)
+    form.queryTransformMode = form.queryTransformMode || 'NONE'
     selectedKbs.value = parseKbs(row.knowledgeBaseIds)
     selectedTools.value = parseKbs(row.toolIds)
     selectedJudges.value = parseKbs(row.judgeModelIds)
@@ -310,6 +326,7 @@ const openDialog = (row) => {
       systemPrompt: '', temperature: 0.7, status: 1,
       evaluationScheme: 'NONE', judgeModelIds: '[]', toolIds: '[]', workflowId: null,
       rerankEnabled: false, rerankModelId: null, hybridEnabled: false,
+      queryTransformMode: 'NONE', rewriteModelId: null,
       agentEnabled: 0, agentMaxSteps: 15, agentPlannerModelId: null,
       agentExecutorModelId: null, agentCriticModelIds: '[]',
       agentReflectionThreshold: 7.0, agentHitlEnabled: 0

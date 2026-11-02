@@ -117,4 +117,12 @@ public class ChatWindow extends BaseEntity {
     /** 是否启用混合检索（向量 + 关键词 RRF 融合）（0 否 / 1 是） */
     @TableField(value = "hybrid_enabled", typeHandler = BooleanToSmallintTypeHandler.class)
     private Boolean hybridEnabled;
+
+    /** 查询变换模式：NONE / REWRITE / MULTI_QUERY / HYDE */
+    @TableField(value = "query_transform_mode")
+    private String queryTransformMode;
+
+    /** 查询变换执行模型 ID（CHAT 类型；为空则复用窗口聊天模型） */
+    @TableField(value = "rewrite_model_id")
+    private Long rewriteModelId;
 }

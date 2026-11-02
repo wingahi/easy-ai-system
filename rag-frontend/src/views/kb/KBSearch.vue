@@ -8,10 +8,20 @@
     </div>
 
     <div class="card" style="margin-bottom:16px">
-      <div style="display:flex;gap:12px">
-        <el-input v-model="query" placeholder="输入问题..." size="large" @keyup.enter="doSearch" />
-        <el-select v-model="rerankModelId" clearable placeholder="Rerank 模型（可选）" style="width:260px" size="large">
+      <div style="display:flex;gap:12px;flex-wrap:wrap">
+        <el-input v-model="query" placeholder="输入问题..." size="large" style="flex:1;min-width:240px" @keyup.enter="doSearch" />
+        <el-select v-model="rerankModelId" clearable placeholder="Rerank 模型（可选）" style="width:220px" size="large">
           <el-option v-for="m in rerankModels" :key="m.id" :label="`${m.name} (${m.modelName})`" :value="m.id" />
+        </el-select>
+        <el-select v-model="queryTransformMode" placeholder="查询变换" style="width:190px" size="large">
+          <el-option label="查询变换：关闭" value="NONE" />
+          <el-option label="查询改写 REWRITE" value="REWRITE" />
+          <el-option label="多查询 MULTI_QUERY" value="MULTI_QUERY" />
+          <el-option label="假设答案 HYDE" value="HYDE" />
+        </el-select>
+        <el-select v-if="queryTransformMode !== 'NONE'" v-model="rewriteModelId" clearable
+                   placeholder="变换模型（可选）" style="width:220px" size="large">
+          <el-option v-for="m in chatModels" :key="m.id" :label="`${m.name} (${m.modelName})`" :value="m.id" />
         </el-select>
         <el-checkbox v-model="hybrid" label="混合检索" border size="large" />
         <el-button type="primary" size="large" :icon="Search" :loading="loading" @click="doSearch">搜索</el-button>
@@ -31,6 +41,13 @@
         <el-descriptions-item label="混合检索">
           <el-tag v-if="result.hybridApplied" type="success" size="small">已启用 · 关键词命中 {{ result.keywordHitCount }}</el-tag>
           <span v-else style="color:#909399">未启用</span>
+        </el-descriptions-item>
+        <el-descriptions-item label="查询变换">
+          <el-tooltip v-if="result.transformedQueries?.length" placement="top"
+                      :content="result.transformedQueries.join('\n')">
+            <el-tag type="primary" size="small">已变换 {{ result.transformedQueries.length }} 条 · {{ result.transformLatencyMs }}ms</el-tag>
+          </el-tooltip>
+          <span v-else style="color:#909399">未启用/已降级</span>
         </el-descriptions-item>
       </el-descriptions>
 
@@ -61,7 +78,7 @@
 import { ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { ArrowLeft, Search, Document } from '@element-plus/icons-vue'
-import { kbGet, kbSearch, rerankModelList } from '../../api'
+import { kbGet, kbSearch, rerankModelList, chatModelList } from '../../api'
 
 const route = useRoute()
 const kbId = route.params.id
@@ -72,12 +89,16 @@ const loading = ref(false)
 const rerankModels = ref([])
 const rerankModelId = ref(null)
 const hybrid = ref(false)
+const queryTransformMode = ref('NONE')
+const rewriteModelId = ref(null)
+const chatModels = ref([])
 
 const doSearch = async () => {
   if (!query.value.trim()) return
   loading.value = true
   try {
-    const res = await kbSearch(kbId, query.value, rerankModelId.value, hybrid.value)
+    const res = await kbSearch(kbId, query.value, rerankModelId.value, hybrid.value,
+      queryTransformMode.value, rewriteModelId.value)
     result.value = res.data
   } finally {
     loading.value = false
@@ -85,9 +106,10 @@ const doSearch = async () => {
 }
 
 onMounted(async () => {
-  const [kbRes, rrRes] = await Promise.all([kbGet(kbId), rerankModelList()])
+  const [kbRes, rrRes, cmRes] = await Promise.all([kbGet(kbId), rerankModelList(), chatModelList()])
   kb.value = kbRes.data
   rerankModels.value = rrRes.data || []
+  chatModels.value = cmRes.data || []
 })
 </script>
 

@@ -32,6 +32,7 @@ class RagRetrieveServiceRerankTest {
     private final VectorStoreService vectorStoreService = Mockito.mock(VectorStoreService.class);
     private final RerankService rerankService = Mockito.mock(RerankService.class);
     private final KeywordSearchService keywordSearchService = Mockito.mock(KeywordSearchService.class);
+    private final QueryTransformService queryTransformService = Mockito.mock(QueryTransformService.class);
     private final EmbeddingModel embeddingModel = Mockito.mock(EmbeddingModel.class);
     private final PgVectorEmbeddingStore store = Mockito.mock(PgVectorEmbeddingStore.class);
 
@@ -43,7 +44,7 @@ class RagRetrieveServiceRerankTest {
         props.getRetrieve().setTopK(2);
         props.getRetrieve().setMinScore(0.0);
         service = new RagRetrieveService(kbMapper, modelCacheManager, vectorStoreService, props,
-                rerankService, keywordSearchService);
+                rerankService, keywordSearchService, queryTransformService);
 
         KnowledgeBase kb = new KnowledgeBase();
         kb.setId(1L);
@@ -130,6 +131,59 @@ class RagRetrieveServiceRerankTest {
 
         assertThat(result.hybridApplied()).isTrue();
         assertThat(result.keywordHitIds()).isEmpty();
+        assertThat(result.matches()).hasSize(2);
+        assertThat(result.matches().get(0).embedded().text()).isEqualTo("chunk0");
+    }
+
+    @Test
+    void multi_query_fuses_variant_lists_via_rrf() {
+        mockVectorMatches(3);
+        when(queryTransformService.transform(eq("q"), eq("MULTI_QUERY"), eq(5L)))
+                .thenReturn(new QueryTransformService.TransformResult(
+                        List.of("q", "v1", "v2"), List.of("v1", "v2"), true, 12));
+
+        RetrieveResult result = service.searchMultiple(List.of(1L), "q",
+                new RetrievalOptions(null, false, "MULTI_QUERY", 5L));
+
+        // 原查询 + 2 变体各 embed 一次并各自召回
+        Mockito.verify(embeddingModel).embed("q");
+        Mockito.verify(embeddingModel).embed("v1");
+        Mockito.verify(embeddingModel).embed("v2");
+        Mockito.verify(store, Mockito.times(3)).search(any());
+        assertThat(result.transformedQueries()).containsExactly("v1", "v2");
+        assertThat(result.transformLatencyMs()).isEqualTo(12);
+        assertThat(result.matches()).hasSize(2);
+    }
+
+    @Test
+    void hyde_replaces_vector_query_with_hypothetical_answer() {
+        mockVectorMatches(3);
+        when(queryTransformService.transform(eq("q"), eq("HYDE"), eq(5L)))
+                .thenReturn(new QueryTransformService.TransformResult(
+                        List.of("假设答案"), List.of("假设答案"), true, 20));
+
+        RetrieveResult result = service.searchMultiple(List.of(1L), "q",
+                new RetrievalOptions(null, false, "HYDE", 5L));
+
+        // 向量路用假设答案做 embedding，原查询不参与向量路
+        Mockito.verify(embeddingModel).embed("假设答案");
+        Mockito.verify(embeddingModel, Mockito.never()).embed("q");
+        assertThat(result.transformedQueries()).containsExactly("假设答案");
+        assertThat(result.matches()).hasSize(2);
+    }
+
+    @Test
+    void transform_degraded_falls_back_to_original_query() {
+        mockVectorMatches(3);
+        // 变换服务降级：返回原查询、无变换产物
+        when(queryTransformService.transform(anyString(), anyString(), anyLong()))
+                .thenReturn(new QueryTransformService.TransformResult(List.of("q"), List.of(), false, 0));
+
+        RetrieveResult result = service.searchMultiple(List.of(1L), "q",
+                new RetrievalOptions(null, false, "REWRITE", 5L));
+
+        Mockito.verify(embeddingModel).embed("q");
+        assertThat(result.transformedQueries()).isEmpty();
         assertThat(result.matches()).hasSize(2);
         assertThat(result.matches().get(0).embedded().text()).isEqualTo("chunk0");
     }

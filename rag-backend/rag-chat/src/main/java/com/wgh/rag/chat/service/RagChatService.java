@@ -211,7 +211,8 @@ public class RagChatService {
         final boolean hasKb = !kbIds.isEmpty();
         final RetrieveResult retrieveResult = hasKb
                 ? ragRetrieveService.searchMultiple(kbIds, userMessage,
-                        new RetrievalOptions(resolveRerankModelId(window), resolveHybridEnabled(window)))
+                        new RetrievalOptions(resolveRerankModelId(window), resolveHybridEnabled(window),
+                                window.getQueryTransformMode(), resolveTransformModelId(window)))
                 : RetrieveResult.empty();
         final List<EmbeddingMatch<TextSegment>> retrievedMatches = new ArrayList<>(retrieveResult.matches());
 
@@ -240,6 +241,8 @@ public class RagChatService {
             retrieveInfo.put("rerankLatencyMs", retrieveResult.rerankLatencyMs());
             retrieveInfo.put("hybridApplied", retrieveResult.hybridApplied());
             retrieveInfo.put("keywordHitCount", retrieveResult.keywordHitIds().size());
+            retrieveInfo.put("transformedQueries", retrieveResult.transformedQueries());
+            retrieveInfo.put("transformLatencyMs", retrieveResult.transformLatencyMs());
             emitter.send(SseEmitter.event().name("retrieve").data(retrieveInfo));
 
             // 保存用户消息的检索指标
@@ -944,5 +947,12 @@ public class RagChatService {
     private boolean resolveHybridEnabled(ChatWindow window) {
         return Boolean.TRUE.equals(window.getHybridEnabled())
                 || Boolean.TRUE.equals(ragProperties.getRetrieve().getEnableHybrid());
+    }
+
+    /**
+     * 解析查询变换执行模型：窗口 rewriteModelId 优先，缺省复用窗口聊天模型。
+     */
+    private Long resolveTransformModelId(ChatWindow window) {
+        return window.getRewriteModelId() != null ? window.getRewriteModelId() : window.getLlmModelId();
     }
 }

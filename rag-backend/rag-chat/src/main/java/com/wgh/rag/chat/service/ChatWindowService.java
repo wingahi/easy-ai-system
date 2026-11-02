@@ -91,6 +91,12 @@ public class ChatWindowService {
                     .eq(ChatWindow::getId, window.getId())
                     .set(ChatWindow::getRerankModelId, null));
         }
+        // 同理：清空查询变换模型下拉时需显式置空 rewrite_model_id
+        if (window.getRewriteModelId() == null) {
+            windowMapper.update(null, new LambdaUpdateWrapper<ChatWindow>()
+                    .eq(ChatWindow::getId, window.getId())
+                    .set(ChatWindow::getRewriteModelId, null));
+        }
         return window;
     }
 

@@ -122,9 +122,12 @@ public class KnowledgeBaseController {
             @PathVariable Long kbId,
             @RequestParam String query,
             @RequestParam(value = "rerankModelId", required = false) Long rerankModelId,
-            @RequestParam(value = "hybrid", required = false, defaultValue = "false") boolean hybrid) {
+            @RequestParam(value = "hybrid", required = false, defaultValue = "false") boolean hybrid,
+            @RequestParam(value = "queryTransformMode", required = false) String queryTransformMode,
+            @RequestParam(value = "rewriteModelId", required = false) Long rewriteModelId) {
         com.wgh.rag.kb.service.RetrieveResult retrieveResult = retrieveService.searchMultiple(
-                List.of(kbId), query, new com.wgh.rag.kb.service.RetrievalOptions(rerankModelId, hybrid));
+                List.of(kbId), query, new com.wgh.rag.kb.service.RetrievalOptions(
+                        rerankModelId, hybrid, queryTransformMode, rewriteModelId));
         List<dev.langchain4j.store.embedding.EmbeddingMatch<dev.langchain4j.data.segment.TextSegment>> matches =
                 retrieveResult.matches();
 
@@ -150,6 +153,8 @@ public class KnowledgeBaseController {
         resp.put("rerankLatencyMs", retrieveResult.rerankLatencyMs());
         resp.put("hybridApplied", retrieveResult.hybridApplied());
         resp.put("keywordHitCount", retrieveResult.keywordHitIds().size());
+        resp.put("transformedQueries", retrieveResult.transformedQueries());
+        resp.put("transformLatencyMs", retrieveResult.transformLatencyMs());
         resp.put("filteredMatches", results.stream().filter(r -> (Boolean) r.get("hit")).count());
         // 评估指标：简化计算（无 ground truth 时做 best-effort）
         double recallRate = matches.isEmpty() ? 0

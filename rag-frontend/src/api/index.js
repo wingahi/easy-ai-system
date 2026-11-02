@@ -28,7 +28,7 @@ export const kbResplitFile = (fileId, splitStrategy, splitConfig) => {
   return request.post(`/kb/files/${fileId}/resplit?${params.toString()}`)
 }
 export const kbPreviewSplit = (fileId) => request.get(`/kb/files/${fileId}/preview`)
-export const kbSearch = (kbId, query, rerankModelId, hybrid) => request.get(`/kb/${kbId}/search`, { params: { query, rerankModelId: rerankModelId || undefined, hybrid: hybrid || undefined } })
+export const kbSearch = (kbId, query, rerankModelId, hybrid, queryTransformMode, rewriteModelId) => request.get(`/kb/${kbId}/search`, { params: { query, rerankModelId: rerankModelId || undefined, hybrid: hybrid || undefined, queryTransformMode: queryTransformMode && queryTransformMode !== 'NONE' ? queryTransformMode : undefined, rewriteModelId: rewriteModelId || undefined } })
 
 // 模型
 export const chatModelPage = (params) => request.get('/models/chat', { params })

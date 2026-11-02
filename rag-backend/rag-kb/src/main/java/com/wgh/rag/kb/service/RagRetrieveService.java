@@ -39,6 +39,7 @@ public class RagRetrieveService {
     private final RagProperties ragProperties;
     private final RerankService rerankService;
     private final KeywordSearchService keywordSearchService;
+    private final QueryTransformService queryTransformService;
 
     /**
      * 多知识库联合检索（默认配置，不做增强）
@@ -59,8 +60,14 @@ public class RagRetrieveService {
         int topK = retrieve.getTopK() != null ? retrieve.getTopK() : 5;
         // minScore 默认 0.55：cosine 相似度下 0.3 噪声过多
         double minScore = retrieve.getMinScore() != null ? retrieve.getMinScore() : 0.55;
-        // 混合检索或 Rerank 都需要更大的候选池
-        boolean needCandidates = opts.rerankEnabled() || opts.hybridEnabled();
+        // 查询变换（REWRITE / MULTI_QUERY / HYDE），任何失败降级为原查询
+        QueryTransformService.TransformResult transform = opts.transformEnabled()
+                ? queryTransformService.transform(queryText, opts.queryTransformMode(), opts.transformModelId())
+                : new QueryTransformService.TransformResult(List.of(queryText), List.of(), false, 0);
+        List<String> vectorQueries = transform.vectorQueries();
+
+        // 混合检索 / Rerank / 多查询变换都需要更大的候选池
+        boolean needCandidates = opts.rerankEnabled() || opts.hybridEnabled() || vectorQueries.size() > 1;
         int candidateTopN = needCandidates ? Math.min(topK * RERANK_CANDIDATE_FACTOR, RERANK_CANDIDATE_MAX) : topK;
         int keywordTopN = retrieve.getKeywordTopN() != null ? retrieve.getKeywordTopN() : 10;
 
@@ -76,7 +83,8 @@ public class RagRetrieveService {
             return RetrieveResult.empty();
         }
 
-        List<EmbeddingMatch<TextSegment>> vectorMatches = new ArrayList<>();
+        // 每个变换查询一条向量召回路；关键词路始终用原查询（一条）
+        List<List<EmbeddingMatch<TextSegment>>> rankedLists = new ArrayList<>();
         List<EmbeddingMatch<TextSegment>> keywordMatches = new ArrayList<>();
         for (var entry : byModel.entrySet()) {
             EmbeddingModel embeddingModel = modelCacheManager.getEmbeddingModel(entry.getKey());
@@ -84,13 +92,22 @@ public class RagRetrieveService {
                 log.warn("EmbeddingModel id={} 不可用，跳过 {} 个知识库", entry.getKey(), entry.getValue().size());
                 continue;
             }
-            Embedding queryEmbedding = embeddingModel.embed(queryText).content();
+            // 同组共享 embedding 模型，逐查询 embed 一次
+            List<Embedding> queryEmbeddings = new ArrayList<>(vectorQueries.size());
+            for (String vq : vectorQueries) {
+                queryEmbeddings.add(embeddingModel.embed(vq).content());
+            }
+            List<List<EmbeddingMatch<TextSegment>>> variantLists = new ArrayList<>();
+            for (int i = 0; i < vectorQueries.size(); i++) variantLists.add(new ArrayList<>());
             for (KnowledgeBase kb : entry.getValue()) {
                 try {
                     EmbeddingStore<TextSegment> store = vectorStoreService.createEmbeddingStore(
                             kb.getCollectionName(),
                             kb.getDimension() != null ? kb.getDimension() : 1536);
-                    vectorMatches.addAll(search(store, queryEmbedding, candidateTopN, minScore));
+                    for (int qi = 0; qi < queryEmbeddings.size(); qi++) {
+                        variantLists.get(qi).addAll(
+                                search(store, queryEmbeddings.get(qi), candidateTopN, minScore));
+                    }
                     if (opts.hybridEnabled()) {
                         keywordMatches.addAll(
                                 keywordSearchService.search(kb.getCollectionName(), queryText, keywordTopN));
@@ -99,35 +116,47 @@ public class RagRetrieveService {
                     log.error("搜索知识库 {} 失败", kb.getId(), e);
                 }
             }
+            rankedLists.addAll(variantLists);
         }
 
-        // 多路融合：hybrid 且关键词路有命中 → RRF(k=60)；否则纯向量序（关键词路为空自动退化）
+        // 多路融合：多路（多查询变体和/或关键词路）→ RRF(k=60)；单路 → 原始分数序
+        List<List<EmbeddingMatch<TextSegment>>> allLists = new ArrayList<>(rankedLists);
+        boolean keywordParticipates = opts.hybridEnabled() && !keywordMatches.isEmpty();
+        if (keywordParticipates) allLists.add(keywordMatches);
+
         List<EmbeddingMatch<TextSegment>> fused;
         Set<String> keywordOnlyIds = Set.of();
-        if (opts.hybridEnabled() && !keywordMatches.isEmpty()) {
-            fused = RrfFusion.fuse(List.of(vectorMatches, keywordMatches), candidateTopN);
-            Set<String> vectorIds = vectorMatches.stream()
-                    .map(EmbeddingMatch::embeddingId).filter(Objects::nonNull).collect(Collectors.toSet());
-            keywordOnlyIds = keywordMatches.stream()
-                    .map(EmbeddingMatch::embeddingId)
-                    .filter(id -> id != null && !vectorIds.contains(id))
-                    .collect(Collectors.toSet());
+        if (allLists.size() > 1) {
+            fused = RrfFusion.fuse(allLists, candidateTopN);
+            if (keywordParticipates) {
+                Set<String> vectorIds = rankedLists.stream().flatMap(List::stream)
+                        .map(EmbeddingMatch::embeddingId).filter(Objects::nonNull).collect(Collectors.toSet());
+                keywordOnlyIds = keywordMatches.stream()
+                        .map(EmbeddingMatch::embeddingId)
+                        .filter(id -> id != null && !vectorIds.contains(id))
+                        .collect(Collectors.toSet());
+            }
         } else {
-            vectorMatches.sort((a, b) -> {
+            List<EmbeddingMatch<TextSegment>> single = allLists.isEmpty()
+                    ? new ArrayList<>() : new ArrayList<>(allLists.get(0));
+            single.sort((a, b) -> {
                 Double sa = a.score();
                 Double sb = b.score();
                 return Double.compare(sb != null ? sb : 0.0, sa != null ? sa : 0.0);
             });
-            fused = vectorMatches.stream().limit(candidateTopN).toList();
+            fused = single.stream().limit(candidateTopN).toList();
         }
 
+        // Rerank 始终面向原查询（保留用户意图）
         if (!opts.rerankEnabled()) {
             return new RetrieveResult(fused.stream().limit(topK).toList(), false, 0,
-                    opts.hybridEnabled(), keywordOnlyIds);
+                    opts.hybridEnabled(), keywordOnlyIds,
+                    transform.transformedQueries(), transform.latencyMs());
         }
         RetrieveResult reranked = applyRerank(fused, queryText, opts.rerankModelId(), topK);
         return new RetrieveResult(reranked.matches(), reranked.rerankApplied(), reranked.rerankLatencyMs(),
-                opts.hybridEnabled(), keywordOnlyIds);
+                opts.hybridEnabled(), keywordOnlyIds,
+                transform.transformedQueries(), transform.latencyMs());
     }
 
     /**
