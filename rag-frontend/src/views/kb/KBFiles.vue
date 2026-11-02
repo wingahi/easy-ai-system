@@ -9,7 +9,7 @@
         :show-file-list="false"
         :before-upload="beforeUpload"
         :http-request="doUpload"
-        accept=".pdf,.docx,.doc,.txt,.md,.csv,.xlsx,.xls"
+        accept=".pdf,.docx,.doc,.txt,.md,.csv,.xlsx,.xls,.pptx,.html,.htm,.json,.eml"
       >
         <el-button type="primary" :icon="Upload">上传文件</el-button>
       </el-upload>

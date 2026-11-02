@@ -10,6 +10,7 @@ import com.wgh.rag.kb.entity.KnowledgeFileVersion;
 import com.wgh.rag.kb.mapper.KnowledgeFileMapper;
 import com.wgh.rag.kb.mapper.KnowledgeFileVersionMapper;
 import com.wgh.rag.kb.parser.DocumentParserDispatcher;
+import com.wgh.rag.kb.parser.ParsedDocument;
 import com.wgh.rag.kb.splitter.ChunkOutput;
 import com.wgh.rag.kb.splitter.SplitContext;
 import com.wgh.rag.kb.splitter.TextSplitter;
@@ -185,7 +186,8 @@ public class KnowledgeFileService {
             throw new BusinessException("文件不存在于磁盘: " + file.getFilePath());
         }
         
-        List<String> paragraphs = documentParser.parse(parsedFile, file.getFileType());
+        ParsedDocument parsed = documentParser.parseDocument(parsedFile, file.getFileType());
+        List<String> paragraphs = parsed.paragraphs();
         TextSplitter.Strategy strategy = TextSplitter.Strategy.valueOf(file.getSplitStrategy());
         // 与异步入库链路一致：传入 embedding 模型上下文（SEMANTIC 需要）
         KnowledgeBase kb = kbService.getById(file.getKnowledgeBaseId());

@@ -25,9 +25,16 @@ abstract class AbstractExcelParser implements DocumentParser {
 
     @Override
     public List<String> parse(File file) {
+        return parseDetailed(file).paragraphs();
+    }
+
+    @Override
+    public ParsedDocument parseDetailed(File file) {
         List<String> rows = new ArrayList<>();
+        int sheetCount = 0;
         try (InputStream is = new FileInputStream(file);
              Workbook workbook = openWorkbook(is)) {
+            sheetCount = workbook.getNumberOfSheets();
 
             for (int i = 0; i < workbook.getNumberOfSheets(); i++) {
                 Sheet sheet = workbook.getSheetAt(i);
@@ -46,7 +53,8 @@ abstract class AbstractExcelParser implements DocumentParser {
             log.error("解析Excel失败: {}", e.getMessage(), e);
             throw new BusinessException("Excel解析失败: " + e.getMessage());
         }
-        return rows;
+        return new ParsedDocument(rows, DocumentMetadataSupport.inferTitle(rows),
+                null, sheetCount, "binary", DocumentMetadataSupport.countChars(rows));
     }
 
     private String getCellValueAsString(Cell cell) {

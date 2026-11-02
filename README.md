@@ -241,7 +241,7 @@ wgh-rag-system/
 | 2 | **混合检索（向量 + 关键词）** | RAGFlow / Dify | ✅ 已完成 | `KeywordSearchService` / `ChatWindows.vue` / — |
 | 3 | **查询改写 / Multi-Query / HyDE** | RAGFlow / LlamaIndex | ✅ 已完成 | `QueryTransformService` / `ChatWindows.vue` / — |
 | 4 | **语义切分 / 结构化切分** | RAGFlow / Dify | ✅ 已完成 | `SemanticChunkingStrategy` / 检索预览带 headingPath / — |
-| 5 | **更多文档格式** | Dify / RAGFlow | 📋 计划中 | HTML / JSON / PPTX / 图片 OCR 未支持（PDF/DOCX/DOC/XLSX/XLS/CSV/TXT/MD 已完成） |
+| 5 | **更多文档格式** | Dify / RAGFlow | ✅ 已完成 | `PptxParser` / `HtmlParser` / `JsonParser` / `EmlParser` + `DocumentParserDispatcher` 统一元数据与大小上限 / `KBFiles.vue` 上传 accept / — （图片 OCR 仍未支持） |
 | 6 | **URL 抓取与数据源连接器** | Dify / FastGPT | 📋 计划中 | 无网页爬取、Notion/飞书文档等第三方数据源同步、增量更新 |
 | 7 | **工作流作为聊天窗口执行模式** | Dify（应用绑定工作流） | ✅ 已完成 | `RagChatService` 分流 + `ChatWorkflowService` / `ChatWindows.vue` WORKFLOW 执行模式 / `wgh_chat_window.workflow_id` |
 | 8 | **工作流独立发布 / 分享页** | Dify Web App / Coze 渠道 | ✅ 已完成 | `WorkflowService` share 逻辑 / `ShareWorkflow.vue` 分享运行页 + HITL / `wgh_workflow.share_token` |

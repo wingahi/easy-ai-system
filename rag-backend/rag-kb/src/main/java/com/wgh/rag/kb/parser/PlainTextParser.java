@@ -5,7 +5,6 @@ import lombok.extern.slf4j.Slf4j;
 
 import java.io.File;
 import java.io.IOException;
-import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -17,9 +16,14 @@ abstract class PlainTextParser implements DocumentParser {
 
     @Override
     public List<String> parse(File file) {
+        return parseDetailed(file).paragraphs();
+    }
+
+    @Override
+    public ParsedDocument parseDetailed(File file) {
         List<String> paragraphs = new ArrayList<>();
         try {
-            String content = Files.readString(file.toPath());
+            String content = DocumentMetadataSupport.readText(file);
             for (String line : content.split("\\n\\s*\\n|\\r\\n\\s*\\r\\n")) {
                 String trimmed = line.trim();
                 if (!trimmed.isEmpty()) {
@@ -33,6 +37,8 @@ abstract class PlainTextParser implements DocumentParser {
             log.error("解析文本文件失败: {}", e.getMessage(), e);
             throw new BusinessException("文本解析失败: " + e.getMessage());
         }
-        return paragraphs;
+        return new ParsedDocument(paragraphs, DocumentMetadataSupport.inferTitle(paragraphs),
+                null, null, DocumentMetadataSupport.detectEncoding(file),
+                DocumentMetadataSupport.countChars(paragraphs));
     }
 }

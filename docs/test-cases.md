@@ -702,3 +702,32 @@
 | 静态检查 | `python3 rag-backend/scripts/check-test-conventions.py`，违规逐条输出 `文件:行号`，退出码 1 |
 | CI 门禁 | GitHub Actions `.github/workflows/ci.yml` 在 push / PR 时阻断；Gitee Go 复用同一脚本（接入说明见 README 第 9 节） |
 | 当前基线 | 380 个测试方法全部合规；surefire 执行 374 项全绿，功能 e2e 113 项全绿 |
+
+---
+
+## 13. 更多文档格式（PPTX / HTML / JSON / EML）
+
+> 特性组 1。实现：`rag-kb` 模块 `parser` 包；自动化：`DocumentFormatParserTest`、`DocumentIngestChainTest`、
+> `DocumentParserDispatcherTest`、`DocumentParserTest`（共 20 项，`mvn -pl rag-kb test` 全绿）。
+> 覆盖类型说明：`单元` = 解析器/分发器；`链路` = 上传→解析→切片→检索；`接口` = REST；`仅手工` = 无自动化。
+
+| 编号 | 分类 | 前置条件 | 用例 / 步骤 | 预期结果 | 覆盖类型 | 自动化落点 |
+|------|------|---------|------------|---------|---------|-----------|
+| FMT-01 | 正常 | 已建知识库；准备含 2 页文本的 pptx | 上传 pptx → 等待处理完成 → 查看切片预览 | 状态 SUCCESS，切片数 > 0，正文含两页文本 | 单元 | `DocumentFormatParserTest#parsePptx` |
+| FMT-02 | 正常 | 同上 | 调用 `GET /api/kb/files/{id}/preview` | `documentMetadata.pageCount == 2`，含 `charCount` | 单元 | `DocumentFormatParserTest#parsePptx` |
+| FMT-03 | 正常 | 准备含 `<title>报销制度</title>` 与正文的 html | 上传 html → 预览 | 标题=「报销制度」，正文含标题与段落 | 单元 | `DocumentFormatParserTest#parseHtml` |
+| FMT-04 | 边界 | html 内含 `<script>alert(1)</script>` 与 `<style>` | 解析 html | 正文不含 `alert`，style 内容不入切片 | 单元 | `DocumentFormatParserTest#parseHtml` |
+| FMT-05 | 正常 | 准备嵌套 JSON `{"title":"产品配置","spec":{"topK":5},"tags":["检索"]}` | 解析 json | 标题=「产品配置」，出现 `spec.topK: 5`、`tags[0]: 检索` | 单元 | `DocumentFormatParserTest#parseJson` |
+| FMT-06 | 正常 | 准备含主题/发件人/正文的 eml | 解析 eml | 标题=主题，正文含发件人与正文 | 单元 | `DocumentFormatParserTest#parseEml` |
+| FMT-07 | 边界 | 准备 GBK 编码的 txt | 解析 txt | `encoding == GBK`，中文无乱码 | 单元 | `DocumentFormatParserTest#parseGbkText` |
+| FMT-08 | 异常 | 准备伪装成 pdf 的文本文件 | 解析 pdf | 抛业务错误，提示「文件可能已损坏或格式不正确」 | 单元 | `DocumentFormatParserTest#corruptFileFriendlyError` |
+| FMT-09 | 边界 | 准备 2MB 文件，上限调为 1MB | 解析 | 抛业务错误，提示「超过解析上限 1 MB」 | 单元 | `DocumentFormatParserTest#oversizedFileRejected` |
+| FMT-10 | 边界 | 准备 0 字节文件 | 解析 | 抛业务错误，提示「文件为空」 | 单元 | `DocumentFormatParserTest#emptyFileRejected` |
+| FMT-11 | 异常 | 文件扩展名为未注册格式（如 xyz） | 解析 | 抛业务错误，提示「不支持的文件格式: XYZ」 | 单元 | `DocumentParserTest#parseUnknown` |
+| FMT-12 | 正常 | 12 个内置解析器 | 遍历扩展名断言注册 | pdf/txt/md/csv/xlsx/xls/docx/doc/pptx/html/htm/json/eml 均有解析器 | 单元 | `DocumentParserDispatcherTest#builtinParsersSupportAllExtensions` |
+| FMT-13 | 正常 | 两个解析器，其中一个支持 pdf | 以大写 `PDF` 分发 | 仅命中 pdf 解析器，扩展名已转小写 | 单元 | `DocumentParserDispatcherTest#dispatchToSupportingParser` |
+| FMT-14 | 链路 | 内存 embedding + 内存向量库 | 上传 HTML → 解析 → 递归切片 → 写入向量 → 检索「采购审批金额」 | top1 命中该 HTML 的切片 | 链路 | `DocumentIngestChainTest#uploadParseSplitEmbedAndRetrieve` |
+| FMT-15 | 接口 | 后端 8080、已登录、已建知识库 | 依次上传 pptx/html/json/eml → 轮询文件状态 → 预览 | 4 个文件均 SUCCESS 且有切片；预览含 `documentMetadata` | 仅手工 | — |
+| FMT-16 | 接口 | 同上 | 上传 GBK txt → 预览 → 重新切片 | 编码 GBK、切片正常；重新切片不报错 | 仅手工 | — |
+| FMT-17 | 回归 | 准备 pdf/docx/doc/xls/xlsx/csv/txt/md 各 1 份 | 逐格式上传并预览 | 既有 8 种格式行为与改造前一致 | 单元 | `DocumentParserTest`（8 项） |
+

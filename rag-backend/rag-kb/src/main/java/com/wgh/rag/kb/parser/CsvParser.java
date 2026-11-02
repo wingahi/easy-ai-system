@@ -6,7 +6,7 @@ import org.springframework.stereotype.Component;
 
 import java.io.BufferedReader;
 import java.io.File;
-import java.io.FileReader;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
@@ -25,8 +25,17 @@ public class CsvParser implements DocumentParser {
 
     @Override
     public List<String> parse(File file) {
+        return parseDetailed(file).paragraphs();
+    }
+
+    @Override
+    public ParsedDocument parseDetailed(File file) {
         List<String> rows = new ArrayList<>();
-        try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+        String encoding = DocumentMetadataSupport.detectEncoding(file);
+        java.nio.charset.Charset charset = "GBK".equals(encoding)
+                ? java.nio.charset.Charset.forName("GBK") : java.nio.charset.StandardCharsets.UTF_8;
+        try (BufferedReader reader = new BufferedReader(new java.io.InputStreamReader(
+                new FileInputStream(file), charset))) {
             String line;
             while ((line = reader.readLine()) != null) {
                 if (!line.trim().isEmpty()) {
@@ -37,6 +46,7 @@ public class CsvParser implements DocumentParser {
             log.error("解析CSV失败: {}", e.getMessage(), e);
             throw new BusinessException("CSV解析失败: " + e.getMessage());
         }
-        return rows;
+        return new ParsedDocument(rows, DocumentMetadataSupport.inferTitle(rows),
+                null, null, encoding, DocumentMetadataSupport.countChars(rows));
     }
 }

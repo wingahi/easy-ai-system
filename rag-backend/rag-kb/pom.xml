@@ -49,6 +49,17 @@
             <artifactId>pdfbox</artifactId>
             <version>3.0.4</version>
         </dependency>
+        <!-- HTML 解析（pptx 复用 POI，json 复用 Jackson） -->
+        <dependency>
+            <groupId>org.jsoup</groupId>
+            <artifactId>jsoup</artifactId>
+            <version>1.18.3</version>
+        </dependency>
+        <!-- EML 邮件解析（Jakarta Mail 实现，API 由 Boot BOM 管理） -->
+        <dependency>
+            <groupId>org.eclipse.angus</groupId>
+            <artifactId>jakarta.mail</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>

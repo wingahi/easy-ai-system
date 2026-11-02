@@ -177,10 +177,10 @@ class DocumentParserTest {
     @Test
     @DisplayName("未知格式 - 抛出 BusinessException，消息保留原始大小写")
     void parseUnknown() {
-        File f = tempDir.resolve("a.html").toFile();
+        File f = new File("a.xyz");
 
-        assertThatThrownBy(() -> parser.parse(f, "HTML"))
+        assertThatThrownBy(() -> parser.parse(f, "XYZ"))
                 .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("不支持的文件格式: HTML");
+                .hasMessageContaining("不支持的文件格式: XYZ");
     }
 }
