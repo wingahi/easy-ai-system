@@ -20,8 +20,21 @@
 10. [触发器（CRON / Webhook）](#10-触发器cron--webhook)
 11. [端到端集成场景](#11-端到端集成场景)
 12. [多 Agent 协作框架（rag-agent-multi）](#12-多-agent-协作框架rag-agent-multi)
-13. [附录 A：测试环境速查](#附录-a测试环境速查)
-14. [附录 B：测试代码规范与自动化门禁](#附录-b测试代码规范与自动化门禁)
+13. [更多文档格式（PPTX / HTML / JSON / EML）](#13-更多文档格式pptx--html--json--eml)
+14. [配额限流（rag-quota）](#14-配额限流rag-quota)
+15. [免登录分享 / 嵌入 Widget / 开放 API](#15-免登录分享--嵌入-widget--开放-api)
+16. [审计日志 / 成本统计](#16-审计日志--成本统计)
+17. [语义缓存](#17-语义缓存)
+18. [反馈闭环与离线评测](#18-反馈闭环与离线评测)
+19. [多模态图片问答](#19-多模态图片问答)
+20. [Prompt 模板中心](#20-prompt-模板中心)
+21. [知识库标签与文档版本](#21-知识库标签与文档版本)
+22. [模型路由与故障转移](#22-模型路由与故障转移)
+23. [工作流 AGENT 节点](#23-工作流-agent-节点)
+24. [多用户与权限（RBAC / OIDC）](#24-多用户与权限rbac--oidc)
+
+- [附录 A：测试环境速查](#附录-a测试环境速查)
+- [附录 B：测试代码规范与自动化门禁](#附录-b测试代码规范与自动化门禁)
 
 ---
 
@@ -824,4 +837,159 @@
 | WID-02 | 接口 | 任意第三方页面 | 引入 `widget.js` 并配置 `data-token/data-base/data-container/data-height` | 在指定容器注入 iframe（宽 100%、圆角、阴影）；iframe 内样式不受宿主影响 | 仅手工 | `public/widget.js` |
 | WID-03 | 接口 | 宿主页面使用深色背景/自定义 CSS | 同上 | iframe 内分享页样式不被宿主 CSS 覆盖（iframe 独立文档隔离） | 仅手工 | `widget.js` / `PublicShareChat.vue` `embed` 样式 |
 | WID-04 | 接口 | 无 token 或 token 无效 | 打开 demo 页 | 提示需填写 token / 分享页展示「分享链接无效」 | 仅手工 | `widget-demo.html` |
+
+---
+
+## 16. 审计日志 / 成本统计
+
+> 实现：`@Audit` + `AuditAspect`（异步落库，失败不阻断主流程，记录 SUCCESS/FAIL）、`ModelPriceService`、`AuditLogService`。
+> 接口：`GET /api/admin/audit-logs`、`GET /api/admin/stats/cost`、`GET /api/admin/stats/quota`。
+> 表：`wgh_audit_log`、`wgh_model_price`、`wgh_chat_message.cost/model_name`。
+> 自动化：`ModelPriceServiceTest`（5 项，rag-llm）；审计切面与统计接口无单测，相关用例标注「仅手工」。
+
+| 编号 | 分类 | 前置条件 | 用例 / 步骤 | 预期结果 | 覆盖类型 | 自动化落点 |
+|------|------|---------|------------|---------|---------|-----------|
+| AUD-01 | 接口 | admin 登录 | 执行写操作（新建知识库）→ `GET /api/admin/audit-logs` | 新增记录含 username/action/resourceType/resourceId/ip/status=SUCCESS/耗时；分页可查 | 仅手工 | `AdminStats.vue` 审计日志页签 |
+| AUD-02 | 异常 | 同上 | 执行失败写操作（如删除不存在资源）→ 查看审计 | 记录 status=FAIL 且 detail 含 ERROR 摘要，主流程仍返回原错误 | 仅手工 | `AuditAspect` |
+| AUD-03 | 边界 | 审计落库异常（模拟 DB 不可用） | 触发写操作 | 主流程不受影响，仅 WARN 日志 | 仅手工 | `AuditAspect#finally` |
+| AUD-04 | 接口 | 存在多条审计记录 | 按关键字/分页查询 | 过滤与总数正确 | 仅手工 | `AdminStatsController#/audit-logs` |
+| COST-01 | 单元 | 配置某模型 input/output 单价 | 估算固定 token 用量成本 | 按单价 × token 计算，缺价格时返回空 | 单元 | `ModelPriceServiceTest`（5 项） |
+| COST-02 | 接口 | 已配置模型价格 | 完成一次对话后查消息 | `wgh_chat_message.cost`、`model_name` 有值 | 仅手工 | `RagChatService` 成本回填 |
+| COST-03 | 接口 | 未配置模型价格 | 完成一次对话 | `cost` 为空，不影响回复 | 仅手工 | `RagChatService` |
+| COST-04 | 接口 | 有多条带成本消息 | `GET /api/admin/stats/cost` | 按模型/日期聚合出金额与 token 用量 | 仅手工 | `AdminStatsController#/stats/cost` |
+
+---
+
+## 17. 语义缓存
+
+> 实现：`SemanticCacheService` + `RagChatService` 前置拦截；窗口字段 `semantic_cache_enabled`；配置 `wgh.rag.cache.enabled/similarity-threshold/max-per-window`；表 `wgh_semantic_cache` + 独立 pgvector 表。
+> 自动化：`SemanticCacheServiceTest`（15 项，rag-kb）。注意：该模块正由其他会话调整，用例以当前磁盘代码为准。
+
+| 编号 | 分类 | 前置条件 | 用例 / 步骤 | 预期结果 | 覆盖类型 | 自动化落点 |
+|------|------|---------|------------|---------|---------|-----------|
+| CACHE-01 | 单元 | 全局与窗口缓存均开启，阈值 0.95 | 写入缓存后以同义问题查询 | 相似度 ≥ 阈值 → 命中，返回缓存答案 | 单元 | `SemanticCacheServiceTest` |
+| CACHE-02 | 单元 | 同上 | 以不相关问题查询 | 低于阈值 → 未命中，走正常检索 | 单元 | `SemanticCacheServiceTest` |
+| CACHE-03 | 单元 | `max-per-window=500` 且已满 | 再写入新缓存 | 删除最旧记录，条数不超过上限 | 单元 | `SemanticCacheServiceTest` |
+| CACHE-04 | 单元 | 全局关闭或窗口关闭 | 查询 | 不读不写缓存，直接走 RAG | 单元 | `SemanticCacheServiceTest` |
+| CACHE-05 | 接口 | 窗口开启缓存 | 相同问题连问两次 | 第二次 SSE 带 cacheHit 标识，响应明显加快 | 仅手工 | `ChatWindows.vue` / `ChatPlayground.vue` |
+| CACHE-06 | 接口 | 窗口关闭缓存 | 相同问题连问两次 | 两次均完整检索 + LLM，无 cacheHit | 仅手工 | `ChatWindows.vue` |
+
+---
+
+## 18. 反馈闭环与离线评测
+
+> 实现：`FeedbackService` + `ChatController`；接口 `POST /api/chat/messages/{id}/feedback`、`GET /api/chat/windows/{windowId}/feedback/stats`、`GET /api/admin/feedback/dislikes`；字段 `wgh_chat_message.feedback/feedback_comment`；离线评测脚本 `eval_recall.py` + ground truth 标注。
+> 自动化：`FeedbackServiceTest`（7 项，rag-chat）。**部分完成**：无数据集版本管理与 A/B 对比。
+
+| 编号 | 分类 | 前置条件 | 用例 / 步骤 | 预期结果 | 覆盖类型 | 自动化落点 |
+|------|------|---------|------------|---------|---------|-----------|
+| FB-01 | 单元 | 存在助手消息 | 提交 feedback=1（赞） | 落库成功，统计 +1 | 单元 | `FeedbackServiceTest` |
+| FB-02 | 单元 | 同上 | 提交 feedback=-1（踩）+ comment | 落库成功，差评列表可见备注 | 单元 | `FeedbackServiceTest` |
+| FB-03 | 单元 | 非法 feedback 值 | 提交 | 明确报错或被忽略，不写脏数据 | 单元 | `FeedbackServiceTest` |
+| FB-04 | 接口 | 已有若干赞/踩 | `GET /api/chat/windows/{id}/feedback/stats` | 返回总数、好评率/差评数 | 仅手工 | `ChatController` |
+| FB-05 | 接口 | 存在差评 | `GET /api/admin/feedback/dislikes` | 分页返回差评消息（含问题、回答、备注） | 仅手工 | `AdminStats.vue` 差评页签 |
+| FB-06 | 接口 | 窗口中有对话 | 前端点击 👍 / 👎 | 图标状态切换，刷新后保持 | 仅手工 | `ChatPlayground.vue` |
+| FB-07 | 仅手工 | 已标注 ground truth 数据集 | `python eval_recall.py`（离线） | 输出 Recall@K 指标，可用于对比 | 仅手工 | `eval_recall.py`（脚本，未纳入 CI） |
+| FB-08 | 仅手工 | 同上 | 管理版本化数据集 / A/B 对比 | **未实现**，无数据集版本与实验对比能力 | 仅手工 | —（缺失） |
+
+---
+
+## 19. 多模态图片问答
+
+> 实现：`ChatImageService` 上传与校验，`RagChatService` 接受 `imageUrls`；`wgh_llm_model.supports_vision` 控制视觉模型；`wgh_chat_message.attachments` 存图片地址。
+> 自动化：`ChatImageServiceTest`（9 项，rag-chat）。
+
+| 编号 | 分类 | 前置条件 | 用例 / 步骤 | 预期结果 | 覆盖类型 | 自动化落点 |
+|------|------|---------|------------|---------|---------|-----------|
+| MM-01 | 单元 | 合法 png/jpg | 上传并校验 | 返回可访问地址（data URL 或静态 URL） | 单元 | `ChatImageServiceTest` |
+| MM-02 | 单元 | 超限大小 / 非图片类型 / 超过数量上限 | 上传 | 明确拒绝并提示原因 | 单元 | `ChatImageServiceTest` |
+| MM-03 | 接口 | 视觉模型（supports_vision=1） | 发送“图片 + 问题” | SSE 正常返回，回答内容引用图片 | 仅手工 | `ChatPlayground.vue` |
+| MM-04 | 接口 | 非视觉模型 | 发送带图片问题 | 明确提示模型不支持图片，不静默丢弃 | 仅手工 | `RagChatService` |
+| MM-05 | 接口 | 任一带图对话 | 查询消息 | `attachments` 字段包含图片地址，刷新可回显 | 仅手工 | `wgh_chat_message.attachments` |
+| MM-06 | 接口 | 分享/开放 API 入口 | 单次提问图片数 > 配置上限 | 拒绝并提示上限（`wgh.public-access.max-images-per-request`） | 仅手工 | `PublicShareController` / `OpenApiController` |
+
+---
+
+## 20. Prompt 模板中心
+
+> 实现：`PromptTemplateService` + `PromptTemplateController`（`/api/prompt-templates` 增删改查、`/{id}/render`）；表 `wgh_prompt_template`；窗口 systemPrompt 支持 `template:{id}` 引用。
+> 自动化：`PromptTemplateServiceTest`（9 项，rag-chat）。
+
+| 编号 | 分类 | 前置条件 | 用例 / 步骤 | 预期结果 | 覆盖类型 | 自动化落点 |
+|------|------|---------|------------|---------|---------|-----------|
+| PT-01 | 单元 | 模板含 `{{question}}` 等变量 | 提取变量 | 返回去重变量列表 | 单元 | `PromptTemplateServiceTest` |
+| PT-02 | 单元 | 提供变量值 | 渲染 | 占位符被替换；缺变量时明确报错或保留 | 单元 | `PromptTemplateServiceTest` |
+| PT-03 | 接口 | 已登录 | `GET /api/prompt-templates/list` | 返回内置 + 自定义模板 | 仅手工 | `PromptTemplates.vue` |
+| PT-04 | 接口 | 同上 | 新建 / 编辑 / 删除模板 | 保存成功，列表刷新 | 仅手工 | `PromptTemplateController` |
+| PT-05 | 接口 | 有模板 | `POST /api/prompt-templates/{id}/render` | 返回渲染后的文本，供预览 | 仅手工 | `PromptTemplates.vue` 实时预览 |
+| PT-06 | 接口 | 窗口 systemPrompt 设为 `template:{id}` | 发起对话 | 实际系统提示为模板渲染结果；模板不存在时报错 | 仅手工 | `RagChatService` |
+
+---
+
+## 21. 知识库标签与文档版本
+
+> 实现：`TagService`、`FileVersionService`、`TagController`；表 `wgh_tag`、`wgh_kb_tag_rel`、`wgh_file_tag_rel`、`wgh_knowledge_file_version`。
+> **无自动化单测**（缺 `TagServiceTest` / `FileVersionServiceTest`），本组用例均为「仅手工」。
+
+| 编号 | 分类 | 前置条件 | 用例 / 步骤 | 预期结果 | 覆盖类型 | 自动化落点 |
+|------|------|---------|------------|---------|---------|-----------|
+| TAG-01 | 接口 | admin 登录 | `/api/tags` 新增/编辑/删除标签 | CRUD 生效，重名给出明确提示 | 仅手工 | `TagController` |
+| TAG-02 | 接口 | 已有标签与知识库 | `PUT /api/kb/{kbId}/tags` 绑定标签 | `GET` 返回绑定结果，多标签不重复 | 仅手工 | `TagController` |
+| TAG-03 | 接口 | 已有文件 | `PUT /api/kb/files/{fileId}/tags` 绑定 | 文件标签 chip 展示正确 | 仅手工 | `KBFiles.vue` |
+| TAG-04 | 接口 | 文件已更新过 | `GET /api/kb/files/{fileId}/versions` | 返回历史版本（版本号、时间、大小） | 仅手工 | `KBFiles.vue` 版本弹窗 |
+| VER-01 | 接口 | 存在历史版本 | `POST /api/kb/files/{fileId}/rollback/{version}` | 生成新版本（不覆盖旧版本），切片/向量重建 | 仅手工 | `FileVersionService` |
+| VER-02 | 异常 | 回滚不存在版本 | 同上 | 返回明确错误，不产生新版本 | 仅手工 | `TagController#rollback` |
+
+---
+
+## 22. 模型路由与故障转移
+
+> 实现：`ModelRouter#resolveChain`（窗口 `model_route_group` 非空时按 `route_priority` 升序成链，否则回退 `llm_model_id`）、`RagChatService#runWithFailover`；字段 `wgh_llm_model.route_group/route_priority`、`wgh_chat_window.model_route_group`。
+> **无自动化单测**（缺 `ModelRouterTest`），本组用例均为「仅手工」。
+
+| 编号 | 分类 | 前置条件 | 用例 / 步骤 | 预期结果 | 覆盖类型 | 自动化落点 |
+|------|------|---------|------------|---------|---------|-----------|
+| ROUTE-01 | 接口 | 两个模型同 route_group，优先级 1/2；窗口选择该组 | 发起对话 | 命中优先级 1 的模型 | 仅手工 | `ChatModels.vue` / `ChatWindows.vue` |
+| ROUTE-02 | 异常 | 优先级 1 模型不可用（错误 key/超时） | 发起对话 | 自动降级到优先级 2，答复成功且日志记录失败模型 | 仅手工 | `RagChatService#runWithFailover` |
+| ROUTE-03 | 异常 | 链路全部失败 | 发起对话 | 返回明确错误，不无限重试 | 仅手工 | `RagChatService` |
+| ROUTE-04 | 边界 | 路由组无可用模型 | 发起对话 | 回退窗口 `llmModelId`；仍无则明确报错 | 仅手工 | `ModelRouter#resolveChain` |
+| ROUTE-05 | 边界 | 窗口未配置路由组 | 发起对话 | 直接使用 `llm_model_id`（行为与改造前一致） | 仅手工 | `RagChatService` |
+
+---
+
+## 23. 工作流 AGENT 节点
+
+> 实现：`AgentNodeExecutor`（Plan-and-Execute 轻量版：Planner → 步骤执行 → 反思），节点类型 `AGENT`；配置 `goal`/`prompt`、`modelId`、`plannerModelId`、`maxSteps`（默认 5）、`timeoutMs`（默认 60000）、`kbIds`；计划/步骤落 `wgh_agent_plan`、`wgh_agent_step`。
+> 自动化：`AgentNodeExecutorTest`（6 项，rag-workflow）。
+
+| 编号 | 分类 | 前置条件 | 用例 / 步骤 | 预期结果 | 覆盖类型 | 自动化落点 |
+|------|------|---------|------------|---------|---------|-----------|
+| WAG-01 | 单元 | 配置 goal + 模型 | 执行 AGENT 节点 | 生成计划并逐步骤执行，输出文本与 stepCount | 单元 | `AgentNodeExecutorTest` |
+| WAG-02 | 单元 | 无 goal/prompt 且无上游 lastOutput | 执行 | 抛「AGENT 节点缺少 goal / prompt 配置」 | 单元 | `AgentNodeExecutorTest` |
+| WAG-03 | 单元 | timeoutMs 很小 | 执行 | 返回 success=false、output.status=TIMEOUT | 单元 | `AgentNodeExecutorTest` |
+| WAG-04 | 单元 | 步骤执行失败 | 执行 | 记录错误并停止/降级，输出含失败步骤信息 | 单元 | `AgentNodeExecutorTest` |
+| WAG-05 | 接口 | 工作流含 AGENT 节点 | `POST /api/workflows/{id}/validate` → run | 校验通过；运行产生 AGENT 步骤事件 | 仅手工 | `WorkflowEditor.vue` |
+| WAG-06 | 接口 | 配置 `kbIds` | 运行 AGENT 节点 | 检索增强后生成计划（有 KB 上下文） | 仅手工 | `AgentNodeExecutor` |
+| WAG-07 | 接口 | 前端编辑器 | 拖入 AGENT 节点并配置 goal/maxSteps/timeoutMs | 保存后重新打开配置不丢失 | 仅手工 | `WorkflowEditor.vue` |
+
+---
+
+## 24. 多用户与权限（RBAC / OIDC）
+
+> 实现：`AuthRBACService`、`WghUser/WghRole/WghPermission/UserRole/RolePermission`、`@RequiresPermission` + `PermissionAspect`、`OidcService/OidcController`；表 `wgh_user`、`wgh_role`、`wgh_permission`、`wgh_user_role`、`wgh_role_permission`。
+> 外部 token 校验：OIDC `id_token`（JWK/HMAC 验签 + iss/aud/exp/nonce/state，支持 PKCE）。
+> **部分完成**：无独立角色管理界面/接口，资源级 `@RequiresPermission` 仅覆盖部分 Controller；自动化：`OidcServiceTest`（10 项，rag-common）。
+
+| 编号 | 分类 | 前置条件 | 用例 / 步骤 | 预期结果 | 覆盖类型 | 自动化落点 |
+|------|------|---------|------------|---------|---------|-----------|
+| RBA-01 | 单元 | OIDC 已配置 | 生成授权请求 | 返回 authorizeUrl + state + nonce + PKCE codeVerifier | 单元 | `OidcServiceTest` |
+| RBA-02 | 单元 | 伪造 id_token（错误签名/iss/aud/过期） | 校验 | 分别抛出对应错误，不建立会话 | 单元 | `OidcServiceTest` |
+| RBA-03 | 单元 | state 不匹配 | 回调 | 拒绝（防 CSRF） | 单元 | `OidcServiceTest` |
+| RBA-04 | 接口 | OIDC 首次登录 | `/api/auth/oidc/callback` | 自动建用户并按 `default-role`（viewer）分配角色 | 仅手工 | `OidcController` / `AuthRBACService#loginByOidc` |
+| RBA-05 | 接口 | 本地账号密码登录 | `POST /api/auth/login` | 返回 JWT，`GET /api/auth/me` 含 roles/permissions | 仅手工 | `AuthController` |
+| RBA-06 | 接口 | 无 `model:manage` 权限的用户 | 调用 `LlmModelController` 写接口 | 403，提示缺少权限 | 仅手工 | `PermissionAspect` |
+| RBA-07 | 接口 | admin 角色 | 同上 | 放行 | 仅手工 | `PermissionAspect` |
+| RBA-08 | 异常 | 用户 status=0（禁用） | 用旧 JWT 访问 | 403「账号已被禁用」，不进入业务 | 仅手工 | `JwtAuthenticationFilter` |
+| RBA-09 | 接口 | admin 登录 | 访问用户/角色管理 | **未实现**独立管理页（仅种子数据），标记为遗留项 | 仅手工 | —（缺失） |
+
 
