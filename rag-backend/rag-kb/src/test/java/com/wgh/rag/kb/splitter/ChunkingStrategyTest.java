@@ -1,9 +1,12 @@
 package com.wgh.rag.kb.splitter;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wgh.rag.config.property.RagProperties;
 import com.wgh.rag.kb.splitter.TextSplitter.Strategy;
+import com.wgh.rag.llm.factory.ModelCacheManager;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -34,7 +37,16 @@ class ChunkingStrategyTest {
                 length,
                 new FaqChunkingStrategy(props, recursive),
                 recursive,
-                new CustomChunkingStrategy(paragraph));
+                new CustomChunkingStrategy(paragraph),
+                new StructuredChunkingStrategy(props, length),
+                // ModelCacheManager 返回 null → SEMANTIC 稳定降级 PARAGRAPH，保证两 splitter 行为一致
+                new SemanticChunkingStrategy(props, mockModelCacheManager(), paragraph, length, new ObjectMapper()));
+    }
+
+    private ModelCacheManager mockModelCacheManager() {
+        ModelCacheManager manager = Mockito.mock(ModelCacheManager.class);
+        Mockito.when(manager.getEmbeddingModel(Mockito.any())).thenReturn(null);
+        return manager;
     }
 
     /** 章节、段落、长度策略的优先级依次为 1、2、3，排序后类型顺序固定。 */
@@ -52,7 +64,8 @@ class ChunkingStrategyTest {
                 .toList();
         assertThat(sorted.stream().map(ChunkingStrategy::type))
                 .containsExactly(Strategy.CHAPTER, Strategy.PARAGRAPH, Strategy.LENGTH,
-                        Strategy.FAQ, Strategy.RECURSIVE, Strategy.CUSTOM);
+                        Strategy.FAQ, Strategy.RECURSIVE, Strategy.CUSTOM,
+                        Strategy.STRUCTURED, Strategy.SEMANTIC);
     }
 
     /** 每个策略类型恰有一个实现，注入顺序颠倒后各策略切分结果不变。 */
@@ -79,15 +92,16 @@ class ChunkingStrategyTest {
         }
     }
 
-    /** 六个策略实现覆盖除 AUTO 外的全部策略类型。 */
+    /** 八个策略实现覆盖除 AUTO 外的全部策略类型。 */
     @Test
-    @DisplayName("注册分发 - 六个策略实现覆盖全部非 AUTO 类型")
+    @DisplayName("注册分发 - 八个策略实现覆盖全部非 AUTO 类型")
     void allNonAutoTypesCovered() {
         List<ChunkingStrategy> strategies = allStrategies(props());
 
-        assertThat(strategies).hasSize(6);
+        assertThat(strategies).hasSize(8);
         assertThat(strategies.stream().map(ChunkingStrategy::type))
                 .containsExactlyInAnyOrder(Strategy.CHAPTER, Strategy.PARAGRAPH, Strategy.LENGTH,
-                        Strategy.FAQ, Strategy.RECURSIVE, Strategy.CUSTOM);
+                        Strategy.FAQ, Strategy.RECURSIVE, Strategy.CUSTOM,
+                        Strategy.STRUCTURED, Strategy.SEMANTIC);
     }
 }

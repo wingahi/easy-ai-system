@@ -55,6 +55,8 @@
           <div v-for="chunk in previewData.chunks" :key="chunk.index" class="chunk-item">
             <div class="chunk-header">
               <el-tag size="small" type="info">#{{ chunk.index }}</el-tag>
+              <el-tag v-if="chunk.attributes?.headingPath" size="small" type="success">{{ chunk.attributes.headingPath }}</el-tag>
+              <el-tag v-if="chunk.attributes?.semanticBlockIndex !== undefined" size="small" type="warning">块 {{ chunk.attributes.semanticBlockIndex }}</el-tag>
               <span style="color:#909399;font-size:12px">{{ chunk.length }} 字符</span>
             </div>
             <div class="chunk-text">{{ chunk.text }}</div>
@@ -74,8 +76,16 @@
             <el-option label="章节分割" value="CHAPTER" />
             <el-option label="段落分割" value="PARAGRAPH" />
             <el-option label="长度分割" value="LENGTH" />
+            <el-option label="结构化切分（Markdown）" value="STRUCTURED" />
+            <el-option label="语义切分" value="SEMANTIC" />
             <el-option label="自定义" value="CUSTOM" />
           </el-select>
+          <div v-if="newStrategy === 'STRUCTURED'" class="strategy-tip">
+            按 Markdown 标题层级（# ~ ####）聚合成块，标题路径写入 chunk metadata；表格整块保留不拆。
+          </div>
+          <div v-else-if="newStrategy === 'SEMANTIC'" class="strategy-tip">
+            相邻句 embedding 相似度断块，需调用知识库绑定的 Embedding 模型，切分耗时与消耗随句数增长；embedding 不可用时自动降级为段落切分。
+          </div>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -164,6 +174,12 @@ onMounted(load)
 </script>
 
 <style scoped>
+.strategy-tip {
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #909399;
+}
 .chunk-item {
   border: 1px solid #ebeef5;
   border-radius: 4px;

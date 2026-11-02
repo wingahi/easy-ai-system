@@ -49,7 +49,7 @@ public class RagProperties {
         private Integer maxLength = 512;
         /** 默认段落重叠长度（推荐 64） */
         private Integer overlapLength = 64;
-        /** 默认分割方式：AUTO / RECURSIVE / CHAPTER / PARAGRAPH / FAQ / LENGTH / CUSTOM */
+        /** 默认分割方式：AUTO / RECURSIVE / CHAPTER / PARAGRAPH / FAQ / LENGTH / CUSTOM / STRUCTURED / SEMANTIC */
         private String defaultStrategy = "AUTO";
     }
 

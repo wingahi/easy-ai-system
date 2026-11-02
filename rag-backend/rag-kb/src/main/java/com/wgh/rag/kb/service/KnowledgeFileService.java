@@ -8,6 +8,8 @@ import com.wgh.rag.kb.entity.KnowledgeBase;
 import com.wgh.rag.kb.entity.KnowledgeFile;
 import com.wgh.rag.kb.mapper.KnowledgeFileMapper;
 import com.wgh.rag.kb.parser.DocumentParserDispatcher;
+import com.wgh.rag.kb.splitter.ChunkOutput;
+import com.wgh.rag.kb.splitter.SplitContext;
 import com.wgh.rag.kb.splitter.TextSplitter;
 import dev.langchain4j.data.document.Metadata;
 import dev.langchain4j.data.segment.TextSegment;
@@ -170,22 +172,28 @@ public class KnowledgeFileService {
         
         List<String> paragraphs = documentParser.parse(parsedFile, file.getFileType());
         TextSplitter.Strategy strategy = TextSplitter.Strategy.valueOf(file.getSplitStrategy());
-        List<String> chunks = textSplitter.split(paragraphs, strategy, file.getSplitConfig());
-        
+        // 与异步入库链路一致：传入 embedding 模型上下文（SEMANTIC 需要）
+        KnowledgeBase kb = kbService.getById(file.getKnowledgeBaseId());
+        SplitContext context = new SplitContext(kb != null ? kb.getEmbeddingModelId() : null);
+        List<ChunkOutput> chunks = textSplitter.splitDetailed(paragraphs, strategy, file.getSplitConfig(), context);
+
         Map<String, Object> result = new HashMap<>();
         result.put("fileName", file.getFileName());
         result.put("fileType", file.getFileType());
         result.put("paragraphCount", paragraphs.size());
         result.put("chunkCount", chunks.size());
-        
+
         // 返回前 100 个片段（含坐标信息）
         List<Map<String, Object>> chunkPreviews = new ArrayList<>();
         int previewSize = Math.min(chunks.size(), 100);
         for (int i = 0; i < previewSize; i++) {
             Map<String, Object> chunk = new HashMap<>();
             chunk.put("index", i);
-            chunk.put("text", chunks.get(i));
-            chunk.put("length", chunks.get(i).length());
+            chunk.put("text", chunks.get(i).text());
+            chunk.put("length", chunks.get(i).text().length());
+            if (!chunks.get(i).attributes().isEmpty()) {
+                chunk.put("attributes", chunks.get(i).attributes());
+            }
             chunkPreviews.add(chunk);
         }
         result.put("chunks", chunkPreviews);
@@ -220,9 +228,11 @@ public class KnowledgeFileService {
                 File parsedFile = new File(file.getFilePath());
                 List<String> paragraphs = documentParser.parse(parsedFile, file.getFileType());
                 TextSplitter.Strategy strategy = TextSplitter.Strategy.valueOf(file.getSplitStrategy());
-                List<String> chunks = textSplitter.split(paragraphs, strategy, file.getSplitConfig());
+                // SEMANTIC 需要知识库绑定的 embedding 模型；STRUCTURED/SEMANTIC 会产出 chunk 属性
+                List<ChunkOutput> chunks = textSplitter.splitDetailed(paragraphs, strategy, file.getSplitConfig(),
+                        new SplitContext(kb.getEmbeddingModelId()));
 
-                // 构造 TextSegment（附带 metadata 记录来源文件）
+                // 构造 TextSegment（附带 metadata 记录来源文件 + 切分属性如 headingPath/semanticBlockIndex）
                 List<TextSegment> segments = new ArrayList<>();
                 for (int i = 0; i < chunks.size(); i++) {
                     Map<String, Object> meta = new HashMap<>();
@@ -230,8 +240,9 @@ public class KnowledgeFileService {
                     meta.put("fileName", file.getFileName());
                     meta.put("kbId", kb.getId());
                     meta.put("chunkIndex", i);
+                    meta.putAll(chunks.get(i).attributes());
                     Metadata metadata = Metadata.from(meta);
-                    segments.add(TextSegment.from(chunks.get(i), metadata));
+                    segments.add(TextSegment.from(chunks.get(i).text(), metadata));
                 }
 
                 // 向量化并存入 pgvector

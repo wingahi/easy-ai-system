@@ -28,7 +28,9 @@ public class TextSplitter {
         PARAGRAPH,   // 按段落
         FAQ,         // 问答对分割（识别「问N：...答：...」，一对一 chunk）
         LENGTH,      // 按长度
-        CUSTOM       // 自定义（通过 config 传递）
+        CUSTOM,      // 自定义（通过 config 传递）
+        STRUCTURED,  // 结构化切分（Markdown 标题聚合 + 表格保护，headingPath 写入 metadata）
+        SEMANTIC     // 语义切分（相邻句 embedding 相似度断块，失败降级 PARAGRAPH）
     }
 
     private final Map<Strategy, ChunkingStrategy> strategies;
@@ -52,13 +54,15 @@ public class TextSplitter {
         RecursiveChunkingStrategy recursive = new RecursiveChunkingStrategy(ragProperties);
         LengthChunkingStrategy length = new LengthChunkingStrategy(ragProperties);
         ParagraphChunkingStrategy paragraph = new ParagraphChunkingStrategy(ragProperties, length);
+        // 注：SEMANTIC 依赖 ModelCacheManager（embedding 模型），仅由 Spring 容器注册，不在手工组装链中
         return List.of(
                 new ChapterChunkingStrategy(paragraph),
                 paragraph,
                 length,
                 new FaqChunkingStrategy(ragProperties, recursive),
                 recursive,
-                new CustomChunkingStrategy(paragraph));
+                new CustomChunkingStrategy(paragraph),
+                new StructuredChunkingStrategy(ragProperties, length));
     }
 
     private static Map<Strategy, ChunkingStrategy> indexByType(List<ChunkingStrategy> list) {
@@ -76,6 +80,19 @@ public class TextSplitter {
      * @param customConfig 自定义配置（JSON 字符串，可选）
      */
     public List<String> split(List<String> originalParagraphs, Strategy strategy, String customConfig) {
+        return splitDetailed(originalParagraphs, strategy, customConfig, null)
+                .stream().map(ChunkOutput::text).toList();
+    }
+
+    /**
+     * 分割文本（携带 chunk 属性）
+     * @param originalParagraphs 解析后的原始段落
+     * @param strategy 分割策略
+     * @param customConfig 自定义配置（JSON 字符串，可选）
+     * @param context 切分上下文（可选资源，如知识库绑定的 embedding 模型 ID，SEMANTIC 策略需要）
+     */
+    public List<ChunkOutput> splitDetailed(List<String> originalParagraphs, Strategy strategy,
+                                           String customConfig, SplitContext context) {
         if (strategy == Strategy.AUTO) {
             strategy = routeByContent(originalParagraphs);
             log.info("AUTO 策略路由结果: {}", strategy);
@@ -84,7 +101,7 @@ public class TextSplitter {
         if (chunking == null) {
             throw new IllegalStateException("未注册的分割策略: " + strategy);
         }
-        return chunking.split(originalParagraphs, customConfig);
+        return chunking.splitDetailed(originalParagraphs, customConfig, context);
     }
 
     // ============ AUTO：按文档类型路由 ============

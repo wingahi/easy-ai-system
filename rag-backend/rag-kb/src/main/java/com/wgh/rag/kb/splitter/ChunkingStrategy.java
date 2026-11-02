@@ -24,4 +24,16 @@ public interface ChunkingStrategy {
      * @param customConfig 自定义配置（JSON 字符串，可选）
      */
     List<String> split(List<String> paragraphs, String customConfig);
+
+    /**
+     * 切分文本（携带 chunk 属性）。默认实现包装 {@link #split} 结果、不带属性；
+     * 需要写 metadata（headingPath / semanticBlockIndex）或依赖上下文（embedding 模型）的策略覆写本方法。
+     *
+     * @param paragraphs   解析后的原始段落
+     * @param customConfig 自定义配置（JSON 字符串，可选）
+     * @param context      切分上下文（可选资源，如知识库绑定的 embedding 模型 ID）
+     */
+    default List<ChunkOutput> splitDetailed(List<String> paragraphs, String customConfig, SplitContext context) {
+        return split(paragraphs, customConfig).stream().map(ChunkOutput::of).toList();
+    }
 }
