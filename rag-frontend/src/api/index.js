@@ -74,6 +74,9 @@ export const windowMessages = (windowId, params) => request.get(`/chat/windows/$
 export const windowSessions = (windowId, params) => request.get(`/chat/windows/${windowId}/sessions`, { params })
 export const windowCreateSession = (windowId, params) => request.post(`/chat/windows/${windowId}/sessions`, null, { params })
 export const windowDeleteSession = (windowId, sessionId, params) => request.delete(`/chat/windows/${windowId}/sessions/${sessionId}`, { params })
+// 反馈闭环
+export const submitMessageFeedback = (id, data) => request.post(`/chat/messages/${id}/feedback`, data)
+export const windowFeedbackStats = (windowId) => request.get(`/chat/windows/${windowId}/feedback/stats`)
 
 // SSE 流式聊天（需要原生 fetch）
 export function streamChatApi(windowId, message, sessionId) {
@@ -489,6 +492,7 @@ export function streamMultiAgentHitl(runId, userInput, onEvent, onDone, onError)
 export const adminAuditLogs = (params) => request.get('/admin/audit-logs', { params })
 export const adminCostStats = (params) => request.get('/admin/stats/cost', { params })
 export const adminQuotaStats = () => request.get('/admin/stats/quota')
+export const adminFeedbackDislikes = (params) => request.get('/admin/feedback/dislikes', { params })
 export const modelPricePage = (params) => request.get('/admin/model-prices', { params })
 export const modelPriceCreate = (data) => request.post('/admin/model-prices', data)
 export const modelPriceUpdate = (data) => request.put('/admin/model-prices', data)

@@ -619,10 +619,11 @@ public class RagChatService {
                     originalUserMessage, fullAnswer);
         }
 
-        // done 事件：有 accuracyRate 才附带，否则不下发该字段
+        // done 事件：有 accuracyRate 才附带，否则不下发该字段；assistantMessageId 供前端反馈闭环
         Map<String, Object> doneData = new HashMap<>();
         doneData.put("fullResponse", fullAnswer);
         if (accuracyRate != null) doneData.put("accuracyRate", accuracyRate);
+        if (saved != null && saved.getId() != null) doneData.put("assistantMessageId", saved.getId());
         emitter.send(SseEmitter.event().name("done").data(doneData));
 
         if (evaluationScheme.hasLlmJudge()) {
@@ -812,10 +813,12 @@ public class RagChatService {
         safeSend(emitter, "cache", Map.of("cacheHit", true, "similarity", hit.score()));
         safeSend(emitter, "content", Map.of("text", hit.answer()));
         safeSend(emitter, "sources", List.of());
-        saveAssistantMessage(session, hit.answer(), List.of(), null, null, null, null);
+        com.wgh.rag.chat.entity.ChatMessage saved =
+                saveAssistantMessage(session, hit.answer(), List.of(), null, null, null, null);
         Map<String, Object> doneData = new HashMap<>();
         doneData.put("fullResponse", hit.answer());
         doneData.put("cacheHit", true);
+        if (saved != null && saved.getId() != null) doneData.put("assistantMessageId", saved.getId());
         safeSend(emitter, "done", doneData);
         safeComplete(emitter);
     }

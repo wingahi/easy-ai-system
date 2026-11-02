@@ -876,6 +876,13 @@ ALTER TABLE wgh_chat_message ADD COLUMN IF NOT EXISTS model_name VARCHAR(100);
 COMMENT ON COLUMN wgh_chat_message.cost IS '本条消息估算成本（元，按模型价格表回填；无价格配置为 NULL）';
 COMMENT ON COLUMN wgh_chat_message.model_name IS '生成本条消息的模型名（厂商侧 modelName，用于成本按模型聚合）';
 
+-- 聊天消息反馈列（仅 ASSISTANT 消息可反馈）
+ALTER TABLE wgh_chat_message ADD COLUMN IF NOT EXISTS feedback SMALLINT DEFAULT 0;
+ALTER TABLE wgh_chat_message ADD COLUMN IF NOT EXISTS feedback_comment VARCHAR(500);
+COMMENT ON COLUMN wgh_chat_message.feedback IS '用户反馈（0 无 / 1 赞 / -1 踩）';
+COMMENT ON COLUMN wgh_chat_message.feedback_comment IS '差评补充说明（截断 500 字）';
+CREATE INDEX IF NOT EXISTS idx_msg_feedback ON wgh_chat_message(feedback) WHERE feedback <> 0;
+
 -- ============ 语义缓存 ============
 
 -- 向量存 pgvector 独立表 wgh_semantic_cache_vec（由 PgVectorEmbeddingStore 自动建表，

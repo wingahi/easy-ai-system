@@ -3,6 +3,7 @@ package com.wgh.rag.controller;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wgh.rag.chat.service.ChatWindowService;
 import com.wgh.rag.chat.service.ChatWorkflowService;
+import com.wgh.rag.chat.service.FeedbackService;
 import com.wgh.rag.chat.service.RagChatService;
 import com.wgh.rag.chat.entity.ChatMessage;
 import com.wgh.rag.chat.entity.ChatSession;
@@ -44,6 +45,7 @@ public class ChatController {
     private final ChatWindowService windowService;
     private final RagChatService ragChatService;
     private final ChatWorkflowService chatWorkflowService;
+    private final FeedbackService feedbackService;
     private final WorkflowService workflowService;
     private final ToolConfigService toolConfigService;
     private final SkillFileService skillFileService;
@@ -129,6 +131,24 @@ public class ChatController {
             @RequestParam(required = false) Long sessionId,
             @RequestParam(defaultValue = "default_user") String userIdentifier) {
         return Result.success(windowService.pageMessages(windowId, userIdentifier, sessionId, page, size));
+    }
+
+    @Operation(summary = "提交消息反馈（1 赞 / -1 踩 / 0 取消，仅助手消息）")
+    @PostMapping("/messages/{id}/feedback")
+    public Result<Void> submitFeedback(
+            @PathVariable Long id,
+            @RequestBody Map<String, Object> body) {
+        Integer feedback = body.get("feedback") != null
+                ? Integer.parseInt(body.get("feedback").toString()) : null;
+        String comment = body.get("comment") != null ? body.get("comment").toString() : null;
+        feedbackService.submitFeedback(id, feedback, comment);
+        return Result.success();
+    }
+
+    @Operation(summary = "窗口满意度统计（赞/踩/满意率）")
+    @GetMapping("/windows/{windowId}/feedback/stats")
+    public Result<Map<String, Object>> feedbackStats(@PathVariable Long windowId) {
+        return Result.success(feedbackService.windowStats(windowId));
     }
 
     @Operation(summary = "列出窗口下的历史会话")

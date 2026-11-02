@@ -5,6 +5,12 @@
         <el-button :icon="ArrowLeft" circle @click="$router.back()" />
         <h2>{{ window?.name }} - 调试对话</h2>
         <el-button type="primary" :icon="Plus" @click="newSession">新建会话</el-button>
+        <el-tooltip v-if="feedbackStats && (feedbackStats.likes + feedbackStats.dislikes) > 0"
+                    placement="bottom" content="本窗口用户反馈满意度（赞 / (赞+踩)）">
+          <el-tag size="small" :type="feedbackStats.rate >= 0.8 ? 'success' : feedbackStats.rate >= 0.5 ? 'warning' : 'danger'">
+            满意度 {{ (feedbackStats.rate * 100).toFixed(0) }}%（👍{{ feedbackStats.likes }} 👎{{ feedbackStats.dislikes }}）
+          </el-tag>
+        </el-tooltip>
       </div>
       <div style="display:flex;gap:8px">
         <el-button :icon="Connection" @click="openMultiAgent">多 Agent 协作</el-button>
@@ -139,6 +145,17 @@
                   <el-tag v-if="s.score" size="small" type="info">{{ (s.score * 100).toFixed(0) }}%</el-tag>
                 </div>
               </div>
+
+              <!-- 反馈（👍/👎，仅已落库的助手消息） -->
+              <div v-if="msg.role === 'ASSISTANT' && !msg.streaming && msg.id" class="msg-feedback">
+                <span :class="['fb-btn', { active: msg.feedback === 1 }]" title="赞"
+                      @click="sendFeedback(msg, 1)">👍</span>
+                <span :class="['fb-btn', { active: msg.feedback === -1 }]" title="踩"
+                      @click="sendFeedback(msg, -1)">👎</span>
+                <span v-if="msg.feedback === -1 && msg.feedbackComment" class="fb-comment">
+                  {{ msg.feedbackComment }}
+                </span>
+              </div>
             </div>
           </div>
         </div>
@@ -223,12 +240,13 @@
 <script setup>
 import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft, Link, Promotion, Plus, Document, Loading, Tools, Delete, Connection } from '@element-plus/icons-vue'
 import { marked } from 'marked'
 import { windowGet, streamChatApi, windowMessages, windowSessions, windowCreateSession, windowDeleteSession,
   agentGetPlanState, agentCancelPlan, agentRetryStep, agentSkipStep, agentGetPlanBySession,
-  chatWorkflowState, streamChatWorkflowHitl, chatWorkflowCancel } from '../../api'
+  chatWorkflowState, streamChatWorkflowHitl, chatWorkflowCancel,
+  submitMessageFeedback, windowFeedbackStats } from '../../api'
 import AgentPlanTree from '../../components/AgentPlanTree.vue'
 import WorkflowRunPanel from '../../components/WorkflowRunPanel.vue'
 
@@ -350,8 +368,11 @@ const dedupeSources = (sources) => {
 // 历史消息 → 视图消息（metrics 抽取）
 const toViewMessage = (m) => {
   const msg = {
+    id: m.id,
     role: m.role,
     content: m.content,
+    feedback: m.feedback || 0,
+    feedbackComment: m.feedbackComment || '',
     sources: m.sources ? dedupeSources(JSON.parse(m.sources)) : [],
     judgeDetails: m.judgeDetails ? safeParse(m.judgeDetails) : null
   }
@@ -367,6 +388,42 @@ const toViewMessage = (m) => {
 
 const safeParse = (json) => {
   try { return JSON.parse(json) } catch { return null }
+}
+
+// ===== 反馈闭环（👍/👎） =====
+const feedbackStats = ref(null)
+
+const loadFeedbackStats = async () => {
+  try {
+    const res = await windowFeedbackStats(windowId)
+    feedbackStats.value = res.data
+  } catch { /* 统计失败不影响聊天 */ }
+}
+
+// 再次点击同一反馈 = 取消（0）；差评弹出可选补充说明
+const sendFeedback = async (msg, value) => {
+  const next = msg.feedback === value ? 0 : value
+  let comment = ''
+  if (next === -1) {
+    try {
+      const { value: input } = await ElMessageBox.prompt(
+        '可以补充一下哪里不好吗？（可选，500 字内）', '差评反馈', {
+          confirmButtonText: '提交', cancelButtonText: '取消',
+          inputType: 'textarea', inputPlaceholder: '例如：答非所问 / 引用内容错误…',
+          inputValidator: v => !v || v.length <= 500 || '不能超过 500 字'
+        })
+      comment = input || ''
+    } catch { return } // 用户取消
+  }
+  try {
+    await submitMessageFeedback(msg.id, { feedback: next, comment })
+    msg.feedback = next
+    msg.feedbackComment = next === -1 ? comment : ''
+    ElMessage.success(next === 0 ? '已取消反馈' : '感谢反馈')
+    loadFeedbackStats()
+  } catch (e) {
+    ElMessage.error(e?.message || '反馈提交失败')
+  }
 }
 
 // Judge tooltip 展示每个 judge 的模型、分数与理由
@@ -794,6 +851,7 @@ const handleEvent = (event, data, aiMsg) => {
       aiMsg.streaming = false
       if (data.sessionId) currentSessionId.value = data.sessionId
       if (data.cacheHit) aiMsg.cacheHit = true
+      if (data.assistantMessageId) aiMsg.id = data.assistantMessageId
       // Agent 路线后端不逐 token 推送 content，只下发 done.fullResponse，这里兜底填充
       if (!aiMsg.content && data.fullResponse) {
         aiMsg.content = data.fullResponse
@@ -1161,6 +1219,7 @@ onMounted(() => {
   // 注意：本组件内 window 是响应式 ref，需用 globalThis 访问浏览器 window
   globalThis.addEventListener('beforeunload', handleBeforeUnload)
   load()
+  loadFeedbackStats()
 })
 onUnmounted(() => {
   globalThis.removeEventListener('beforeunload', handleBeforeUnload)
@@ -1317,6 +1376,22 @@ onUnmounted(() => {
   margin-top: 8px;
   flex-wrap: wrap;
 }
+.msg-feedback {
+  margin-top: 8px;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.fb-btn {
+  cursor: pointer;
+  font-size: 15px;
+  opacity: 0.45;
+  transition: opacity 0.15s, transform 0.15s;
+  user-select: none;
+}
+.fb-btn:hover { opacity: 0.9; transform: scale(1.15); }
+.fb-btn.active { opacity: 1; }
+.fb-comment { font-size: 12px; color: #909399; }
 .msg-sources {
   margin-top: 12px;
   padding-top: 10px;

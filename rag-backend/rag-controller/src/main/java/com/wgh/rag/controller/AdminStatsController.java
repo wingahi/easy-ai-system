@@ -1,6 +1,7 @@
 package com.wgh.rag.controller;
 
 import com.wgh.rag.chat.mapper.ChatMessageMapper;
+import com.wgh.rag.chat.service.FeedbackService;
 import com.wgh.rag.common.entity.AuditLog;
 import com.wgh.rag.common.entity.QuotaUsage;
 import com.wgh.rag.common.quota.QuotaService;
@@ -34,6 +35,7 @@ public class AdminStatsController {
     private final AuditLogService auditLogService;
     private final QuotaService quotaService;
     private final ChatMessageMapper chatMessageMapper;
+    private final FeedbackService feedbackService;
 
     @Operation(summary = "分页查询审计日志")
     @GetMapping("/audit-logs")
@@ -69,5 +71,13 @@ public class AdminStatsController {
         data.put("chatDailyLimit", quotaService.getChatDailyLimit());
         data.put("tokenDailyLimit", quotaService.getTokenDailyLimit());
         return Result.success(data);
+    }
+
+    @Operation(summary = "差评反馈分页（运营闭环：差评答案 + 触发问题 + 窗口）")
+    @GetMapping("/feedback/dislikes")
+    public Result<PageResult<Map<String, Object>>> dislikes(
+            @RequestParam(defaultValue = "1") long page,
+            @RequestParam(defaultValue = "20") long size) {
+        return Result.success(feedbackService.dislikePage(page, size));
     }
 }

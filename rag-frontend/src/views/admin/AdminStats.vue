@@ -41,6 +41,28 @@
       </el-table>
     </el-card>
 
+    <!-- 差评反馈（运营闭环） -->
+    <el-card shadow="never">
+      <template #header>
+        <div class="card-header">
+          <span>差评反馈</span>
+          <el-button size="small" @click="loadDislikes(1)">刷新</el-button>
+        </div>
+      </template>
+      <el-table :data="dislikeRows" v-loading="dislikeLoading" size="small">
+        <el-table-column prop="createTime" label="时间" width="170" />
+        <el-table-column prop="windowName" label="窗口" width="150" show-overflow-tooltip />
+        <el-table-column prop="userQuery" label="用户问题" show-overflow-tooltip />
+        <el-table-column prop="answer" label="差评答案" show-overflow-tooltip />
+        <el-table-column prop="feedbackComment" label="反馈说明" width="180" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.feedbackComment || '—' }}</template>
+        </el-table-column>
+      </el-table>
+      <el-pagination class="pager" layout="total, prev, pager, next" :total="dislikeTotal"
+                     :page-size="20" :current-page="dislikePage"
+                     @current-change="loadDislikes" />
+    </el-card>
+
     <!-- 审计日志 -->
     <el-card shadow="never">
       <template #header>
@@ -78,7 +100,7 @@
 
 <script setup>
 import { onMounted, reactive, ref, computed } from 'vue'
-import { adminAuditLogs, adminCostStats, adminQuotaStats } from '../../api'
+import { adminAuditLogs, adminCostStats, adminQuotaStats, adminFeedbackDislikes } from '../../api'
 
 const quota = reactive({ chatCount: 0, chatDailyLimit: 0, tokenUsed: 0, tokenDailyLimit: 0, dateKey: '' })
 const quotaLoading = ref(false)
@@ -94,6 +116,21 @@ const auditRows = ref([])
 const auditTotal = ref(0)
 const auditLoading = ref(false)
 const auditQuery = reactive({ page: 1, size: 20, username: '', action: '' })
+
+const dislikeRows = ref([])
+const dislikeTotal = ref(0)
+const dislikePage = ref(1)
+const dislikeLoading = ref(false)
+
+async function loadDislikes(page) {
+  if (typeof page === 'number') dislikePage.value = page
+  dislikeLoading.value = true
+  try {
+    const { data } = await adminFeedbackDislikes({ page: dislikePage.value, size: 20 })
+    dislikeRows.value = data.data.records || []
+    dislikeTotal.value = data.data.total || 0
+  } finally { dislikeLoading.value = false }
+}
 
 async function loadQuota() {
   quotaLoading.value = true
@@ -130,7 +167,7 @@ async function loadAudit(page) {
   } finally { auditLoading.value = false }
 }
 
-onMounted(() => { loadQuota(); loadCost(); loadAudit(1) })
+onMounted(() => { loadQuota(); loadCost(); loadAudit(1); loadDislikes(1) })
 </script>
 
 <style scoped lang="scss">

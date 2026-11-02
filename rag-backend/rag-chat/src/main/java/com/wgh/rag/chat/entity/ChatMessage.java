@@ -102,4 +102,14 @@ public class ChatMessage extends BaseEntity {
      * 生成本条消息的模型名（厂商侧 modelName，用于成本按模型聚合）
      */
     private String modelName;
+
+    /**
+     * 用户反馈：0 无 / 1 赞 / -1 踩（仅 ASSISTANT 消息可反馈）
+     */
+    private Integer feedback;
+
+    /**
+     * 差评补充说明（截断 500 字）
+     */
+    private String feedbackComment;
 }
