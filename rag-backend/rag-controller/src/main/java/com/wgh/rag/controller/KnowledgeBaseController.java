@@ -1,5 +1,6 @@
 package com.wgh.rag.controller;
 
+import com.wgh.rag.common.annotation.Audit;
 import com.wgh.rag.common.result.PageResult;
 import com.wgh.rag.common.result.Result;
 import com.wgh.rag.kb.entity.KnowledgeBase;
@@ -53,18 +54,21 @@ public class KnowledgeBaseController {
 
     @Operation(summary = "新增知识库")
     @PostMapping
+    @Audit(action = "KB_CREATE", resourceType = "KNOWLEDGE_BASE")
     public Result<KnowledgeBase> create(@Valid @RequestBody KnowledgeBase kb) {
         return Result.success(kbService.create(kb));
     }
 
     @Operation(summary = "编辑知识库")
     @PutMapping
+    @Audit(action = "KB_UPDATE", resourceType = "KNOWLEDGE_BASE")
     public Result<KnowledgeBase> update(@Valid @RequestBody KnowledgeBase kb) {
         return Result.success(kbService.update(kb));
     }
 
     @Operation(summary = "删除知识库")
     @DeleteMapping("/{id}")
+    @Audit(action = "KB_DELETE", resourceType = "KNOWLEDGE_BASE")
     public Result<Void> delete(@PathVariable Long id) {
         kbService.delete(id);
         return Result.success();
@@ -80,6 +84,7 @@ public class KnowledgeBaseController {
 
     @Operation(summary = "上传文件到知识库")
     @PostMapping("/{kbId}/files")
+    @Audit(action = "KB_FILE_UPLOAD", resourceType = "KNOWLEDGE_FILE")
     public Result<KnowledgeFile> uploadFile(
             @PathVariable Long kbId,
             @RequestParam("file") MultipartFile file,
@@ -96,6 +101,7 @@ public class KnowledgeBaseController {
 
     @Operation(summary = "删除知识库文件")
     @DeleteMapping("/files/{fileId}")
+    @Audit(action = "KB_FILE_DELETE", resourceType = "KNOWLEDGE_FILE")
     public Result<Void> deleteFile(@PathVariable Long fileId) {
         fileService.delete(fileId);
         return Result.success();

@@ -14,6 +14,8 @@ import com.wgh.rag.chat.mapper.ChatSessionMapper;
 import com.wgh.rag.chat.mapper.ChatWindowMapper;
 import com.wgh.rag.agent.service.AgentOrchestrator;
 import com.wgh.rag.common.exception.BusinessException;
+import com.wgh.rag.common.quota.QuotaService;
+import com.wgh.rag.common.security.SecurityUtils;
 import com.wgh.rag.config.property.RagProperties;
 import com.wgh.rag.kb.service.RagRetrieveService;
 import com.wgh.rag.kb.service.RetrievalOptions;
@@ -21,6 +23,9 @@ import com.wgh.rag.kb.service.RetrievalQuality;
 import com.wgh.rag.kb.service.RetrieveResult;
 import com.wgh.rag.llm.entity.LlmModel;
 import com.wgh.rag.llm.factory.ModelCacheManager;
+import com.wgh.rag.llm.service.LlmModelService;
+import com.wgh.rag.llm.service.ModelPriceService;
+import com.wgh.rag.llm.util.TokenEstimator;
 import com.wgh.rag.tool.entity.ToolConfig;
 import com.wgh.rag.tool.executor.ToolExecutionEngine;
 import com.wgh.rag.tool.service.ToolConfigService;
@@ -32,6 +37,7 @@ import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.model.chat.response.StreamingChatResponseHandler;
+import dev.langchain4j.model.output.TokenUsage;
 import dev.langchain4j.store.embedding.EmbeddingMatch;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -69,6 +75,9 @@ public class RagChatService {
     private final AgentOrchestrator agentOrchestrator;
     private final com.wgh.rag.agent.config.AgentProperties agentProperties;
     private final ChatWorkflowService chatWorkflowService;
+    private final QuotaService quotaService;
+    private final ModelPriceService modelPriceService;
+    private final LlmModelService llmModelService;
 
     /**
      * 流式聊天 - SSE
@@ -87,6 +96,10 @@ public class RagChatService {
         if (window == null || window.getStatus() == 0) {
             throw new BusinessException("聊天窗口不可用");
         }
+
+        // 配额限流：发送前检查并计数（超限抛业务异常，请求线程内执行可取到登录用户）
+        final String quotaUsername = SecurityUtils.currentUsername();
+        quotaService.checkAndIncrementChat(quotaUsername);
 
         // 确保会话存在
         ChatSession session = ensureSession(sessionId, window);
@@ -118,7 +131,7 @@ public class RagChatService {
         // 子线程执行 RAG + LLM 并推送 SSE
         new Thread(() -> {
             try {
-                doRagStreamChat(window, session, userMessage, emitter, userMsg, shareMode);
+                doRagStreamChat(window, session, userMessage, emitter, userMsg, shareMode, quotaUsername);
             } catch (Exception e) {
                 log.error("流式聊天异常", e);
                 try {
@@ -193,7 +206,7 @@ public class RagChatService {
 
     private void doRagStreamChat(ChatWindow window, ChatSession session, String userMessage,
                                   SseEmitter emitter, com.wgh.rag.chat.entity.ChatMessage userMsg,
-                                  boolean shareMode) throws Exception {
+                                  boolean shareMode, String quotaUsername) throws Exception {
 
         // 1. 发送开始事件
         emitter.send(SseEmitter.event().name("start").data(Map.of("sessionId", session.getId())));
@@ -390,6 +403,8 @@ public class RagChatService {
         // 最大工具调用轮次（防死循环）
         final int MAX_TOOL_ROUNDS = 5;
         final int[] toolRoundCount = {0};
+        // token 用量累加器（跨工具调用轮次累计，[0]=input [1]=output），用于成本回填与配额
+        final long[] tokenUsageAcc = {0L, 0L};
 
         try {
             // 构建 chat request（首次带完整 messages + toolSpecs）
@@ -400,7 +415,8 @@ public class RagChatService {
 
             streamChatWithTools(streamingModel, request, toolSpecs, messages, fullResponse,
                     emitter, retrievedMatches, hitRate, evaluationScheme, session, window,
-                    userMessage, toolRoundCount, MAX_TOOL_ROUNDS, toolRegistry, windowModelId);
+                    userMessage, toolRoundCount, MAX_TOOL_ROUNDS, toolRegistry, windowModelId,
+                    tokenUsageAcc, quotaUsername);
 
         } catch (Exception e) {
             log.error("LLM调用异常", e);
@@ -426,7 +442,8 @@ public class RagChatService {
                                       ChatSession session, ChatWindow window,
                                       String originalUserMessage,
                                       int[] toolRoundCount, int maxToolRounds,
-                                      Map<String, ToolConfig> toolRegistry, Long windowModelId) {
+                                      Map<String, ToolConfig> toolRegistry, Long windowModelId,
+                                      long[] tokenUsageAcc, String quotaUsername) {
 
         streamingModel.chat(request, new StreamingChatResponseHandler() {
             @Override
@@ -443,6 +460,13 @@ public class RagChatService {
             public void onCompleteResponse(ChatResponse completeResponse) {
                 AiMessage aiMessage = completeResponse.aiMessage();
 
+                // 累计真实 token 用量（流式响应提供商未下发 usage 时为 null，后续按字符估算兜底）
+                TokenUsage usage = completeResponse.tokenUsage();
+                if (usage != null) {
+                    if (usage.inputTokenCount() != null) tokenUsageAcc[0] += usage.inputTokenCount();
+                    if (usage.outputTokenCount() != null) tokenUsageAcc[1] += usage.outputTokenCount();
+                }
+
                 // 1. 检查是否有 tool calls
                 List<ToolExecutionRequest> toolCalls = aiMessage.toolExecutionRequests();
                 if (toolCalls != null && !toolCalls.isEmpty()) {
@@ -452,7 +476,8 @@ public class RagChatService {
                         log.warn("工具调用超过最大轮次 {}，停止循环", maxToolRounds);
                         try {
                             sendFinalEvents(emitter, fullResponse.toString(), retrievedMatches, hitRate,
-                                    evaluationScheme, session, window, originalUserMessage);
+                                    evaluationScheme, session, window, originalUserMessage,
+                                    tokenUsageAcc, quotaUsername);
                         } catch (IOException ioe) {
                             log.error("发送最终事件失败", ioe);
                         }
@@ -508,14 +533,15 @@ public class RagChatService {
                     streamChatWithTools(streamingModel, nextRequest, toolSpecs, messages, fullResponse,
                             emitter, retrievedMatches, hitRate, evaluationScheme, session, window,
                             originalUserMessage, toolRoundCount, maxToolRounds,
-                            toolRegistry, windowModelId);
+                            toolRegistry, windowModelId, tokenUsageAcc, quotaUsername);
                     return;
                 }
 
                 // 2. 没有 tool calls —— 最终回答，发送完成事件
                 try {
                     sendFinalEvents(emitter, fullResponse.toString(), retrievedMatches, hitRate,
-                            evaluationScheme, session, window, originalUserMessage);
+                            evaluationScheme, session, window, originalUserMessage,
+                            tokenUsageAcc, quotaUsername);
                 } catch (IOException e) {
                     log.error("完成SSE响应失败", e);
                 }
@@ -541,7 +567,8 @@ public class RagChatService {
                                   List<EmbeddingMatch<TextSegment>> retrievedMatches,
                                   Double hitRate, EvaluationScheme evaluationScheme,
                                   ChatSession session, ChatWindow window,
-                                  String originalUserMessage) throws IOException {
+                                  String originalUserMessage,
+                                  long[] tokenUsageAcc, String quotaUsername) throws IOException {
 
         List<Map<String, Object>> sourceList = buildSourcesList(retrievedMatches);
         emitter.send(SseEmitter.event().name("sources").data(sourceList));
@@ -569,6 +596,10 @@ public class RagChatService {
                 metrics != null ? metrics.mrr() : null,
                 metrics != null ? metrics.ndcg() : null);
 
+        // 成本回填 + 配额 token 累加（失败不影响主流程）
+        settleCostAndQuota(window, originalUserMessage, retrievedMatches, fullAnswer, saved,
+                tokenUsageAcc, quotaUsername);
+
         // done 事件：有 accuracyRate 才附带，否则不下发该字段
         Map<String, Object> doneData = new HashMap<>();
         doneData.put("fullResponse", fullAnswer);
@@ -579,6 +610,57 @@ public class RagChatService {
             runLlmJudgeAsync(window, originalUserMessage, retrievedMatches, fullAnswer, emitter, saved);
         } else {
             emitter.complete();
+        }
+    }
+
+    /**
+     * 成本回填 + 配额 token 累加：优先使用模型返回的真实 token 用量，
+     * 缺失时按字符启发式估算（CJK 1字≈1token，其余 4字符≈1token）。
+     * 全部失败只记日志，不影响主流程。
+     */
+    private void settleCostAndQuota(ChatWindow window, String userMessage,
+                                    List<EmbeddingMatch<TextSegment>> retrievedMatches, String fullAnswer,
+                                    com.wgh.rag.chat.entity.ChatMessage saved,
+                                    long[] tokenUsageAcc, String quotaUsername) {
+        try {
+            long inputTokens = tokenUsageAcc != null ? tokenUsageAcc[0] : 0;
+            long outputTokens = tokenUsageAcc != null ? tokenUsageAcc[1] : 0;
+            if (inputTokens + outputTokens == 0) {
+                StringBuilder inputText = new StringBuilder(userMessage != null ? userMessage : "");
+                for (EmbeddingMatch<TextSegment> m : retrievedMatches) {
+                    if (m.embedded() != null && m.embedded().text() != null) {
+                        inputText.append(m.embedded().text());
+                    }
+                }
+                inputTokens = TokenEstimator.estimate(inputText.toString());
+                outputTokens = TokenEstimator.estimate(fullAnswer);
+            }
+            long total = inputTokens + outputTokens;
+
+            Double cost = null;
+            String modelName = null;
+            try {
+                LlmModel model = llmModelService.getChatModel(window.getLlmModelId());
+                if (model != null) {
+                    modelName = model.getModelName();
+                    cost = modelPriceService.estimateCost(model.getProvider(), model.getModelName(),
+                            inputTokens, outputTokens);
+                }
+            } catch (Exception e) {
+                log.warn("成本估算失败: windowId={}, reason={}", window.getId(), e.getMessage());
+            }
+
+            if (saved != null && saved.getId() != null) {
+                com.wgh.rag.chat.entity.ChatMessage update = new com.wgh.rag.chat.entity.ChatMessage();
+                update.setId(saved.getId());
+                update.setTokenCount((int) Math.min(Integer.MAX_VALUE, total));
+                update.setCost(cost);
+                update.setModelName(modelName);
+                messageMapper.updateById(update);
+            }
+            quotaService.addTokens(quotaUsername, total);
+        } catch (Exception e) {
+            log.warn("成本回填/配额累加失败: {}", e.getMessage());
         }
     }
 

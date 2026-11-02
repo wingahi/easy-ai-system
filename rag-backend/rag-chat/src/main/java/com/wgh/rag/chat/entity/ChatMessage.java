@@ -92,4 +92,14 @@ public class ChatMessage extends BaseEntity {
      * Judge 详细结果 JSON
      */
     private String judgeDetails;
+
+    /**
+     * 本条消息估算成本（元，按模型价格表回填；无价格配置为 null）
+     */
+    private Double cost;
+
+    /**
+     * 生成本条消息的模型名（厂商侧 modelName，用于成本按模型聚合）
+     */
+    private String modelName;
 }

@@ -27,6 +27,11 @@ public class RagProperties {
      */
     private Context context = new Context();
 
+    /**
+     * 配额限流
+     */
+    private Quota quota = new Quota();
+
     @Data
     public static class Retrieve {
         /** 检索返回 topK */
@@ -74,5 +79,13 @@ public class RagProperties {
         private Integer summaryMaxTokens = 600;
         /** 分层压缩：摘要 LLM 调用超时（秒） */
         private Integer summaryTimeoutSeconds = 20;
+    }
+
+    @Data
+    public static class Quota {
+        /** 每人每天聊天条数上限（<=0 不限制） */
+        private Integer chatDailyLimit = 200;
+        /** 每人每天 token 上限（<=0 不限制） */
+        private Long tokenDailyLimit = 2_000_000L;
     }
 }

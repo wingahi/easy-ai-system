@@ -1,5 +1,6 @@
 package com.wgh.rag.controller;
 
+import com.wgh.rag.common.annotation.Audit;
 import com.wgh.rag.common.result.PageResult;
 import com.wgh.rag.common.result.Result;
 import com.wgh.rag.llm.entity.EmbeddingModelConfig;
@@ -40,18 +41,21 @@ public class LlmModelController {
 
     @Operation(summary = "新增 ChatModel")
     @PostMapping("/chat")
+    @Audit(action = "MODEL_CREATE", resourceType = "LLM_MODEL")
     public Result<LlmModel> createChatModel(@Valid @RequestBody LlmModel model) {
         return Result.success(modelService.createChatModel(model));
     }
 
     @Operation(summary = "编辑 ChatModel")
     @PutMapping("/chat")
+    @Audit(action = "MODEL_UPDATE", resourceType = "LLM_MODEL")
     public Result<LlmModel> updateChatModel(@Valid @RequestBody LlmModel model) {
         return Result.success(modelService.updateChatModel(model));
     }
 
     @Operation(summary = "删除 ChatModel")
     @DeleteMapping("/chat/{id}")
+    @Audit(action = "MODEL_DELETE", resourceType = "LLM_MODEL")
     public Result<Void> deleteChatModel(@PathVariable Long id) {
         modelService.deleteChatModel(id);
         return Result.success();

@@ -54,6 +54,11 @@
           <el-menu-item index="/multi-agent/crews">Crew 管理</el-menu-item>
           <el-menu-item index="/multi-agent/playground">运行调试</el-menu-item>
         </el-sub-menu>
+
+        <el-menu-item index="/admin/stats">
+          <el-icon><DataAnalysis /></el-icon>
+          <template #title>审计与统计</template>
+        </el-menu-item>
       </el-menu>
     </el-aside>
 
@@ -101,7 +106,7 @@ import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { 
   FolderOpened, Cpu, ChatDotRound, SetUp, Share, Connection,
-  Fold, Expand, SwitchButton 
+  Fold, Expand, SwitchButton, DataAnalysis 
 } from '@element-plus/icons-vue'
 import { useUserStore } from '../stores/user'
 

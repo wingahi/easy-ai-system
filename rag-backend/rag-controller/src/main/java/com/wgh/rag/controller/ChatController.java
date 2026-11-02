@@ -11,6 +11,7 @@ import com.wgh.rag.tool.entity.ToolConfig;
 import com.wgh.rag.tool.executor.ToolExecutionEngine;
 import com.wgh.rag.tool.service.SkillFileService;
 import com.wgh.rag.tool.service.ToolConfigService;
+import com.wgh.rag.common.annotation.Audit;
 import com.wgh.rag.common.result.PageResult;
 import com.wgh.rag.common.result.Result;
 import com.wgh.rag.common.result.ResultCode;
@@ -67,18 +68,21 @@ public class ChatController {
 
     @Operation(summary = "创建聊天窗口")
     @PostMapping("/windows")
+    @Audit(action = "WINDOW_CREATE", resourceType = "CHAT_WINDOW")
     public Result<ChatWindow> createWindow(@Valid @RequestBody ChatWindow window) {
         return Result.success(windowService.create(window));
     }
 
     @Operation(summary = "编辑聊天窗口")
     @PutMapping("/windows")
+    @Audit(action = "WINDOW_UPDATE", resourceType = "CHAT_WINDOW")
     public Result<ChatWindow> updateWindow(@Valid @RequestBody ChatWindow window) {
         return Result.success(windowService.update(window));
     }
 
     @Operation(summary = "删除聊天窗口（软删除）")
     @DeleteMapping("/windows/{id}")
+    @Audit(action = "WINDOW_DELETE", resourceType = "CHAT_WINDOW")
     public Result<Void> deleteWindow(@PathVariable Long id) {
         windowService.delete(id);
         return Result.success();
@@ -329,6 +333,7 @@ public class ChatController {
 
     @Operation(summary = "新增工具")
     @PostMapping("/tools")
+    @Audit(action = "TOOL_CREATE", resourceType = "TOOL")
     public Result<ToolConfig> createTool(@Valid @RequestBody ToolConfig tool) {
         return Result.success(toolConfigService.create(tool));
     }
@@ -397,12 +402,14 @@ public class ChatController {
 
     @Operation(summary = "编辑工具")
     @PutMapping("/tools")
+    @Audit(action = "TOOL_UPDATE", resourceType = "TOOL")
     public Result<ToolConfig> updateTool(@Valid @RequestBody ToolConfig tool) {
         return Result.success(toolConfigService.update(tool));
     }
 
     @Operation(summary = "删除工具")
     @DeleteMapping("/tools/{id}")
+    @Audit(action = "TOOL_DELETE", resourceType = "TOOL")
     public Result<Void> deleteTool(@PathVariable Long id) {
         toolConfigService.delete(id);
         return Result.success();

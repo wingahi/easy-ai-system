@@ -28,7 +28,8 @@ const routes = [
       { path: 'workflows', name: 'Workflows', component: () => import('../views/workflow/WorkflowList.vue'), meta: { title: '工作流编排' } },
       { path: 'workflows/:id/edit', name: 'WorkflowEditor', component: () => import('../views/workflow/WorkflowEditor.vue'), meta: { title: '工作流编辑器' } },
       { path: 'multi-agent/crews', name: 'MultiAgentCrews', component: () => import('../views/multi-agent/MultiAgentCrews.vue'), meta: { title: '多 Agent 协作' } },
-      { path: 'multi-agent/playground', name: 'MultiAgentPlayground', component: () => import('../views/multi-agent/MultiAgentPlayground.vue'), meta: { title: '多 Agent 运行调试' } }
+      { path: 'multi-agent/playground', name: 'MultiAgentPlayground', component: () => import('../views/multi-agent/MultiAgentPlayground.vue'), meta: { title: '多 Agent 运行调试' } },
+      { path: 'admin/stats', name: 'AdminStats', component: () => import('../views/admin/AdminStats.vue'), meta: { title: '审计与统计' } }
     ]
   },
   { path: '/:pathMatch(.*)*', redirect: '/' }

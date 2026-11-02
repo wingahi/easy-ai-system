@@ -484,3 +484,12 @@ export function streamMultiAgentHitl(runId, userInput, onEvent, onDone, onError)
   return streamPost(`/api/agent-multi/runs/${runId}/hitl-confirm`, { userInput }, onEvent, onDone, onError)
 }
 
+
+// ===== 管理端：审计 / 配额 / 成本 =====
+export const adminAuditLogs = (params) => request.get('/admin/audit-logs', { params })
+export const adminCostStats = (params) => request.get('/admin/stats/cost', { params })
+export const adminQuotaStats = () => request.get('/admin/stats/quota')
+export const modelPricePage = (params) => request.get('/admin/model-prices', { params })
+export const modelPriceCreate = (data) => request.post('/admin/model-prices', data)
+export const modelPriceUpdate = (data) => request.put('/admin/model-prices', data)
+export const modelPriceDelete = (id) => request.delete(`/admin/model-prices/${id}`)

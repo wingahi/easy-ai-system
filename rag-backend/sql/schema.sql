@@ -798,3 +798,78 @@ CREATE INDEX IF NOT EXISTS idx_m_crew_status ON wgh_m_agent_crew(status);
 
 COMMENT ON TABLE wgh_m_agent_crew IS '可复用的多 Agent Crew 配置模板';
 
+-- ============ 审计日志 / 配额限流 / 成本统计 ============
+
+CREATE TABLE IF NOT EXISTS wgh_audit_log (
+  id BIGSERIAL PRIMARY KEY,
+  username VARCHAR(50),
+  action VARCHAR(50) NOT NULL,
+  resource_type VARCHAR(50),
+  resource_id VARCHAR(64),
+  detail TEXT,
+  ip VARCHAR(64),
+  status VARCHAR(20) DEFAULT 'SUCCESS',
+  create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  create_by VARCHAR(50) DEFAULT 'system',
+  update_by VARCHAR(50) DEFAULT 'system',
+  deleted SMALLINT DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_audit_username_create ON wgh_audit_log(username, create_time);
+CREATE INDEX IF NOT EXISTS idx_audit_action_create ON wgh_audit_log(action, create_time);
+COMMENT ON TABLE wgh_audit_log IS '审计日志（写操作留痕，异步写入）';
+COMMENT ON COLUMN wgh_audit_log.username IS '操作人用户名（未登录为 anonymous）';
+COMMENT ON COLUMN wgh_audit_log.action IS '操作标识（如 KB_CREATE / MODEL_DELETE）';
+COMMENT ON COLUMN wgh_audit_log.resource_type IS '资源类型（如 KNOWLEDGE_BASE / LLM_MODEL）';
+COMMENT ON COLUMN wgh_audit_log.resource_id IS '资源 ID（尽力提取）';
+COMMENT ON COLUMN wgh_audit_log.detail IS '操作详情（方法 + 参数摘要，截断 500 字）';
+COMMENT ON COLUMN wgh_audit_log.ip IS '客户端 IP';
+COMMENT ON COLUMN wgh_audit_log.status IS '结果：SUCCESS / FAIL';
+
+CREATE TABLE IF NOT EXISTS wgh_model_price (
+  id BIGSERIAL PRIMARY KEY,
+  provider VARCHAR(50) NOT NULL,
+  model_name VARCHAR(100) NOT NULL,
+  input_price_per_1k DOUBLE PRECISION NOT NULL DEFAULT 0,
+  output_price_per_1k DOUBLE PRECISION NOT NULL DEFAULT 0,
+  currency VARCHAR(10) DEFAULT 'CNY',
+  remark VARCHAR(500),
+  create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  create_by VARCHAR(50) DEFAULT 'system',
+  update_by VARCHAR(50) DEFAULT 'system',
+  deleted SMALLINT DEFAULT 0,
+  CONSTRAINT uk_model_price UNIQUE (provider, model_name)
+);
+COMMENT ON TABLE wgh_model_price IS '模型价格表（每 1K token 单价，用于成本估算）';
+COMMENT ON COLUMN wgh_model_price.provider IS '提供厂商（与 wgh_llm_model.provider 对齐）';
+COMMENT ON COLUMN wgh_model_price.model_name IS '厂商侧模型名（与 wgh_llm_model.model_name 对齐）';
+COMMENT ON COLUMN wgh_model_price.input_price_per_1k IS '输入单价（元/1K tokens）';
+COMMENT ON COLUMN wgh_model_price.output_price_per_1k IS '输出单价（元/1K tokens）';
+COMMENT ON COLUMN wgh_model_price.currency IS '币种（默认 CNY）';
+
+CREATE TABLE IF NOT EXISTS wgh_quota_usage (
+  id BIGSERIAL PRIMARY KEY,
+  username VARCHAR(50) NOT NULL,
+  date_key VARCHAR(10) NOT NULL,
+  chat_count INT DEFAULT 0,
+  token_used BIGINT DEFAULT 0,
+  create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  create_by VARCHAR(50) DEFAULT 'system',
+  update_by VARCHAR(50) DEFAULT 'system',
+  deleted SMALLINT DEFAULT 0,
+  CONSTRAINT uk_quota_user_date UNIQUE (username, date_key)
+);
+COMMENT ON TABLE wgh_quota_usage IS '用户每日配额用量（聊天条数 + token 消耗）';
+COMMENT ON COLUMN wgh_quota_usage.username IS '用户名';
+COMMENT ON COLUMN wgh_quota_usage.date_key IS '日期键（yyyy-MM-dd，服务器本地时区）';
+COMMENT ON COLUMN wgh_quota_usage.chat_count IS '当日已用对话条数';
+COMMENT ON COLUMN wgh_quota_usage.token_used IS '当日已用 token 数（实际或估算）';
+
+-- 聊天消息成本列（回复完成后按模型价格表回填，无价格配置时为 NULL）
+ALTER TABLE wgh_chat_message ADD COLUMN IF NOT EXISTS cost DOUBLE PRECISION;
+ALTER TABLE wgh_chat_message ADD COLUMN IF NOT EXISTS model_name VARCHAR(100);
+COMMENT ON COLUMN wgh_chat_message.cost IS '本条消息估算成本（元，按模型价格表回填；无价格配置为 NULL）';
+COMMENT ON COLUMN wgh_chat_message.model_name IS '生成本条消息的模型名（厂商侧 modelName，用于成本按模型聚合）';
+
