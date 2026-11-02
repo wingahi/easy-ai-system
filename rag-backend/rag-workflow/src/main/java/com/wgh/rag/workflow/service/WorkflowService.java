@@ -194,7 +194,7 @@ public class WorkflowService {
     public Workflow getByShareToken(String shareToken) {
         Workflow wf = workflowMapper.selectOne(new LambdaQueryWrapper<Workflow>()
                 .eq(Workflow::getShareToken, shareToken)
-                .eq(Workflow::getShareEnabled, true)
+                .eq(Workflow::getShareEnabled, 1)
                 .eq(Workflow::getStatus, 1));
         if (wf == null) throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "分享链接已失效或工作流已关闭分享");
         return wf;

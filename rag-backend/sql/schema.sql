@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS wgh_llm_model (
   api_key VARCHAR(500),
   max_context_tokens INT DEFAULT 4096,
   temperature DOUBLE PRECISION DEFAULT 0.7,
-  compression_model BOOLEAN DEFAULT FALSE,
+  compression_model SMALLINT DEFAULT 0,
   status SMALLINT DEFAULT 1,
   remark VARCHAR(500),
   create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -28,6 +28,17 @@ CREATE TABLE IF NOT EXISTS wgh_llm_model (
   update_by VARCHAR(50) DEFAULT 'system',
   deleted SMALLINT DEFAULT 0
 );
+-- 兼容修复：历史库中 compression_model 曾为 BOOLEAN，统一为 SMALLINT（幂等）
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns
+             WHERE table_name = 'wgh_llm_model' AND column_name = 'compression_model' AND data_type = 'boolean') THEN
+    ALTER TABLE wgh_llm_model ALTER COLUMN compression_model DROP DEFAULT;
+    ALTER TABLE wgh_llm_model ALTER COLUMN compression_model TYPE SMALLINT
+      USING CASE WHEN compression_model THEN 1 ELSE 0 END;
+    ALTER TABLE wgh_llm_model ALTER COLUMN compression_model SET DEFAULT 0;
+  END IF;
+END $$;
 COMMENT ON TABLE wgh_llm_model IS 'LLM 模型配置';
 COMMENT ON COLUMN wgh_llm_model.id IS '主键';
 COMMENT ON COLUMN wgh_llm_model.name IS '显示名称（如 通义 qwen-plus）';

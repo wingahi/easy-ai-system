@@ -109,7 +109,7 @@ public class LlmModelService {
                 new LambdaQueryWrapper<LlmModel>()
                         .eq(LlmModel::getModelType, "CHAT")
                         .eq(LlmModel::getStatus, 1)
-                        .eq(LlmModel::getCompressionModel, true)
+                        .eq(LlmModel::getCompressionModel, 1)
                         .orderByAsc(LlmModel::getId)
                         .last("LIMIT 1"));
     }

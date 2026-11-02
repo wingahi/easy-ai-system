@@ -2,6 +2,7 @@ package com.wgh.rag.workflow.entity;
 
 import com.baomidou.mybatisplus.annotation.*;
 import com.wgh.rag.common.entity.BaseEntity;
+import com.wgh.rag.common.handler.BooleanToSmallintTypeHandler;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
@@ -33,6 +34,6 @@ public class Workflow extends BaseEntity {
     private String shareToken;
 
     /** 是否开启分享运行页（分享态运行启用 safeMode 只读工具白名单） */
-    @TableField(value = "share_enabled")
+    @TableField(value = "share_enabled", typeHandler = BooleanToSmallintTypeHandler.class)
     private Boolean shareEnabled;
 }
