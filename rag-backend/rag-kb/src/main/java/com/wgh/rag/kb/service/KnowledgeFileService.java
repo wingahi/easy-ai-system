@@ -6,7 +6,9 @@ import com.wgh.rag.common.result.PageResult;
 import com.wgh.rag.common.result.ResultCode;
 import com.wgh.rag.kb.entity.KnowledgeBase;
 import com.wgh.rag.kb.entity.KnowledgeFile;
+import com.wgh.rag.kb.entity.KnowledgeFileVersion;
 import com.wgh.rag.kb.mapper.KnowledgeFileMapper;
+import com.wgh.rag.kb.mapper.KnowledgeFileVersionMapper;
 import com.wgh.rag.kb.parser.DocumentParserDispatcher;
 import com.wgh.rag.kb.splitter.ChunkOutput;
 import com.wgh.rag.kb.splitter.SplitContext;
@@ -37,6 +39,7 @@ import java.util.*;
 public class KnowledgeFileService {
 
     private final KnowledgeFileMapper fileMapper;
+    private final KnowledgeFileVersionMapper versionMapper;
     private final KnowledgeBaseService kbService;
     private final DocumentParserDispatcher documentParser;
     private final TextSplitter textSplitter;
@@ -122,6 +125,18 @@ public class KnowledgeFileService {
         KnowledgeBase kb = kbService.getById(file.getKnowledgeBaseId());
         vectorStoreService.deleteByFileId(kb.getCollectionName(), fileId);
 
+        // 升级版本号 + 记录旧版本快照（回滚时按此版本的策略重切）
+        Integer oldVersion = file.getVersion() == null ? 1 : file.getVersion();
+        KnowledgeFileVersion snapshot = new KnowledgeFileVersion();
+        snapshot.setFileId(fileId);
+        snapshot.setVersion(oldVersion);
+        snapshot.setChunkCount(file.getChunkCount());
+        snapshot.setSplitStrategy(file.getSplitStrategy());
+        snapshot.setSplitConfig(file.getSplitConfig());
+        snapshot.setStatus("SUCCESS");
+        versionMapper.insert(snapshot);
+
+        file.setVersion(oldVersion + 1);
         file.setSplitStrategy(splitStrategy);
         file.setSplitConfig(splitConfig);
         file.setStatus("PENDING");

@@ -83,6 +83,15 @@ export const chatUploadImage = (file) => {
   return request.post('/chat/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' } })
 }
 
+// Prompt 模板中心
+export const promptTemplatePage = (params) => request.get('/prompt-templates', { params })
+export const promptTemplateList = () => request.get('/prompt-templates/list')
+export const promptTemplateGet = (id) => request.get(`/prompt-templates/${id}`)
+export const promptTemplateCreate = (data) => request.post('/prompt-templates', data)
+export const promptTemplateUpdate = (data) => request.put('/prompt-templates', data)
+export const promptTemplateDelete = (id) => request.delete(`/prompt-templates/${id}`)
+export const promptTemplateRender = (id, vars) => request.post(`/prompt-templates/${id}/render`, { vars })
+
 // SSE 流式聊天（需要原生 fetch）
 export function streamChatApi(windowId, message, sessionId, imageUrls) {
   const token = localStorage.getItem('wgh_token')
@@ -502,3 +511,16 @@ export const modelPricePage = (params) => request.get('/admin/model-prices', { p
 export const modelPriceCreate = (data) => request.post('/admin/model-prices', data)
 export const modelPriceUpdate = (data) => request.put('/admin/model-prices', data)
 export const modelPriceDelete = (id) => request.delete(`/admin/model-prices/${id}`)
+
+// ===== 标签 / 知识库版本 =====
+export const tagPage = (params) => request.get('/tags', { params })
+export const tagList = () => request.get('/tags/list')
+export const tagCreate = (data) => request.post('/tags', data)
+export const tagUpdate = (data) => request.put('/tags', data)
+export const tagDelete = (id) => request.delete(`/tags/${id}`)
+export const kbTags = (kbId) => request.get(`/kb/${kbId}/tags`)
+export const kbSetTags = (kbId, tagIds) => request.put(`/kb/${kbId}/tags`, { tagIds })
+export const kbFileTags = (fileId) => request.get(`/kb/files/${fileId}/tags`)
+export const kbFileSetTags = (fileId, tagIds) => request.put(`/kb/files/${fileId}/tags`, { tagIds })
+export const kbFileVersions = (fileId) => request.get(`/kb/files/${fileId}/versions`)
+export const kbFileRollback = (fileId, version) => request.post(`/kb/files/${fileId}/rollback/${version}`)

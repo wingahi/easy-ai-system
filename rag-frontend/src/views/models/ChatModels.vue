@@ -25,6 +25,14 @@
             <span v-else>-</span>
           </template>
         </el-table-column>
+        <el-table-column label="路由组" width="140">
+          <template #default="{ row }">
+            <el-tag v-if="row.routeGroup" type="warning" size="small">
+              {{ row.routeGroup }} <span style="opacity:.7">·P{{ row.routePriority ?? 0 }}</span>
+            </el-tag>
+            <span v-else>-</span>
+          </template>
+        </el-table-column>
         <el-table-column label="状态" width="80">
           <template #default="{ row }">
             <el-tag :type="row.status === 1 ? 'success' : 'danger'">{{ row.status === 1 ? '启用' : '禁用' }}</el-tag>
@@ -76,6 +84,14 @@
           <el-switch v-model="form.supportsVision" />
           <span style="margin-left:10px;color:#909399;font-size:12px">开启后聊天窗口可上传图片问答（如 qwen-vl / gpt-4o）</span>
         </el-form-item>
+        <el-form-item label="路由组">
+          <el-input v-model="form.routeGroup" placeholder="如 default（留空表示不参与故障转移链路）" />
+          <span style="margin-left:10px;color:#909399;font-size:12px">同组内按优先级升序形成故障转移调用链</span>
+        </el-form-item>
+        <el-form-item label="路由优先级">
+          <el-input-number v-model="form.routePriority" :min="0" :max="100" style="width:140px" />
+          <span style="margin-left:10px;color:#909399;font-size:12px">数字越小越优先；默认 0</span>
+        </el-form-item>
         <el-form-item label="状态">
           <el-switch v-model="form.status" :active-value="1" :inactive-value="0" />
         </el-form-item>
@@ -107,6 +123,7 @@ const formRef = ref()
 const form = reactive({
   name: '', provider: 'DEEPSEEK', modelName: '', baseUrl: '', apiKey: '',
   maxContextTokens: 8192, temperature: 0.7, compressionModel: false, supportsVision: false,
+  routeGroup: '', routePriority: 0,
   status: 1, modelType: 'CHAT'
 })
 const rules = {
@@ -131,6 +148,7 @@ const openDialog = (row) => {
   } else {
     Object.assign(form, { name: '', provider: 'DEEPSEEK', modelName: '', baseUrl: '', apiKey: '',
       maxContextTokens: 8192, temperature: 0.7, compressionModel: false, supportsVision: false,
+      routeGroup: '', routePriority: 0,
       status: 1, modelType: 'CHAT' })
   }
   dialogVisible.value = true

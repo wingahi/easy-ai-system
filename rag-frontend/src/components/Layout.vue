@@ -34,6 +34,7 @@
             <span>聊天管理</span>
           </template>
           <el-menu-item index="/chat/windows">聊天窗口</el-menu-item>
+          <el-menu-item index="/prompt/templates">Prompt 模板</el-menu-item>
         </el-sub-menu>
         
         <el-menu-item index="/tools">

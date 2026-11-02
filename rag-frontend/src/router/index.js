@@ -23,6 +23,7 @@ const routes = [
       { path: 'models/embedding', name: 'EmbeddingModels', component: () => import('../views/models/EmbeddingModels.vue'), meta: { title: '嵌入模型管理' } },
       { path: 'models/rerank', name: 'RerankModels', component: () => import('../views/models/RerankModels.vue'), meta: { title: '重排序模型' } },
       { path: 'chat/windows', name: 'ChatWindows', component: () => import('../views/chat-admin/ChatWindows.vue'), meta: { title: '聊天窗口' } },
+      { path: 'prompt/templates', name: 'PromptTemplates', component: () => import('../views/prompt/PromptTemplates.vue'), meta: { title: 'Prompt 模板' } },
       { path: 'chat/windows/:id/playground', name: 'ChatPlayground', component: () => import('../views/chat/ChatPlayground.vue'), meta: { title: '调试对话' } },
       { path: 'tools', name: 'Tools', component: () => import('../views/tools/ToolManagement.vue'), meta: { title: '工具管理' } },
       { path: 'workflows', name: 'Workflows', component: () => import('../views/workflow/WorkflowList.vue'), meta: { title: '工作流编排' } },

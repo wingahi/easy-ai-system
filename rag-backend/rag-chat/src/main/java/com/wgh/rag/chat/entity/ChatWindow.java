@@ -31,6 +31,12 @@ public class ChatWindow extends BaseEntity {
     private Long llmModelId;
 
     /**
+     * 模型路由组（优先于 llmModelId：非空时走 ModelRouter 选链路；用于故障转移/多厂商负载）
+     */
+    @TableField(value = "model_route_group")
+    private String modelRouteGroup;
+
+    /**
      * 使用的知识库 ID（支持多个，JSON 数组）
      */
     private String knowledgeBaseIds;

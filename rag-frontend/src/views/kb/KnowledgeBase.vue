@@ -25,6 +25,18 @@
         <el-table-column prop="id" label="ID" width="70" />
         <el-table-column prop="name" label="名称" />
         <el-table-column prop="description" label="描述" show-overflow-tooltip />
+        <el-table-column label="标签" width="200">
+          <template #default="{ row }">
+            <div class="kb-tags">
+              <el-tag v-for="t in row._tags || []" :key="t.id" :color="t.color || ''"
+                      :style="t.color ? `background:${t.color}20;color:${t.color};border-color:${t.color}40` : ''"
+                      size="small" effect="light" style="margin-right:4px;margin-bottom:2px">
+                {{ t.name }}
+              </el-tag>
+              <span v-if="!row._tags?.length" style="color:#c0c4cc;font-size:12px">-</span>
+            </div>
+          </template>
+        </el-table-column>
         <el-table-column prop="dimension" label="维度" width="80" />
         <el-table-column prop="fileCount" label="文件" width="80" />
         <el-table-column prop="chunkCount" label="段落" width="80" />
@@ -34,11 +46,12 @@
           </template>
         </el-table-column>
         <el-table-column prop="createTime" label="创建时间" width="170" />
-        <el-table-column label="操作" width="260" fixed="right">
+        <el-table-column label="操作" width="310" fixed="right">
           <template #default="{ row }">
             <div class="table-actions">
               <el-button link type="primary" @click="goFiles(row)">文件</el-button>
               <el-button link type="primary" @click="goSearch(row)">搜索</el-button>
+              <el-button link type="warning" @click="openTagDialog(row)">标签</el-button>
               <el-button link type="primary" @click="openDialog(row)">编辑</el-button>
               <el-popconfirm title="确认删除？" @confirm="del(row)">
                 <template #reference>
@@ -79,6 +92,27 @@
         <el-button type="primary" :loading="submitting" @click="submit">确定</el-button>
       </template>
     </el-dialog>
+
+    <!-- 标签管理弹窗 -->
+    <el-dialog v-model="tagDialogVisible" :title="`知识库标签 — ${tagKb?.name || ''}`" width="480px">
+      <div style="margin-bottom:8px;color:#909399;font-size:12px">勾选要绑定到该知识库的标签（多选）</div>
+      <el-checkbox-group v-model="tagSelectedIds" style="display:flex;flex-wrap:wrap;gap:6px">
+        <el-checkbox v-for="t in allTags" :key="t.id" :label="t.id" :value="t.id">
+          <el-tag :color="t.color || ''"
+                  :style="t.color ? `background:${t.color}20;color:${t.color};border-color:${t.color}40` : ''"
+                  effect="light" size="small">
+            {{ t.name }}
+          </el-tag>
+        </el-checkbox>
+      </el-checkbox-group>
+      <div v-if="!allTags.length" style="color:#909399;font-size:13px;padding:16px 0">
+        还没有任何标签。请先在数据库里创建标签，或通过 API 添加。
+      </div>
+      <template #footer>
+        <el-button @click="tagDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="tagSubmitting" @click="saveKbTags">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -87,7 +121,8 @@ import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Plus, Search } from '@element-plus/icons-vue'
-import { kbPage, kbCreate, kbUpdate, kbDelete, embeddingModelList } from '../../api'
+import { kbPage, kbCreate, kbUpdate, kbDelete, embeddingModelList,
+         tagList, kbTags, kbSetTags } from '../../api'
 
 const router = useRouter()
 const loading = ref(false)
@@ -101,6 +136,13 @@ const dialogVisible = ref(false)
 const editing = ref(null)
 const formRef = ref()
 const embeddingList = ref([])
+
+// ===== 标签管理 =====
+const allTags = ref([])
+const tagDialogVisible = ref(false)
+const tagKb = ref(null)
+const tagSelectedIds = ref([])
+const tagSubmitting = ref(false)
 
 const form = reactive({
   name: '', description: '', embeddingModelId: null, status: 1
@@ -119,6 +161,13 @@ const load = async () => {
     const res = await kbPage({ page: page.value, size: size.value, keyword: keyword.value })
     list.value = res.data.records
     total.value = res.data.total
+    // 批量拉每个 KB 的标签
+    await Promise.all(list.value.map(async (kb) => {
+      try {
+        const t = await kbTags(kb.id)
+        kb._tags = t.data || []
+      } catch { kb._tags = [] }
+    }))
   } finally {
     loading.value = false
   }
@@ -168,6 +217,32 @@ const del = async (row) => {
 const goFiles = (row) => router.push(`/kb/${row.id}/files`)
 const goSearch = (row) => router.push(`/kb/${row.id}/search`)
 
+// ===== 标签管理方法 =====
+const loadAllTags = async () => {
+  try {
+    const res = await tagList()
+    allTags.value = res.data || []
+  } catch { allTags.value = [] }
+}
+const openTagDialog = async (row) => {
+  tagKb.value = row
+  tagSelectedIds.value = (row._tags || []).map(t => t.id)
+  tagDialogVisible.value = true
+}
+const saveKbTags = async () => {
+  tagSubmitting.value = true
+  try {
+    // 转成 Long 类型 ID 列表（后端 setKbTags 要求 List<Long>）
+    const ids = tagSelectedIds.value.map(id => Number(id))
+    await kbSetTags(tagKb.value.id, ids)
+    ElMessage.success('标签已更新')
+    tagDialogVisible.value = false
+    // 刷新该行标签
+    const t = await kbTags(tagKb.value.id)
+    tagKb.value._tags = t.data || []
+  } finally { tagSubmitting.value = false }
+}
+
 watch(keyword, () => { page.value = 1; load() })
-onMounted(() => { load(); loadEmbedding() })
+onMounted(() => { load(); loadEmbedding(); loadAllTags() })
 </script>

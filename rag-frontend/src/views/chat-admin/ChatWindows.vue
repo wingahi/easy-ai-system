@@ -77,6 +77,20 @@
             <el-option v-for="m in chatModels" :key="m.id" :label="`${m.name} (${m.modelName})`" :value="m.id" />
           </el-select>
         </el-form-item>
+        <el-form-item label="模型路由组">
+          <el-select v-model="form.modelRouteGroup" clearable style="width:100%"
+                     placeholder="非空时优先走故障转移链路">
+            <el-option v-for="g in routeGroups" :key="g" :label="g" :value="g">
+              <span style="float:left">{{ g }}</span>
+              <span style="float:right;font-size:12px;color:#909399">
+                {{ routeGroupModels(g).length }} 个模型
+              </span>
+            </el-option>
+          </el-select>
+          <div style="font-size:12px;color:#909399;margin-top:4px;line-height:1.4">
+            非空时按组内优先级顺序形成故障转移链路，首个模型失败（首 token 前）自动切下一个；留空则只使用上方「大模型」直连
+          </div>
+        </el-form-item>
         <el-form-item label="关联知识库">
           <el-select v-model="selectedKbs" multiple style="width:100%" placeholder="可选">
             <el-option v-for="kb in kbList" :key="kb.id" :label="kb.name" :value="kb.id" />
@@ -100,7 +114,11 @@
           <div style="font-size:12px;color:#909399;margin-top:4px;line-height:1.4">非必填。选择后该窗口对话时模型可自动调用这些工具</div>
         </el-form-item>
         <el-form-item label="System 提示词">
-          <el-input v-model="form.systemPrompt" type="textarea" :rows="4" placeholder="定义 AI 助手角色，注意防提示词注入" />
+          <el-input v-model="form.systemPrompt" type="textarea" :rows="4"
+                    placeholder="定义 AI 助手角色；也可输入 template:模板名 引用 Prompt 模板中心的模板" />
+          <div style="color:#909399;font-size:12px;margin-top:4px">
+            支持 template:模板名 语法引用模板（可用变量：{{windowName}} / {{kbName}} / {{userName}}）
+          </div>
         </el-form-item>
         <el-form-item label="RAG 评估方案">
           <el-select v-model="form.evaluationScheme" style="width:100%" placeholder="选择评估方案">
@@ -254,7 +272,7 @@ const execMode = ref('RAG')
 const selectedWorkflowId = ref(null)
 
 const form = reactive({
-  name: '', description: '', llmModelId: null,
+  name: '', description: '', llmModelId: null, modelRouteGroup: null,
   knowledgeBaseIds: '[]', systemPrompt: '', temperature: 0.7, status: 1,
   evaluationScheme: 'NONE', judgeModelIds: '[]', toolIds: '[]', workflowId: null,
   rerankEnabled: false, rerankModelId: null, hybridEnabled: false,
@@ -287,6 +305,16 @@ const loadOptions = async () => {
 }
 
 const workflowName = (id) => workflows.value.find(w => w.id === id)?.name || `#${id}`
+
+// ===== 模型路由组聚合（从 chatModels 里按 routeGroup distinct 提取） =====
+const routeGroups = computed(() => {
+  const set = new Set()
+  for (const m of chatModels.value) {
+    if (m.routeGroup) set.add(m.routeGroup)
+  }
+  return [...set].sort()
+})
+const routeGroupModels = (g) => chatModels.value.filter(m => m.routeGroup === g)
 
 const parseKbs = (json) => {
   try { return JSON.parse(json || '[]') } catch { return [] }
@@ -326,7 +354,8 @@ const openDialog = (row) => {
     selectedWorkflowId.value = row.workflowId || null
   } else {
     Object.assign(form, {
-      name: '', description: '', llmModelId: null, knowledgeBaseIds: '[]',
+      name: '', description: '', llmModelId: null, modelRouteGroup: null,
+      knowledgeBaseIds: '[]',
       systemPrompt: '', temperature: 0.7, status: 1,
       evaluationScheme: 'NONE', judgeModelIds: '[]', toolIds: '[]', workflowId: null,
       rerankEnabled: false, rerankModelId: null, hybridEnabled: false,

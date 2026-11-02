@@ -62,4 +62,9 @@ public class KnowledgeFile extends BaseEntity {
      * 错误信息
      */
     private String errorMessage;
+
+    /**
+     * 当前版本号（重切/重传时 +1，配合 wgh_knowledge_file_version 记录历史）
+     */
+    private Integer version;
 }

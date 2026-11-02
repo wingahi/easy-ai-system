@@ -915,3 +915,123 @@ COMMENT ON COLUMN wgh_llm_model.supports_vision IS '是否支持图片输入（�
 ALTER TABLE wgh_chat_message ADD COLUMN IF NOT EXISTS attachments TEXT;
 COMMENT ON COLUMN wgh_chat_message.attachments IS '消息附件 JSON 数组（图片 data URL 或公网 URL）';
 
+-- ============ Prompt 模板中心 ============
+
+CREATE TABLE IF NOT EXISTS wgh_prompt_template (
+  id BIGSERIAL PRIMARY KEY,
+  name VARCHAR(100) NOT NULL UNIQUE,
+  category VARCHAR(50),
+  content TEXT NOT NULL,
+  variables VARCHAR(500),
+  version INT DEFAULT 1,
+  builtin SMALLINT DEFAULT 0,
+  remark VARCHAR(500),
+  create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  create_by VARCHAR(50) DEFAULT 'system',
+  update_by VARCHAR(50) DEFAULT 'system',
+  deleted SMALLINT DEFAULT 0
+);
+COMMENT ON TABLE wgh_prompt_template IS 'Prompt 模板中心（{{var}} 占位符；聊天窗口 system_prompt 支持 template:模板名 引用）';
+COMMENT ON COLUMN wgh_prompt_template.name IS '模板名（唯一，template: 引用键）';
+COMMENT ON COLUMN wgh_prompt_template.category IS '分类（RAG / 客服 / 总结 等）';
+COMMENT ON COLUMN wgh_prompt_template.content IS '模板内容（{{var}} 占位符）';
+COMMENT ON COLUMN wgh_prompt_template.variables IS '变量名 JSON 数组（保存时从 content 自动提取）';
+COMMENT ON COLUMN wgh_prompt_template.version IS '版本号（内容变更自动 +1）';
+COMMENT ON COLUMN wgh_prompt_template.builtin IS '是否内置模板（1 内置不可删除/改名，0 自定义）';
+COMMENT ON COLUMN wgh_prompt_template.remark IS '备注';
+
+-- 内置种子模板（幂等）
+INSERT INTO wgh_prompt_template (name, category, content, variables, builtin, remark)
+SELECT 'RAG问答助手', 'RAG', '你是知识库「{{kbName}}」的智能问答助手。
+要求：
+1. 仅依据检索到的知识库内容回答，不编造信息；
+2. 回答标注来源（知识库名 + 文件名）；
+3. 知识库内容不足时明确告知用户；
+4. 回答结构化、条理清晰，使用中文。', '["kbName"]', 1, '内置模板'
+WHERE NOT EXISTS (SELECT 1 FROM wgh_prompt_template WHERE name = 'RAG问答助手');
+
+INSERT INTO wgh_prompt_template (name, category, content, variables, builtin, remark)
+SELECT '客服专员', '客服', '你是「{{kbName}}」的客服专员{{userName}}。
+要求：
+1. 语气友好专业，先共情再解决问题；
+2. 严格依据知识库内容作答，不确定的问题引导用户联系人工客服；
+3. 不承诺知识库之外的补偿、退款等事项；
+4. 每次回答控制在 300 字以内。', '["kbName","userName"]', 1, '内置模板'
+WHERE NOT EXISTS (SELECT 1 FROM wgh_prompt_template WHERE name = '客服专员');
+
+INSERT INTO wgh_prompt_template (name, category, content, variables, builtin, remark)
+SELECT '内容总结专家', '总结', '你是内容总结专家。
+要求：
+1. 将检索到的内容浓缩为要点列表（3-7 条）；
+2. 保留关键数据、结论与来源；
+3. 去除重复与口水内容；
+4. 输出格式：先一句话总述，再分条列出要点。', '[]', 1, '内置模板'
+WHERE NOT EXISTS (SELECT 1 FROM wgh_prompt_template WHERE name = '内容总结专家');
+
+-- ============ 知识库标签 / 文档版本 ============
+
+CREATE TABLE IF NOT EXISTS wgh_tag (
+  id BIGSERIAL PRIMARY KEY,
+  name VARCHAR(50) NOT NULL UNIQUE,
+  color VARCHAR(20),
+  remark VARCHAR(200),
+  create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  create_by VARCHAR(50) DEFAULT 'system',
+  update_by VARCHAR(50) DEFAULT 'system',
+  deleted SMALLINT DEFAULT 0
+);
+COMMENT ON TABLE wgh_tag IS '知识库 / 文档共用标签';
+COMMENT ON COLUMN wgh_tag.name IS '标签名（唯一）';
+COMMENT ON COLUMN wgh_tag.color IS '颜色（Hex，如 #409EFF）';
+
+CREATE TABLE IF NOT EXISTS wgh_kb_tag_rel (
+  id BIGSERIAL PRIMARY KEY,
+  kb_id BIGINT NOT NULL,
+  tag_id BIGINT NOT NULL,
+  create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(kb_id, tag_id)
+);
+CREATE INDEX IF NOT EXISTS idx_kb_tag_rel_tag ON wgh_kb_tag_rel(tag_id);
+COMMENT ON TABLE wgh_kb_tag_rel IS '知识库-标签关系';
+
+CREATE TABLE IF NOT EXISTS wgh_file_tag_rel (
+  id BIGSERIAL PRIMARY KEY,
+  file_id BIGINT NOT NULL,
+  tag_id BIGINT NOT NULL,
+  create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(file_id, tag_id)
+);
+CREATE INDEX IF NOT EXISTS idx_file_tag_rel_tag ON wgh_file_tag_rel(tag_id);
+COMMENT ON TABLE wgh_file_tag_rel IS '知识库文件-标签关系';
+
+ALTER TABLE wgh_knowledge_file ADD COLUMN IF NOT EXISTS version INT DEFAULT 1;
+COMMENT ON COLUMN wgh_knowledge_file.version IS '当前版本号（重切/重传时 +1）';
+
+CREATE TABLE IF NOT EXISTS wgh_knowledge_file_version (
+  id BIGSERIAL PRIMARY KEY,
+  file_id BIGINT NOT NULL,
+  version INT NOT NULL,
+  chunk_count INT,
+  split_strategy VARCHAR(20),
+  split_config TEXT,
+  status VARCHAR(20),
+  remark VARCHAR(500),
+  create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_kfv_file ON wgh_knowledge_file_version(file_id);
+COMMENT ON TABLE wgh_knowledge_file_version IS '知识库文件版本快照（记录历史切分元数据，支持追溯；不回滚向量）';
+COMMENT ON COLUMN wgh_knowledge_file_version.remark IS '变更说明（如 手动重切、修复OCR）';
+
+-- 知识库列表支持按标签过滤：新增 wgh_knowledge_file 与标签联合查询走 idx_file_tag_rel_tag
+
+-- ============ 模型路由与故障转移 ============
+
+ALTER TABLE wgh_llm_model ADD COLUMN IF NOT EXISTS route_group VARCHAR(50);
+ALTER TABLE wgh_llm_model ADD COLUMN IF NOT EXISTS route_priority INT DEFAULT 0;
+COMMENT ON COLUMN wgh_llm_model.route_group IS '路由组名（窗口 model_route_group 匹配；非空时可参与故障转移链路）';
+COMMENT ON COLUMN wgh_llm_model.route_priority IS '同组内优先级（升序：数字越小越优先）';
+ALTER TABLE wgh_chat_window ADD COLUMN IF NOT EXISTS model_route_group VARCHAR(50);
+COMMENT ON COLUMN wgh_chat_window.model_route_group IS '指定模型路由组（优先于 llm_model_id：非空则走 ModelRouter 选链路）';
+

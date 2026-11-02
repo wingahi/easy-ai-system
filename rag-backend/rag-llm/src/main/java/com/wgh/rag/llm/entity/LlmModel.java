@@ -68,6 +68,16 @@ public class LlmModel extends BaseEntity {
     private Boolean supportsVision;
 
     /**
+     * 路由组名（参与故障转移链路）
+     */
+    private String routeGroup;
+
+    /**
+     * 同组内优先级（升序：数字越小越优先）
+     */
+    private Integer routePriority;
+
+    /**
      * 状态：0-禁用，1-启用
      */
     private Integer status;

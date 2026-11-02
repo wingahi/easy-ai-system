@@ -1,6 +1,6 @@
 # Easy AI System
 
-一个开箱即用的 RAG（检索增强生成）+ LLM 工作流引擎 Agent 自动规划执行 + 多 Agent 协作 ，专为构建企业级智能系统而设计。
+一个开箱即用的 RAG（检索增强生成）+ LLM 工作流引擎 + Agent 自动规划执行 + 多 Agent 协作 ，专为构建企业级智能系统而设计。
 
 覆盖 **知识库管理 → 向量检索 → 工具调用 → 分层上下文压缩 → Agent 自动规划执行 → 多 Agent 协作 → LLM 流式对话 → RAG 效果评估 → 工作流编排 → 分享会话** 完整链路，可广泛应用于智能客服、企业内部知识库、数据分析、策划评审等场景。
 
@@ -235,28 +235,28 @@ wgh-rag-system/
 
 以下功能是市面主流产品（Dify / Coze / RAGFlow / FastGPT）普遍具备、本系统尚未落地的能力，按优先级排列：
 
-| # | 功能 | 主流对标 | 当前状态 | 说明 |
+| # | 功能 | 主流对标 | 当前状态 | 落地位置（后端 / 前端 / 表） |
 |---|------|---------|---------|------|
-| 1 | **Rerank 重排序** | Dify / RAGFlow / FastGPT | ✅ 已完成 | 候选放大 `min(topK*3,30)` → Rerank 模型打分 → 取 topK，失败降级原始向量序；延迟随 SSE 下发 |
-| 2 | **混合检索（向量 + 关键词）** | RAGFlow / Dify | ✅ 已完成 | pg_trgm 关键词路 + 向量路 RRF(k=60) 融合，关键词空结果自动退化为向量序，`ScoreType=RRF` 标识分数语义 |
-| 3 | **查询改写 / Multi-Query / HyDE** | RAGFlow / LlamaIndex | ✅ 已完成 | REWRITE / MULTI_QUERY / HYDE 三种模式，多查询变体走 RRF 融合，变换失败降级原查询，耗时与变体随 SSE 下发 |
-| 4 | **语义切分 / 结构化切分** | RAGFlow / Dify | ✅ 已完成 | STRUCTURED 标题层级感知（headingPath 元数据）+ SEMANTIC 语义断句（数字句点保护），入库与预览均带 chunk 属性 |
+| 1 | **Rerank 重排序** | Dify / RAGFlow / FastGPT | ✅ 已完成 | `RerankService` / `ChatWindows.vue` / — |
+| 2 | **混合检索（向量 + 关键词）** | RAGFlow / Dify | ✅ 已完成 | `KeywordSearchService` / `ChatWindows.vue` / — |
+| 3 | **查询改写 / Multi-Query / HyDE** | RAGFlow / LlamaIndex | ✅ 已完成 | `QueryTransformService` / `ChatWindows.vue` / — |
+| 4 | **语义切分 / 结构化切分** | RAGFlow / Dify | ✅ 已完成 | `SemanticChunkingStrategy` / 检索预览带 headingPath / — |
 | 5 | **更多文档格式** | Dify / RAGFlow | 📋 计划中 | HTML / JSON / PPTX / 图片 OCR 未支持（PDF/DOCX/DOC/XLSX/XLS/CSV/TXT/MD 已完成） |
 | 6 | **URL 抓取与数据源连接器** | Dify / FastGPT | 📋 计划中 | 无网页爬取、Notion/飞书文档等第三方数据源同步、增量更新 |
-| 7 | **工作流作为聊天窗口执行模式** | Dify（应用绑定工作流） | 📋 计划中 | 已完成方案设计（窗口加 `workflow_id` + 聊天 SSE 分流），待实现 |
-| 8 | **工作流独立发布 / 分享页** | Dify Web App / Coze 渠道 | 📋 计划中 | 工作流目前仅管理端调试与 CRON/Webhook 触发，无对外发布入口 |
+| 7 | **工作流作为聊天窗口执行模式** | Dify（应用绑定工作流） | ✅ 已完成 | `RagChatService` 分流 + `ChatWorkflowService` / `ChatWindows.vue` WORKFLOW 执行模式 / `wgh_chat_window.workflow_id` |
+| 8 | **工作流独立发布 / 分享页** | Dify Web App / Coze 渠道 | ✅ 已完成 | `WorkflowService` share 逻辑 / `ShareWorkflow.vue` 分享运行页 + HITL / `wgh_workflow.share_token` |
 | 9 | **工作流 AGENT 节点** | Dify / Coze | 📋 计划中 | 节点白名单暂无 `AGENT`，工作流内无法直接复用 Agent 能力 |
 | 10 | **免登录分享 / 嵌入 Widget / 开放 API** | Dify / Coze / FastGPT | 📋 计划中 | 现分享页需登录；无 iframe 嵌入、JS SDK、API Key 开放调用 |
 | 11 | **多用户与权限体系** | Dify / FastGPT | 📋 计划中 | 当前仅 `admin` 单账号 JWT，无租户、RBAC、知识库/文档级权限 |
-| 12 | **审计日志 / 配额限流 / 成本统计** | 企业级产品通用 | 📋 计划中 | 无操作审计、租户配额、Token 用量与费用报表 |
-| 13 | **语义缓存** | Dify（Redis 缓存） | 📋 计划中 | 无相似问题命中缓存，重复提问仍会全量调用 LLM |
+| 12 | **审计日志 / 配额限流 / 成本统计** | 企业级产品通用 | ✅ 已完成 | `@Audit` AOP + `QuotaService` + `ModelPriceService` / `AdminStats.vue` + `ChatPlayground` 成本显示 / `wgh_audit_log`、`wgh_quota_usage`、`wgh_model_price` |
+| 13 | **语义缓存** | Dify（Redis 缓存） | ✅ 已完成 | `SemanticCacheService` + `RagChatService` 前置拦截 / `ChatWindows.vue` 开关 + `ChatPlayground` cacheHit 标识 / `wgh_semantic_cache` + 独立 pgvector 表 |
 | 14 | **可观测性与部署编排** | 企业级产品通用 | 📋 计划中 | 无 Prometheus 指标 / 链路追踪；仓库无 Dockerfile 与 docker-compose |
-| 15 | **反馈闭环与离线评测平台** | Dify / RAGFlow | 🔶 部分完成 | 已落地：ground truth 标注表 + 在线 Recall@K 评测接口 + 零依赖离线脚本 `eval_recall.py`；未做：点赞点踩、A/B 对比、数据集版本管理 |
-| 16 | **多模态** | Coze / Dify | 📋 计划中 | 无图片问答、语音输入、TTS 输出 |
-| 17 | **模型路由与故障转移** | Dify | 📋 计划中 | 按模型 ID 直连，无多模型负载均衡、失败重试与降级链 |
-| 18 | **Prompt 模板中心** | Dify | 📋 计划中 | Prompt 分散在各编排配置中，无统一模板库与版本管理 |
+| 15 | **反馈闭环与离线评测平台** | Dify / RAGFlow | 🔶 部分完成 | 已落地：ground truth 标注 + 在线 Recall@K + 离线 `eval_recall.py` + 👍👎 + `AdminStats.dislikes` 运营闭环；未做：A/B 对比、数据集版本管理 |
+| 16 | **多模态（图片问答）** | Coze / Dify | ✅ 已完成 | `ChatImageService` + `supports_vision` / `ChatPlayground` 图片上传 + `ChatModels.vue` 视觉开关 / `wgh_llm_model.supports_vision`、`wgh_chat_message.attachments` |
+| 17 | **模型路由与故障转移** | Dify | ✅ 已完成 | `ModelRouter` + `RagChatService.runWithFailover` / `ChatModels.vue` routeGroup + routePriority、`ChatWindows.vue` modelRouteGroup 下拉 / `wgh_llm_model.route_group`、`wgh_llm_model.route_priority`、`wgh_chat_window.model_route_group` |
+| 18 | **Prompt 模板中心** | Dify | ✅ 已完成 | `PromptTemplateService` + `PromptTemplateController` / `PromptTemplates.vue` + 实时变量检测 + 后端渲染预览 / `wgh_prompt_template` + 3 个内置种子模板 |
 | 19 | **移动端与国际化** | Coze / Dify | 📋 计划中 | 仅桌面端布局，无 i18n |
-| 20 | **知识库标签 / 文档版本** | FastGPT / RAGFlow | 📋 计划中 | 知识库与文件无标签体系、无文档版本与差异对比 |
+| 20 | **知识库标签 / 文档版本** | FastGPT / RAGFlow | ✅ 已完成 | `TagService` + `FileVersionService` + `TagController` CRUD + 版本快照回滚 / `KnowledgeBase.vue` 标签弹窗 + `KBFiles.vue` 文件标签 chip + 版本历史弹窗 + 回滚 / `wgh_tag`、`wgh_kb_tag_rel`、`wgh_file_tag_rel`、`wgh_knowledge_file_version` |
 
 > 已明确不做的方向：引入 Milvus / Elasticsearch 等独立向量或检索中间件（当前以 PostgreSQL + pgvector 单库承载，降低部署与运维成本）。
 
