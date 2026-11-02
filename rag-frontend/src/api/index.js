@@ -109,7 +109,16 @@ export function streamChatApi(windowId, message, sessionId, imageUrls) {
         signal: controller.signal
       })
       
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      // 配额超限等业务错误以 JSON 返回（HTTP 200 + code=429），需解析为可读提示
+      const contentType = res.headers.get('content-type') || ''
+      if (!res.ok || contentType.includes('application/json')) {
+        let msg = `HTTP ${res.status}`
+        try {
+          const body = await res.json()
+          if (body?.message) msg = body.message
+        } catch { /* 非 JSON 时保持 HTTP 状态提示 */ }
+        throw new Error(msg)
+      }
       
       const reader = res.body.getReader()
       const decoder = new TextDecoder()
@@ -180,7 +189,16 @@ export function streamShareApi(shareToken, message, sessionId) {
         signal: controller.signal
       })
       
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      // 配额超限等业务错误以 JSON 返回（HTTP 200 + code=429），需解析为可读提示
+      const contentType = res.headers.get('content-type') || ''
+      if (!res.ok || contentType.includes('application/json')) {
+        let msg = `HTTP ${res.status}`
+        try {
+          const body = await res.json()
+          if (body?.message) msg = body.message
+        } catch { /* 非 JSON 时保持 HTTP 状态提示 */ }
+        throw new Error(msg)
+      }
       
       const reader = res.body.getReader()
       const decoder = new TextDecoder()
@@ -511,6 +529,14 @@ export const modelPricePage = (params) => request.get('/admin/model-prices', { p
 export const modelPriceCreate = (data) => request.post('/admin/model-prices', data)
 export const modelPriceUpdate = (data) => request.put('/admin/model-prices', data)
 export const modelPriceDelete = (id) => request.delete(`/admin/model-prices/${id}`)
+
+// ===== 配额管理（管理端 + 用户自查） =====
+export const quotaAdminPage = (params) => request.get('/admin/quota/users', { params })
+export const quotaAdminGet = (username) => request.get(`/admin/quota/users/${encodeURIComponent(username)}`)
+export const quotaAdminSave = (username, data) => request.put(`/admin/quota/users/${encodeURIComponent(username)}`, data)
+export const quotaAdminResetUsage = (username) => request.post(`/admin/quota/users/${encodeURIComponent(username)}/reset-usage`)
+export const quotaAdminRestoreDefault = (username) => request.delete(`/admin/quota/users/${encodeURIComponent(username)}`)
+export const myQuota = () => request.get('/quota/my')
 
 // ===== 标签 / 知识库版本 =====
 export const tagPage = (params) => request.get('/tags', { params })

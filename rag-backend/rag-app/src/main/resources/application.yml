@@ -100,6 +100,10 @@ wgh:
       enabled: ${WGH_CACHE_ENABLED:true}                        # 语义缓存全局开关（窗口级需同时开启）
       similarity-threshold: ${WGH_CACHE_THRESHOLD:0.95}         # 命中阈值（余弦相似度，越高越严格）
       max-per-window: ${WGH_CACHE_MAX_PER_WINDOW:500}           # 每窗口最大缓存条数，超出删最旧
+    quota:
+      # 全局默认配额：用户无自定义配置或自定义配置被禁用时生效（<=0 表示不限制）
+      chat-daily-limit: ${WGH_QUOTA_CHAT_DAILY_LIMIT:200}       # 每人每天对话条数上限
+      token-daily-limit: ${WGH_QUOTA_TOKEN_DAILY_LIMIT:2000000} # 每人每天 token 上限
   
   file:
     upload-dir: ${WGH_UPLOAD_DIR:./uploads}

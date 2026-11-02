@@ -66,6 +66,11 @@
           <template #title>开放平台</template>
           <span class="menu-hint">分享 / Widget / API</span>
         </el-menu-item>
+
+        <el-menu-item v-if="userStore.isAdmin" index="/admin/quota">
+          <el-icon><Odometer /></el-icon>
+          <template #title>用户配额</template>
+        </el-menu-item>
       </el-menu>
     </el-aside>
 
@@ -88,6 +93,9 @@
             </span>
             <template #dropdown>
               <el-dropdown-menu>
+                <el-dropdown-item command="myQuota">
+                  <el-icon><Odometer /></el-icon>我的配额
+                </el-dropdown-item>
                 <el-dropdown-item command="logout">
                   <el-icon><SwitchButton /></el-icon>退出登录
                 </el-dropdown-item>
@@ -113,7 +121,7 @@ import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { 
   FolderOpened, Cpu, ChatDotRound, SetUp, Share, Connection,
-  Fold, Expand, SwitchButton, DataAnalysis, Link
+  Fold, Expand, SwitchButton, DataAnalysis, Odometer, Link
 } from '@element-plus/icons-vue'
 import { useUserStore } from '../stores/user'
 
@@ -125,6 +133,8 @@ const handleCommand = (cmd) => {
   if (cmd === 'logout') {
     userStore.logout()
     router.push('/login')
+  } else if (cmd === 'myQuota') {
+    router.push('/my/quota')
   }
 }
 </script>

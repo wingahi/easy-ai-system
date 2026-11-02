@@ -864,11 +864,36 @@ CREATE TABLE IF NOT EXISTS wgh_quota_usage (
   deleted SMALLINT DEFAULT 0,
   CONSTRAINT uk_quota_user_date UNIQUE (username, date_key)
 );
-COMMENT ON TABLE wgh_quota_usage IS '用户每日配额用量（聊天条数 + token 消耗）';
+COMMENT ON TABLE wgh_quota_usage IS '用户周期配额用量（聊天条数 + token 消耗，按 date_key 聚合）';
 COMMENT ON COLUMN wgh_quota_usage.username IS '用户名';
-COMMENT ON COLUMN wgh_quota_usage.date_key IS '日期键（yyyy-MM-dd，服务器本地时区）';
+COMMENT ON COLUMN wgh_quota_usage.date_key IS '周期键（日=yyyy-MM-dd，月=yyyy-MM，服务器本地时区）';
 COMMENT ON COLUMN wgh_quota_usage.chat_count IS '当日已用对话条数';
 COMMENT ON COLUMN wgh_quota_usage.token_used IS '当日已用 token 数（实际或估算）';
+
+-- 按用户配额配置（rag-quota 模块；无记录或禁用时回退全局默认 wgh.rag.quota.*）
+CREATE TABLE IF NOT EXISTS wgh_user_quota_config (
+  id BIGSERIAL PRIMARY KEY,
+  username VARCHAR(50) NOT NULL,
+  period VARCHAR(10) NOT NULL DEFAULT 'DAY',
+  chat_limit INT DEFAULT 0,
+  token_limit BIGINT DEFAULT 0,
+  enabled SMALLINT DEFAULT 1,
+  remark VARCHAR(500),
+  create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  create_by VARCHAR(50) DEFAULT 'system',
+  update_by VARCHAR(50) DEFAULT 'system',
+  deleted SMALLINT DEFAULT 0,
+  CONSTRAINT uk_user_quota_username UNIQUE (username)
+);
+COMMENT ON TABLE wgh_user_quota_config IS '按用户配额配置（优先于全局默认）';
+COMMENT ON COLUMN wgh_user_quota_config.username IS '用户名（唯一）';
+COMMENT ON COLUMN wgh_user_quota_config.period IS '统计周期：DAY=自然日，MONTH=自然月';
+COMMENT ON COLUMN wgh_user_quota_config.chat_limit IS '请求数上限（<=0 不限制）';
+COMMENT ON COLUMN wgh_user_quota_config.token_limit IS 'token 上限（<=0 不限制）';
+COMMENT ON COLUMN wgh_user_quota_config.enabled IS '是否启用（0/1；禁用时回退全局默认）';
+COMMENT ON COLUMN wgh_user_quota_config.remark IS '备注';
+-- date_key 兼容月周期键（yyyy-MM，7 字符，原 VARCHAR(10) 已足够，无需改列）
 
 -- 聊天消息成本列（回复完成后按模型价格表回填，无价格配置时为 NULL）
 ALTER TABLE wgh_chat_message ADD COLUMN IF NOT EXISTS cost DOUBLE PRECISION;
@@ -1035,6 +1060,62 @@ COMMENT ON COLUMN wgh_llm_model.route_priority IS '同组内优先级（升序�
 ALTER TABLE wgh_chat_window ADD COLUMN IF NOT EXISTS model_route_group VARCHAR(50);
 COMMENT ON COLUMN wgh_chat_window.model_route_group IS '指定模型路由组（优先于 llm_model_id：非空则走 ModelRouter 选链路）';
 
+
+-- ============ 多用户与权限体系（RBAC） ============
+
+CREATE TABLE IF NOT EXISTS wgh_user (
+    id                  BIGSERIAL PRIMARY KEY,
+    username            VARCHAR(64) NOT NULL,
+    password_hash       VARCHAR(256) NOT NULL,
+    name                VARCHAR(64),
+    email               VARCHAR(128),
+    tenant_id           VARCHAR(64),
+    status              SMALLINT NOT NULL DEFAULT 1,
+    create_time         TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    update_time         TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    create_by           VARCHAR(64),
+    update_by           VARCHAR(64),
+    deleted             SMALLINT NOT NULL DEFAULT 0,
+    UNIQUE (username)
+);
+
+CREATE TABLE IF NOT EXISTS wgh_role (
+    id                  BIGSERIAL PRIMARY KEY,
+    role_code           VARCHAR(64) NOT NULL,
+    role_name           VARCHAR(128),
+    description         TEXT,
+    create_time         TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    update_time         TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    deleted             SMALLINT NOT NULL DEFAULT 0,
+    UNIQUE (role_code)
+);
+
+CREATE TABLE IF NOT EXISTS wgh_permission (
+    id                  BIGSERIAL PRIMARY KEY,
+    perm_code           VARCHAR(128) NOT NULL,
+    perm_name           VARCHAR(128),
+    resource_type       VARCHAR(64),
+    create_time         TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (perm_code)
+);
+
+CREATE TABLE IF NOT EXISTS wgh_user_role (
+    user_id             BIGINT NOT NULL REFERENCES wgh_user(id),
+    role_id             BIGINT NOT NULL REFERENCES wgh_role(id),
+    PRIMARY KEY (user_id, role_id),
+    create_time         TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS wgh_role_permission (
+    role_id             BIGINT NOT NULL REFERENCES wgh_role(id),
+    permission_id       BIGINT NOT NULL REFERENCES wgh_permission(id),
+    PRIMARY KEY (role_id, permission_id),
+    create_time         TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_wgh_user_role_user ON wgh_user_role(user_id);
+CREATE INDEX IF NOT EXISTS idx_wgh_role_perm_role   ON wgh_role_permission(role_id);
+
 -- ============ 免登录分享 / Widget / 开放 API ============
 
 CREATE TABLE IF NOT EXISTS wgh_share_link (
@@ -1100,3 +1181,4 @@ CREATE TABLE IF NOT EXISTS wgh_api_call_log (
 );
 COMMENT ON TABLE wgh_api_call_log IS '开放 API 调用日志（谁、接口、状态码、耗时）';
 CREATE INDEX IF NOT EXISTS idx_api_call_log_key ON wgh_api_call_log(api_key_id, create_time);
+

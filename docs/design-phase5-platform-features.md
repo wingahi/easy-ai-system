@@ -320,6 +320,77 @@ docs/design-phase5-platform-features.md                       # 本次落地记�
 
 ---
 
+## 配额模块抽取与按用户配额（rag-quota，2026-11-02 落地）
+
+### 模块结构
+
+配额能力从 `rag-common` 抽取为独立 Maven 模块 `rag-quota`（包 `com.wgh.rag.quota`）：
+
+```
+rag-quota
+├── entity/    QuotaUsage（wgh_quota_usage，按周期用量）、UserQuotaConfig（wgh_user_quota_config，按用户配置）
+├── mapper/    QuotaUsageMapper（可移植原子 upsert：UPDATE 先行 + DuplicateKeyException 回退，PG/H2 通用）、UserQuotaConfigMapper（含逻辑删除行复活）
+├── properties/ QuotaProperties（@ConfigurationProperties "wgh.rag.quota"）
+└── service/   QuotaService（解析/校验/计数/配置管理）、EffectiveQuota（生效配额 DTO）、
+               QuotaUserResolver + DefaultQuotaUserResolver（用户身份解析，LoginUser → SecurityUtils → "anonymous" 兜底）、
+               QuotaAdminGuard（管理端角色校验：admin 角色或内置 admin 用户，否则 1004）
+```
+
+调用方改造：`rag-chat` RagChatService、`rag-controller` AdminStatsController 改为依赖 `com.wgh.rag.quota.service.QuotaService`；`rag-config` RagProperties 移除 Quota 段（配置键位不变，行为兼容）。旧包 `com.wgh.rag.common.quota` 已删除。
+
+### 表结构
+
+| 表 | 说明 | 关键列 |
+|----|------|--------|
+| `wgh_quota_usage` | 按周期用量（沿用） | username + date_key 唯一（uk_quota_user_date）；date_key 兼容日键 `yyyy-MM-dd` 与月键 `yyyy-MM`；chat_count / token_used |
+| `wgh_user_quota_config` | 按用户配额配置（新增，增量 DDL 已应用到 live DB） | username 唯一（uk_user_quota_username）、period（DAY/MONTH）、chat_limit、token_limit（<=0 不限）、enabled（SMALLINT 0/1，禁用回退默认）、remark、审计列 + deleted 逻辑删除 |
+
+### 接口清单
+
+管理端（`/api/admin/quota`，仅管理员，QuotaAdminGuard 校验）：
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/users?page&size&username` | 分页列出（自定义配置 ∪ 有用量用户），行含角色（预留，RBAC 未落地恒空）、来源、周期、上限/已用、启用、备注、更新时间 |
+| GET | `/users/{username}` | 查询某用户生效配额 + 当期用量 |
+| PUT | `/users/{username}` | 创建/修改配置（校验：周期 DAY/MONTH、上限非负） |
+| POST | `/users/{username}/reset-usage` | 清零当期用量（不改配置） |
+| DELETE | `/users/{username}` | 恢复默认（逻辑删除自定义配置；再保存时复活该 Row 避免唯一键冲突） |
+
+用户侧：`GET /api/quota/my` —— 本人来源/周期/上限/已用/剩余/nearLimit（≥90%）。
+
+兼容接口保留：`GET /api/admin/stats/quota`（AdminStatsController，全局默认视角）。
+
+### 配置项
+
+| key | 默认值 | 说明 |
+|-----|--------|------|
+| `wgh.rag.quota.chat-daily-limit` | 200 | 全局默认：日对话数上限（键位沿用历史，未变） |
+| `wgh.rag.quota.token-daily-limit` | 2000000 | 全局默认：日 token 上限 |
+
+### 关键类与调用链
+
+聊天入口：`RagChatService.chat/stream` → `QuotaService.checkAndIncrementChat(username)` → `resolve()`（自定义启用配置 > 全局默认）→ 按生效周期查 `wgh_quota_usage` → 超限抛 `BusinessException(QUOTA_EXCEEDED=429)`（GlobalExceptionHandler 输出 HTTP 200 + body code 429，前端拦截器/SSE JSON 解析为可读提示）→ 未超限 `upsertIncrement` 原子累加（并发不丢，计数异常仅 WARN 不阻断主流程）；回复完成后 `addTokens` 按同一周期键累加 token。
+
+### 验收标准
+
+- 全局默认生效 / 用户覆盖生效 / 禁用回退 / 配置缺失回退（QuotaServiceTest）
+- 超限 429 且不计数；周期键 DAY=`yyyy-MM-dd`、MONTH=`yyyy-MM`，跨期自然重置
+- 管理端增删改查 + 恢复默认 + 重置用量；非管理员 1004；未登录 401（QuotaApiTest 切片上下文 7 项）
+- 并发 16 线程 × 10 次计数无丢失（QuotaConcurrencyTest）
+- E2E：REST 设限 → 真实计数 → 耗尽后第二次请求 429（QuotaApiTest#e2e_quotaExhausted_rejectedWith429）
+
+### 前端页面说明
+
+| 页面 | 路由 | 入口 | 接口 |
+|------|------|------|------|
+| 用户配额管理 | `/admin/quota` | 侧边菜单「用户配额」（仅 admin 角色可见，`requiresAdmin` 路由守卫兜底） | quotaAdminPage / quotaAdminSave / quotaAdminResetUsage / quotaAdminRestoreDefault |
+| 我的配额 | `/my/quota` | 右上角用户下拉「我的配额」 | myQuota（GET /api/quota/my） |
+
+管理页支持搜索/分页、对话框编辑（周期/上限/启用/备注）、保存前非负整数校验、上限不高于已用量时提示但不阻断、保存后即时刷新；失败经 axios 拦截器展示后端 message。聊天 SSE（streamChatApi/streamShareApi）对 429 JSON 响应解析 message 弹出可读提示。权限限制：前端权限体系尚未完善，暂按登录 roles 含 `admin` 控制菜单与路由；后端 QuotaAdminGuard 独立兜底（admin 角色或内置 admin 用户），RBAC 权限点落地后可切换 `@RequiresPermission("quota:manage")`。
+
+---
+
 ## 后续迭代保留（不在本次承诺范围）
 
 | # | 功能 | 简述 |

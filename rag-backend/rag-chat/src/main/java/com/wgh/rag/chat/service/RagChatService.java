@@ -14,7 +14,7 @@ import com.wgh.rag.chat.mapper.ChatSessionMapper;
 import com.wgh.rag.chat.mapper.ChatWindowMapper;
 import com.wgh.rag.agent.service.AgentOrchestrator;
 import com.wgh.rag.common.exception.BusinessException;
-import com.wgh.rag.common.quota.QuotaService;
+import com.wgh.rag.quota.service.QuotaService;
 import com.wgh.rag.common.security.SecurityUtils;
 import com.wgh.rag.config.property.RagProperties;
 import com.wgh.rag.kb.service.RagRetrieveService;

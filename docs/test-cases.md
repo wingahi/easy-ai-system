@@ -733,6 +733,39 @@
 
 ---
 
+## 14. 配额限流（rag-quota）
+
+> 特性组：审计日志 / 配额限流 / 成本统计中的配额部分。实现：`rag-quota` 模块；
+> 自动化：`QuotaServiceTest`（19 项，`mvn -pl rag-quota -am test` 全绿）。
+> 覆盖类型说明：`单元` = 服务/解析规则；`接口` = REST；`端到端` = 配置→校验→统一响应；`仅手工` = 浏览器交互。
+
+| 编号 | 分类 | 前置条件 | 用例 / 步骤 | 预期结果 | 覆盖类型 | 自动化落点 |
+|------|------|---------|------------|---------|---------|-----------|
+| QTA-01 | 正常 | 无自定义配置，全局默认 200 条/200 万 token | 查询用户生效配额 | 来源 DEFAULT、周期 DAY、上限 200 / 2000000 | 单元 | `QuotaServiceTest#globalDefaultApplies` |
+| QTA-02 | 正常 | 无自定义配置，用量 10 条 | 发送一次对话 | 放行并按当日键 `+1 chat / +0 token` | 单元 | `QuotaServiceTest#defaultAllowsUnderLimit` |
+| QTA-03 | 正常 | 用户自定义 3 条/5000 token 且启用 | 查询生效配额 | 来源 CUSTOM，自定义值覆盖全局默认 | 单元 | `QuotaServiceTest#userOverrideApplies` |
+| QTA-04 | 异常 | 用户自定义上限 3 条，当期已用 3 条 | 发送对话 | 抛 429，提示「今日对话次数已达上限（3 条）」，不累加计数 | 单元 | `QuotaServiceTest#chatLimitExceededReturns429` |
+| QTA-05 | 异常 | 用户 token 上限 5000，当期已用 5000 | 发送对话 | 抛 429，提示「token 用量已达上限」 | 单元 | `QuotaServiceTest#tokenLimitExceededReturns429` |
+| QTA-06 | 正常 | 用户配置周期 DAY / MONTH | 计算周期键 | DAY=`yyyy-MM-dd`，MONTH=`yyyy-MM`，大小写不敏感 | 单元 | `QuotaServiceTest#periodKeys`、`#periodRolloverProducesNewKeys` |
+| QTA-07 | 正常 | 用户周期 MONTH | 发送对话 | 计数写入 `yyyy-MM` 周期键 | 单元 | `QuotaServiceTest#monthPeriodCountsOnMonthKey` |
+| QTA-08 | 边界 | 用户自定义配置 enabled=0 | 查询/发送 | 回退全局默认（200 条/日） | 单元 | `QuotaServiceTest#disabledConfigFallsBackToDefault` |
+| QTA-09 | 异常 | 提交周期 WEEK、负数上限、空用户名 | PUT 保存配置 | 分别提示「周期仅支持 DAY / MONTH」「不能为负数」「用户名不能为空」 | 单元 | `QuotaServiceTest#saveUserConfigValidates` |
+| QTA-10 | 正常 | 用户已有自定义配置 | 再次保存 | 走更新，不新增行 | 单元 | `QuotaServiceTest#saveUserConfigUpsert` |
+| QTA-11 | 正常 | 用户已有自定义配置 | 恢复默认后再保存 | 逻辑删除行被复活，不触发 username 唯一键冲突 | 单元 | `QuotaServiceTest#saveAfterRestoreRevivesDeletedRow` |
+| QTA-12 | 正常 | 用户有当期用量 | 管理端重置用量 | 当期键计数清零，配置不变 | 单元 | `QuotaServiceTest#resetUsageClearsCurrentPeriod` |
+| QTA-13 | 正常 | 用户有自定义配置 | 恢复默认 | 配置逻辑删除，生效配额回退 DEFAULT | 单元 | `QuotaServiceTest#resetUserConfigFallsBackToDefault` |
+| QTA-14 | 边界 | 用户无自定义配置 | 恢复默认 | 返回 false（无操作） | 单元 | `QuotaServiceTest#resetUserConfigNoop` |
+| QTA-15 | 边界 | 8 线程 × 25 次并发发送 | 并发计数 | 全部落库，总增量 200，无异常 | 单元 | `QuotaServiceTest#concurrentIncrementsAreNotLost` |
+| QTA-16 | 正常 | token 增量为 0/负数 | 累加 token | 不写库；正数按生效周期键累加 | 单元 | `QuotaServiceTest#addTokensSkipsNonPositive` |
+| QTA-17 | 异常 | DB 不可用 | 发送/累加 token | 不阻断主流程，仅 WARN 日志 | 单元 | `QuotaServiceTest#dbFailureIsSwallowed` |
+| QTA-18 | 端到端 | 用户上限 2 条，当期已用 2 条 | 发送对话 → 全局异常处理 | 响应体 `code=429`，message 含「对话次数已达上限」 | 端到端 | `QuotaServiceTest#quotaExhaustedMapsTo429Response` |
+| QTA-19 | 接口 | 后端 8080，admin 登录 | 打开「用户配额」→ 搜索/编辑上限与周期/启用开关/保存 → 列表刷新 | 行内来源/周期/上限/用量即时更新 | 仅手工 | `QuotaManagement.vue` |
+| QTA-20 | 接口 | 同上 | 点击「重置用量」/「恢复默认」 | 用量归零 / 来源变全局默认，提示成功 | 仅手工 | `QuotaManagement.vue` |
+| QTA-21 | 接口 | 普通用户登录 | 用户菜单「我的配额」 | 展示来源、周期、上限、已用、剩余；≥90% 显示接近上限告警 | 仅手工 | `MyQuota.vue` |
+| QTA-22 | 接口 | 配额耗尽 | 在调试对话/分享页发送消息 | 页面显示可读的配额提示，而非静默结束 | 仅手工 | `streamChatApi` / `streamShareApi` JSON 错误解析 |
+
+---
+
 ## 15. 免登录分享 / 嵌入 Widget / 开放 API
 
 > 特性组：阶段 H。后端 `com.wgh.rag.publicaccess`；前端 `PublicShareChat.vue`、`PublicAccess.vue`、`public/widget.js`。

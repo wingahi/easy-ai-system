@@ -28,6 +28,9 @@ public enum ResultCode {
     RESOURCE_NOT_FOUND(3001, "资源不存在"),
     RESOURCE_ALREADY_EXISTS(3002, "资源已存在"),
     OPERATION_NOT_ALLOWED(3003, "操作不允许"),
+
+    // 限流配额 429
+    QUOTA_EXCEEDED(429, "请求超出配额限制"),
     
     // 文件相关 4xxx
     FILE_UPLOAD_FAILED(4001, "文件上传失败"),

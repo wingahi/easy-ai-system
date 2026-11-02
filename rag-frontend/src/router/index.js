@@ -31,7 +31,9 @@ const routes = [
       { path: 'multi-agent/crews', name: 'MultiAgentCrews', component: () => import('../views/multi-agent/MultiAgentCrews.vue'), meta: { title: '多 Agent 协作' } },
       { path: 'multi-agent/playground', name: 'MultiAgentPlayground', component: () => import('../views/multi-agent/MultiAgentPlayground.vue'), meta: { title: '多 Agent 运行调试' } },
       { path: 'admin/stats', name: 'AdminStats', component: () => import('../views/admin/AdminStats.vue'), meta: { title: '审计与统计' } },
-      { path: 'open-access', name: 'OpenAccess', component: () => import('../views/open/PublicAccess.vue'), meta: { title: '开放平台' } }
+      { path: 'open-access', name: 'OpenAccess', component: () => import('../views/open/PublicAccess.vue'), meta: { title: '开放平台' } },
+      { path: 'admin/quota', name: 'QuotaManagement', component: () => import('../views/admin/QuotaManagement.vue'), meta: { title: '用户配额管理', requiresAdmin: true } },
+      { path: 'my/quota', name: 'MyQuota', component: () => import('../views/admin/MyQuota.vue'), meta: { title: '我的配额' } }
     ]
   },
   { path: '/:pathMatch(.*)*', redirect: '/' }
@@ -60,6 +62,12 @@ router.beforeEach((to, from, next) => {
   if (!userStore.isLoggedIn) {
     // 未登录访问任何页面（含分享页）→ 跳登录页并带 redirect，登录后回跳
     next({ path: '/login', query: { redirect: to.fullPath } })
+    return
+  }
+
+  // 管理页面：按登录角色控制（前端权限体系尚未完善，后端接口仍有 admin 校验兜底）
+  if (to.meta?.requiresAdmin && !userStore.isAdmin) {
+    next({ path: '/' })
     return
   }
 

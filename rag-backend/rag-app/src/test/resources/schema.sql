@@ -163,3 +163,35 @@ CREATE TABLE IF NOT EXISTS wgh_embedding_model (
     update_by VARCHAR(100),
     deleted INT DEFAULT 0
 );
+
+-- ===== 配额（rag-quota） =====
+
+CREATE TABLE IF NOT EXISTS wgh_quota_usage (
+    id SERIAL PRIMARY KEY,
+    username VARCHAR(50) NOT NULL,
+    date_key VARCHAR(10) NOT NULL,
+    chat_count INT DEFAULT 0,
+    token_used BIGINT DEFAULT 0,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    create_by VARCHAR(100),
+    update_by VARCHAR(100),
+    deleted INT DEFAULT 0,
+    CONSTRAINT uk_quota_user_date UNIQUE (username, date_key)
+);
+
+CREATE TABLE IF NOT EXISTS wgh_user_quota_config (
+    id SERIAL PRIMARY KEY,
+    username VARCHAR(50) NOT NULL,
+    period VARCHAR(10) NOT NULL DEFAULT 'DAY',
+    chat_limit INT DEFAULT 0,
+    token_limit BIGINT DEFAULT 0,
+    enabled INT DEFAULT 1,
+    remark VARCHAR(500),
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    create_by VARCHAR(100),
+    update_by VARCHAR(100),
+    deleted INT DEFAULT 0,
+    CONSTRAINT uk_user_quota_username UNIQUE (username)
+);

@@ -248,7 +248,7 @@ wgh-rag-system/
 | 9 | **工作流 AGENT 节点** | Dify / Coze | 📋 计划中 | 节点白名单暂无 `AGENT`，工作流内无法直接复用 Agent 能力 |
 | 10 | **免登录分享 / 嵌入 Widget / 开放 API** | Dify / Coze / FastGPT | ✅ 已完成 | `ShareLinkService` + `ApiKeyService` + `PublicShareController` / `OpenApiController` + 独立安全链 `PublicAccessSecurityConfig` / `PublicShareChat.vue` 免登录分享页、`PublicAccess.vue` 管理端、`widget.js` 嵌入脚本 + `widget-demo.html` / `wgh_share_link`、`wgh_api_key`、`wgh_api_call_log`（Widget 为简化实现：iframe + 同源脚本，不含跨域 postMessage 通信） |
 | 11 | **多用户与权限体系** | Dify / FastGPT | 📋 计划中 | 当前仅 `admin` 单账号 JWT，无租户、RBAC、知识库/文档级权限 |
-| 12 | **审计日志 / 配额限流 / 成本统计** | 企业级产品通用 | ✅ 已完成 | `@Audit` AOP + `QuotaService` + `ModelPriceService` / `AdminStats.vue` + `ChatPlayground` 成本显示 / `wgh_audit_log`、`wgh_quota_usage`、`wgh_model_price` |
+| 12 | **审计日志 / 配额限流 / 成本统计** | 企业级产品通用 | ✅ 已完成 | 审计 `@Audit` AOP + 成本 `ModelPriceService`；配额已抽为独立 `rag-quota` 模块（全局默认 + 按用户日/月配置，超限 429，用量原子累加） / `AdminStats.vue`、`QuotaManagement.vue`、`MyQuota.vue` + `ChatPlayground` 成本显示 / `wgh_audit_log`、`wgh_quota_usage`、`wgh_user_quota_config`、`wgh_model_price` |
 | 13 | **语义缓存** | Dify（Redis 缓存） | ✅ 已完成 | `SemanticCacheService` + `RagChatService` 前置拦截 / `ChatWindows.vue` 开关 + `ChatPlayground` cacheHit 标识 / `wgh_semantic_cache` + 独立 pgvector 表 |
 | 14 | **可观测性与部署编排** | 企业级产品通用 | 📋 计划中 | 无 Prometheus 指标 / 链路追踪；仓库无 Dockerfile 与 docker-compose |
 | 15 | **反馈闭环与离线评测平台** | Dify / RAGFlow | 🔶 部分完成 | 已落地：ground truth 标注 + 在线 Recall@K + 离线 `eval_recall.py` + 👍👎 + `AdminStats.dislikes` 运营闭环；未做：A/B 对比、数据集版本管理 |
