@@ -27,4 +27,10 @@ public class RunContext {
 
     /** 当前循环轮次（变量 {{loop.iteration}} 使用，不参与持久化语义） */
     private Integer currentLoopIteration = 0;
+
+    /**
+     * 安全模式（分享态运行）：为 true 时禁止执行有写操作副作用的工具节点
+     * （HTTP 非 GET/HEAD、MCP）。随上下文持久化，HITL 恢复后仍然生效。
+     */
+    private Boolean safeMode = false;
 }

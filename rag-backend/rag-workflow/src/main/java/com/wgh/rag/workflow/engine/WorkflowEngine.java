@@ -54,7 +54,18 @@ public class WorkflowEngine {
     public void run(WorkflowRun run, WorkflowGraph graph, String input,
                     GraphValidator.GraphValidationResult validation,
                     BiConsumer<String, Map<String, Object>> sink) {
+        run(run, graph, input, validation, false, sink);
+    }
+
+    /**
+     * 首次执行（可指定安全模式）。
+     * safeMode=true 时，工具节点会拒绝有写操作副作用的 HTTP/MCP 调用（分享态使用）。
+     */
+    public void run(WorkflowRun run, WorkflowGraph graph, String input,
+                    GraphValidator.GraphValidationResult validation, boolean safeMode,
+                    BiConsumer<String, Map<String, Object>> sink) {
         RunContext ctx = new RunContext();
+        ctx.setSafeMode(safeMode);
         ctx.getVars().put("input", input == null ? "" : input);
         ctx.getVars().put("lastOutput", "");
 

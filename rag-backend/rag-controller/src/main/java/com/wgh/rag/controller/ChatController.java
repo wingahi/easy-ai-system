@@ -2,6 +2,7 @@ package com.wgh.rag.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wgh.rag.chat.service.ChatWindowService;
+import com.wgh.rag.chat.service.ChatWorkflowService;
 import com.wgh.rag.chat.service.RagChatService;
 import com.wgh.rag.chat.entity.ChatMessage;
 import com.wgh.rag.chat.entity.ChatSession;
@@ -14,6 +15,7 @@ import com.wgh.rag.common.result.PageResult;
 import com.wgh.rag.common.result.Result;
 import com.wgh.rag.common.result.ResultCode;
 import com.wgh.rag.common.exception.BusinessException;
+import com.wgh.rag.workflow.service.WorkflowService;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.data.message.ToolExecutionResultMessage;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -40,6 +42,8 @@ public class ChatController {
 
     private final ChatWindowService windowService;
     private final RagChatService ragChatService;
+    private final ChatWorkflowService chatWorkflowService;
+    private final WorkflowService workflowService;
     private final ToolConfigService toolConfigService;
     private final SkillFileService skillFileService;
     private final ToolExecutionEngine toolExecutionEngine;
@@ -225,6 +229,90 @@ public class ChatController {
             @RequestParam(defaultValue = "20") Long size) {
         ChatWindow window = windowService.getByShareToken(shareToken);
         return Result.success(windowService.pageMessages(window.getId(), currentUsername(), sessionId, page, size));
+    }
+
+    // ===== 工作流运行（聊天窗口绑定工作流） =====
+
+    @Operation(summary = "查询会话最近一次工作流运行状态（调试页刷新恢复）")
+    @GetMapping("/windows/{windowId}/sessions/{sessionId}/workflow-state")
+    public Result<Map<String, Object>> workflowState(
+            @PathVariable Long windowId, @PathVariable Long sessionId) {
+        windowService.getById(windowId);
+        windowService.getOwnedSession(windowId, sessionId, "default_user");
+        return Result.success(chatWorkflowService.getSessionRunState(sessionId));
+    }
+
+    @Operation(summary = "工作流 HITL 确认（调试页，SSE）")
+    @PostMapping(value = "/windows/{windowId}/workflow-runs/{runId}/hitl-confirm",
+            produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter workflowHitlConfirm(
+            @PathVariable Long windowId,
+            @PathVariable Long runId,
+            @RequestBody(required = false) Map<String, Object> params) {
+        windowService.getById(windowId);
+        Long sessionId = parseSessionId(params);
+        if (sessionId != null) {
+            windowService.getOwnedSession(windowId, sessionId, "default_user");
+        }
+        return chatWorkflowService.hitlConfirm(runId, sessionId, extractUserInput(params), false);
+    }
+
+    @Operation(summary = "取消工作流运行（调试页）")
+    @PostMapping("/windows/{windowId}/workflow-runs/{runId}/cancel")
+    public Result<Void> workflowCancel(@PathVariable Long windowId, @PathVariable Long runId) {
+        windowService.getById(windowId);
+        workflowService.cancel(runId);
+        return Result.success();
+    }
+
+    @Operation(summary = "分享页面：查询会话最近一次工作流运行状态")
+    @GetMapping("/share/{shareToken}/sessions/{sessionId}/workflow-state")
+    public Result<Map<String, Object>> shareWorkflowState(
+            @PathVariable String shareToken, @PathVariable Long sessionId) {
+        ChatWindow window = windowService.getByShareToken(shareToken);
+        windowService.getOwnedSession(window.getId(), sessionId, currentUsername());
+        return Result.success(chatWorkflowService.getSessionRunState(sessionId));
+    }
+
+    @Operation(summary = "分享页面：工作流 HITL 确认（安全模式，SSE）")
+    @PostMapping(value = "/share/{shareToken}/workflow-runs/{runId}/hitl-confirm",
+            produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter shareWorkflowHitlConfirm(
+            @PathVariable String shareToken,
+            @PathVariable Long runId,
+            @RequestBody(required = false) Map<String, Object> params) {
+        ChatWindow window = windowService.getByShareToken(shareToken);
+        Long sessionId = parseSessionId(params);
+        if (sessionId != null) {
+            windowService.getOwnedSession(window.getId(), sessionId, currentUsername());
+        }
+        return chatWorkflowService.hitlConfirm(runId, sessionId, extractUserInput(params), true);
+    }
+
+    @Operation(summary = "分享页面：取消工作流运行")
+    @PostMapping("/share/{shareToken}/workflow-runs/{runId}/cancel")
+    public Result<Void> shareWorkflowCancel(
+            @PathVariable String shareToken,
+            @PathVariable Long runId,
+            @RequestParam(required = false) Long sessionId) {
+        ChatWindow window = windowService.getByShareToken(shareToken);
+        if (sessionId != null) {
+            windowService.getOwnedSession(window.getId(), sessionId, currentUsername());
+        }
+        workflowService.cancel(runId);
+        return Result.success();
+    }
+
+    private Long parseSessionId(Map<String, Object> params) {
+        if (params == null || params.get("sessionId") == null) return null;
+        String raw = String.valueOf(params.get("sessionId"));
+        if (raw.isBlank() || "null".equals(raw)) return null;
+        return Long.parseLong(raw);
+    }
+
+    private String extractUserInput(Map<String, Object> params) {
+        if (params == null || params.get("userInput") == null) return "";
+        return String.valueOf(params.get("userInput"));
     }
 
     // ===== 工具管理 =====

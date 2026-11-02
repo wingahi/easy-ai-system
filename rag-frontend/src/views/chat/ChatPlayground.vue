@@ -133,9 +133,19 @@
 
       <!-- 右侧信息面板 -->
       <div class="chat-info">
+        <!-- 工作流运行面板（窗口绑定工作流时） -->
+        <WorkflowRunPanel
+          v-if="window?.workflowId"
+          :run="workflowRun"
+          :prompt="workflowPrompt"
+          :confirming="workflowConfirming"
+          @confirm="onWorkflowConfirm"
+          @cancel="onWorkflowCancel"
+        />
+
         <!-- Agent 计划树（当窗口启用 Agent 时） -->
         <AgentPlanTree
-          v-if="window?.agentEnabled === 1"
+          v-if="window?.agentEnabled === 1 && !window?.workflowId"
           :plan-id="agentPlan.planId"
           :plan-status="agentPlan.status"
           :user-goal="agentPlan.userGoal"
@@ -150,7 +160,7 @@
         />
 
         <!-- 普通 RAG 会话信息 -->
-        <template v-if="window?.agentEnabled !== 1">
+        <template v-if="window?.agentEnabled !== 1 && !window?.workflowId">
           <h3>会话信息</h3>
           <el-descriptions :column="1" border v-if="window">
             <el-descriptions-item label="窗口">{{ window.name }}</el-descriptions-item>
@@ -194,8 +204,10 @@ import { ElMessage } from 'element-plus'
 import { ArrowLeft, Link, Promotion, Plus, Document, Loading, Tools, Delete, Connection } from '@element-plus/icons-vue'
 import { marked } from 'marked'
 import { windowGet, streamChatApi, windowMessages, windowSessions, windowCreateSession, windowDeleteSession,
-  agentGetPlanState, agentCancelPlan, agentRetryStep, agentSkipStep, agentGetPlanBySession } from '../../api'
+  agentGetPlanState, agentCancelPlan, agentRetryStep, agentSkipStep, agentGetPlanBySession,
+  chatWorkflowState, streamChatWorkflowHitl, chatWorkflowCancel } from '../../api'
 import AgentPlanTree from '../../components/AgentPlanTree.vue'
+import WorkflowRunPanel from '../../components/WorkflowRunPanel.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -221,8 +233,32 @@ const agentPlan = ref({
   reflectionThreshold: 7.0
 })
 
+// ============ 工作流运行状态 ============
+const workflowRun = ref(null)      // { runId, status, totalNodes, executedNodes, nodes: [], error }
+const workflowPrompt = ref('')
+const workflowConfirming = ref(false)
+let workflowPollTimer = null
+let workflowAbort = null
+
 // 右侧「当前状态」栏的文案与样式（无内容时也要有兜底展示）
 const statusInfo = computed(() => {
+  // 工作流模式：以运行状态为准
+  if (window.value?.workflowId) {
+    const run = workflowRun.value
+    if (streaming.value) {
+      const running = (run?.nodes || []).find(n => n.status === 'RUNNING')
+      return { text: '🧩 工作流执行中', detail: running ? `当前节点：${running.nodeName || running.nodeId}` : '', spinning: true, tone: 'running' }
+    }
+    switch (run?.status) {
+      case 'PAUSED': return { text: '✋ 等待人工确认（HITL）', spinning: false, tone: 'paused' }
+      case 'COMPLETED': return { text: '✅ 工作流已完成', detail: `执行节点 ${run.executedNodes || 0}/${run.totalNodes || 0}`, spinning: false, tone: 'done' }
+      case 'FAILED': return { text: '❌ 工作流执行失败', detail: run.error || '', spinning: false, tone: 'failed' }
+      case 'CANCELLED': return { text: '⛔ 运行已取消', spinning: false, tone: 'paused' }
+      case 'RUNNING': return { text: '⚡ 工作流执行中', spinning: true, tone: 'running' }
+      default: return { text: '空闲', detail: '', spinning: false, tone: 'idle' }
+    }
+  }
+
   const plan = agentPlan.value
   const steps = plan.steps || []
   const activeStep = steps.find(s => s.stepId === plan.activeStepId || s.status === 'RUNNING')
@@ -328,6 +364,7 @@ const load = async () => {
   await loadSessions()
   await loadHistory()
   await restoreAgentPlan()
+  await restoreWorkflowRun()
 }
 
 // 加载左侧历史会话列表
@@ -351,6 +388,7 @@ const selectSession = async (s) => {
   messages.value = []
   await loadHistory()
   await restoreAgentPlan()
+  await restoreWorkflowRun()
 }
 
 // 新建会话：调用后端创建，选中后清空消息区
@@ -365,6 +403,9 @@ const newSession = async () => {
     currentSessionId.value = created.id
     sessions.value = [created, ...sessions.value]
     messages.value = []
+    stopWorkflowPolling()
+    workflowRun.value = null
+    workflowPrompt.value = ''
     historyPage.value = 1
     historyTotal.value = 0
     noMoreHistory.value = false
@@ -472,6 +513,11 @@ const send = async () => {
     reflectionThreshold: window.value?.agentReflectionThreshold ?? 7.0
   }
 
+  // 重置工作流运行状态（新消息触发一次新的运行）
+  stopWorkflowPolling()
+  workflowRun.value = null
+  workflowPrompt.value = ''
+
   // 添加用户消息
   messages.value.push({ role: 'USER', content: text })
   
@@ -501,6 +547,8 @@ const send = async () => {
 }
 
 const handleEvent = (event, data, aiMsg) => {
+  // 收到首个事件即解除 HITL 确认 loading（vite 代理可能不转发 SSE 终止帧）
+  workflowConfirming.value = false
   switch (event) {
     case 'start':
       if (data.sessionId) currentSessionId.value = data.sessionId
@@ -621,6 +669,63 @@ const handleEvent = (event, data, aiMsg) => {
       if (step) step.retryCount = (step.retryCount || 0) + 1
       break
     }
+
+    // ===== 工作流运行事件（窗口绑定工作流） =====
+    case 'workflow_start':
+      workflowRun.value = {
+        runId: data.runId,
+        status: 'RUNNING',
+        totalNodes: data.totalNodes || 0,
+        executedNodes: 0,
+        nodes: [],
+        error: null
+      }
+      workflowPrompt.value = ''
+      break
+    case 'node_start':
+      upsertWorkflowNode(data.nodeId, {
+        nodeType: data.nodeType, nodeName: data.nodeName,
+        iteration: data.iteration, status: 'RUNNING'
+      })
+      break
+    case 'node_output':
+      upsertWorkflowNode(data.nodeId, {
+        nodeType: data.nodeType, nodeName: data.nodeName, status: 'SUCCESS',
+        durationMs: data.durationMs, iteration: data.iteration, output: data.output
+      })
+      if (workflowRun.value) {
+        workflowRun.value.executedNodes = (workflowRun.value.executedNodes || 0) + 1
+      }
+      break
+    case 'node_error':
+      upsertWorkflowNode(data.nodeId, {
+        nodeName: data.nodeName, status: 'FAILED', error: data.error
+      })
+      break
+    case 'node_hitl_pending':
+      upsertWorkflowNode(data.nodeId, {
+        nodeName: data.nodeName, status: 'HITL_PENDING', output: { prompt: data.prompt }
+      })
+      if (workflowRun.value) workflowRun.value.status = 'PAUSED'
+      workflowPrompt.value = data.prompt || ''
+      aiMsg.content = aiMsg.content || '⏸ 工作流执行已暂停，请在右侧完成人工确认后继续。'
+      aiMsg.streaming = false
+      break
+    case 'workflow_complete':
+      if (workflowRun.value) {
+        workflowRun.value.status = 'COMPLETED'
+        workflowRun.value.executedNodes = data.executedNodes ?? workflowRun.value.executedNodes
+      }
+      break
+    case 'workflow_failed':
+      if (workflowRun.value) {
+        workflowRun.value.status = 'FAILED'
+        workflowRun.value.error = data.error
+      }
+      break
+    case 'workflow_cancelled':
+      if (workflowRun.value) workflowRun.value.status = 'CANCELLED'
+      break
 
     case 'sources':
       aiMsg.sources = dedupeSources(data)
@@ -873,10 +978,156 @@ const onHitlConfirmFromTree = async () => {
   if (isPlanActive(agentPlan.value.status)) startPlanPolling()
 }
 
+// ============ 工作流运行状态 ============
+
+const upsertWorkflowNode = (nodeId, patch) => {
+  if (!workflowRun.value) return null
+  const nodes = workflowRun.value.nodes || []
+  const idx = nodes.findIndex(n => n.nodeId === nodeId)
+  if (idx >= 0) {
+    nodes[idx] = { ...nodes[idx], ...patch }
+    return nodes[idx]
+  }
+  const created = {
+    nodeId, nodeType: '', nodeName: nodeId, status: 'PENDING',
+    iteration: null, durationMs: null, error: null, output: null, ...patch
+  }
+  nodes.push(created)
+  workflowRun.value.nodes = nodes
+  return created
+}
+
+// 后端运行状态 → 面板数据结构
+const applyWorkflowState = (state) => {
+  const nodes = (state.nodes || []).map(n => ({
+    nodeId: n.nodeId,
+    nodeType: n.nodeType,
+    nodeName: n.nodeName,
+    status: n.status,
+    iteration: n.iteration,
+    durationMs: n.durationMs,
+    error: n.error,
+    output: n.output
+  }))
+  workflowRun.value = {
+    runId: state.runId,
+    status: state.status,
+    totalNodes: state.totalNodes,
+    executedNodes: state.executedNodes,
+    error: state.error,
+    nodes
+  }
+  workflowPrompt.value = ''
+}
+
+const stopWorkflowPolling = () => {
+  if (workflowPollTimer) {
+    clearInterval(workflowPollTimer)
+    workflowPollTimer = null
+  }
+  if (workflowAbort) {
+    workflowAbort.abort()
+    workflowAbort = null
+  }
+}
+
+// 刷新后 SSE 已断开：轮询运行状态直到终态
+const startWorkflowPolling = () => {
+  stopWorkflowPolling()
+  workflowPollTimer = setInterval(async () => {
+    const runId = workflowRun.value?.runId
+    if (!runId || !currentSessionId.value) { stopWorkflowPolling(); return }
+    try {
+      workflowAbort = new AbortController()
+      const res = await chatWorkflowState(windowId, currentSessionId.value, workflowAbort.signal)
+      const state = res.data
+      if (!state) { stopWorkflowPolling(); return }
+      applyWorkflowState(state)
+      if (state.status !== 'RUNNING' && state.status !== 'PAUSED') {
+        stopWorkflowPolling()
+        if (!streaming.value) await loadHistory()
+        loadSessions()
+      }
+    } catch (e) {
+      if (e.name !== 'CanceledError' && e.name !== 'AbortError') {
+        console.warn('轮询工作流状态失败', e)
+      }
+    }
+  }, 2000)
+}
+
+// 从会话恢复最近一次工作流运行（刷新/切换会话）
+const restoreWorkflowRun = async () => {
+  stopWorkflowPolling()
+  if (!window.value?.workflowId || !currentSessionId.value) {
+    workflowRun.value = null
+    workflowPrompt.value = ''
+    return
+  }
+  try {
+    workflowAbort = new AbortController()
+    const res = await chatWorkflowState(windowId, currentSessionId.value, workflowAbort.signal)
+    const state = res.data
+    if (!state) {
+      workflowRun.value = null
+      return
+    }
+    applyWorkflowState(state)
+    if (state.status === 'RUNNING') startWorkflowPolling()
+  } catch (e) {
+    if (e.name !== 'CanceledError' && e.name !== 'AbortError') {
+      console.warn('恢复工作流运行状态失败', e)
+    }
+  }
+}
+
+// HITL 确认：续跑并复用同一套事件处理
+const onWorkflowConfirm = async (userInput) => {
+  const runId = workflowRun.value?.runId
+  if (!runId || workflowConfirming.value || streaming.value) return
+  workflowConfirming.value = true
+  workflowPrompt.value = ''
+
+  const aiMsg = { role: 'ASSISTANT', content: '', streaming: true, metrics: null, sources: [], tools: [] }
+  messages.value.push(aiMsg)
+  streaming.value = true
+  await scrollToBottom()
+
+  streamer = streamChatWorkflowHitl(
+    windowId, runId, currentSessionId.value, userInput,
+    (event, data) => handleEvent(event, data, aiMsg),
+    () => {
+      streaming.value = false
+      aiMsg.streaming = false
+      workflowConfirming.value = false
+      nextTick(scrollToBottom)
+    },
+    (err) => {
+      streaming.value = false
+      aiMsg.streaming = false
+      workflowConfirming.value = false
+      aiMsg.content = '抱歉，确认失败: ' + err.message
+    }
+  )
+  streamer.doStream()
+}
+
+const onWorkflowCancel = async (runId) => {
+  try {
+    await chatWorkflowCancel(windowId, runId)
+    ElMessage.success('工作流运行已取消')
+    if (workflowRun.value) workflowRun.value.status = 'CANCELLED'
+    if (streaming.value) { streamer?.abort(); streaming.value = false }
+  } catch (e) {
+    ElMessage.error('取消失败: ' + (e.message || ''))
+  }
+}
+
 // 刷新/关闭页面前主动中断 SSE 与轮询，避免浏览器记录 net::ERR_ABORTED
 const handleBeforeUnload = () => {
   streamer?.abort()
   stopPlanPolling()
+  stopWorkflowPolling()
 }
 
 onMounted(() => {
@@ -888,6 +1139,7 @@ onUnmounted(() => {
   globalThis.removeEventListener('beforeunload', handleBeforeUnload)
   streamer?.abort()
   stopPlanPolling()
+  stopWorkflowPolling()
 })
 </script>
 

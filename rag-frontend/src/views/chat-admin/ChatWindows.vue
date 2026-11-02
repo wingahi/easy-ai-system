@@ -16,10 +16,11 @@
         <el-table-column label="工具数" width="90">
           <template #default="{ row }">{{ parseKbs(row.toolIds).length }}</template>
         </el-table-column>
-        <el-table-column label="Agent" width="100">
+        <el-table-column label="执行模式" width="130">
           <template #default="{ row }">
-            <el-tag v-if="row.agentEnabled === 1" type="warning" size="small">🤖 已启用</el-tag>
-            <el-tag v-else type="info" size="small">未启用</el-tag>
+            <el-tag v-if="row.workflowId" type="primary" size="small">🧩 {{ workflowName(row.workflowId) }}</el-tag>
+            <el-tag v-else-if="row.agentEnabled === 1" type="warning" size="small">🤖 Agent</el-tag>
+            <el-tag v-else type="info" size="small">RAG</el-tag>
           </template>
         </el-table-column>
         <el-table-column label="分享" width="100">
@@ -118,14 +119,32 @@
         </el-form-item>
         <el-form-item label="温度"><el-slider v-model="form.temperature" :min="0" :max="2" :step="0.1" /></el-form-item>
 
-        <!-- ============ Agent 自动规划执行 ============ -->
-        <el-divider content-position="left">🤖 Agent 自动规划执行</el-divider>
-        <el-form-item label="启用 Agent">
-          <el-switch v-model="form.agentEnabled" :active-value="1" :inactive-value="0" />
-          <span style="font-size:12px;color:#909399;margin-left:12px">开启后，发送消息时 Agent 会自动拆解任务、规划步骤、调用工具并反思重试</span>
+        <!-- ============ 执行模式 ============ -->
+        <el-divider content-position="left">⚙️ 执行模式</el-divider>
+        <el-form-item label="执行模式">
+          <el-radio-group v-model="execMode">
+            <el-radio-button value="RAG">RAG 检索问答</el-radio-button>
+            <el-radio-button value="AGENT">Agent 自动规划</el-radio-button>
+            <el-radio-button value="WORKFLOW">工作流</el-radio-button>
+          </el-radio-group>
+          <div style="font-size:12px;color:#909399;margin-top:4px;line-height:1.4">
+            RAG：知识库检索后直接回答；Agent：自动拆解任务、规划步骤并调用工具；工作流：每条消息触发一次完整工作流运行
+          </div>
         </el-form-item>
 
-        <template v-if="form.agentEnabled === 1">
+        <el-form-item v-if="execMode === 'WORKFLOW'" label="绑定工作流">
+          <el-select v-model="selectedWorkflowId" clearable style="width:100%" placeholder="选择启用中的工作流">
+            <el-option v-for="wf in workflows" :key="wf.id" :label="wf.name" :value="wf.id">
+              <span style="float:left">{{ wf.name }}</span>
+              <el-tag size="small" type="success" style="float:right;margin-top:5px">v{{ wf.version || 1 }}</el-tag>
+            </el-option>
+          </el-select>
+          <div style="font-size:12px;color:#909399;margin-top:4px;line-height:1.4">
+            工作流模式下每条用户消息触发一次完整工作流运行；分享页仅允许只读工具节点（HTTP GET/HEAD）
+          </div>
+        </el-form-item>
+
+        <template v-if="execMode === 'AGENT'">
           <el-form-item label="最大步骤数">
             <el-input-number v-model="form.agentMaxSteps" :min="2" :max="20" style="width:140px" />
             <span style="font-size:12px;color:#909399;margin-left:12px">兜底上限，防止 Planner 输出过长计划</span>
@@ -171,7 +190,8 @@ import { ElMessage } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import {
   windowPage, windowCreate, windowUpdate, windowDelete, windowDisable, windowEnable,
-  windowEnableShare, windowDisableShare, windowRegenerateShare, chatModelList, kbList as fetchKbList, toolList
+  windowEnableShare, windowDisableShare, windowRegenerateShare, chatModelList, kbList as fetchKbList,
+  toolList, workflowList
 } from '../../api'
 
 const router = useRouter()
@@ -187,14 +207,18 @@ const formRef = ref()
 const chatModels = ref([])
 const kbList = ref([])
 const tools = ref([])
+const workflows = ref([])
 const selectedKbs = ref([])
 const selectedTools = ref([])
 const selectedJudges = ref([])
+// 执行模式：RAG / AGENT / WORKFLOW，与 form.agentEnabled、form.workflowId 双向映射
+const execMode = ref('RAG')
+const selectedWorkflowId = ref(null)
 
 const form = reactive({
   name: '', description: '', llmModelId: null,
   knowledgeBaseIds: '[]', systemPrompt: '', temperature: 0.7, status: 1,
-  evaluationScheme: 'NONE', judgeModelIds: '[]', toolIds: '[]',
+  evaluationScheme: 'NONE', judgeModelIds: '[]', toolIds: '[]', workflowId: null,
   agentEnabled: 0, agentMaxSteps: 15, agentPlannerModelId: null,
   agentExecutorModelId: null, agentCriticModelIds: '[]',
   agentReflectionThreshold: 7.0, agentHitlEnabled: 0
@@ -214,11 +238,14 @@ const load = async () => {
 }
 
 const loadOptions = async () => {
-  const [cmRes, kbRes, toolRes] = await Promise.all([chatModelList(), fetchKbList(), toolList()])
+  const [cmRes, kbRes, toolRes, wfRes] = await Promise.all([chatModelList(), fetchKbList(), toolList(), workflowList()])
   chatModels.value = cmRes.data
   kbList.value = kbRes.data
   tools.value = toolRes.data || []
+  workflows.value = wfRes.data || []
 }
+
+const workflowName = (id) => workflows.value.find(w => w.id === id)?.name || `#${id}`
 
 const parseKbs = (json) => {
   try { return JSON.parse(json || '[]') } catch { return [] }
@@ -253,11 +280,13 @@ const openDialog = (row) => {
     selectedKbs.value = parseKbs(row.knowledgeBaseIds)
     selectedTools.value = parseKbs(row.toolIds)
     selectedJudges.value = parseKbs(row.judgeModelIds)
+    execMode.value = row.workflowId ? 'WORKFLOW' : (row.agentEnabled === 1 ? 'AGENT' : 'RAG')
+    selectedWorkflowId.value = row.workflowId || null
   } else {
     Object.assign(form, {
       name: '', description: '', llmModelId: null, knowledgeBaseIds: '[]',
       systemPrompt: '', temperature: 0.7, status: 1,
-      evaluationScheme: 'NONE', judgeModelIds: '[]', toolIds: '[]',
+      evaluationScheme: 'NONE', judgeModelIds: '[]', toolIds: '[]', workflowId: null,
       agentEnabled: 0, agentMaxSteps: 15, agentPlannerModelId: null,
       agentExecutorModelId: null, agentCriticModelIds: '[]',
       agentReflectionThreshold: 7.0, agentHitlEnabled: 0
@@ -265,15 +294,24 @@ const openDialog = (row) => {
     selectedKbs.value = []
     selectedTools.value = []
     selectedJudges.value = []
+    execMode.value = 'RAG'
+    selectedWorkflowId.value = null
   }
   dialogVisible.value = true
 }
 
 const submit = async () => {
   await formRef.value.validate()
+  if (execMode.value === 'WORKFLOW' && !selectedWorkflowId.value) {
+    ElMessage.warning('请选择要绑定的工作流')
+    return
+  }
   form.knowledgeBaseIds = JSON.stringify(selectedKbs.value)
   form.toolIds = JSON.stringify(selectedTools.value)
   form.judgeModelIds = JSON.stringify(selectedJudges.value)
+  // 执行模式映射：工作流模式绑定 workflowId 并关闭 Agent；Agent 模式关闭工作流
+  form.workflowId = execMode.value === 'WORKFLOW' ? selectedWorkflowId.value : null
+  form.agentEnabled = execMode.value === 'AGENT' ? 1 : 0
   submitting.value = true
   try {
     if (editing.value) { form.id = editing.value.id; await windowUpdate(form) }

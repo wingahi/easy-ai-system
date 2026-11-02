@@ -179,12 +179,15 @@ CREATE TABLE IF NOT EXISTS wgh_chat_window (
   agent_critic_model_ids VARCHAR(200),
   agent_reflection_threshold DOUBLE PRECISION DEFAULT 7.0,
   agent_hitl_enabled SMALLINT DEFAULT 0,
+  workflow_id BIGINT,
   create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   create_by VARCHAR(50) DEFAULT 'system',
   update_by VARCHAR(50) DEFAULT 'system',
   deleted SMALLINT DEFAULT 0
 );
+ALTER TABLE wgh_chat_window ADD COLUMN IF NOT EXISTS workflow_id BIGINT;
+CREATE INDEX IF NOT EXISTS idx_cw_workflow_id ON wgh_chat_window(workflow_id);
 CREATE INDEX IF NOT EXISTS idx_cw_share_token ON wgh_chat_window(share_token);
 CREATE INDEX IF NOT EXISTS idx_cw_share_enabled ON wgh_chat_window(share_enabled);
 CREATE INDEX IF NOT EXISTS idx_cw_status_create ON wgh_chat_window(status, create_time);
@@ -210,6 +213,7 @@ COMMENT ON COLUMN wgh_chat_window.agent_executor_model_id IS 'Agent Step Executo
 COMMENT ON COLUMN wgh_chat_window.agent_critic_model_ids IS 'Agent Critic 模型 ID 列表（JSON 数组，反思评估用）';
 COMMENT ON COLUMN wgh_chat_window.agent_reflection_threshold IS '反思评分阈值（0-10，低于此分触发重试）';
 COMMENT ON COLUMN wgh_chat_window.agent_hitl_enabled IS '是否允许计划中 HITL（Human-In-The-Loop）节点（0 否 / 1 是）';
+COMMENT ON COLUMN wgh_chat_window.workflow_id IS '绑定的工作流 ID（非空时每条用户消息触发一次完整工作流运行）';
 COMMENT ON COLUMN wgh_chat_window.create_time IS '创建时间';
 COMMENT ON COLUMN wgh_chat_window.update_time IS '更新时间';
 COMMENT ON COLUMN wgh_chat_window.create_by IS '创建人';
@@ -541,6 +545,7 @@ COMMENT ON COLUMN wgh_workflow_trigger.deleted IS '逻辑删除（0 未删除 / 
 CREATE TABLE IF NOT EXISTS wgh_workflow_run (
   id BIGSERIAL PRIMARY KEY,
   workflow_id BIGINT NOT NULL,
+  session_id BIGINT,
   workflow_version INT,
   input_text TEXT,
   status VARCHAR(20) DEFAULT 'RUNNING',
@@ -559,11 +564,14 @@ CREATE TABLE IF NOT EXISTS wgh_workflow_run (
   update_by VARCHAR(50) DEFAULT 'system',
   deleted SMALLINT DEFAULT 0
 );
+ALTER TABLE wgh_workflow_run ADD COLUMN IF NOT EXISTS session_id BIGINT;
 CREATE INDEX IF NOT EXISTS idx_wf_run_workflow_start ON wgh_workflow_run(workflow_id, start_time);
+CREATE INDEX IF NOT EXISTS idx_wf_run_session ON wgh_workflow_run(session_id, id);
 CREATE INDEX IF NOT EXISTS idx_wf_run_status ON wgh_workflow_run(status);
 COMMENT ON TABLE wgh_workflow_run IS '工作流运行实例';
 COMMENT ON COLUMN wgh_workflow_run.id IS '主键';
 COMMENT ON COLUMN wgh_workflow_run.workflow_id IS '所属工作流 ID';
+COMMENT ON COLUMN wgh_workflow_run.session_id IS '关联的聊天会话 ID（聊天窗口触发的工作流运行，用于刷新恢复）';
 COMMENT ON COLUMN wgh_workflow_run.workflow_version IS '运行时的版本号快照';
 COMMENT ON COLUMN wgh_workflow_run.input_text IS '运行输入';
 COMMENT ON COLUMN wgh_workflow_run.status IS '状态：RUNNING / PAUSED / COMPLETED / FAILED / CANCELLED';

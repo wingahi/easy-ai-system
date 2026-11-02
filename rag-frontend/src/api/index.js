@@ -331,6 +331,36 @@ export function streamWorkflowResume(runId, userInput, onEvent, onDone, onError)
   return streamPost(`/api/workflows/runs/${runId}/hitl-confirm`, { userInput }, onEvent, onDone, onError)
 }
 
+// ==================== 聊天窗口工作流运行（阶段 A） ====================
+
+/** 查询会话最近一次工作流运行状态（调试页刷新恢复） */
+export const chatWorkflowState = (windowId, sessionId, signal) =>
+  request.get(`/chat/windows/${windowId}/sessions/${sessionId}/workflow-state`, signal ? { signal } : undefined)
+
+/** 调试页工作流 HITL 确认（SSE） */
+export function streamChatWorkflowHitl(windowId, runId, sessionId, userInput, onEvent, onDone, onError) {
+  return streamPost(`/api/chat/windows/${windowId}/workflow-runs/${runId}/hitl-confirm`,
+    { sessionId, userInput }, onEvent, onDone, onError)
+}
+
+/** 调试页取消工作流运行 */
+export const chatWorkflowCancel = (windowId, runId) =>
+  request.post(`/chat/windows/${windowId}/workflow-runs/${runId}/cancel`)
+
+/** 分享页：查询会话最近一次工作流运行状态 */
+export const shareWorkflowState = (shareToken, sessionId, signal) =>
+  request.get(`/chat/share/${shareToken}/sessions/${sessionId}/workflow-state`, signal ? { signal } : undefined)
+
+/** 分享页工作流 HITL 确认（安全模式，SSE） */
+export function streamShareWorkflowHitl(shareToken, runId, sessionId, userInput, onEvent, onDone, onError) {
+  return streamPost(`/api/chat/share/${shareToken}/workflow-runs/${runId}/hitl-confirm`,
+    { sessionId, userInput }, onEvent, onDone, onError)
+}
+
+/** 分享页取消工作流运行 */
+export const shareWorkflowCancel = (shareToken, runId, params) =>
+  request.post(`/chat/share/${shareToken}/workflow-runs/${runId}/cancel`, null, { params })
+
 // ==================== 多 Agent 协作 ====================
 
 // Crew（可复用多 Agent 配置模板）

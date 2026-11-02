@@ -65,12 +65,21 @@ public class RagChatService {
     private final ToolConfigService toolConfigService;
     private final AgentOrchestrator agentOrchestrator;
     private final com.wgh.rag.agent.config.AgentProperties agentProperties;
+    private final ChatWorkflowService chatWorkflowService;
 
     /**
      * 流式聊天 - SSE
      */
     @Transactional
     public SseEmitter streamChat(Long windowId, Long sessionId, String userMessage) {
+        return streamChat(windowId, sessionId, userMessage, false);
+    }
+
+    /**
+     * 流式聊天 - SSE（分享态标识：分享运行时对工作流工具节点启用安全模式）
+     */
+    @Transactional
+    public SseEmitter streamChat(Long windowId, Long sessionId, String userMessage, boolean shareMode) {
         ChatWindow window = windowMapper.selectById(windowId);
         if (window == null || window.getStatus() == 0) {
             throw new BusinessException("聊天窗口不可用");
@@ -106,7 +115,7 @@ public class RagChatService {
         // 子线程执行 RAG + LLM 并推送 SSE
         new Thread(() -> {
             try {
-                doRagStreamChat(window, session, userMessage, emitter, userMsg);
+                doRagStreamChat(window, session, userMessage, emitter, userMsg, shareMode);
             } catch (Exception e) {
                 log.error("流式聊天异常", e);
                 try {
@@ -174,16 +183,23 @@ public class RagChatService {
             session = createSession(window, userIdentifier);
         }
 
-        return streamChat(window.getId(), session.getId(), userMessage);
+        return streamChat(window.getId(), session.getId(), userMessage, true);
     }
 
     // ============ 核心 RAG 链路 ============
 
     private void doRagStreamChat(ChatWindow window, ChatSession session, String userMessage,
-                                  SseEmitter emitter, com.wgh.rag.chat.entity.ChatMessage userMsg) throws Exception {
+                                  SseEmitter emitter, com.wgh.rag.chat.entity.ChatMessage userMsg,
+                                  boolean shareMode) throws Exception {
 
         // 1. 发送开始事件
         emitter.send(SseEmitter.event().name("start").data(Map.of("sessionId", session.getId())));
+
+        // ===== 工作流分支：窗口绑定了工作流时，每条用户消息触发一次完整工作流运行 =====
+        if (window.getWorkflowId() != null) {
+            chatWorkflowService.stream(window, session, userMessage, emitter, shareMode);
+            return;
+        }
 
         // 读取评估方案
         EvaluationScheme evaluationScheme = EvaluationScheme.from(window.getEvaluationScheme());

@@ -33,6 +33,11 @@ public class ToolNodeExecutor implements NodeExecutor {
         Long toolId = NodeConfigSupport.asLong(cfg.get("toolId"));
         if (toolId == null) throw new IllegalArgumentException("工具节点缺少 toolId");
 
+        // 分享态安全边界：禁止写操作类 HTTP / MCP 工具
+        if (Boolean.TRUE.equals(ctx.getSafeMode())) {
+            toolNodeInvoker.assertSafeMode(toolId);
+        }
+
         Object rawArgs = cfg.get("arguments");
         Map<String, Object> args = new LinkedHashMap<>();
         if (rawArgs instanceof Map<?, ?> map) {

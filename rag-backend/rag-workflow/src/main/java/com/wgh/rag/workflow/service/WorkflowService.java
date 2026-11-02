@@ -200,23 +200,11 @@ public class WorkflowService {
     /** 启动一次运行，返回 SSE 通道。 */
     public SseEmitter run(Long workflowId, String input) {
         Workflow wf = getById(workflowId);
-        if (wf.getStatus() != null && wf.getStatus() == 0) {
-            throw new BusinessException("工作流已停用，无法运行");
-        }
         WorkflowGraph graph = parseGraph(wf.getGraphJson());
         GraphValidator.GraphValidationResult vr = graphValidator.validate(graph);
         assertValid(vr);
 
-        WorkflowRun run = new WorkflowRun();
-        run.setWorkflowId(wf.getId());
-        run.setWorkflowVersion(wf.getVersion());
-        run.setInputText(input == null ? "" : input);
-        run.setStatus("RUNNING");
-        run.setGraphSnapshot(wf.getGraphJson());
-        run.setExecutedNodes(0);
-        run.setTotalNodes(graph.getNodes().size());
-        run.setStartTime(LocalDateTime.now());
-        runMapper.insert(run);
+        WorkflowRun run = createRun(wf, graph, input, null);
 
         SseEmitter emitter = createEmitter(run.getId());
         BiConsumer<String, Map<String, Object>> sink = sinkFor(run.getId());
@@ -243,6 +231,62 @@ public class WorkflowService {
         });
 
         return emitter;
+    }
+
+    /**
+     * 聊天窗口触发的工作流运行：事件通过调用方提供的 sink 输出（映射为聊天 SSE 协议）。
+     * 返回已创建的运行记录（执行异步进行）。
+     *
+     * @param sessionId 关联聊天会话（用于刷新恢复定位运行）
+     * @param safeMode  分享态安全模式：禁止写操作类 HTTP / MCP 工具节点
+     */
+    public WorkflowRun runForChat(Long workflowId, String input, Long sessionId,
+                                  boolean safeMode, BiConsumer<String, Map<String, Object>> sink) {
+        Workflow wf = getById(workflowId);
+        WorkflowGraph graph = parseGraph(wf.getGraphJson());
+        GraphValidator.GraphValidationResult vr = graphValidator.validate(graph);
+        assertValid(vr);
+
+        WorkflowRun run = createRun(wf, graph, input, sessionId);
+
+        workflowExecutor.execute(() -> {
+            try {
+                DomainEventPublisher.emit(sink, WorkflowEvents.WORKFLOW_START, Map.of(
+                        "runId", run.getId(),
+                        "workflowId", wf.getId(),
+                        "workflowName", wf.getName(),
+                        "totalNodes", graph.getNodes().size()));
+                engine.run(run, graph, input, vr, safeMode, sink);
+            } catch (PauseSignal pause) {
+                log.info("聊天工作流 {} 在节点暂停，等待人工确认", run.getId());
+            } catch (Exception e) {
+                log.error("聊天工作流运行失败 runId={}", run.getId(), e);
+                markRunFailed(run.getId(), e.getMessage());
+                DomainEventPublisher.emit(sink, WorkflowEvents.WORKFLOW_FAILED, Map.of(
+                        "runId", run.getId(),
+                        "error", e.getMessage() != null ? e.getMessage() : "未知错误"));
+            }
+        });
+        return run;
+    }
+
+    /** 创建工作流运行实例（统一设置版本快照与节点计数）。 */
+    private WorkflowRun createRun(Workflow wf, WorkflowGraph graph, String input, Long sessionId) {
+        if (wf.getStatus() != null && wf.getStatus() == 0) {
+            throw new BusinessException("工作流已停用，无法运行");
+        }
+        WorkflowRun run = new WorkflowRun();
+        run.setWorkflowId(wf.getId());
+        run.setSessionId(sessionId);
+        run.setWorkflowVersion(wf.getVersion());
+        run.setInputText(input == null ? "" : input);
+        run.setStatus("RUNNING");
+        run.setGraphSnapshot(wf.getGraphJson());
+        run.setExecutedNodes(0);
+        run.setTotalNodes(graph.getNodes().size());
+        run.setStartTime(LocalDateTime.now());
+        runMapper.insert(run);
+        return run;
     }
 
     /** 无 SSE 的静默运行（定时 / Webhook 触发使用），返回运行记录（异步执行中）。 */
@@ -282,6 +326,28 @@ public class WorkflowService {
 
     /** HITL 确认后从断点续跑，返回新的 SSE 通道。 */
     public SseEmitter hitlConfirm(Long runId, String userInput) {
+        HitlResumeState rs = prepareHitlResume(runId, userInput);
+
+        SseEmitter emitter = createEmitter(runId);
+        BiConsumer<String, Map<String, Object>> sink = sinkFor(runId);
+
+        workflowExecutor.execute(() -> executeHitlResume(rs, sink, true));
+        return emitter;
+    }
+
+    /**
+     * 聊天窗口触发的 HITL 确认：事件通过调用方提供的 sink 输出（映射为聊天 SSE 协议），
+     * 不创建独立 SSE 通道。返回更新后的运行记录（续跑异步进行）。
+     */
+    public WorkflowRun resumeForChat(Long runId, String userInput,
+                                     BiConsumer<String, Map<String, Object>> sink) {
+        HitlResumeState rs = prepareHitlResume(runId, userInput);
+        workflowExecutor.execute(() -> executeHitlResume(rs, sink, false));
+        return rs.run;
+    }
+
+    /** 校验断点并准备好续跑所需的上下文（确认输入写入 HITL 节点输出）。 */
+    private HitlResumeState prepareHitlResume(Long runId, String userInput) {
         WorkflowRun run = runMapper.selectById(runId);
         if (run == null) throw new BusinessException("运行记录不存在");
         if (!"PAUSED".equals(run.getStatus())) throw new BusinessException("运行未处于暂停状态，无法确认");
@@ -318,26 +384,31 @@ public class WorkflowService {
             throw new BusinessException("运行图快照解析失败：" + e.getMessage());
         }
         GraphValidator.GraphValidationResult vr = graphValidator.validate(graph);
+        return new HitlResumeState(run, graph, vr, ctx);
+    }
 
-        SseEmitter emitter = createEmitter(runId);
-        BiConsumer<String, Map<String, Object>> sink = sinkFor(runId);
+    private void executeHitlResume(HitlResumeState rs,
+                                   BiConsumer<String, Map<String, Object>> sink,
+                                   boolean completeEmitter) {
+        try {
+            engine.resume(rs.run, rs.graph, rs.validation, rs.ctx, sink);
+        } catch (PauseSignal pause) {
+            log.info("工作流 {} 再次暂停", rs.run.getId());
+        } catch (Exception e) {
+            log.error("工作流恢复执行失败 runId={}", rs.run.getId(), e);
+            markRunFailed(rs.run.getId(), e.getMessage());
+            DomainEventPublisher.emit(sink, WorkflowEvents.WORKFLOW_FAILED, Map.of(
+                    "runId", rs.run.getId(),
+                    "error", e.getMessage() != null ? e.getMessage() : "未知错误"));
+        } finally {
+            if (completeEmitter) completeEmitter(rs.run.getId());
+        }
+    }
 
-        workflowExecutor.execute(() -> {
-            try {
-                engine.resume(run, graph, vr, ctx, sink);
-            } catch (PauseSignal pause) {
-                log.info("工作流 {} 再次暂停", runId);
-            } catch (Exception e) {
-                log.error("工作流恢复执行失败 runId={}", runId, e);
-                markRunFailed(runId, e.getMessage());
-                DomainEventPublisher.emit(sink, WorkflowEvents.WORKFLOW_FAILED, Map.of(
-                        "runId", runId, "error", e.getMessage() != null ? e.getMessage() : "未知错误"));
-            } finally {
-                completeEmitter(runId);
-            }
-        });
-
-        return emitter;
+    /** HITL 续跑所需的运行状态快照 */
+    private record HitlResumeState(WorkflowRun run, WorkflowGraph graph,
+                                   GraphValidator.GraphValidationResult validation,
+                                   RunContext ctx) {
     }
 
     /** 取消运行。 */
@@ -361,6 +432,23 @@ public class WorkflowService {
     }
 
     // ==================== 查询 ====================
+
+    public WorkflowRun getRun(Long runId) {
+        WorkflowRun run = runMapper.selectById(runId);
+        if (run == null) throw new BusinessException("运行记录不存在");
+        return run;
+    }
+
+    /** 按聊天会话查询最近一次工作流运行状态（页面刷新恢复用），无记录返回 null。 */
+    public Map<String, Object> getRunStateBySession(Long sessionId) {
+        if (sessionId == null) return null;
+        WorkflowRun run = runMapper.selectOne(new LambdaQueryWrapper<WorkflowRun>()
+                .eq(WorkflowRun::getSessionId, sessionId)
+                .orderByDesc(WorkflowRun::getId)
+                .last("LIMIT 1"));
+        if (run == null) return null;
+        return getRunState(run.getId());
+    }
 
     public Map<String, Object> getRunState(Long runId) {
         WorkflowRun run = runMapper.selectById(runId);

@@ -17,6 +17,9 @@ public class WorkflowRun {
 
     private Long workflowId;
 
+    /** 关联的聊天会话 ID（聊天窗口触发的工作流运行，用于刷新恢复） */
+    private Long sessionId;
+
     /** 运行时的工作流版本快照 */
     private Integer workflowVersion;
 

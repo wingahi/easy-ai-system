@@ -65,9 +65,18 @@
         </div>
       </div>
 
-      <!-- Agent 执行计划（窗口启用 Agent 时展示，与调试页一致） -->
-      <aside v-if="window?.agentEnabled === 1" class="agent-side">
+      <!-- 工作流运行 / Agent 执行计划（窗口绑定工作流或启用 Agent 时展示，与调试页一致） -->
+      <aside v-if="window?.agentEnabled === 1 || window?.workflowId" class="agent-side">
+        <WorkflowRunPanel
+          v-if="window?.workflowId"
+          :run="workflowRun"
+          :prompt="workflowPrompt"
+          :confirming="workflowConfirming"
+          @confirm="onWorkflowConfirm"
+          @cancel="onWorkflowCancel"
+        />
         <AgentPlanTree
+          v-if="window?.agentEnabled === 1 && !window?.workflowId"
           :plan-id="agentPlan.planId"
           :plan-status="agentPlan.status"
           :user-goal="agentPlan.userGoal"
@@ -105,10 +114,12 @@ import { ElMessage } from 'element-plus'
 import { Promotion, Plus, Delete, Loading } from '@element-plus/icons-vue'
 import { marked } from 'marked'
 import AgentPlanTree from '../../components/AgentPlanTree.vue'
+import WorkflowRunPanel from '../../components/WorkflowRunPanel.vue'
 import {
   windowGetByShareToken, streamShareApi,
   shareSessions, shareCreateSession, shareDeleteSession, shareMessages,
-  agentGetPlanBySession, agentGetPlanState, agentCancelPlan, agentRetryStep, agentSkipStep
+  agentGetPlanBySession, agentGetPlanState, agentCancelPlan, agentRetryStep, agentSkipStep,
+  shareWorkflowState, streamShareWorkflowHitl, shareWorkflowCancel
 } from '../../api'
 
 const route = useRoute()
@@ -129,7 +140,31 @@ const agentPlan = ref({
   reflectionThreshold: 7.0
 })
 
+// ===== 工作流运行状态 =====
+const workflowRun = ref(null)
+const workflowPrompt = ref('')
+const workflowConfirming = ref(false)
+let workflowPollTimer = null
+let workflowAbort = null
+
 const statusInfo = computed(() => {
+  // 工作流模式：以运行状态为准
+  if (window.value?.workflowId) {
+    const run = workflowRun.value
+    if (streaming.value) {
+      const running = (run?.nodes || []).find(n => n.status === 'RUNNING')
+      return { text: '🧩 工作流执行中', detail: running ? `当前节点：${running.nodeName || running.nodeId}` : '', spinning: true, tone: 'running' }
+    }
+    switch (run?.status) {
+      case 'PAUSED': return { text: '✋ 等待人工确认（HITL）', spinning: false, tone: 'paused' }
+      case 'COMPLETED': return { text: '✅ 工作流已完成', detail: `执行节点 ${run.executedNodes || 0}/${run.totalNodes || 0}`, spinning: false, tone: 'done' }
+      case 'FAILED': return { text: '❌ 工作流执行失败', detail: run.error || '', spinning: false, tone: 'failed' }
+      case 'CANCELLED': return { text: '⛔ 运行已取消', spinning: false, tone: 'paused' }
+      case 'RUNNING': return { text: '⚡ 工作流执行中', spinning: true, tone: 'running' }
+      default: return { text: '空闲', detail: '', spinning: false, tone: 'idle' }
+    }
+  }
+
   const plan = agentPlan.value
   const steps = plan.steps || []
   const activeStep = steps.find(s => s.stepId === plan.activeStepId || s.status === 'RUNNING')
@@ -179,6 +214,7 @@ const load = async () => {
     await loadSessions()
     await loadHistory()
     await restoreAgentPlan()
+    await restoreWorkflowRun()
   } catch (e) {
     ElMessage.error('分享链接无效或已停用')
   }
@@ -222,6 +258,7 @@ const selectSession = async (s) => {
   messages.value = []
   await loadHistory()
   await restoreAgentPlan()
+  await restoreWorkflowRun()
 }
 
 // 新建会话：先调后端创建，再清空消息区
@@ -237,6 +274,7 @@ const newSession = async () => {
     sessions.value = [created, ...sessions.value]
     messages.value = []
     await restoreAgentPlan()
+    await restoreWorkflowRun()
   } catch (e) {
     ElMessage.error('新建会话失败')
   }
@@ -511,6 +549,199 @@ const onHitlConfirmFromTree = async () => {
   if (isPlanActive(agentPlan.value.status)) startPlanPolling()
 }
 
+// ===== 工作流运行状态 / 事件 =====
+const upsertWorkflowNode = (nodeId, patch) => {
+  if (!workflowRun.value) return null
+  const nodes = workflowRun.value.nodes || []
+  const idx = nodes.findIndex(n => n.nodeId === nodeId)
+  if (idx >= 0) {
+    nodes[idx] = { ...nodes[idx], ...patch }
+    return nodes[idx]
+  }
+  const created = {
+    nodeId, nodeType: '', nodeName: nodeId, status: 'PENDING',
+    iteration: null, durationMs: null, error: null, output: null, ...patch
+  }
+  nodes.push(created)
+  workflowRun.value.nodes = nodes
+  return created
+}
+
+const applyWorkflowState = (state) => {
+  const nodes = (state.nodes || []).map(n => ({
+    nodeId: n.nodeId, nodeType: n.nodeType, nodeName: n.nodeName,
+    status: n.status, iteration: n.iteration, durationMs: n.durationMs,
+    error: n.error, output: n.output
+  }))
+  workflowRun.value = {
+    runId: state.runId,
+    status: state.status,
+    totalNodes: state.totalNodes,
+    executedNodes: state.executedNodes,
+    error: state.error,
+    nodes
+  }
+  workflowPrompt.value = ''
+}
+
+const stopWorkflowPolling = () => {
+  if (workflowPollTimer) {
+    clearInterval(workflowPollTimer)
+    workflowPollTimer = null
+  }
+  if (workflowAbort) {
+    workflowAbort.abort()
+    workflowAbort = null
+  }
+}
+
+const startWorkflowPolling = () => {
+  stopWorkflowPolling()
+  workflowPollTimer = setInterval(async () => {
+    if (!workflowRun.value?.runId || !currentSessionId.value) { stopWorkflowPolling(); return }
+    try {
+      workflowAbort = new AbortController()
+      const res = await shareWorkflowState(token, currentSessionId.value, workflowAbort.signal)
+      const state = res.data
+      if (!state) { stopWorkflowPolling(); return }
+      applyWorkflowState(state)
+      if (state.status !== 'RUNNING' && state.status !== 'PAUSED') {
+        stopWorkflowPolling()
+        if (!streaming.value) await loadHistory()
+        loadSessions()
+      }
+    } catch (e) {
+      if (e.name !== 'CanceledError' && e.name !== 'AbortError') {
+        console.warn('轮询工作流状态失败', e)
+      }
+    }
+  }, 2000)
+}
+
+const restoreWorkflowRun = async () => {
+  stopWorkflowPolling()
+  if (!window.value?.workflowId || !currentSessionId.value) {
+    workflowRun.value = null
+    workflowPrompt.value = ''
+    return
+  }
+  try {
+    workflowAbort = new AbortController()
+    const res = await shareWorkflowState(token, currentSessionId.value, workflowAbort.signal)
+    const state = res.data
+    if (!state) {
+      workflowRun.value = null
+      return
+    }
+    applyWorkflowState(state)
+    if (state.status === 'RUNNING') startWorkflowPolling()
+  } catch (e) {
+    if (e.name !== 'CanceledError' && e.name !== 'AbortError') {
+      console.warn('恢复工作流运行状态失败', e)
+    }
+  }
+}
+
+// 工作流 SSE 事件，返回 true 表示已消费
+const handleWorkflowEvent = (event, data, aiMsg) => {
+  workflowConfirming.value = false
+  switch (event) {
+    case 'workflow_start':
+      workflowRun.value = {
+        runId: data.runId, status: 'RUNNING',
+        totalNodes: data.totalNodes || 0, executedNodes: 0, nodes: [], error: null
+      }
+      workflowPrompt.value = ''
+      return true
+    case 'node_start':
+      upsertWorkflowNode(data.nodeId, {
+        nodeType: data.nodeType, nodeName: data.nodeName,
+        iteration: data.iteration, status: 'RUNNING'
+      })
+      return true
+    case 'node_output':
+      upsertWorkflowNode(data.nodeId, {
+        nodeType: data.nodeType, nodeName: data.nodeName, status: 'SUCCESS',
+        durationMs: data.durationMs, iteration: data.iteration, output: data.output
+      })
+      if (workflowRun.value) workflowRun.value.executedNodes = (workflowRun.value.executedNodes || 0) + 1
+      return true
+    case 'node_error':
+      upsertWorkflowNode(data.nodeId, { nodeName: data.nodeName, status: 'FAILED', error: data.error })
+      return true
+    case 'node_hitl_pending':
+      upsertWorkflowNode(data.nodeId, { nodeName: data.nodeName, status: 'HITL_PENDING', output: { prompt: data.prompt } })
+      if (workflowRun.value) workflowRun.value.status = 'PAUSED'
+      workflowPrompt.value = data.prompt || ''
+      aiMsg.content = aiMsg.content || '⏸ 工作流执行已暂停，请在右侧完成人工确认后继续。'
+      aiMsg.streaming = false
+      return true
+    case 'workflow_complete':
+      if (workflowRun.value) {
+        workflowRun.value.status = 'COMPLETED'
+        workflowRun.value.executedNodes = data.executedNodes ?? workflowRun.value.executedNodes
+      }
+      return true
+    case 'workflow_failed':
+      if (workflowRun.value) {
+        workflowRun.value.status = 'FAILED'
+        workflowRun.value.error = data.error
+      }
+      return true
+    case 'workflow_cancelled':
+      if (workflowRun.value) workflowRun.value.status = 'CANCELLED'
+      return true
+    default:
+      return false
+  }
+}
+
+// HITL 确认：续跑（分享态安全模式）
+const onWorkflowConfirm = async (userInput) => {
+  const runId = workflowRun.value?.runId
+  if (!runId || workflowConfirming.value || streaming.value) return
+  workflowConfirming.value = true
+  workflowPrompt.value = ''
+
+  const aiMsg = { role: 'ASSISTANT', content: '', streaming: true, sources: [] }
+  messages.value.push(aiMsg)
+  streaming.value = true
+  await scroll()
+
+  streamer = streamShareWorkflowHitl(
+    token, runId, currentSessionId.value, userInput,
+    (event, data) => {
+      if (event === 'start') {
+        if (data?.sessionId) currentSessionId.value = data.sessionId
+      } else if (handleWorkflowEvent(event, data, aiMsg)) {
+        // 已消费
+      } else if (event === 'content') aiMsg.content += (data && typeof data === 'object' ? (data.text ?? '') : data)
+      else if (event === 'sources') aiMsg.sources = data
+      else if (event === 'done') {
+        streaming.value = false
+        aiMsg.streaming = false
+        if (!aiMsg.content && data?.fullResponse) aiMsg.content = data.fullResponse
+        loadSessions()
+      }
+      nextTick(scroll)
+    },
+    () => { streaming.value = false; aiMsg.streaming = false; workflowConfirming.value = false; nextTick(scroll) },
+    (err) => { streaming.value = false; aiMsg.streaming = false; workflowConfirming.value = false; aiMsg.content = '确认失败: ' + err.message }
+  )
+  streamer.doStream()
+}
+
+const onWorkflowCancel = async (runId) => {
+  try {
+    await shareWorkflowCancel(token, runId, { sessionId: currentSessionId.value || undefined })
+    ElMessage.success('工作流运行已取消')
+    if (workflowRun.value) workflowRun.value.status = 'CANCELLED'
+    if (streaming.value) { streamer?.abort(); streaming.value = false }
+  } catch (e) {
+    ElMessage.error('取消失败: ' + (e.message || ''))
+  }
+}
+
 const send = async () => {
   const text = input.value.trim()
   if (!text || streaming.value || !window.value) return
@@ -522,6 +753,11 @@ const send = async () => {
     planId: null, status: '', userGoal: '', steps: [], activeStepId: null,
     reflectionThreshold: window.value?.agentReflectionThreshold ?? 7.0
   }
+
+  // 重置工作流运行状态（每条消息触发一次新的运行）
+  stopWorkflowPolling()
+  workflowRun.value = null
+  workflowPrompt.value = ''
   
   messages.value.push({ role: 'USER', content: text })
   const aiMsg = { role: 'ASSISTANT', content: '', streaming: true, sources: [] }
@@ -537,6 +773,8 @@ const send = async () => {
         if (data?.sessionId) currentSessionId.value = data.sessionId
       } else if (handleAgentEvent(event, data)) {
         // Agent 专属事件已消费
+      } else if (handleWorkflowEvent(event, data, aiMsg)) {
+        // 工作流专属事件已消费
       } else if (event === 'content') aiMsg.content += (data && typeof data === 'object' ? (data.text ?? '') : data)
       else if (event === 'sources') aiMsg.sources = data
       else if (event === 'done') {

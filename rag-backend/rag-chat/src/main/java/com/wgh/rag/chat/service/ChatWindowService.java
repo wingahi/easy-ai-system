@@ -1,6 +1,7 @@
 package com.wgh.rag.chat.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.wgh.rag.chat.entity.ChatMessage;
 import com.wgh.rag.chat.entity.ChatSession;
@@ -11,6 +12,8 @@ import com.wgh.rag.chat.mapper.ChatWindowMapper;
 import com.wgh.rag.common.exception.BusinessException;
 import com.wgh.rag.common.result.PageResult;
 import com.wgh.rag.common.result.ResultCode;
+import com.wgh.rag.workflow.entity.Workflow;
+import com.wgh.rag.workflow.service.WorkflowService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -30,6 +33,7 @@ public class ChatWindowService {
     private final ChatWindowMapper windowMapper;
     private final ChatSessionMapper sessionMapper;
     private final ChatMessageMapper messageMapper;
+    private final WorkflowService workflowService;
 
     public PageResult<ChatWindow> page(Long page, Long size, String keyword) {
         LambdaQueryWrapper<ChatWindow> wrapper = new LambdaQueryWrapper<>();
@@ -50,6 +54,8 @@ public class ChatWindowService {
 
     @Transactional
     public ChatWindow create(ChatWindow window) {
+        validateWorkflow(window);
+
         // 生成 share token
         window.setShareToken(UUID.randomUUID().toString().replace("-", ""));
         window.setShareEnabled(false);
@@ -70,8 +76,29 @@ public class ChatWindowService {
         ChatWindow existing = windowMapper.selectById(window.getId());
         if (existing == null) throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "聊天窗口不存在");
 
+        validateWorkflow(window);
         windowMapper.updateById(window);
+
+        // MyBatis-Plus updateById 会忽略 null 字段：切换回 RAG/Agent 模式时需显式清空 workflow_id
+        if (window.getWorkflowId() == null) {
+            windowMapper.update(null, new LambdaUpdateWrapper<ChatWindow>()
+                    .eq(ChatWindow::getId, window.getId())
+                    .set(ChatWindow::getWorkflowId, null));
+        }
         return window;
+    }
+
+    /**
+     * 校验绑定的工作流存在且启用；工作流模式下不与 Agent 模式并存。
+     */
+    private void validateWorkflow(ChatWindow window) {
+        if (window.getWorkflowId() == null) return;
+        Workflow wf = workflowService.getById(window.getWorkflowId());
+        if (wf.getStatus() == null || wf.getStatus() != 1) {
+            throw new BusinessException("所选工作流已停用，无法绑定");
+        }
+        // 工作流模式下每条消息直接运行工作流，不走 Agent 规划链路
+        window.setAgentEnabled(0);
     }
 
     /**
@@ -226,6 +253,18 @@ public class ChatWindowService {
                 .eq(ChatSession::getStatus, "ACTIVE")
                 .orderByDesc(ChatSession::getUpdateTime)
                 .last("LIMIT 50"));
+    }
+
+    /**
+     * 校验会话归属（窗口 + 用户），用于工作流运行状态查询与 HITL 确认
+     */
+    public ChatSession getOwnedSession(Long windowId, Long sessionId, String userIdentifier) {
+        ChatSession session = sessionMapper.selectById(sessionId);
+        if (session == null || !windowId.equals(session.getChatWindowId())
+                || !userIdentifier.equals(session.getUserIdentifier())) {
+            throw new BusinessException(ResultCode.OPERATION_NOT_ALLOWED, "会话不存在或无权访问");
+        }
+        return session;
     }
 
     /**

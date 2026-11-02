@@ -102,4 +102,7 @@ public class ChatWindow extends BaseEntity {
     /** 是否允许计划中 HITL 节点（0 否 / 1 是） */
     @TableField(value = "agent_hitl_enabled")
     private Integer agentHitlEnabled;
+    /** 绑定的工作流 ID（非空时每条用户消息触发一次完整工作流运行） */
+    @TableField(value = "workflow_id")
+    private Long workflowId;
 }
