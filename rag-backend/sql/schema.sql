@@ -223,6 +223,7 @@ CREATE TABLE IF NOT EXISTS wgh_chat_window (
   hybrid_enabled SMALLINT DEFAULT 0,
   query_transform_mode VARCHAR(20) DEFAULT 'NONE',
   rewrite_model_id BIGINT,
+  semantic_cache_enabled SMALLINT DEFAULT 0,
   create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   create_by VARCHAR(50) DEFAULT 'system',
@@ -235,6 +236,7 @@ ALTER TABLE wgh_chat_window ADD COLUMN IF NOT EXISTS rerank_model_id BIGINT;
 ALTER TABLE wgh_chat_window ADD COLUMN IF NOT EXISTS hybrid_enabled SMALLINT DEFAULT 0;
 ALTER TABLE wgh_chat_window ADD COLUMN IF NOT EXISTS query_transform_mode VARCHAR(20) DEFAULT 'NONE';
 ALTER TABLE wgh_chat_window ADD COLUMN IF NOT EXISTS rewrite_model_id BIGINT;
+ALTER TABLE wgh_chat_window ADD COLUMN IF NOT EXISTS semantic_cache_enabled SMALLINT DEFAULT 0;
 CREATE INDEX IF NOT EXISTS idx_cw_workflow_id ON wgh_chat_window(workflow_id);
 CREATE INDEX IF NOT EXISTS idx_cw_share_token ON wgh_chat_window(share_token);
 CREATE INDEX IF NOT EXISTS idx_cw_share_enabled ON wgh_chat_window(share_enabled);
@@ -267,6 +269,7 @@ COMMENT ON COLUMN wgh_chat_window.rerank_model_id IS 'Rerank 模型 ID（指向 
 COMMENT ON COLUMN wgh_chat_window.hybrid_enabled IS '是否启用混合检索（向量 + pg_trgm 关键词，RRF 融合）（0 否 / 1 是）';
 COMMENT ON COLUMN wgh_chat_window.query_transform_mode IS '查询变换模式：NONE / REWRITE / MULTI_QUERY / HYDE';
 COMMENT ON COLUMN wgh_chat_window.rewrite_model_id IS '查询变换执行模型 ID（CHAT 类型；为空则复用窗口聊天模型）';
+COMMENT ON COLUMN wgh_chat_window.semantic_cache_enabled IS '是否启用语义缓存（相似问题直接返回缓存答案，跳过检索+LLM）（0 否 / 1 是）';
 COMMENT ON COLUMN wgh_chat_window.create_time IS '创建时间';
 COMMENT ON COLUMN wgh_chat_window.update_time IS '更新时间';
 COMMENT ON COLUMN wgh_chat_window.create_by IS '创建人';
@@ -872,4 +875,29 @@ ALTER TABLE wgh_chat_message ADD COLUMN IF NOT EXISTS cost DOUBLE PRECISION;
 ALTER TABLE wgh_chat_message ADD COLUMN IF NOT EXISTS model_name VARCHAR(100);
 COMMENT ON COLUMN wgh_chat_message.cost IS '本条消息估算成本（元，按模型价格表回填；无价格配置为 NULL）';
 COMMENT ON COLUMN wgh_chat_message.model_name IS '生成本条消息的模型名（厂商侧 modelName，用于成本按模型聚合）';
+
+-- ============ 语义缓存 ============
+
+-- 向量存 pgvector 独立表 wgh_semantic_cache_vec（由 PgVectorEmbeddingStore 自动建表，
+-- 维度取窗口知识库的 embedding 模型维度；metadata.windowId 做窗口隔离）
+CREATE TABLE IF NOT EXISTS wgh_semantic_cache (
+  id BIGSERIAL PRIMARY KEY,
+  window_id BIGINT NOT NULL,
+  query_text VARCHAR(2000) NOT NULL,
+  answer_text TEXT NOT NULL,
+  embedding_id VARCHAR(64),
+  hit_count INT DEFAULT 0,
+  create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  create_by VARCHAR(50) DEFAULT 'system',
+  update_by VARCHAR(50) DEFAULT 'system',
+  deleted SMALLINT DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_semantic_cache_window ON wgh_semantic_cache(window_id, deleted);
+COMMENT ON TABLE wgh_semantic_cache IS '语义缓存（相似问题直接返回缓存答案，跳过检索+LLM；向量存 wgh_semantic_cache_vec）';
+COMMENT ON COLUMN wgh_semantic_cache.window_id IS '聊天窗口 ID（缓存按窗口隔离）';
+COMMENT ON COLUMN wgh_semantic_cache.query_text IS '用户问题（截断 2000 字）';
+COMMENT ON COLUMN wgh_semantic_cache.answer_text IS '缓存的答案全文';
+COMMENT ON COLUMN wgh_semantic_cache.embedding_id IS 'wgh_semantic_cache_vec 中的向量 ID（uuid）';
+COMMENT ON COLUMN wgh_semantic_cache.hit_count IS '命中次数';
 

@@ -21,6 +21,7 @@ import com.wgh.rag.kb.service.RagRetrieveService;
 import com.wgh.rag.kb.service.RetrievalOptions;
 import com.wgh.rag.kb.service.RetrievalQuality;
 import com.wgh.rag.kb.service.RetrieveResult;
+import com.wgh.rag.kb.service.SemanticCacheService;
 import com.wgh.rag.llm.entity.LlmModel;
 import com.wgh.rag.llm.factory.ModelCacheManager;
 import com.wgh.rag.llm.service.LlmModelService;
@@ -78,6 +79,7 @@ public class RagChatService {
     private final QuotaService quotaService;
     private final ModelPriceService modelPriceService;
     private final LlmModelService llmModelService;
+    private final SemanticCacheService semanticCacheService;
 
     /**
      * 流式聊天 - SSE
@@ -223,6 +225,17 @@ public class RagChatService {
         // 2. 知识库搜索（窗口级 Rerank 增强，失败自动降级为原始向量序）
         List<Long> kbIds = parseKbIds(window.getKnowledgeBaseIds());
         final boolean hasKb = !kbIds.isEmpty();
+
+        // ===== 语义缓存：命中则直接返回缓存答案，跳过检索 + LLM =====
+        if (hasKb && Boolean.TRUE.equals(window.getSemanticCacheEnabled())) {
+            SemanticCacheService.CacheHit cacheHit =
+                    semanticCacheService.lookup(window.getId(), kbIds, userMessage);
+            if (cacheHit != null) {
+                sendCachedAnswer(session, emitter, cacheHit);
+                return;
+            }
+        }
+
         final RetrieveResult retrieveResult = hasKb
                 ? ragRetrieveService.searchMultiple(kbIds, userMessage,
                         new RetrievalOptions(resolveRerankModelId(window), resolveHybridEnabled(window),
@@ -600,6 +613,12 @@ public class RagChatService {
         settleCostAndQuota(window, originalUserMessage, retrievedMatches, fullAnswer, saved,
                 tokenUsageAcc, quotaUsername);
 
+        // 语义缓存：写入问答对（缓存命中路径提前 return，不会走到这里）
+        if (Boolean.TRUE.equals(window.getSemanticCacheEnabled())) {
+            semanticCacheService.save(window.getId(), parseKbIds(window.getKnowledgeBaseIds()),
+                    originalUserMessage, fullAnswer);
+        }
+
         // done 事件：有 accuracyRate 才附带，否则不下发该字段
         Map<String, Object> doneData = new HashMap<>();
         doneData.put("fullResponse", fullAnswer);
@@ -782,6 +801,23 @@ public class RagChatService {
             sb.append(segment.text()).append("\n\n");
         }
         return sb.toString();
+    }
+
+    /**
+     * 语义缓存命中：直接下发缓存答案（cache + content + sources + done），跳过检索 + LLM。
+     * 同时落库 assistant 消息，保证会话历史完整。
+     */
+    private void sendCachedAnswer(ChatSession session, SseEmitter emitter,
+                                  SemanticCacheService.CacheHit hit) {
+        safeSend(emitter, "cache", Map.of("cacheHit", true, "similarity", hit.score()));
+        safeSend(emitter, "content", Map.of("text", hit.answer()));
+        safeSend(emitter, "sources", List.of());
+        saveAssistantMessage(session, hit.answer(), List.of(), null, null, null, null);
+        Map<String, Object> doneData = new HashMap<>();
+        doneData.put("fullResponse", hit.answer());
+        doneData.put("cacheHit", true);
+        safeSend(emitter, "done", doneData);
+        safeComplete(emitter);
     }
 
     /**

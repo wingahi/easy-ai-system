@@ -125,6 +125,10 @@
           <el-switch v-model="form.hybridEnabled" />
           <span style="font-size:12px;color:#909399;margin-left:12px">向量 + 关键词（pg_trgm）双路召回，RRF 融合；提升专有名词/编号类查询召回</span>
         </el-form-item>
+        <el-form-item label="语义缓存">
+          <el-switch v-model="form.semanticCacheEnabled" />
+          <span style="font-size:12px;color:#909399;margin-left:12px">相似问题（余弦相似度达阈值）直接返回缓存答案，跳过检索+LLM；需绑定知识库</span>
+        </el-form-item>
         <el-form-item label="Rerank 重排序">
           <el-switch v-model="form.rerankEnabled" />
           <span style="font-size:12px;color:#909399;margin-left:12px">候选放大至 topK×3 后由重排序模型精排；失败自动降级为原始向量序</span>
@@ -254,7 +258,7 @@ const form = reactive({
   knowledgeBaseIds: '[]', systemPrompt: '', temperature: 0.7, status: 1,
   evaluationScheme: 'NONE', judgeModelIds: '[]', toolIds: '[]', workflowId: null,
   rerankEnabled: false, rerankModelId: null, hybridEnabled: false,
-  queryTransformMode: 'NONE', rewriteModelId: null,
+  queryTransformMode: 'NONE', rewriteModelId: null, semanticCacheEnabled: false,
   agentEnabled: 0, agentMaxSteps: 15, agentPlannerModelId: null,
   agentExecutorModelId: null, agentCriticModelIds: '[]',
   agentReflectionThreshold: 7.0, agentHitlEnabled: 0
@@ -326,7 +330,7 @@ const openDialog = (row) => {
       systemPrompt: '', temperature: 0.7, status: 1,
       evaluationScheme: 'NONE', judgeModelIds: '[]', toolIds: '[]', workflowId: null,
       rerankEnabled: false, rerankModelId: null, hybridEnabled: false,
-      queryTransformMode: 'NONE', rewriteModelId: null,
+      queryTransformMode: 'NONE', rewriteModelId: null, semanticCacheEnabled: false,
       agentEnabled: 0, agentMaxSteps: 15, agentPlannerModelId: null,
       agentExecutorModelId: null, agentCriticModelIds: '[]',
       agentReflectionThreshold: 7.0, agentHitlEnabled: 0

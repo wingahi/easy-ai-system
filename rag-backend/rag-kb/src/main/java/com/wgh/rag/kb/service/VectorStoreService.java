@@ -86,6 +86,37 @@ public class VectorStoreService {
     }
 
     /**
+     * 按 embedding_id 批量删除向量（语义缓存淘汰用）
+     */
+    public void deleteByEmbeddingIds(String tableName, java.util.Collection<String> embeddingIds) {
+        if (tableName == null || embeddingIds == null || embeddingIds.isEmpty()) return;
+        try (var conn = dataSource.getConnection();
+             var check = conn.createStatement();
+             var rs = check.executeQuery(
+                     "SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='" + tableName + "'")) {
+            if (!rs.next()) {
+                log.debug("向量表 {} 不存在，跳过向量删除", tableName);
+                return;
+            }
+        } catch (Exception e) {
+            log.warn("检查向量表 {} 失败: {}", tableName, e.getMessage());
+            return;
+        }
+        try (var conn = dataSource.getConnection();
+             var ps = conn.prepareStatement(
+                     "DELETE FROM " + tableName + " WHERE embedding_id = ?::uuid")) {
+            for (String id : embeddingIds) {
+                ps.setString(1, id);
+                ps.addBatch();
+            }
+            int[] n = ps.executeBatch();
+            log.info("✓ 删除 {} 中 {} 条向量", tableName, n.length);
+        } catch (Exception e) {
+            log.warn("按 embedding_id 删除向量失败 table={}: {}", tableName, e.getMessage());
+        }
+    }
+
+    /**
      * 真实向量化入库：EmbeddingModel embedAll() + PgVectorEmbeddingStore.addAll()
      */
     public void insertVectors(String tableName,

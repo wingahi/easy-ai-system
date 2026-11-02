@@ -32,6 +32,11 @@ public class RagProperties {
      */
     private Quota quota = new Quota();
 
+    /**
+     * 语义缓存
+     */
+    private Cache cache = new Cache();
+
     @Data
     public static class Retrieve {
         /** 检索返回 topK */
@@ -87,5 +92,15 @@ public class RagProperties {
         private Integer chatDailyLimit = 200;
         /** 每人每天 token 上限（<=0 不限制） */
         private Long tokenDailyLimit = 2_000_000L;
+    }
+
+    @Data
+    public static class Cache {
+        /** 语义缓存全局开关（窗口级 semanticCacheEnabled 需同时开启） */
+        private Boolean enabled = true;
+        /** 命中阈值（余弦相似度 0-1，越高越严格） */
+        private Double similarityThreshold = 0.95;
+        /** 每窗口最大缓存条数，超出删除最旧 */
+        private Integer maxPerWindow = 500;
     }
 }

@@ -96,6 +96,10 @@ wgh:
       long-term-facts-tokens: 400                               # 分层压缩：远期对话 Token 预算（关键事实）
       summary-max-tokens: 600                                   # 分层压缩：LLM 摘要最大输出 Token
       summary-timeout-seconds: 20                               # 分层压缩：摘要 LLM 调用超时（秒）
+    cache:
+      enabled: ${WGH_CACHE_ENABLED:true}                        # 语义缓存全局开关（窗口级需同时开启）
+      similarity-threshold: ${WGH_CACHE_THRESHOLD:0.95}         # 命中阈值（余弦相似度，越高越严格）
+      max-per-window: ${WGH_CACHE_MAX_PER_WINDOW:500}           # 每窗口最大缓存条数，超出删最旧
   
   file:
     upload-dir: ${WGH_UPLOAD_DIR:./uploads}

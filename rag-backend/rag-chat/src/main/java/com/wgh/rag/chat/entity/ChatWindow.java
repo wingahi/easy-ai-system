@@ -125,4 +125,8 @@ public class ChatWindow extends BaseEntity {
     /** 查询变换执行模型 ID（CHAT 类型；为空则复用窗口聊天模型） */
     @TableField(value = "rewrite_model_id")
     private Long rewriteModelId;
+
+    /** 是否启用语义缓存（相似问题直接返回缓存答案，跳过检索+LLM）（0 否 / 1 是） */
+    @TableField(value = "semantic_cache_enabled", typeHandler = BooleanToSmallintTypeHandler.class)
+    private Boolean semanticCacheEnabled;
 }

@@ -63,6 +63,14 @@
                 <span></span><span></span><span></span>
               </div>
               
+              <!-- 语义缓存命中徽标（独立于 metrics，缓存命中时无检索指标） -->
+              <div v-if="msg.role === 'ASSISTANT' && msg.cacheHit" class="msg-metrics">
+                <el-tooltip placement="top"
+                            content="相似问题命中语义缓存，直接返回缓存答案，未经过检索与 LLM">
+                  <el-tag size="small" type="warning">⚡ 语义缓存命中</el-tag>
+                </el-tooltip>
+              </div>
+
               <!-- 指标展示（AI消息下方） -->
               <div v-if="msg.role === 'ASSISTANT' && msg.metrics" class="msg-metrics">
                 <el-tooltip v-if="msg.metrics.coverageRate != null" placement="top"
@@ -785,6 +793,7 @@ const handleEvent = (event, data, aiMsg) => {
       streaming.value = false
       aiMsg.streaming = false
       if (data.sessionId) currentSessionId.value = data.sessionId
+      if (data.cacheHit) aiMsg.cacheHit = true
       // Agent 路线后端不逐 token 推送 content，只下发 done.fullResponse，这里兜底填充
       if (!aiMsg.content && data.fullResponse) {
         aiMsg.content = data.fullResponse
