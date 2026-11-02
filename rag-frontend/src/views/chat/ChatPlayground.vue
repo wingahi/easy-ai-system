@@ -74,6 +74,9 @@
                 <el-tag size="small" type="success" v-if="msg.metrics.rerankApplied">
                   已重排序 {{ msg.metrics.rerankLatencyMs }}ms
                 </el-tag>
+                <el-tag size="small" type="primary" v-if="msg.metrics.hybridApplied">
+                  混合检索 · 关键词命中 {{ msg.metrics.keywordHitCount }}
+                </el-tag>
                 <el-tag size="small" type="success" v-if="msg.metrics.accuracyRate != null">
                   正确率 {{ (msg.metrics.accuracyRate * 100).toFixed(1) }}%
                 </el-tag>
@@ -568,7 +571,8 @@ const handleEvent = (event, data, aiMsg) => {
           ...(aiMsg.metrics || {}),
           ...(data.recallRate != null ? { recallRate: data.recallRate } : {}),
           ...(data.hitRate != null ? { hitRate: data.hitRate } : {}),
-          ...(data.rerankApplied ? { rerankApplied: true, rerankLatencyMs: data.rerankLatencyMs } : {})
+          ...(data.rerankApplied ? { rerankApplied: true, rerankLatencyMs: data.rerankLatencyMs } : {}),
+          ...(data.hybridApplied ? { hybridApplied: true, keywordHitCount: data.keywordHitCount } : {})
         }
       }
       break

@@ -211,7 +211,7 @@ public class RagChatService {
         final boolean hasKb = !kbIds.isEmpty();
         final RetrieveResult retrieveResult = hasKb
                 ? ragRetrieveService.searchMultiple(kbIds, userMessage,
-                        new RetrievalOptions(resolveRerankModelId(window)))
+                        new RetrievalOptions(resolveRerankModelId(window), resolveHybridEnabled(window)))
                 : RetrieveResult.empty();
         final List<EmbeddingMatch<TextSegment>> retrievedMatches = new ArrayList<>(retrieveResult.matches());
 
@@ -238,6 +238,8 @@ public class RagChatService {
             retrieveInfo.put("retrievedCount", retrievedMatches.size());
             retrieveInfo.put("rerankApplied", retrieveResult.rerankApplied());
             retrieveInfo.put("rerankLatencyMs", retrieveResult.rerankLatencyMs());
+            retrieveInfo.put("hybridApplied", retrieveResult.hybridApplied());
+            retrieveInfo.put("keywordHitCount", retrieveResult.keywordHitIds().size());
             emitter.send(SseEmitter.event().name("retrieve").data(retrieveInfo));
 
             // 保存用户消息的检索指标
@@ -934,5 +936,13 @@ public class RagChatService {
                 || Boolean.TRUE.equals(retrieve.getEnableRerank());
         if (!enabled) return null;
         return window.getRerankModelId() != null ? window.getRerankModelId() : retrieve.getRerankModelId();
+    }
+
+    /**
+     * 解析窗口级混合检索开关：窗口开启或全局开启即启用。
+     */
+    private boolean resolveHybridEnabled(ChatWindow window) {
+        return Boolean.TRUE.equals(window.getHybridEnabled())
+                || Boolean.TRUE.equals(ragProperties.getRetrieve().getEnableHybrid());
     }
 }

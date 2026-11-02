@@ -121,6 +121,10 @@
 
         <!-- ============ 检索增强 ============ -->
         <el-divider content-position="left">🔍 检索增强</el-divider>
+        <el-form-item label="混合检索">
+          <el-switch v-model="form.hybridEnabled" />
+          <span style="font-size:12px;color:#909399;margin-left:12px">向量 + 关键词（pg_trgm）双路召回，RRF 融合；提升专有名词/编号类查询召回</span>
+        </el-form-item>
         <el-form-item label="Rerank 重排序">
           <el-switch v-model="form.rerankEnabled" />
           <span style="font-size:12px;color:#909399;margin-left:12px">候选放大至 topK×3 后由重排序模型精排；失败自动降级为原始向量序</span>
@@ -235,7 +239,7 @@ const form = reactive({
   name: '', description: '', llmModelId: null,
   knowledgeBaseIds: '[]', systemPrompt: '', temperature: 0.7, status: 1,
   evaluationScheme: 'NONE', judgeModelIds: '[]', toolIds: '[]', workflowId: null,
-  rerankEnabled: false, rerankModelId: null,
+  rerankEnabled: false, rerankModelId: null, hybridEnabled: false,
   agentEnabled: 0, agentMaxSteps: 15, agentPlannerModelId: null,
   agentExecutorModelId: null, agentCriticModelIds: '[]',
   agentReflectionThreshold: 7.0, agentHitlEnabled: 0
@@ -305,7 +309,7 @@ const openDialog = (row) => {
       name: '', description: '', llmModelId: null, knowledgeBaseIds: '[]',
       systemPrompt: '', temperature: 0.7, status: 1,
       evaluationScheme: 'NONE', judgeModelIds: '[]', toolIds: '[]', workflowId: null,
-      rerankEnabled: false, rerankModelId: null,
+      rerankEnabled: false, rerankModelId: null, hybridEnabled: false,
       agentEnabled: 0, agentMaxSteps: 15, agentPlannerModelId: null,
       agentExecutorModelId: null, agentCriticModelIds: '[]',
       agentReflectionThreshold: 7.0, agentHitlEnabled: 0

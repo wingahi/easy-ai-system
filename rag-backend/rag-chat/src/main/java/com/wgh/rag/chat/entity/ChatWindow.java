@@ -113,4 +113,8 @@ public class ChatWindow extends BaseEntity {
     /** Rerank 模型 ID（wgh_llm_model 中 model_type=RERANK 的记录） */
     @TableField(value = "rerank_model_id")
     private Long rerankModelId;
+
+    /** 是否启用混合检索（向量 + 关键词 RRF 融合）（0 否 / 1 是） */
+    @TableField(value = "hybrid_enabled", typeHandler = BooleanToSmallintTypeHandler.class)
+    private Boolean hybridEnabled;
 }

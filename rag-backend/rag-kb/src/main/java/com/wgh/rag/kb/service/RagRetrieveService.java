@@ -17,6 +17,9 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * RAG 检索服务 - 封装 VectorStoreService.search()（pgvector 向量检索）
@@ -35,6 +38,7 @@ public class RagRetrieveService {
     private final VectorStoreService vectorStoreService;
     private final RagProperties ragProperties;
     private final RerankService rerankService;
+    private final KeywordSearchService keywordSearchService;
 
     /**
      * 多知识库联合检索（默认配置，不做增强）
@@ -55,7 +59,10 @@ public class RagRetrieveService {
         int topK = retrieve.getTopK() != null ? retrieve.getTopK() : 5;
         // minScore 默认 0.55：cosine 相似度下 0.3 噪声过多
         double minScore = retrieve.getMinScore() != null ? retrieve.getMinScore() : 0.55;
-        int candidateTopN = opts.rerankEnabled() ? Math.min(topK * RERANK_CANDIDATE_FACTOR, RERANK_CANDIDATE_MAX) : topK;
+        // 混合检索或 Rerank 都需要更大的候选池
+        boolean needCandidates = opts.rerankEnabled() || opts.hybridEnabled();
+        int candidateTopN = needCandidates ? Math.min(topK * RERANK_CANDIDATE_FACTOR, RERANK_CANDIDATE_MAX) : topK;
+        int keywordTopN = retrieve.getKeywordTopN() != null ? retrieve.getKeywordTopN() : 10;
 
         // 按 embeddingModelId 分组
         java.util.Map<Long, List<KnowledgeBase>> byModel = new java.util.LinkedHashMap<>();
@@ -69,7 +76,8 @@ public class RagRetrieveService {
             return RetrieveResult.empty();
         }
 
-        List<EmbeddingMatch<TextSegment>> allMatches = new ArrayList<>();
+        List<EmbeddingMatch<TextSegment>> vectorMatches = new ArrayList<>();
+        List<EmbeddingMatch<TextSegment>> keywordMatches = new ArrayList<>();
         for (var entry : byModel.entrySet()) {
             EmbeddingModel embeddingModel = modelCacheManager.getEmbeddingModel(entry.getKey());
             if (embeddingModel == null) {
@@ -82,24 +90,44 @@ public class RagRetrieveService {
                     EmbeddingStore<TextSegment> store = vectorStoreService.createEmbeddingStore(
                             kb.getCollectionName(),
                             kb.getDimension() != null ? kb.getDimension() : 1536);
-                    allMatches.addAll(search(store, queryEmbedding, candidateTopN, minScore));
+                    vectorMatches.addAll(search(store, queryEmbedding, candidateTopN, minScore));
+                    if (opts.hybridEnabled()) {
+                        keywordMatches.addAll(
+                                keywordSearchService.search(kb.getCollectionName(), queryText, keywordTopN));
+                    }
                 } catch (Exception e) {
                     log.error("搜索知识库 {} 失败", kb.getId(), e);
                 }
             }
         }
 
-        // 按分数降序
-        allMatches.sort((a, b) -> {
-            Double sa = a.score();
-            Double sb = b.score();
-            return Double.compare(sb != null ? sb : 0.0, sa != null ? sa : 0.0);
-        });
+        // 多路融合：hybrid 且关键词路有命中 → RRF(k=60)；否则纯向量序（关键词路为空自动退化）
+        List<EmbeddingMatch<TextSegment>> fused;
+        Set<String> keywordOnlyIds = Set.of();
+        if (opts.hybridEnabled() && !keywordMatches.isEmpty()) {
+            fused = RrfFusion.fuse(List.of(vectorMatches, keywordMatches), candidateTopN);
+            Set<String> vectorIds = vectorMatches.stream()
+                    .map(EmbeddingMatch::embeddingId).filter(Objects::nonNull).collect(Collectors.toSet());
+            keywordOnlyIds = keywordMatches.stream()
+                    .map(EmbeddingMatch::embeddingId)
+                    .filter(id -> id != null && !vectorIds.contains(id))
+                    .collect(Collectors.toSet());
+        } else {
+            vectorMatches.sort((a, b) -> {
+                Double sa = a.score();
+                Double sb = b.score();
+                return Double.compare(sb != null ? sb : 0.0, sa != null ? sa : 0.0);
+            });
+            fused = vectorMatches.stream().limit(candidateTopN).toList();
+        }
 
         if (!opts.rerankEnabled()) {
-            return new RetrieveResult(allMatches.stream().limit(topK).toList(), false, 0);
+            return new RetrieveResult(fused.stream().limit(topK).toList(), false, 0,
+                    opts.hybridEnabled(), keywordOnlyIds);
         }
-        return applyRerank(allMatches.stream().limit(candidateTopN).toList(), queryText, opts.rerankModelId(), topK);
+        RetrieveResult reranked = applyRerank(fused, queryText, opts.rerankModelId(), topK);
+        return new RetrieveResult(reranked.matches(), reranked.rerankApplied(), reranked.rerankLatencyMs(),
+                opts.hybridEnabled(), keywordOnlyIds);
     }
 
     /**

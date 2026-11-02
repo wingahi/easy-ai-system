@@ -121,9 +121,10 @@ public class KnowledgeBaseController {
     public Result<java.util.Map<String, Object>> search(
             @PathVariable Long kbId,
             @RequestParam String query,
-            @RequestParam(value = "rerankModelId", required = false) Long rerankModelId) {
+            @RequestParam(value = "rerankModelId", required = false) Long rerankModelId,
+            @RequestParam(value = "hybrid", required = false, defaultValue = "false") boolean hybrid) {
         com.wgh.rag.kb.service.RetrieveResult retrieveResult = retrieveService.searchMultiple(
-                List.of(kbId), query, new com.wgh.rag.kb.service.RetrievalOptions(rerankModelId));
+                List.of(kbId), query, new com.wgh.rag.kb.service.RetrievalOptions(rerankModelId, hybrid));
         List<dev.langchain4j.store.embedding.EmbeddingMatch<dev.langchain4j.data.segment.TextSegment>> matches =
                 retrieveResult.matches();
 
@@ -136,6 +137,9 @@ public class KnowledgeBaseController {
             item.put("kbName", getMeta(m, "kbName"));
             item.put("fileName", getMeta(m, "fileName"));
             item.put("chunkIndex", getMetaInt(m, "chunkIndex"));
+            // 召回来源：KEYWORD 表示仅关键词路命中（向量路未召回）
+            item.put("source", m.embeddingId() != null && retrieveResult.keywordHitIds().contains(m.embeddingId())
+                    ? "KEYWORD" : "VECTOR");
             results.add(item);
         }
 
@@ -144,6 +148,8 @@ public class KnowledgeBaseController {
         resp.put("totalMatches", matches.size());
         resp.put("rerankApplied", retrieveResult.rerankApplied());
         resp.put("rerankLatencyMs", retrieveResult.rerankLatencyMs());
+        resp.put("hybridApplied", retrieveResult.hybridApplied());
+        resp.put("keywordHitCount", retrieveResult.keywordHitIds().size());
         resp.put("filteredMatches", results.stream().filter(r -> (Boolean) r.get("hit")).count());
         // 评估指标：简化计算（无 ground truth 时做 best-effort）
         double recallRate = matches.isEmpty() ? 0

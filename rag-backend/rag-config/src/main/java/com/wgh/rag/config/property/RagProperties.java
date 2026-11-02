@@ -37,6 +37,10 @@ public class RagProperties {
         private Boolean enableRerank = false;
         /** 全局默认 Rerank 模型 ID（窗口未配置 rerankModelId 时回退） */
         private Long rerankModelId;
+        /** 是否开启混合检索（向量 + 关键词 RRF 融合，全局默认，窗口级优先） */
+        private Boolean enableHybrid = false;
+        /** 混合检索关键词路召回条数 */
+        private Integer keywordTopN = 10;
     }
 
     @Data

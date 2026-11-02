@@ -13,6 +13,7 @@
         <el-select v-model="rerankModelId" clearable placeholder="Rerank 模型（可选）" style="width:260px" size="large">
           <el-option v-for="m in rerankModels" :key="m.id" :label="`${m.name} (${m.modelName})`" :value="m.id" />
         </el-select>
+        <el-checkbox v-model="hybrid" label="混合检索" border size="large" />
         <el-button type="primary" size="large" :icon="Search" :loading="loading" @click="doSearch">搜索</el-button>
       </div>
     </div>
@@ -27,6 +28,10 @@
           <el-tag v-if="result.rerankApplied" type="success" size="small">已应用 {{ result.rerankLatencyMs }}ms</el-tag>
           <span v-else style="color:#909399">未启用/已降级</span>
         </el-descriptions-item>
+        <el-descriptions-item label="混合检索">
+          <el-tag v-if="result.hybridApplied" type="success" size="small">已启用 · 关键词命中 {{ result.keywordHitCount }}</el-tag>
+          <span v-else style="color:#909399">未启用</span>
+        </el-descriptions-item>
       </el-descriptions>
 
       <h3 style="margin:0 0 12px">搜索结果</h3>
@@ -37,6 +42,7 @@
             <el-tag size="small" :type="item.hit ? 'success' : 'info'">
               {{ item.hit ? '命中' : '相关' }}
             </el-tag>
+            <el-tag v-if="item.source === 'KEYWORD'" size="small" type="warning">关键词召回</el-tag>
             <span class="score">相似度: {{ (item.score * 100).toFixed(1) }}%</span>
           </div>
           <div class="result-content">{{ item.content }}</div>
@@ -65,12 +71,13 @@ const result = ref(null)
 const loading = ref(false)
 const rerankModels = ref([])
 const rerankModelId = ref(null)
+const hybrid = ref(false)
 
 const doSearch = async () => {
   if (!query.value.trim()) return
   loading.value = true
   try {
-    const res = await kbSearch(kbId, query.value, rerankModelId.value)
+    const res = await kbSearch(kbId, query.value, rerankModelId.value, hybrid.value)
     result.value = res.data
   } finally {
     loading.value = false

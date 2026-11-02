@@ -31,6 +31,7 @@ class RagRetrieveServiceRerankTest {
     private final ModelCacheManager modelCacheManager = Mockito.mock(ModelCacheManager.class);
     private final VectorStoreService vectorStoreService = Mockito.mock(VectorStoreService.class);
     private final RerankService rerankService = Mockito.mock(RerankService.class);
+    private final KeywordSearchService keywordSearchService = Mockito.mock(KeywordSearchService.class);
     private final EmbeddingModel embeddingModel = Mockito.mock(EmbeddingModel.class);
     private final PgVectorEmbeddingStore store = Mockito.mock(PgVectorEmbeddingStore.class);
 
@@ -41,7 +42,8 @@ class RagRetrieveServiceRerankTest {
         RagProperties props = new RagProperties();
         props.getRetrieve().setTopK(2);
         props.getRetrieve().setMinScore(0.0);
-        service = new RagRetrieveService(kbMapper, modelCacheManager, vectorStoreService, props, rerankService);
+        service = new RagRetrieveService(kbMapper, modelCacheManager, vectorStoreService, props,
+                rerankService, keywordSearchService);
 
         KnowledgeBase kb = new KnowledgeBase();
         kb.setId(1L);
@@ -98,6 +100,36 @@ class RagRetrieveServiceRerankTest {
         RetrieveResult result = service.searchMultiple(List.of(1L), "q", new RetrievalOptions(99L));
 
         assertThat(result.rerankApplied()).isFalse();
+        assertThat(result.matches()).hasSize(2);
+        assertThat(result.matches().get(0).embedded().text()).isEqualTo("chunk0");
+    }
+
+    @Test
+    void hybrid_fuses_keyword_only_hits_and_marks_source() {
+        mockVectorMatches(3);
+        // 关键词路召回：chunk1（两路命中）+ kwOnly（仅关键词）
+        when(keywordSearchService.search(eq("kb_1"), eq("q"), anyInt())).thenReturn(List.of(
+                new EmbeddingMatch<>(0.6, "id1", null, TextSegment.from("chunk1")),
+                new EmbeddingMatch<>(0.55, "kw1", null, TextSegment.from("kwOnly"))));
+
+        RetrieveResult result = service.searchMultiple(List.of(1L), "q", new RetrievalOptions(null, true));
+
+        assertThat(result.hybridApplied()).isTrue();
+        assertThat(result.keywordHitIds()).containsExactly("kw1");
+        assertThat(result.matches()).hasSize(2);
+        // RRF 后 chunk1（两路命中）应排第一
+        assertThat(result.matches().get(0).embedded().text()).isEqualTo("chunk1");
+    }
+
+    @Test
+    void hybrid_with_empty_keyword_path_degrades_to_vector_order() {
+        mockVectorMatches(3);
+        when(keywordSearchService.search(anyString(), anyString(), anyInt())).thenReturn(List.of());
+
+        RetrieveResult result = service.searchMultiple(List.of(1L), "q", new RetrievalOptions(null, true));
+
+        assertThat(result.hybridApplied()).isTrue();
+        assertThat(result.keywordHitIds()).isEmpty();
         assertThat(result.matches()).hasSize(2);
         assertThat(result.matches().get(0).embedded().text()).isEqualTo("chunk0");
     }
