@@ -14,7 +14,7 @@
 
 | 范式 | 适用场景 | 特点 |
 |------|---------|------|
-| RAG 对话 | 知识问答、客服、文档助手 | 检索 + 生成，三率指标实时可见 |
+| RAG 对话 | 知识问答、客服、文档助手 | 检索增强（查询变换 / 混合检索 / Rerank）+ 生成，覆盖率与命中率实时可见 |
 | Agent 自动规划 | 目标明确、步骤未知的开放任务 | Planner 拆解 → 逐步执行 → 反思重试 |
 | 多 Agent 协作 | 多角色分工、需要讨论收敛的任务 | 角色分层 / 状态图 / 对话式三种协调器 |
 | 工作流编排 | 步骤固定、需审核、需复用的 SOP | 人工编排 DAG，可复现、可审计、可回滚 |
@@ -35,7 +35,7 @@
 | 多 Agent | CrewAI 风格角色分层 + 自研状态图（DAG）协调器 + AutoGen 风格对话式协调器 |
 | 工作流 | 自研 DAG 引擎：9 类节点 + 子流程、并行 fan-out/fan-in、版本快照、CRON/Webhook 触发器、模板市场 |
 | 鉴权 | JWT（HS512），预留 OIDC 扩展 |
-| 评估 | MRR / NDCG / Hit Rate / Recall + LLM-as-Judge（Faithfulness / Answer Relevancy） |
+| 评估 | 检索侧：Recall@K（ground truth 标注）/ Precision@K / MRR / NDCG + 离线脚本；生成侧：LLM-as-Judge（Faithfulness / Answer Relevancy） |
 | 测试 | JUnit 5 + Mockito + shell e2e/冒烟/压测脚本 + CI 静态规范检查 |
 
 ---
@@ -57,7 +57,7 @@
 
 | 痛点 | 本系统做法 |
 |------|-----------|
-| 检索效果不可度量 | 对话实时输出**召回率 / 命中率 / 正确率**；评估模块提供 MRR、NDCG、Hit Rate、Recall + LLM-as-Judge 双轨评估 |
+| 检索效果不可度量 | 对话实时输出**召回覆盖率 / 命中率**；标注后可算真实 Recall@K：`wgh_kb_ground_truth` 标注表 + 在线评测接口 + 零依赖离线脚本；生成侧 LLM-as-Judge 双轨评估 |
 | 长对话 token 爆炸、成本失控 | **三层上下文压缩**（近期原文 / 中期摘要 / 远期事实），持久化复用，Prompt 版本升级自动失效重算，全链路可降级 |
 | 编排能力割裂，"问答"与"流程"两套系统 | 统一为窗口级能力 + 独立工作流引擎，SSE 事件风格、HITL、持久化、刷新恢复刻意对齐 |
 | Agent 不可控、结果不可审计 | 计划/步骤全量落库，反思评分可追溯，HITL 对**有副作用**操作强制人工确认，支持取消/重试/跳过 |
@@ -71,7 +71,11 @@
 ## 4. 核心特性
 
 ### 4.1 知识库与 RAG 链路
-多格式解析（PDF / DOCX / DOC / XLSX / XLS / CSV / TXT / MD）；7 种切分策略（AUTO / RECURSIVE / CHAPTER / PARAGRAPH / FAQ / LENGTH / CUSTOM）；pgvector 检索默认 `min_similarity=0.55`，按 embedding 模型 ID 分组避免维度混用；文件级幂等，重新分割/删除同步清理旧向量；三率指标随 SSE 下发并落库。
+多格式解析（PDF / DOCX / DOC / XLSX / XLS / CSV / TXT / MD）；9 种切分策略（AUTO / RECURSIVE / CHAPTER / PARAGRAPH / FAQ / LENGTH / CUSTOM / STRUCTURED 结构化标题感知 / SEMANTIC 语义断句，英文句点前后为数字不断句）；文件级幂等，重新分割/删除同步清理旧向量。
+
+检索链路：**查询变换（REWRITE / MULTI_QUERY / HYDE）→ 多路召回（向量余弦 + pg_trgm 关键词）→ RRF(k=60) 融合 → 可选 Rerank 重排序 → topK**，每步失败独立降级（变换失败回原查询、关键词为空退化为向量、Rerank 失败回原始序）；Rerank 候选放大至 `min(topK*3, 30)`；按 embedding 模型 ID 分组避免维度混用；`RetrieveResult.ScoreType`（COSINE / RRF / RERANK）标识分数语义，RRF 融合分不参与余弦阈值判定。
+
+指标口径：SSE 随消息下发**召回覆盖率**（返回条数/topK，槽位填充率）与**命中率**（Precision@K，分数达标占比）并落库；真实 Recall@K 需 ground truth（见 4.5）。
 
 ### 4.2 工具调用（Tool Calling）
 `ToolExecutor` SPI + `ToolExecutionEngine` 按类型分发：
@@ -92,7 +96,9 @@
 超过 `max-history-messages`（默认 20）触发三层压缩：近期 4 轮保留原文、中期 6 轮生成 3-5 句摘要、远期提取 ≤8 条关键事实。Prompt 显式定义保留优先级（用户需求/业务规则/实体名/精确数值 > 背景闲聊）。压缩结果持久化（来源消息范围、模型、Prompt 版本、时间戳），命中范围直接复用；无压缩模型、LLM 超时/异常时自动降级为简单截断，不阻塞主流程。
 
 ### 4.5 RAG 评估双轨
-检索侧：MRR / NDCG@K / Hit Rate / Recall（需 ground truth）；生成侧：Faithfulness / Answer Relevancy（LLM-as-Judge，不需要 ground truth）。窗口可选 `METRICS` / `LLM_JUDGE` / `BOTH` / `NONE`；Judge 未指定时自动选 2 个不同提供商的模型并排除当前聊天模型；评估异步执行不阻塞 SSE。
+检索侧：**真实 Recall@K = |检索 ∩ 标注相关集| / |标注相关集|**（分母是标注相关 chunk 数，不是 topK）。ground truth 存 `wgh_kb_ground_truth`（相关 chunk 以 `fileId:chunkIndex` 为键，重新向量化不失效），支持 CRUD / 批量导入（同查询覆盖）；`POST /api/kb/{kbId}/evaluate?topK=K` 逐条评测并聚合 Recall@K / Precision@K / 查询命中率；`GET /api/kb/{kbId}/chunks` 分页列 chunk 供标注；`eval/eval_recall.py` 零依赖离线脚本（语料正则提取 / 自定义查询文件 / 人工标注 JSON 三种标注来源，输出 Recall@K / Precision@K / MRR / NDCG，可 `--save-gt` 落库复用）。聊天消息无标注，Recall@K 不实时计算（`recall_rate` 恒 NULL）。
+
+生成侧：Faithfulness / Answer Relevancy（LLM-as-Judge，不需要 ground truth）。窗口可选 `METRICS` / `LLM_JUDGE` / `BOTH` / `NONE`；Judge 未指定时自动选 2 个不同提供商的模型并排除当前聊天模型；评估异步执行不阻塞 SSE。
 
 ### 4.6 会话与分享
 多会话、首条消息自动生成标题、滑动加载历史；窗口级分享开关与 token 管理；分享页需登录，按登录用户名隔离历史会话，与调试页渲染规则完全一致（Markdown、引用去重、指标展示、Agent 计划树）。
@@ -132,7 +138,7 @@ wgh-rag-system/
 │   ├── rag-common/               # Result / PageResult / JWT / 全局异常 / MyBatisPlus / SecurityConfig
 │   ├── rag-config/               # RagProperties（RAG / PgVector / Agent / Context 配置映射）
 │   ├── rag-llm/                  # 模型管理：DB 动态配置 + 多厂商工厂 + ModelCacheManager 热更新
-│   ├── rag-kb/                   # 知识库：上传 → 解析 → 切分 → 向量化 → 检索
+│   ├── rag-kb/                   # 知识库：上传 → 解析 → 切分 → 向量化 → 检索增强（变换/混合/Rerank）→ 评测
 │   ├── rag-chat/                 # 对话：窗口/会话、分层上下文压缩、流式 RAG、评估、分享
 │   ├── rag-tool/                 # 工具框架：ToolExecutor SPI + 四类执行器 + Skill 文件服务
 │   ├── rag-agent/                # 单 Agent：planner / reflection / service（编排、SSE、HITL）
@@ -140,7 +146,8 @@ wgh-rag-system/
 │   ├── rag-workflow/             # 工作流：engine（frontier 调度 + executor）、trigger、template、service
 │   ├── rag-controller/           # 统一 REST 层：Auth / Chat / KnowledgeBase / LlmModel / Agent / Workflow
 │   ├── rag-app/                  # 启动模块 + application*.yml + 集成测试 + skills
-│   ├── sql/                      # init.sql → schema.sql（18 张表 + 索引 + COMMENT）+ data.sql（种子）
+│   ├── sql/                      # init.sql → schema.sql（19 张表 + 索引 + COMMENT）+ data.sql（种子）
+│   ├── eval/                     # 离线评测：eval_recall.py（零依赖 Recall@K）、eval_rag.py（含 LLM Judge）
 │   └── scripts/                  # e2e / 冒烟 / 压测 / 测试代码规范检查
 ├── rag-frontend/                 # Vue 3 前端
 │   └── src/
@@ -170,7 +177,7 @@ wgh-rag-system/
 | 模块 | 前缀 | 说明 |
 |------|------|------|
 | 鉴权 | `/api/auth` | 登录、当前用户 |
-| 知识库 | `/api/kb` | 知识库/文件 CRUD、重整、检索测试 |
+| 知识库 | `/api/kb` | 知识库/文件 CRUD、重整、检索测试、ground truth 标注、召回评测 |
 | 模型 | `/api/models` | Chat / Embedding 模型 CRUD |
 | 聊天 | `/api/chat/windows` | 窗口 CRUD、会话、消息、SSE 流式对话 |
 | 分享 | `/api/chat/share` | token 校验、SSE 对话、会话与消息 |
@@ -190,14 +197,14 @@ wgh-rag-system/
 | rag-common | ✅ 完成 | Result / JWT / 异常 / MyBatisPlus / Security |
 | rag-config | ✅ 完成 | 多 profile 配置映射（RAG / PgVector / Agent / Context） |
 | rag-llm | ✅ 完成 | DB 动态模型 + DASHSCOPE / DEEPSEEK / CUSTOM_OPENAI + 缓存热更新 |
-| rag-kb | ✅ 完成 | 8 种格式解析、7 种切分、pgvector 存储与检索 |
+| rag-kb | ✅ 完成 | 8 种格式解析、9 种切分、pgvector 存储；查询变换 / 混合检索 RRF / Rerank；检索评测（ground truth + Recall@K） |
 | rag-chat | ✅ 完成 | 窗口/会话、三层压缩、流式 RAG、双轨评估、分享 |
 | rag-tool | ✅ 完成 | 4 类执行器 + Skill 双源 + 在线调试 |
 | rag-agent | ✅ 完成 | Planner → Executor → Reflection → HITL 全链路 |
 | rag-agent-multi | ✅ 完成 | 6 种协作模式、14 类 SSE 事件、HITL 续跑、步骤落库 |
 | rag-workflow | ✅ 完成 | 9 类节点 + 子流程、并行 fan-in、版本、触发器、模板 |
-| rag-controller | ✅ 完成 | 9 组 REST API 全覆盖 |
-| 单元测试 | ✅ 完成 | 374 项全绿（common 11 / llm 36 / kb 25 / agent 23 / chat 24 / workflow 63 / agent-multi 56 / app 136） |
+| rag-controller | ✅ 完成 | 10 组 REST API 全覆盖 |
+| 单元测试 | ✅ 完成 | 432 项全绿（common 11 / llm 36 / kb 73 / agent 23 / chat 24 / workflow 73 / agent-multi 56 / app 136） |
 | e2e / 冒烟 | ✅ 完成 | Agent 18 + HITL 16 + 工作流 67 + 多 Agent 12 |
 | 压力测试 | ✅ 完成 | 7 场景 8 项断言通过（登录 3091 RPS、SSE 首字节 24-38ms） |
 | CI 静态检查 | ✅ 完成 | 测试方法英文命名 + 中文注释，GitHub Actions / Gitee Go 复用 |
@@ -207,7 +214,7 @@ wgh-rag-system/
 | 页面 | 状态 | 说明 |
 |------|------|------|
 | 登录 | ✅ 完成 | JWT + 路由守卫 + redirect |
-| 知识库管理 / 检索测试 | ✅ 完成 | 上传、状态、实时检索与三率指标 |
+| 知识库管理 / 检索测试 | ✅ 完成 | 上传、重切策略选择、检索测试（混合检索 / Rerank / 查询变换选项，覆盖率 / 命中率 / 分数语义标签） |
 | 对话调试 | ✅ 完成 | SSE 流式、来源、指标、工具事件、会话侧栏、Agent 计划树 |
 | 分享对话 | ✅ 完成 | 与调试页一致的渲染 + Agent 计划树 + 刷新恢复 |
 | 聊天窗口管理 | ✅ 完成 | 知识库 / 工具分组选择 / 评估方案 / Agent 配置 / 分享 |
@@ -220,7 +227,7 @@ wgh-rag-system/
 
 | 项目 | 状态 | 说明 |
 |------|------|------|
-| schema.sql | ✅ 完成 | 18 张表 + 业务索引，幂等 DDL（`IF NOT EXISTS`） |
+| schema.sql | ✅ 完成 | 19 张表 + 业务索引，幂等 DDL（`IF NOT EXISTS`） |
 | data.sql | ✅ 完成 | 种子数据 + 老库兼容修复，可重复执行 |
 | pgvector | ✅ 完成 | 自动建表、可选索引、连接复用、不可用不阻断启动 |
 
@@ -230,10 +237,10 @@ wgh-rag-system/
 
 | # | 功能 | 主流对标 | 当前状态 | 说明 |
 |---|------|---------|---------|------|
-| 1 | **Rerank 重排序** | Dify / RAGFlow / FastGPT | 📋 计划中 | 配置项 `wgh.pgvector.retrieve.enable-rerank` 已预留（默认 false），尚未接入任何 Rerank 模型调用 |
-| 2 | **混合检索（向量 + 关键词）** | RAGFlow / Dify | 📋 计划中 | 现仅向量检索；可基于 PostgreSQL `tsvector` + 中文分词实现 BM25 与向量加权融合 |
-| 3 | **查询改写 / Multi-Query / HyDE** | RAGFlow / LlamaIndex | 📋 计划中 | 现直接使用原始 query 检索，缺少同义改写与多路召回 |
-| 4 | **语义切分 / 结构化切分** | RAGFlow / Dify | 📋 计划中 | 现为规则切分；语义切分依赖 embedding 聚类，结构化切分依赖 Excel/JSON 结构 |
+| 1 | **Rerank 重排序** | Dify / RAGFlow / FastGPT | ✅ 已完成 | 候选放大 `min(topK*3,30)` → Rerank 模型打分 → 取 topK，失败降级原始向量序；延迟随 SSE 下发 |
+| 2 | **混合检索（向量 + 关键词）** | RAGFlow / Dify | ✅ 已完成 | pg_trgm 关键词路 + 向量路 RRF(k=60) 融合，关键词空结果自动退化为向量序，`ScoreType=RRF` 标识分数语义 |
+| 3 | **查询改写 / Multi-Query / HyDE** | RAGFlow / LlamaIndex | ✅ 已完成 | REWRITE / MULTI_QUERY / HYDE 三种模式，多查询变体走 RRF 融合，变换失败降级原查询，耗时与变体随 SSE 下发 |
+| 4 | **语义切分 / 结构化切分** | RAGFlow / Dify | ✅ 已完成 | STRUCTURED 标题层级感知（headingPath 元数据）+ SEMANTIC 语义断句（数字句点保护），入库与预览均带 chunk 属性 |
 | 5 | **更多文档格式** | Dify / RAGFlow | 📋 计划中 | HTML / JSON / PPTX / 图片 OCR 未支持（PDF/DOCX/DOC/XLSX/XLS/CSV/TXT/MD 已完成） |
 | 6 | **URL 抓取与数据源连接器** | Dify / FastGPT | 📋 计划中 | 无网页爬取、Notion/飞书文档等第三方数据源同步、增量更新 |
 | 7 | **工作流作为聊天窗口执行模式** | Dify（应用绑定工作流） | 📋 计划中 | 已完成方案设计（窗口加 `workflow_id` + 聊天 SSE 分流），待实现 |
@@ -244,7 +251,7 @@ wgh-rag-system/
 | 12 | **审计日志 / 配额限流 / 成本统计** | 企业级产品通用 | 📋 计划中 | 无操作审计、租户配额、Token 用量与费用报表 |
 | 13 | **语义缓存** | Dify（Redis 缓存） | 📋 计划中 | 无相似问题命中缓存，重复提问仍会全量调用 LLM |
 | 14 | **可观测性与部署编排** | 企业级产品通用 | 📋 计划中 | 无 Prometheus 指标 / 链路追踪；仓库无 Dockerfile 与 docker-compose |
-| 15 | **反馈闭环与离线评测平台** | Dify / RAGFlow | 📋 计划中 | 无点赞点踩与人工标注；评估以脚本为主，缺数据集管理与 A/B 对比 |
+| 15 | **反馈闭环与离线评测平台** | Dify / RAGFlow | 🔶 部分完成 | 已落地：ground truth 标注表 + 在线 Recall@K 评测接口 + 零依赖离线脚本 `eval_recall.py`；未做：点赞点踩、A/B 对比、数据集版本管理 |
 | 16 | **多模态** | Coze / Dify | 📋 计划中 | 无图片问答、语音输入、TTS 输出 |
 | 17 | **模型路由与故障转移** | Dify | 📋 计划中 | 按模型 ID 直连，无多模型负载均衡、失败重试与降级链 |
 | 18 | **Prompt 模板中心** | Dify | 📋 计划中 | Prompt 分散在各编排配置中，无统一模板库与版本管理 |
@@ -267,7 +274,7 @@ docker run -d --name postgres-with-vector \
   -p 5432:5432 \
   pgvector/pgvector:pg16
 
-# 初始化：18 张表 + 业务索引 + 种子数据（幂等，可重复执行）
+# 初始化：19 张表 + 业务索引 + 种子数据（幂等，可重复执行）
 docker exec -i postgres-with-vector psql -U postgres -d wgh_rag < rag-backend/sql/init.sql
 ```
 
@@ -313,6 +320,7 @@ bash scripts/test-agent-hitl-e2e.sh       # Agent HITL
 bash scripts/test-workflow-e2e.sh         # 工作流 9 类节点 / 并行 / 版本 / 触发器
 bash scripts/test-multi-agent-smoke.sh    # 多 Agent 冒烟
 bash scripts/test-stress.sh               # 压力测试（依赖 ab）
+python3 eval/eval_recall.py --kb 2 --k 5  # 离线召回率评测（Recall@K/Precision@K/MRR/NDCG，零依赖）
 ```
 
 脚本依赖后端 8080 运行中、`postgres-with-vector` 可访问（默认库 `wgh_rag`）。
