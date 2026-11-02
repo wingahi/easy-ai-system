@@ -126,17 +126,17 @@ async function loadDislikes(page) {
   if (typeof page === 'number') dislikePage.value = page
   dislikeLoading.value = true
   try {
-    const { data } = await adminFeedbackDislikes({ page: dislikePage.value, size: 20 })
-    dislikeRows.value = data.data.records || []
-    dislikeTotal.value = data.data.total || 0
+    const res = await adminFeedbackDislikes({ page: dislikePage.value, size: 20 })
+    dislikeRows.value = res.data.records || []
+    dislikeTotal.value = res.data.total || 0
   } finally { dislikeLoading.value = false }
 }
 
 async function loadQuota() {
   quotaLoading.value = true
   try {
-    const { data } = await adminQuotaStats()
-    Object.assign(quota, data.data)
+    const res = await adminQuotaStats()
+    Object.assign(quota, res.data)
   } finally { quotaLoading.value = false }
 }
 
@@ -148,8 +148,8 @@ async function loadCost() {
       params.from = costRange.value[0]
       params.to = costRange.value[1]
     }
-    const { data } = await adminCostStats(params)
-    costRows.value = data.data || []
+    const res = await adminCostStats(params)
+    costRows.value = res.data || []
   } finally { costLoading.value = false }
 }
 
@@ -157,13 +157,13 @@ async function loadAudit(page) {
   if (typeof page === 'number') auditQuery.page = page
   auditLoading.value = true
   try {
-    const { data } = await adminAuditLogs({
+    const res = await adminAuditLogs({
       page: auditQuery.page, size: auditQuery.size,
       username: auditQuery.username || undefined,
       action: auditQuery.action || undefined
     })
-    auditRows.value = data.data.records || []
-    auditTotal.value = data.data.total || 0
+    auditRows.value = res.data.records || []
+    auditTotal.value = res.data.total || 0
   } finally { auditLoading.value = false }
 }
 

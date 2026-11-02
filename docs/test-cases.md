@@ -838,6 +838,8 @@
 | WID-03 | 接口 | 宿主页面使用深色背景/自定义 CSS | 同上 | iframe 内分享页样式不被宿主 CSS 覆盖（iframe 独立文档隔离） | 仅手工 | `widget.js` / `PublicShareChat.vue` `embed` 样式 |
 | WID-04 | 接口 | 无 token 或 token 无效 | 打开 demo 页 | 提示需填写 token / 分享页展示「分享链接无效」 | 仅手工 | `widget-demo.html` |
 
+> 实测（2026-11-02）：WID-01 初测失败——`widget-demo.html` 内联脚本字符串含字面量 `</script>` 导致脚本被提前闭合、整段不执行；已修复（`'</scr' + 'ipt>'`）并复测通过（详见 §25 F1）。
+
 ---
 
 ## 16. 审计日志 / 成本统计
@@ -946,6 +948,7 @@
 
 > 实现：`ModelRouter#resolveChain`（窗口 `model_route_group` 非空时按 `route_priority` 升序成链，否则回退 `llm_model_id`）、`RagChatService#runWithFailover`；字段 `wgh_llm_model.route_group/route_priority`、`wgh_chat_window.model_route_group`。
 > **无自动化单测**（缺 `ModelRouterTest`），本组用例均为「仅手工」。
+> 实测（2026-11-02）：ROUTE-01 通过；ROUTE-02 **失败**——首模型连接失败经异步 `onError` 上报，未进入 `runWithFailover` 的切链逻辑，直接向前端返回 `event:error`（详见 §25 F4，遗留）。
 
 | 编号 | 分类 | 前置条件 | 用例 / 步骤 | 预期结果 | 覆盖类型 | 自动化落点 |
 |------|------|---------|------------|---------|---------|-----------|
@@ -979,6 +982,7 @@
 > 实现：`AuthRBACService`、`WghUser/WghRole/WghPermission/UserRole/RolePermission`、`@RequiresPermission` + `PermissionAspect`、`OidcService/OidcController`；表 `wgh_user`、`wgh_role`、`wgh_permission`、`wgh_user_role`、`wgh_role_permission`。
 > 外部 token 校验：OIDC `id_token`（JWK/HMAC 验签 + iss/aud/exp/nonce/state，支持 PKCE）。
 > **部分完成**：无独立角色管理界面/接口，资源级 `@RequiresPermission` 仅覆盖部分 Controller；自动化：`OidcServiceTest`（10 项，rag-common）。
+> 实测（2026-11-02）：`POST /api/auth/login` 响应不含 `roles`（`GET /api/auth/me` 才有），前端 `isAdmin` 因此为 false，`requiresAdmin` 路由（`/admin/quota`）被守卫重定向到 `/kb`（详见 §25 F5）。
 
 | 编号 | 分类 | 前置条件 | 用例 / 步骤 | 预期结果 | 覆盖类型 | 自动化落点 |
 |------|------|---------|------------|---------|---------|-----------|
@@ -993,3 +997,43 @@
 | RBA-09 | 接口 | admin 登录 | 访问用户/角色管理 | **未实现**独立管理页（仅种子数据），标记为遗留项 | 仅手工 | —（缺失） |
 
 
+
+---
+
+## 25. 浏览器全量测试执行记录（2026-11-02）
+
+> 环境：后端 `localhost:8080`、前端 `localhost:5173`、PostgreSQL 16 + pgvector（`docker postgres-with-vector`）。
+> 工具：TRAE-browseruse 子代理（脚本 + 快照 + 网络/控制台采集）。
+> 证据截图统一存放在 `docs/browser-evidence/`（文件名与测试时间一一对应）。
+> 说明：后端从干净 HEAD 工作树启动，避免混入其他会话未提交的 auth/quota 改动。
+
+### 25.1 流程结果
+
+| 流程 | 结果 | 关键证据 | 备注 |
+|------|------|---------|------|
+| 登录与权限校验 | PASS | `page-2026-11-02T11-14-59-196Z.png`、`page-2026-11-02T11-15-53-635Z.png` | admin/admin 登录成功；未登录访问管理页被守卫拦截 |
+| 知识库创建 / 上传 / 解析（HTML、JSON、EML、PPTX） | PASS | 同批 `page-2026-11-02T11-15-53-635Z.png` | 4 个新格式文件均解析成功、各生成 1 个切片；文件列表可见 |
+| 检索与 RAG 问答（含来源/命中率） | PASS | `rag-full-answer-with-sources.png`、`rag-answer-with-sources.png` | 回答“7 天”，来源含 EML/HTML/JSON/PPTX；coverageRate/hitRate=1.0 |
+| Prompt 模板管理（创建 / 渲染） | PASS | `templates-page.png`、`templates-saved.png`、`template-render-preview.png` | 变量渲染结果正确 |
+| 标签与文档版本（绑定 / 版本列表 / 回滚） | PASS | `page-2026-11-02T11-24-01-972Z.png`、`page-2026-11-02T11-24-47-143Z.png` | 回滚经 API 验证：version 递增并生成新快照 |
+| 工作流 AGENT 节点运行 | PASS（修复后） | `workflow-129-run-result.png`、`workflow-129-final-debug.png` | 修复 `GraphValidator` 缺 `AGENT` 后创建成功；SSE 运行 AGENT 节点 SUCCESS，2 步，输出“7 天” |
+| 模型路由与故障转移 | **FAIL** | 后端日志 `[Failover] 使用模型 deepseek-chat (id=2)，原因: 首模型` + `event:error` | ROUTE-01 路由命中正常；ROUTE-02 故障转移未生效（F4） |
+| 分享链接免登录访问 | PASS | `share-page-initial.png`、`share-page-answer.png` | 匿名访问与 SSE 问答成功；无效 token/越权错误经 curl 验证 |
+| Widget 嵌入 demo | PASS（修复后） | `widget-iframe-evidence.png` | iframe `src=/share/{token}?embed=1`，内部可见问答输入、无登录表单 |
+| 开放 API 调用 | PASS | `page-2026-11-02T13-20-08-204Z.png`、`page-2026-11-02T13-20-29-505Z.png` | `/me`、`/kb/search`、`/chat/stream`、`/usage` 均通过；scope 越权 403；限流 429；吊销后 401 |
+| 统计与审计页面 | PASS（修复后） | `page-2026-11-02T13-19-41-175Z.png` | 配额 15/200、成本表与审计表均有数据，共 34 条 |
+| 配额展示与超限提示 | PASS（部分） | 我的配额页截图（同批） | 我的配额显示 15/200、4,623/2,000,000；限额设为 1 后对话返回 `code=429` 文案；`/admin/quota` UI 被守卫拦截（F5） |
+
+统计：已执行 12 个流程，10 PASS、1 FAIL（模型故障转移）、1 部分（配额管理页 UI 不可达，接口层已验证）。
+
+### 25.2 发现的问题
+
+| 编号 | 问题 | 状态 | 处理 |
+|------|------|------|------|
+| F1 | `widget-demo.html` 内联脚本字符串含字面量 `</script>`，HTML 提前闭合脚本，demo 完全不执行 | 已修复 | 改为 `'</scr' + 'ipt>'`，复测 iframe 注入成功 |
+| F2 | `AdminStats.vue` 对 axios 返回值多做一层 `data.data` 解包，导致 TypeError、统计页全空 | 已修复 | 统一改为 `res.data`，复测数据正常渲染 |
+| F3 | `GraphValidator.NODE_TYPES` 缺 `AGENT`，含 AGENT 节点的工作流保存即报“节点类型非法” | 已修复 | 加入 `AGENT`，复测创建与运行通过 |
+| F4 | 模型故障转移仅覆盖同步异常：首模型连接失败经异步 `onError` 上报，未进入 `runWithFailover` 切链，直接返回 `event:error` | 未修复（遗留） | 需以 CompletableFuture/CountDownLatch 将首 token 前异步失败纳入切链；涉及核心流式链路，本轮未改动 |
+| F5 | `POST /api/auth/login` 响应不含 `roles`，前端 `isAdmin=false`，`requiresAdmin` 路由（`/admin/quota`）被重定向到 `/kb` | 未修复（遗留） | 受“不改 auth/角色”约束；接口层 `/api/admin/quota` 已验证可用，建议登录后补拉 `/auth/me` 或登录响应补 roles |
+| F6 | EML 原始 UTF-8 非编码 Subject 显示乱码 | 非缺陷 | 测试数据应使用 RFC2047 编码（`=?UTF-8?B?...?=`）；已用 v2 样例验证解析正确 |
+| F7 | 限流/配额业务错误的 HTTP 状态为 200，实际语义码（429）放在响应体 `code` | 待优化 | 前端按 `code` 处理可用；对外开放 API 建议统一为 HTTP 429，便于第三方网关识别 |

@@ -18,7 +18,7 @@ import java.util.*;
 public class GraphValidator {
 
     private static final Set<String> NODE_TYPES = Set.of(
-            "START", "END", "LLM", "RETRIEVAL", "TOOL", "CONDITION", "LOOP", "HITL", "VARIABLE", "WORKFLOW");
+            "START", "END", "LLM", "RETRIEVAL", "TOOL", "CONDITION", "LOOP", "HITL", "VARIABLE", "WORKFLOW", "AGENT");
 
     public GraphValidationResult validate(WorkflowGraph graph) {
         List<String> errors = new ArrayList<>();
