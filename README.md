@@ -231,9 +231,9 @@ wgh-rag-system/
 | data.sql | ✅ 完成 | 种子数据 + 老库兼容修复，可重复执行 |
 | pgvector | ✅ 完成 | 自动建表、可选索引、连接复用、不可用不阻断启动 |
 
-### 7.4 计划中（主流能力尚未实现）
+### 7.4 主流能力对标与完成状态
 
-以下功能是市面主流产品（Dify / Coze / RAGFlow / FastGPT）普遍具备、本系统尚未落地的能力，按优先级排列：
+以下是市面主流产品（Dify / Coze / RAGFlow / FastGPT）的能力对标与本系统实际落地状态（以当前代码与测试结果为准）：
 
 | # | 功能 | 主流对标 | 当前状态 | 落地位置（后端 / 前端 / 表） |
 |---|------|---------|---------|------|
@@ -245,18 +245,18 @@ wgh-rag-system/
 | 6 | **URL 抓取与数据源连接器** | Dify / FastGPT | 📋 计划中 | 无网页爬取、Notion/飞书文档等第三方数据源同步、增量更新 |
 | 7 | **工作流作为聊天窗口执行模式** | Dify（应用绑定工作流） | ✅ 已完成 | `RagChatService` 分流 + `ChatWorkflowService` / `ChatWindows.vue` WORKFLOW 执行模式 / `wgh_chat_window.workflow_id` |
 | 8 | **工作流独立发布 / 分享页** | Dify Web App / Coze 渠道 | ✅ 已完成 | `WorkflowService` share 逻辑 / `ShareWorkflow.vue` 分享运行页 + HITL / `wgh_workflow.share_token` |
-| 9 | **工作流 AGENT 节点** | Dify / Coze | 📋 计划中 | 节点白名单暂无 `AGENT`，工作流内无法直接复用 Agent 能力 |
+| 9 | **工作流 AGENT 节点** | Dify / Coze | ✅ 已完成 | `AgentNodeExecutor`（Planner → 步骤执行 → 反思；缺 goal、超时、步骤失败均有明确处理） / `WorkflowEditor.vue` 节点配置（goal/maxSteps/timeoutMs/kbIds） / `wgh_agent_plan`、`wgh_agent_step` |
 | 10 | **免登录分享 / 嵌入 Widget / 开放 API** | Dify / Coze / FastGPT | ✅ 已完成 | `ShareLinkService` + `ApiKeyService` + `PublicShareController` / `OpenApiController` + 独立安全链 `PublicAccessSecurityConfig` / `PublicShareChat.vue` 免登录分享页、`PublicAccess.vue` 管理端、`widget.js` 嵌入脚本 + `widget-demo.html` / `wgh_share_link`、`wgh_api_key`、`wgh_api_call_log`（Widget 为简化实现：iframe + 同源脚本，不含跨域 postMessage 通信） |
-| 11 | **多用户与权限体系** | Dify / FastGPT | 📋 计划中 | 当前仅 `admin` 单账号 JWT，无租户、RBAC、知识库/文档级权限 |
+| 11 | **多用户与权限体系** | Dify / FastGPT | 🔶 部分完成 | 已落地：`AuthRBACService`、`@RequiresPermission` + `PermissionAspect`、`OidcService`/`OidcController`（id_token 验签 + PKCE） / `Login.vue`；未做：角色管理界面/接口、租户隔离、知识库/文档级权限全量覆盖 / `wgh_user`、`wgh_role`、`wgh_permission`、`wgh_user_role`、`wgh_role_permission` |
 | 12 | **审计日志 / 配额限流 / 成本统计** | 企业级产品通用 | ✅ 已完成 | 审计 `@Audit` AOP + 成本 `ModelPriceService`；配额已抽为独立 `rag-quota` 模块（全局默认 + 按用户日/月配置，超限 429，用量原子累加） / `AdminStats.vue`、`QuotaManagement.vue`、`MyQuota.vue` + `ChatPlayground` 成本显示 / `wgh_audit_log`、`wgh_quota_usage`、`wgh_user_quota_config`、`wgh_model_price` |
 | 13 | **语义缓存** | Dify（Redis 缓存） | ✅ 已完成 | `SemanticCacheService` + `RagChatService` 前置拦截 / `ChatWindows.vue` 开关 + `ChatPlayground` cacheHit 标识 / `wgh_semantic_cache` + 独立 pgvector 表 |
 | 14 | **可观测性与部署编排** | 企业级产品通用 | 📋 计划中 | 无 Prometheus 指标 / 链路追踪；仓库无 Dockerfile 与 docker-compose |
 | 15 | **反馈闭环与离线评测平台** | Dify / RAGFlow | 🔶 部分完成 | 已落地：ground truth 标注 + 在线 Recall@K + 离线 `eval_recall.py` + 👍👎 + `AdminStats.dislikes` 运营闭环；未做：A/B 对比、数据集版本管理 |
 | 16 | **多模态（图片问答）** | Coze / Dify | ✅ 已完成 | `ChatImageService` + `supports_vision` / `ChatPlayground` 图片上传 + `ChatModels.vue` 视觉开关 / `wgh_llm_model.supports_vision`、`wgh_chat_message.attachments` |
-| 17 | **模型路由与故障转移** | Dify | ✅ 已完成 | `ModelRouter` + `RagChatService.runWithFailover` / `ChatModels.vue` routeGroup + routePriority、`ChatWindows.vue` modelRouteGroup 下拉 / `wgh_llm_model.route_group`、`wgh_llm_model.route_priority`、`wgh_chat_window.model_route_group` |
+| 17 | **模型路由与故障转移** | Dify | ✅ 已完成（待优化） | `ModelRouter#resolveChain` + `RagChatService#runWithFailover` / `ChatModels.vue` routeGroup + routePriority、`ChatWindows.vue` modelRouteGroup 下拉 / `wgh_llm_model.route_group`、`wgh_llm_model.route_priority`、`wgh_chat_window.model_route_group`；待优化：缺 `ModelRouterTest` |
 | 18 | **Prompt 模板中心** | Dify | ✅ 已完成 | `PromptTemplateService` + `PromptTemplateController` / `PromptTemplates.vue` + 实时变量检测 + 后端渲染预览 / `wgh_prompt_template` + 3 个内置种子模板 |
 | 19 | **移动端与国际化** | Coze / Dify | 📋 计划中 | 仅桌面端布局，无 i18n |
-| 20 | **知识库标签 / 文档版本** | FastGPT / RAGFlow | ✅ 已完成 | `TagService` + `FileVersionService` + `TagController` CRUD + 版本快照回滚 / `KnowledgeBase.vue` 标签弹窗 + `KBFiles.vue` 文件标签 chip + 版本历史弹窗 + 回滚 / `wgh_tag`、`wgh_kb_tag_rel`、`wgh_file_tag_rel`、`wgh_knowledge_file_version` |
+| 20 | **知识库标签 / 文档版本** | FastGPT / RAGFlow | ✅ 已完成（待优化） | `TagService` + `FileVersionService` + `TagController` CRUD + 版本快照回滚 / `KnowledgeBase.vue` 标签弹窗 + `KBFiles.vue` 文件标签 chip + 版本历史弹窗 + 回滚 / `wgh_tag`、`wgh_kb_tag_rel`、`wgh_file_tag_rel`、`wgh_knowledge_file_version`；待优化：缺 `TagServiceTest` / `FileVersionServiceTest` |
 
 > 已明确不做的方向：引入 Milvus / Elasticsearch 等独立向量或检索中间件（当前以 PostgreSQL + pgvector 单库承载，降低部署与运维成本）。
 
