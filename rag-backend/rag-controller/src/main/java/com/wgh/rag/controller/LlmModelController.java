@@ -63,6 +63,47 @@ public class LlmModelController {
         return Result.success(modelService.listEnabledChatModels());
     }
 
+    // ===== Rerank =====
+
+    @Operation(summary = "分页查询 RerankModel")
+    @GetMapping("/rerank")
+    public Result<PageResult<LlmModel>> pageRerankModels(
+            @RequestParam(defaultValue = "1") Long page,
+            @RequestParam(defaultValue = "10") Long size) {
+        return Result.success(modelService.pageRerankModels(page, size));
+    }
+
+    @Operation(summary = "获取 RerankModel 详情")
+    @GetMapping("/rerank/{id}")
+    public Result<LlmModel> getRerankModel(@PathVariable Long id) {
+        return Result.success(modelService.getRerankModel(id));
+    }
+
+    @Operation(summary = "新增 RerankModel")
+    @PostMapping("/rerank")
+    public Result<LlmModel> createRerankModel(@Valid @RequestBody LlmModel model) {
+        return Result.success(modelService.createRerankModel(model));
+    }
+
+    @Operation(summary = "编辑 RerankModel")
+    @PutMapping("/rerank")
+    public Result<LlmModel> updateRerankModel(@Valid @RequestBody LlmModel model) {
+        return Result.success(modelService.updateRerankModel(model));
+    }
+
+    @Operation(summary = "删除 RerankModel")
+    @DeleteMapping("/rerank/{id}")
+    public Result<Void> deleteRerankModel(@PathVariable Long id) {
+        modelService.deleteRerankModel(id);
+        return Result.success();
+    }
+
+    @Operation(summary = "列出所有启用的 RerankModel")
+    @GetMapping("/rerank/list")
+    public Result<List<LlmModel>> listEnabledRerankModels() {
+        return Result.success(modelService.listEnabledRerankModels());
+    }
+
     // ===== Embedding =====
 
     @Operation(summary = "分页查询嵌入模型")

@@ -71,6 +71,9 @@
                 <el-tag size="small" type="warning" v-if="msg.metrics.hitRate != null">
                   命中率 {{ (msg.metrics.hitRate * 100).toFixed(1) }}%
                 </el-tag>
+                <el-tag size="small" type="success" v-if="msg.metrics.rerankApplied">
+                  已重排序 {{ msg.metrics.rerankLatencyMs }}ms
+                </el-tag>
                 <el-tag size="small" type="success" v-if="msg.metrics.accuracyRate != null">
                   正确率 {{ (msg.metrics.accuracyRate * 100).toFixed(1) }}%
                 </el-tag>
@@ -564,7 +567,8 @@ const handleEvent = (event, data, aiMsg) => {
         aiMsg.metrics = {
           ...(aiMsg.metrics || {}),
           ...(data.recallRate != null ? { recallRate: data.recallRate } : {}),
-          ...(data.hitRate != null ? { hitRate: data.hitRate } : {})
+          ...(data.hitRate != null ? { hitRate: data.hitRate } : {}),
+          ...(data.rerankApplied ? { rerankApplied: true, rerankLatencyMs: data.rerankLatencyMs } : {})
         }
       }
       break

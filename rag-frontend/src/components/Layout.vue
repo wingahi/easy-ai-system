@@ -25,6 +25,7 @@
           </template>
           <el-menu-item index="/models/chat">大模型配置</el-menu-item>
           <el-menu-item index="/models/embedding">嵌入模型</el-menu-item>
+          <el-menu-item index="/models/rerank">重排序模型</el-menu-item>
         </el-sub-menu>
         
         <el-sub-menu index="chat">

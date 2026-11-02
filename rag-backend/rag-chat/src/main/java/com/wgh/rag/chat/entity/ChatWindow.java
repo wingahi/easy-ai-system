@@ -105,4 +105,12 @@ public class ChatWindow extends BaseEntity {
     /** 绑定的工作流 ID（非空时每条用户消息触发一次完整工作流运行） */
     @TableField(value = "workflow_id")
     private Long workflowId;
+
+    /** 是否启用 Rerank 重排序（0 否 / 1 是） */
+    @TableField(value = "rerank_enabled", typeHandler = BooleanToSmallintTypeHandler.class)
+    private Boolean rerankEnabled;
+
+    /** Rerank 模型 ID（wgh_llm_model 中 model_type=RERANK 的记录） */
+    @TableField(value = "rerank_model_id")
+    private Long rerankModelId;
 }

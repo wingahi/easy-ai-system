@@ -119,6 +119,21 @@
         </el-form-item>
         <el-form-item label="温度"><el-slider v-model="form.temperature" :min="0" :max="2" :step="0.1" /></el-form-item>
 
+        <!-- ============ 检索增强 ============ -->
+        <el-divider content-position="left">🔍 检索增强</el-divider>
+        <el-form-item label="Rerank 重排序">
+          <el-switch v-model="form.rerankEnabled" />
+          <span style="font-size:12px;color:#909399;margin-left:12px">候选放大至 topK×3 后由重排序模型精排；失败自动降级为原始向量序</span>
+        </el-form-item>
+        <el-form-item v-if="form.rerankEnabled" label="重排序模型">
+          <el-select v-model="form.rerankModelId" clearable style="width:100%" placeholder="选择 RERANK 类型模型">
+            <el-option v-for="m in rerankModels" :key="m.id" :label="`${m.name} (${m.modelName})`" :value="m.id" />
+          </el-select>
+          <div v-if="!rerankModels.length" style="font-size:12px;color:#e6a23c;margin-top:4px">
+            暂无启用的重排序模型，请先在「模型管理 → 重排序模型」中配置
+          </div>
+        </el-form-item>
+
         <!-- ============ 执行模式 ============ -->
         <el-divider content-position="left">⚙️ 执行模式</el-divider>
         <el-form-item label="执行模式">
@@ -191,7 +206,7 @@ import { Plus } from '@element-plus/icons-vue'
 import {
   windowPage, windowCreate, windowUpdate, windowDelete, windowDisable, windowEnable,
   windowEnableShare, windowDisableShare, windowRegenerateShare, chatModelList, kbList as fetchKbList,
-  toolList, workflowList
+  toolList, workflowList, rerankModelList
 } from '../../api'
 
 const router = useRouter()
@@ -205,6 +220,7 @@ const dialogVisible = ref(false)
 const editing = ref(null)
 const formRef = ref()
 const chatModels = ref([])
+const rerankModels = ref([])
 const kbList = ref([])
 const tools = ref([])
 const workflows = ref([])
@@ -219,6 +235,7 @@ const form = reactive({
   name: '', description: '', llmModelId: null,
   knowledgeBaseIds: '[]', systemPrompt: '', temperature: 0.7, status: 1,
   evaluationScheme: 'NONE', judgeModelIds: '[]', toolIds: '[]', workflowId: null,
+  rerankEnabled: false, rerankModelId: null,
   agentEnabled: 0, agentMaxSteps: 15, agentPlannerModelId: null,
   agentExecutorModelId: null, agentCriticModelIds: '[]',
   agentReflectionThreshold: 7.0, agentHitlEnabled: 0
@@ -238,11 +255,12 @@ const load = async () => {
 }
 
 const loadOptions = async () => {
-  const [cmRes, kbRes, toolRes, wfRes] = await Promise.all([chatModelList(), fetchKbList(), toolList(), workflowList()])
+  const [cmRes, kbRes, toolRes, wfRes, rrRes] = await Promise.all([chatModelList(), fetchKbList(), toolList(), workflowList(), rerankModelList()])
   chatModels.value = cmRes.data
   kbList.value = kbRes.data
   tools.value = toolRes.data || []
   workflows.value = wfRes.data || []
+  rerankModels.value = rrRes.data || []
 }
 
 const workflowName = (id) => workflows.value.find(w => w.id === id)?.name || `#${id}`
@@ -287,6 +305,7 @@ const openDialog = (row) => {
       name: '', description: '', llmModelId: null, knowledgeBaseIds: '[]',
       systemPrompt: '', temperature: 0.7, status: 1,
       evaluationScheme: 'NONE', judgeModelIds: '[]', toolIds: '[]', workflowId: null,
+      rerankEnabled: false, rerankModelId: null,
       agentEnabled: 0, agentMaxSteps: 15, agentPlannerModelId: null,
       agentExecutorModelId: null, agentCriticModelIds: '[]',
       agentReflectionThreshold: 7.0, agentHitlEnabled: 0

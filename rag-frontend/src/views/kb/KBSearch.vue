@@ -10,16 +10,23 @@
     <div class="card" style="margin-bottom:16px">
       <div style="display:flex;gap:12px">
         <el-input v-model="query" placeholder="输入问题..." size="large" @keyup.enter="doSearch" />
+        <el-select v-model="rerankModelId" clearable placeholder="Rerank 模型（可选）" style="width:260px" size="large">
+          <el-option v-for="m in rerankModels" :key="m.id" :label="`${m.name} (${m.modelName})`" :value="m.id" />
+        </el-select>
         <el-button type="primary" size="large" :icon="Search" :loading="loading" @click="doSearch">搜索</el-button>
       </div>
     </div>
 
     <div v-if="result" class="card">
-      <el-descriptions title="检索指标" :column="4" border style="margin-bottom:20px">
+      <el-descriptions title="检索指标" :column="5" border style="margin-bottom:20px">
         <el-descriptions-item label="召回数">{{ result.totalMatches }}</el-descriptions-item>
         <el-descriptions-item label="过滤后">{{ result.filteredMatches }}</el-descriptions-item>
         <el-descriptions-item label="召回率">{{ (result.recallRate * 100).toFixed(1) }}%</el-descriptions-item>
         <el-descriptions-item label="命中率">{{ (result.hitRate * 100).toFixed(1) }}%</el-descriptions-item>
+        <el-descriptions-item label="重排序">
+          <el-tag v-if="result.rerankApplied" type="success" size="small">已应用 {{ result.rerankLatencyMs }}ms</el-tag>
+          <span v-else style="color:#909399">未启用/已降级</span>
+        </el-descriptions-item>
       </el-descriptions>
 
       <h3 style="margin:0 0 12px">搜索结果</h3>
@@ -48,7 +55,7 @@
 import { ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { ArrowLeft, Search, Document } from '@element-plus/icons-vue'
-import { kbGet, kbSearch } from '../../api'
+import { kbGet, kbSearch, rerankModelList } from '../../api'
 
 const route = useRoute()
 const kbId = route.params.id
@@ -56,12 +63,14 @@ const kb = ref(null)
 const query = ref('')
 const result = ref(null)
 const loading = ref(false)
+const rerankModels = ref([])
+const rerankModelId = ref(null)
 
 const doSearch = async () => {
   if (!query.value.trim()) return
   loading.value = true
   try {
-    const res = await kbSearch(kbId, query.value)
+    const res = await kbSearch(kbId, query.value, rerankModelId.value)
     result.value = res.data
   } finally {
     loading.value = false
@@ -69,8 +78,9 @@ const doSearch = async () => {
 }
 
 onMounted(async () => {
-  const res = await kbGet(kbId)
-  kb.value = res.data
+  const [kbRes, rrRes] = await Promise.all([kbGet(kbId), rerankModelList()])
+  kb.value = kbRes.data
+  rerankModels.value = rrRes.data || []
 })
 </script>
 

@@ -120,9 +120,12 @@ public class KnowledgeBaseController {
     @GetMapping("/{kbId}/search")
     public Result<java.util.Map<String, Object>> search(
             @PathVariable Long kbId,
-            @RequestParam String query) {
+            @RequestParam String query,
+            @RequestParam(value = "rerankModelId", required = false) Long rerankModelId) {
+        com.wgh.rag.kb.service.RetrieveResult retrieveResult = retrieveService.searchMultiple(
+                List.of(kbId), query, new com.wgh.rag.kb.service.RetrievalOptions(rerankModelId));
         List<dev.langchain4j.store.embedding.EmbeddingMatch<dev.langchain4j.data.segment.TextSegment>> matches =
-                retrieveService.searchMultiple(List.of(kbId), query);
+                retrieveResult.matches();
 
         List<java.util.Map<String, Object>> results = new java.util.ArrayList<>();
         for (var m : matches) {
@@ -139,6 +142,8 @@ public class KnowledgeBaseController {
         java.util.Map<String, Object> resp = new java.util.LinkedHashMap<>();
         resp.put("results", results);
         resp.put("totalMatches", matches.size());
+        resp.put("rerankApplied", retrieveResult.rerankApplied());
+        resp.put("rerankLatencyMs", retrieveResult.rerankLatencyMs());
         resp.put("filteredMatches", results.stream().filter(r -> (Boolean) r.get("hit")).count());
         // 评估指标：简化计算（无 ground truth 时做 best-effort）
         double recallRate = matches.isEmpty() ? 0

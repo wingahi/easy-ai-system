@@ -16,6 +16,8 @@ import com.wgh.rag.agent.service.AgentOrchestrator;
 import com.wgh.rag.common.exception.BusinessException;
 import com.wgh.rag.config.property.RagProperties;
 import com.wgh.rag.kb.service.RagRetrieveService;
+import com.wgh.rag.kb.service.RetrievalOptions;
+import com.wgh.rag.kb.service.RetrieveResult;
 import com.wgh.rag.llm.entity.LlmModel;
 import com.wgh.rag.llm.factory.ModelCacheManager;
 import com.wgh.rag.tool.entity.ToolConfig;
@@ -204,12 +206,14 @@ public class RagChatService {
         // 读取评估方案
         EvaluationScheme evaluationScheme = EvaluationScheme.from(window.getEvaluationScheme());
 
-        // 2. 知识库搜索
+        // 2. 知识库搜索（窗口级 Rerank 增强，失败自动降级为原始向量序）
         List<Long> kbIds = parseKbIds(window.getKnowledgeBaseIds());
         final boolean hasKb = !kbIds.isEmpty();
-        final List<EmbeddingMatch<TextSegment>> retrievedMatches = hasKb
-                ? ragRetrieveService.searchMultiple(kbIds, userMessage)
-                : new ArrayList<>();
+        final RetrieveResult retrieveResult = hasKb
+                ? ragRetrieveService.searchMultiple(kbIds, userMessage,
+                        new RetrievalOptions(resolveRerankModelId(window)))
+                : RetrieveResult.empty();
+        final List<EmbeddingMatch<TextSegment>> retrievedMatches = new ArrayList<>(retrieveResult.matches());
 
         // 发送检索结果事件（召回率、命中率）
         // recallRate: 召回覆盖率 = retrievedCount / topK（召回是否打满）
@@ -232,6 +236,8 @@ public class RagChatService {
             retrieveInfo.put("recallRate", recallRate);
             retrieveInfo.put("hitRate", hitRate);
             retrieveInfo.put("retrievedCount", retrievedMatches.size());
+            retrieveInfo.put("rerankApplied", retrieveResult.rerankApplied());
+            retrieveInfo.put("rerankLatencyMs", retrieveResult.rerankLatencyMs());
             emitter.send(SseEmitter.event().name("retrieve").data(retrieveInfo));
 
             // 保存用户消息的检索指标
@@ -916,5 +922,17 @@ public class RagChatService {
             log.warn("解析知识库ID列表失败: {}", kbIdsJson);
             return List.of();
         }
+    }
+
+    /**
+     * 解析窗口级 Rerank 配置：窗口开关或全局开关任一开启即启用；
+     * 模型 ID 窗口级优先，回退全局默认；无可用模型时返回 null（不启用）。
+     */
+    private Long resolveRerankModelId(ChatWindow window) {
+        RagProperties.Retrieve retrieve = ragProperties.getRetrieve();
+        boolean enabled = Boolean.TRUE.equals(window.getRerankEnabled())
+                || Boolean.TRUE.equals(retrieve.getEnableRerank());
+        if (!enabled) return null;
+        return window.getRerankModelId() != null ? window.getRerankModelId() : retrieve.getRerankModelId();
     }
 }

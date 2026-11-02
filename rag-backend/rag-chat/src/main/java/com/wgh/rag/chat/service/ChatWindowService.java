@@ -85,6 +85,12 @@ public class ChatWindowService {
                     .eq(ChatWindow::getId, window.getId())
                     .set(ChatWindow::getWorkflowId, null));
         }
+        // 同理：前端清空重排序模型下拉时需显式置空 rerank_model_id
+        if (window.getRerankModelId() == null) {
+            windowMapper.update(null, new LambdaUpdateWrapper<ChatWindow>()
+                    .eq(ChatWindow::getId, window.getId())
+                    .set(ChatWindow::getRerankModelId, null));
+        }
         return window;
     }
 

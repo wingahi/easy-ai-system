@@ -33,8 +33,10 @@ public class RagProperties {
         private Integer topK = 5;
         /** 相似度阈值（0-1） */
         private Double minScore = 0.3;
-        /** 是否开启重排 */
+        /** 是否开启重排（全局默认，窗口级 rerankEnabled 优先） */
         private Boolean enableRerank = false;
+        /** 全局默认 Rerank 模型 ID（窗口未配置 rerankModelId 时回退） */
+        private Long rerankModelId;
     }
 
     @Data

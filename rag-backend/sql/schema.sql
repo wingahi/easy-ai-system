@@ -42,8 +42,8 @@ END $$;
 COMMENT ON TABLE wgh_llm_model IS 'LLM 模型配置';
 COMMENT ON COLUMN wgh_llm_model.id IS '主键';
 COMMENT ON COLUMN wgh_llm_model.name IS '显示名称（如 通义 qwen-plus）';
-COMMENT ON COLUMN wgh_llm_model.model_type IS '模型类型：CHAT / EMBEDDING';
-COMMENT ON COLUMN wgh_llm_model.provider IS '提供厂商：DEEPSEEK / DASHSCOPE / CUSTOM_OPENAI 等';
+COMMENT ON COLUMN wgh_llm_model.model_type IS '模型类型：CHAT / EMBEDDING / RERANK';
+COMMENT ON COLUMN wgh_llm_model.provider IS '提供厂商：DEEPSEEK / DASHSCOPE / CUSTOM_OPENAI / CUSTOM_RERANK 等';
 COMMENT ON COLUMN wgh_llm_model.model_name IS '厂商侧模型名（API 请求用，如 qwen-plus / deepseek-chat）';
 COMMENT ON COLUMN wgh_llm_model.base_url IS 'API Base URL';
 COMMENT ON COLUMN wgh_llm_model.api_key IS 'API Key（加密存储，生产环境建议 KMS）';
@@ -191,6 +191,8 @@ CREATE TABLE IF NOT EXISTS wgh_chat_window (
   agent_reflection_threshold DOUBLE PRECISION DEFAULT 7.0,
   agent_hitl_enabled SMALLINT DEFAULT 0,
   workflow_id BIGINT,
+  rerank_enabled SMALLINT DEFAULT 0,
+  rerank_model_id BIGINT,
   create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   create_by VARCHAR(50) DEFAULT 'system',
@@ -198,6 +200,8 @@ CREATE TABLE IF NOT EXISTS wgh_chat_window (
   deleted SMALLINT DEFAULT 0
 );
 ALTER TABLE wgh_chat_window ADD COLUMN IF NOT EXISTS workflow_id BIGINT;
+ALTER TABLE wgh_chat_window ADD COLUMN IF NOT EXISTS rerank_enabled SMALLINT DEFAULT 0;
+ALTER TABLE wgh_chat_window ADD COLUMN IF NOT EXISTS rerank_model_id BIGINT;
 CREATE INDEX IF NOT EXISTS idx_cw_workflow_id ON wgh_chat_window(workflow_id);
 CREATE INDEX IF NOT EXISTS idx_cw_share_token ON wgh_chat_window(share_token);
 CREATE INDEX IF NOT EXISTS idx_cw_share_enabled ON wgh_chat_window(share_enabled);
@@ -225,6 +229,8 @@ COMMENT ON COLUMN wgh_chat_window.agent_critic_model_ids IS 'Agent Critic 模型
 COMMENT ON COLUMN wgh_chat_window.agent_reflection_threshold IS '反思评分阈值（0-10，低于此分触发重试）';
 COMMENT ON COLUMN wgh_chat_window.agent_hitl_enabled IS '是否允许计划中 HITL（Human-In-The-Loop）节点（0 否 / 1 是）';
 COMMENT ON COLUMN wgh_chat_window.workflow_id IS '绑定的工作流 ID（非空时每条用户消息触发一次完整工作流运行）';
+COMMENT ON COLUMN wgh_chat_window.rerank_enabled IS '是否启用 Rerank 重排序（0 否 / 1 是）';
+COMMENT ON COLUMN wgh_chat_window.rerank_model_id IS 'Rerank 模型 ID（指向 wgh_llm_model 中 model_type=RERANK 的记录）';
 COMMENT ON COLUMN wgh_chat_window.create_time IS '创建时间';
 COMMENT ON COLUMN wgh_chat_window.update_time IS '更新时间';
 COMMENT ON COLUMN wgh_chat_window.create_by IS '创建人';

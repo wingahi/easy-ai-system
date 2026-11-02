@@ -28,7 +28,7 @@ export const kbResplitFile = (fileId, splitStrategy, splitConfig) => {
   return request.post(`/kb/files/${fileId}/resplit?${params.toString()}`)
 }
 export const kbPreviewSplit = (fileId) => request.get(`/kb/files/${fileId}/preview`)
-export const kbSearch = (kbId, query) => request.get(`/kb/${kbId}/search`, { params: { query } })
+export const kbSearch = (kbId, query, rerankModelId) => request.get(`/kb/${kbId}/search`, { params: { query, rerankModelId: rerankModelId || undefined } })
 
 // 模型
 export const chatModelPage = (params) => request.get('/models/chat', { params })
@@ -43,6 +43,13 @@ export const embeddingModelList = () => request.get('/models/embedding/list')
 export const embeddingModelCreate = (data) => request.post('/models/embedding', data)
 export const embeddingModelUpdate = (data) => request.put('/models/embedding', data)
 export const embeddingModelDelete = (id) => request.delete(`/models/embedding/${id}`)
+
+export const rerankModelPage = (params) => request.get('/models/rerank', { params })
+export const rerankModelList = () => request.get('/models/rerank/list')
+export const rerankModelGet = (id) => request.get(`/models/rerank/${id}`)
+export const rerankModelCreate = (data) => request.post('/models/rerank', data)
+export const rerankModelUpdate = (data) => request.put('/models/rerank', data)
+export const rerankModelDelete = (id) => request.delete(`/models/rerank/${id}`)
 
 // 聊天窗口
 export const windowPage = (params) => request.get('/chat/windows', { params })

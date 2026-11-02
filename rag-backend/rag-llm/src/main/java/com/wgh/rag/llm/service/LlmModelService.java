@@ -114,6 +114,57 @@ public class LlmModelService {
                         .last("LIMIT 1"));
     }
 
+    // ==================== RerankModel 管理 ====================
+
+    public PageResult<LlmModel> pageRerankModels(Long page, Long size) {
+        Page<LlmModel> result = llmModelMapper.selectPage(
+                Page.of(page, size),
+                new LambdaQueryWrapper<LlmModel>().eq(LlmModel::getModelType, "RERANK")
+                        .orderByDesc(LlmModel::getCreateTime));
+        return new PageResult<>(result.getTotal(), result.getCurrent(), result.getSize(), result.getRecords());
+    }
+
+    public LlmModel getRerankModel(Long id) {
+        LlmModel model = llmModelMapper.selectById(id);
+        if (model == null || !"RERANK".equals(model.getModelType())) {
+            throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "Rerank 模型不存在");
+        }
+        return model;
+    }
+
+    @Transactional
+    public LlmModel createRerankModel(LlmModel model) {
+        model.setModelType("RERANK");
+        model.setCompressionModel(false);
+        model.setStatus(model.getStatus() != null ? model.getStatus() : 1);
+        llmModelMapper.insert(model);
+        return model;
+    }
+
+    @Transactional
+    public LlmModel updateRerankModel(LlmModel model) {
+        LlmModel existing = llmModelMapper.selectById(model.getId());
+        if (existing == null || !"RERANK".equals(existing.getModelType())) {
+            throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "Rerank 模型不存在");
+        }
+        model.setModelType("RERANK");
+        model.setCompressionModel(false);
+        llmModelMapper.updateById(model);
+        return model;
+    }
+
+    @Transactional
+    public void deleteRerankModel(Long id) {
+        llmModelMapper.deleteById(id);
+    }
+
+    public List<LlmModel> listEnabledRerankModels() {
+        return llmModelMapper.selectList(
+                new LambdaQueryWrapper<LlmModel>()
+                        .eq(LlmModel::getModelType, "RERANK")
+                        .eq(LlmModel::getStatus, 1));
+    }
+
     // ==================== EmbeddingModel 管理 ====================
 
     public PageResult<EmbeddingModelConfig> pageEmbeddingModels(Long page, Long size) {
