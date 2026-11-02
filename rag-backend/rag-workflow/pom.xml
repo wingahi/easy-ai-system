@@ -34,6 +34,11 @@
             <groupId>com.wgh</groupId>
             <artifactId>rag-tool</artifactId>
         </dependency>
+        <dependency>
+            <groupId>com.wgh</groupId>
+            <artifactId>rag-agent</artifactId>
+            <!-- AGENT 节点执行器依赖：复用 Planner + StepExecutor 做轻量同步 Agent 编排 -->
+        </dependency>
 
         <dependency>
             <groupId>com.baomidou</groupId>
