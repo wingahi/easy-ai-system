@@ -147,16 +147,21 @@ public class RagRetrieveService {
             fused = single.stream().limit(candidateTopN).toList();
         }
 
+        // 分数语义：单路原始分数为余弦相似度；多路融合为 RRF 分数（仅 Rerank 后才是相关性分数）
+        RetrieveResult.ScoreType scoreType = allLists.size() > 1
+                ? RetrieveResult.ScoreType.RRF : RetrieveResult.ScoreType.COSINE;
+
         // Rerank 始终面向原查询（保留用户意图）
         if (!opts.rerankEnabled()) {
             return new RetrieveResult(fused.stream().limit(topK).toList(), false, 0,
                     opts.hybridEnabled(), keywordOnlyIds,
-                    transform.transformedQueries(), transform.latencyMs());
+                    transform.transformedQueries(), transform.latencyMs(), scoreType);
         }
         RetrieveResult reranked = applyRerank(fused, queryText, opts.rerankModelId(), topK);
         return new RetrieveResult(reranked.matches(), reranked.rerankApplied(), reranked.rerankLatencyMs(),
                 opts.hybridEnabled(), keywordOnlyIds,
-                transform.transformedQueries(), transform.latencyMs());
+                transform.transformedQueries(), transform.latencyMs(),
+                reranked.rerankApplied() ? RetrieveResult.ScoreType.RERANK : scoreType);
     }
 
     /**

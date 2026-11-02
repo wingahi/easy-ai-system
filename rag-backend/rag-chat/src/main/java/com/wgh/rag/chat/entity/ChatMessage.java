@@ -39,9 +39,14 @@ public class ChatMessage extends BaseEntity {
     private Integer tokenCount;
 
     /**
-     * RAG 检索召回率
+     * RAG 检索召回率（Recall@K，需要相关性标注；未标注时为 null，历史数据勿使用）
      */
     private Double recallRate;
+
+    /**
+     * RAG 召回覆盖率（实际返回条数 / topK，衡量 topK 填充程度，不是召回率）
+     */
+    private Double coverageRate;
 
     /**
      * RAG 命中率

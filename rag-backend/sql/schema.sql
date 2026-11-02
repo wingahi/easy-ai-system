@@ -310,6 +310,7 @@ CREATE TABLE IF NOT EXISTS wgh_chat_message (
   message_type VARCHAR(20) DEFAULT 'TEXT',
   token_count INT DEFAULT 0,
   recall_rate DOUBLE PRECISION,
+  coverage_rate DOUBLE PRECISION,
   hit_rate DOUBLE PRECISION,
   accuracy_rate DOUBLE PRECISION,
   sources TEXT,
@@ -325,6 +326,7 @@ CREATE TABLE IF NOT EXISTS wgh_chat_message (
   update_by VARCHAR(50) DEFAULT 'system',
   deleted SMALLINT DEFAULT 0
 );
+ALTER TABLE wgh_chat_message ADD COLUMN IF NOT EXISTS coverage_rate DOUBLE PRECISION;
 CREATE INDEX IF NOT EXISTS idx_cm_session_create ON wgh_chat_message(session_id, create_time);
 COMMENT ON TABLE wgh_chat_message IS '聊天消息';
 COMMENT ON COLUMN wgh_chat_message.id IS '主键';
@@ -333,8 +335,9 @@ COMMENT ON COLUMN wgh_chat_message.role IS '角色：SYSTEM / USER / ASSISTANT';
 COMMENT ON COLUMN wgh_chat_message.content IS '消息文本';
 COMMENT ON COLUMN wgh_chat_message.message_type IS '消息类型：TEXT / IMAGE / FILE / TOOL_CALL';
 COMMENT ON COLUMN wgh_chat_message.token_count IS 'token 数';
-COMMENT ON COLUMN wgh_chat_message.recall_rate IS '检索召回率（有 ground truth 时）';
-COMMENT ON COLUMN wgh_chat_message.hit_rate IS '命中率（检索结果中相关 chunk 占比）';
+COMMENT ON COLUMN wgh_chat_message.recall_rate IS '检索召回率 Recall@K（分母为标注的相关 chunk 数，需 ground truth；在线无标注时为 NULL）';
+COMMENT ON COLUMN wgh_chat_message.coverage_rate IS '召回覆盖率（实际返回条数/topK，衡量 topK 填充程度，非召回率）';
+COMMENT ON COLUMN wgh_chat_message.hit_rate IS '命中率 Precision@K（检索结果中分数达标的 chunk 占比）';
 COMMENT ON COLUMN wgh_chat_message.accuracy_rate IS '准确率';
 COMMENT ON COLUMN wgh_chat_message.sources IS '被引用的检索来源 JSON';
 COMMENT ON COLUMN wgh_chat_message.mrr IS 'MRR（Mean Reciprocal Rank）：第一个被引用 chunk 的检索排名倒数';

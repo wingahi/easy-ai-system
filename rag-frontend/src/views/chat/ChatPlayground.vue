@@ -65,9 +65,12 @@
               
               <!-- 指标展示（AI消息下方） -->
               <div v-if="msg.role === 'ASSISTANT' && msg.metrics" class="msg-metrics">
-                <el-tag size="small" type="info" v-if="msg.metrics.recallRate != null">
-                  召回率 {{ (msg.metrics.recallRate * 100).toFixed(1) }}%
-                </el-tag>
+                <el-tooltip v-if="msg.metrics.coverageRate != null" placement="top"
+                            content="召回覆盖率 = 实际返回条数 / topK，衡量 topK 槽位填充程度；真实召回率需相关性标注">
+                  <el-tag size="small" type="info">
+                    召回覆盖率 {{ (msg.metrics.coverageRate * 100).toFixed(1) }}%
+                  </el-tag>
+                </el-tooltip>
                 <el-tag size="small" type="warning" v-if="msg.metrics.hitRate != null">
                   命中率 {{ (msg.metrics.hitRate * 100).toFixed(1) }}%
                 </el-tag>
@@ -344,7 +347,7 @@ const toViewMessage = (m) => {
     sources: m.sources ? dedupeSources(JSON.parse(m.sources)) : [],
     judgeDetails: m.judgeDetails ? safeParse(m.judgeDetails) : null
   }
-  const metricsKeys = ['recallRate', 'hitRate', 'accuracyRate', 'mrr', 'ndcg', 'faithfulness', 'answerRelevancy', 'judgeAgreement']
+  const metricsKeys = ['coverageRate', 'hitRate', 'accuracyRate', 'mrr', 'ndcg', 'faithfulness', 'answerRelevancy', 'judgeAgreement']
   const metrics = {}
   let hasAny = false
   for (const k of metricsKeys) {
@@ -572,10 +575,10 @@ const handleEvent = (event, data, aiMsg) => {
       break
     case 'retrieve':
       // 后端仅在窗口关联知识库时下发该事件；保守起见这里也按 null 过滤
-      if (data.recallRate != null || data.hitRate != null) {
+      if (data.coverageRate != null || data.hitRate != null) {
         aiMsg.metrics = {
           ...(aiMsg.metrics || {}),
-          ...(data.recallRate != null ? { recallRate: data.recallRate } : {}),
+          ...(data.coverageRate != null ? { coverageRate: data.coverageRate } : {}),
           ...(data.hitRate != null ? { hitRate: data.hitRate } : {}),
           ...(data.rerankApplied ? { rerankApplied: true, rerankLatencyMs: data.rerankLatencyMs } : {}),
           ...(data.hybridApplied ? { hybridApplied: true, keywordHitCount: data.keywordHitCount } : {}),

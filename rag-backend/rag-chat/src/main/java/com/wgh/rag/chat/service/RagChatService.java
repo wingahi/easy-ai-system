@@ -17,6 +17,7 @@ import com.wgh.rag.common.exception.BusinessException;
 import com.wgh.rag.config.property.RagProperties;
 import com.wgh.rag.kb.service.RagRetrieveService;
 import com.wgh.rag.kb.service.RetrievalOptions;
+import com.wgh.rag.kb.service.RetrievalQuality;
 import com.wgh.rag.kb.service.RetrieveResult;
 import com.wgh.rag.llm.entity.LlmModel;
 import com.wgh.rag.llm.factory.ModelCacheManager;
@@ -216,25 +217,24 @@ public class RagChatService {
                 : RetrieveResult.empty();
         final List<EmbeddingMatch<TextSegment>> retrievedMatches = new ArrayList<>(retrieveResult.matches());
 
-        // 发送检索结果事件（召回率、命中率）
-        // recallRate: 召回覆盖率 = retrievedCount / topK（召回是否打满）
-        // hitRate:    有效命中占比 = score >= minScore 的条数 / 总条数
+        // 检索指标（在线链路无相关性标注，Recall@K 不可计算，故不下发 recallRate）：
+        // coverageRate: 召回覆盖率 = 实际返回条数 / topK（是否填满 topK，不是召回率）
+        // hitRate:      命中率 = 分数达标的条数 / 实际返回条数（Precision@K）
         // 注意：未配置知识库时，不应下发/持久化检索指标（前端按 null 不展示）
         int topK = ragProperties.getRetrieve().getTopK() != null ? ragProperties.getRetrieve().getTopK() : 5;
         double minScore = ragProperties.getRetrieve().getMinScore() != null
                 ? ragProperties.getRetrieve().getMinScore() : 0.55;
-        Double recallRate = null;
+        Double coverageRate = null;
         Double hitRate = null;
         if (hasKb) {
-            recallRate = Math.min(1.0, (double) retrievedMatches.size() / topK);
+            coverageRate = RetrievalQuality.coverage(retrievedMatches.size(), topK);
             long highQualityHits = retrievedMatches.stream()
                     .filter(m -> m.score() != null && m.score() >= minScore)
                     .count();
-            hitRate = retrievedMatches.isEmpty() ? 0.0
-                    : (double) highQualityHits / retrievedMatches.size();
+            hitRate = RetrievalQuality.hitRate((int) highQualityHits, retrievedMatches.size());
 
             Map<String, Object> retrieveInfo = new HashMap<>();
-            retrieveInfo.put("recallRate", recallRate);
+            retrieveInfo.put("coverageRate", coverageRate);
             retrieveInfo.put("hitRate", hitRate);
             retrieveInfo.put("retrievedCount", retrievedMatches.size());
             retrieveInfo.put("rerankApplied", retrieveResult.rerankApplied());
@@ -246,7 +246,7 @@ public class RagChatService {
             emitter.send(SseEmitter.event().name("retrieve").data(retrieveInfo));
 
             // 保存用户消息的检索指标
-            userMsg.setRecallRate(recallRate);
+            userMsg.setCoverageRate(coverageRate);
             userMsg.setHitRate(hitRate);
             messageMapper.updateById(userMsg);
         }

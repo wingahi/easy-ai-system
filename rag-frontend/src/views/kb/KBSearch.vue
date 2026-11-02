@@ -32,7 +32,11 @@
       <el-descriptions title="检索指标" :column="5" border style="margin-bottom:20px">
         <el-descriptions-item label="召回数">{{ result.totalMatches }}</el-descriptions-item>
         <el-descriptions-item label="过滤后">{{ result.filteredMatches }}</el-descriptions-item>
-        <el-descriptions-item label="召回率">{{ (result.recallRate * 100).toFixed(1) }}%</el-descriptions-item>
+        <el-descriptions-item label="召回覆盖率">
+          <el-tooltip placement="top" content="实际返回条数 / topK，衡量 topK 填充程度；真实召回率需相关性标注">
+            <span>{{ (result.coverageRate * 100).toFixed(1) }}%</span>
+          </el-tooltip>
+        </el-descriptions-item>
         <el-descriptions-item label="命中率">{{ (result.hitRate * 100).toFixed(1) }}%</el-descriptions-item>
         <el-descriptions-item label="重排序">
           <el-tag v-if="result.rerankApplied" type="success" size="small">已应用 {{ result.rerankLatencyMs }}ms</el-tag>
@@ -60,7 +64,7 @@
               {{ item.hit ? '命中' : '相关' }}
             </el-tag>
             <el-tag v-if="item.source === 'KEYWORD'" size="small" type="warning">关键词召回</el-tag>
-            <span class="score">相似度: {{ (item.score * 100).toFixed(1) }}%</span>
+            <span class="score">{{ scoreLabel }}: {{ (item.score * 100).toFixed(1) }}%</span>
           </div>
           <div class="result-content">{{ item.content }}</div>
           <div class="result-source">
@@ -75,7 +79,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { ArrowLeft, Search, Document } from '@element-plus/icons-vue'
 import { kbGet, kbSearch, rerankModelList, chatModelList } from '../../api'
@@ -92,6 +96,13 @@ const hybrid = ref(false)
 const queryTransformMode = ref('NONE')
 const rewriteModelId = ref(null)
 const chatModels = ref([])
+
+// 分数标签随分数语义变化：RRF 融合分不可解读为余弦相似度
+const scoreLabel = computed(() => ({
+  RERANK: '重排分数',
+  RRF: 'RRF 融合分',
+  COSINE: '余弦相似度'
+}[result.value?.scoreType] || '相似度'))
 
 const doSearch = async () => {
   if (!query.value.trim()) return

@@ -73,6 +73,8 @@ class RagRetrieveServiceRerankTest {
         assertThat(result.rerankApplied()).isFalse();
         assertThat(result.matches()).hasSize(2);
         assertThat(result.matches().get(0).embedded().text()).isEqualTo("chunk0");
+        // 单路向量召回：分数是余弦相似度，可与 minScore 比较
+        assertThat(result.scoreType()).isEqualTo(RetrieveResult.ScoreType.COSINE);
     }
 
     @Test
@@ -90,6 +92,8 @@ class RagRetrieveServiceRerankTest {
         assertThat(result.matches().get(0).embedded().text()).isEqualTo("chunk2");
         assertThat(result.matches().get(0).score()).isEqualTo(0.95);
         assertThat(result.matches().get(1).embedded().text()).isEqualTo("chunk4");
+        // Rerank 后分数是重排相关性分数
+        assertThat(result.scoreType()).isEqualTo(RetrieveResult.ScoreType.RERANK);
     }
 
     @Test
@@ -103,6 +107,8 @@ class RagRetrieveServiceRerankTest {
         assertThat(result.rerankApplied()).isFalse();
         assertThat(result.matches()).hasSize(2);
         assertThat(result.matches().get(0).embedded().text()).isEqualTo("chunk0");
+        // Rerank 失败降级，分数仍是原始余弦相似度
+        assertThat(result.scoreType()).isEqualTo(RetrieveResult.ScoreType.COSINE);
     }
 
     @Test
@@ -120,6 +126,8 @@ class RagRetrieveServiceRerankTest {
         assertThat(result.matches()).hasSize(2);
         // RRF 后 chunk1（两路命中）应排第一
         assertThat(result.matches().get(0).embedded().text()).isEqualTo("chunk1");
+        // 多路融合 → RRF 分数，不可用余弦阈值判定命中
+        assertThat(result.scoreType()).isEqualTo(RetrieveResult.ScoreType.RRF);
     }
 
     @Test
@@ -153,6 +161,8 @@ class RagRetrieveServiceRerankTest {
         assertThat(result.transformedQueries()).containsExactly("v1", "v2");
         assertThat(result.transformLatencyMs()).isEqualTo(12);
         assertThat(result.matches()).hasSize(2);
+        // 多查询变体多路召回 → RRF 分数
+        assertThat(result.scoreType()).isEqualTo(RetrieveResult.ScoreType.RRF);
     }
 
     @Test

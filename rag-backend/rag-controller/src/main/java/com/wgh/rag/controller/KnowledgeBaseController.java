@@ -7,6 +7,7 @@ import com.wgh.rag.kb.entity.KnowledgeFile;
 import com.wgh.rag.kb.service.KnowledgeBaseService;
 import com.wgh.rag.kb.service.KnowledgeFileService;
 import com.wgh.rag.kb.service.RagRetrieveService;
+import com.wgh.rag.kb.service.RetrievalQuality;
 import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.store.embedding.EmbeddingMatch;
 import io.swagger.v3.oas.annotations.Operation;
@@ -31,6 +32,7 @@ public class KnowledgeBaseController {
     private final KnowledgeBaseService kbService;
     private final KnowledgeFileService fileService;
     private final RagRetrieveService retrieveService;
+    private final com.wgh.rag.config.property.RagProperties ragProperties;
 
     // ===== 知识库 CRUD =====
 
@@ -131,11 +133,19 @@ public class KnowledgeBaseController {
         List<dev.langchain4j.store.embedding.EmbeddingMatch<dev.langchain4j.data.segment.TextSegment>> matches =
                 retrieveResult.matches();
 
+        // 分数语义由检索层给出：只有 COSINE / RERANK 可与 minScore 阈值比较
+        int topK = ragProperties.getRetrieve().getTopK() != null ? ragProperties.getRetrieve().getTopK() : 5;
+        double minScore = ragProperties.getRetrieve().getMinScore() != null
+                ? ragProperties.getRetrieve().getMinScore() : 0.55;
+        String scoreType = retrieveResult.scoreType().name();
+        boolean thresholdComparable = retrieveResult.scoreType() != com.wgh.rag.kb.service.RetrieveResult.ScoreType.RRF;
+
         List<java.util.Map<String, Object>> results = new java.util.ArrayList<>();
         for (var m : matches) {
             java.util.Map<String, Object> item = new java.util.LinkedHashMap<>();
             item.put("score", m.score());
-            item.put("hit", m.score() >= 0.65);
+            // RRF 融合分数无法与余弦阈值比较，此时检索结果均已通过各自召回路的阈值过滤，视为命中
+            item.put("hit", !thresholdComparable || (m.score() != null && m.score() >= minScore));
             item.put("content", m.embedded() != null ? m.embedded().text() : null);
             item.put("kbName", getMeta(m, "kbName"));
             item.put("fileName", getMeta(m, "fileName"));
@@ -146,6 +156,7 @@ public class KnowledgeBaseController {
             results.add(item);
         }
 
+        long hitCount = results.stream().filter(r -> (Boolean) r.get("hit")).count();
         java.util.Map<String, Object> resp = new java.util.LinkedHashMap<>();
         resp.put("results", results);
         resp.put("totalMatches", matches.size());
@@ -155,14 +166,13 @@ public class KnowledgeBaseController {
         resp.put("keywordHitCount", retrieveResult.keywordHitIds().size());
         resp.put("transformedQueries", retrieveResult.transformedQueries());
         resp.put("transformLatencyMs", retrieveResult.transformLatencyMs());
-        resp.put("filteredMatches", results.stream().filter(r -> (Boolean) r.get("hit")).count());
-        // 评估指标：简化计算（无 ground truth 时做 best-effort）
-        double recallRate = matches.isEmpty() ? 0
-                : results.stream().filter(r -> (Boolean) r.get("hit")).count() / (double) matches.size();
-        resp.put("recallRate", Math.round(recallRate * 10000.0) / 10000.0);
-        resp.put("hitRate", results.isEmpty() ? 0
-                : Math.round((results.stream().filter(r -> (Boolean) r.get("hit")).count()
-                        / (double) results.size()) * 10000.0) / 10000.0);
+        resp.put("filteredMatches", hitCount);
+        resp.put("scoreType", scoreType);
+        resp.put("relevantThreshold", thresholdComparable ? minScore : null);
+        // 指标：在线无相关性标注，Recall@K 不可计算（需 ground truth），故只返回覆盖率与命中率
+        resp.put("coverageRate", round4(RetrievalQuality.coverage(matches.size(), topK)));
+        resp.put("hitRate", round4(RetrievalQuality.hitRate((int) hitCount, matches.size())));
+        resp.put("recallRate", null);
         return Result.success(resp);
     }
 
@@ -175,5 +185,10 @@ public class KnowledgeBaseController {
         String v = getMeta(m, key);
         if (v == null) return null;
         try { return Integer.parseInt(v); } catch (Exception e) { return null; }
+    }
+
+    /** 保留 4 位小数 */
+    private static double round4(double v) {
+        return Math.round(v * 10000.0) / 10000.0;
     }
 }
