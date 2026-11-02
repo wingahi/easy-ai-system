@@ -1,6 +1,7 @@
 package com.wgh.rag.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.wgh.rag.chat.service.ChatImageService;
 import com.wgh.rag.chat.service.ChatWindowService;
 import com.wgh.rag.chat.service.ChatWorkflowService;
 import com.wgh.rag.chat.service.FeedbackService;
@@ -27,6 +28,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.HashMap;
@@ -46,6 +48,7 @@ public class ChatController {
     private final RagChatService ragChatService;
     private final ChatWorkflowService chatWorkflowService;
     private final FeedbackService feedbackService;
+    private final ChatImageService chatImageService;
     private final WorkflowService workflowService;
     private final ToolConfigService toolConfigService;
     private final SkillFileService skillFileService;
@@ -179,15 +182,32 @@ public class ChatController {
 
     // ===== SSE 流式聊天 =====
 
+    @Operation(summary = "上传聊天图片（多模态问答，返回 data URL）")
+    @PostMapping("/upload")
+    @Audit(action = "CHAT_IMAGE_UPLOAD", resourceType = "CHAT")
+    public Result<Map<String, String>> uploadImage(@RequestParam("file") MultipartFile file) {
+        String dataUrl = chatImageService.store(file);
+        return Result.success(Map.of("dataUrl", dataUrl, "name", file.getOriginalFilename() != null ? file.getOriginalFilename() : "image"));
+    }
+
     @Operation(summary = "SSE 流式聊天（管理端）")
     @PostMapping(value = "/windows/{windowId}/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter streamChat(
             @PathVariable Long windowId,
             @RequestBody Map<String, Object> params) {
-        Long sessionId = params.get("sessionId") != null ? 
+        Long sessionId = params.get("sessionId") != null ?
                 Long.parseLong(params.get("sessionId").toString()) : null;
         String message = (String) params.get("message");
-        return ragChatService.streamChat(windowId, sessionId, message);
+        List<String> imageUrls = parseImageUrls(params.get("imageUrls"));
+        return ragChatService.streamChat(windowId, sessionId, message, false, imageUrls);
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<String> parseImageUrls(Object raw) {
+        if (raw instanceof List<?> list) {
+            return (List<String>) list;
+        }
+        return null;
     }
 
     // ===== 分享页面（需登录；userIdentifier 取当前登录用户名，与 shareToken 解耦） =====
@@ -217,7 +237,8 @@ public class ChatController {
         String message = (String) params.get("message");
         Long sessionId = params.get("sessionId") != null
                 ? Long.parseLong(params.get("sessionId").toString()) : null;
-        return ragChatService.streamShareChat(shareToken, message, currentUsername(), sessionId);
+        List<String> imageUrls = parseImageUrls(params.get("imageUrls"));
+        return ragChatService.streamShareChat(shareToken, message, currentUsername(), sessionId, imageUrls);
     }
 
     @Operation(summary = "分享页面：列出当前登录用户的历史会话")

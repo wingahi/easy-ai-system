@@ -77,12 +77,17 @@ export const windowDeleteSession = (windowId, sessionId, params) => request.dele
 // 反馈闭环
 export const submitMessageFeedback = (id, data) => request.post(`/chat/messages/${id}/feedback`, data)
 export const windowFeedbackStats = (windowId) => request.get(`/chat/windows/${windowId}/feedback/stats`)
+export const chatUploadImage = (file) => {
+  const formData = new FormData()
+  formData.append('file', file)
+  return request.post('/chat/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' } })
+}
 
 // SSE 流式聊天（需要原生 fetch）
-export function streamChatApi(windowId, message, sessionId) {
+export function streamChatApi(windowId, message, sessionId, imageUrls) {
   const token = localStorage.getItem('wgh_token')
   const controller = new AbortController()
-  
+
   const doStream = async (onEvent, onDone, onError) => {
     try {
       const res = await fetch(`/api/chat/windows/${windowId}/stream`, {
@@ -91,7 +96,7 @@ export function streamChatApi(windowId, message, sessionId) {
           'Content-Type': 'application/json',
           ...(token ? { 'Authorization': `Bearer ${token}` } : {})
         },
-        body: JSON.stringify({ message, sessionId }),
+        body: JSON.stringify({ message, sessionId, ...(imageUrls?.length ? { imageUrls } : {}) }),
         signal: controller.signal
       })
       

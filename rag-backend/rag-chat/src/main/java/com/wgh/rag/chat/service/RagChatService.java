@@ -80,6 +80,7 @@ public class RagChatService {
     private final ModelPriceService modelPriceService;
     private final LlmModelService llmModelService;
     private final SemanticCacheService semanticCacheService;
+    private final ChatImageService chatImageService;
 
     /**
      * 流式聊天 - SSE
@@ -94,9 +95,27 @@ public class RagChatService {
      */
     @Transactional
     public SseEmitter streamChat(Long windowId, Long sessionId, String userMessage, boolean shareMode) {
+        return streamChat(windowId, sessionId, userMessage, shareMode, null);
+    }
+
+    /**
+     * 流式聊天 - SSE（多模态：imageUrls 为图片 data URL 或公网 URL，需窗口模型 supportsVision=true）
+     */
+    @Transactional
+    public SseEmitter streamChat(Long windowId, Long sessionId, String userMessage,
+                                 boolean shareMode, List<String> imageUrls) {
         ChatWindow window = windowMapper.selectById(windowId);
         if (window == null || window.getStatus() == 0) {
             throw new BusinessException("聊天窗口不可用");
+        }
+
+        final List<String> images = imageUrls == null ? List.of() : imageUrls;
+        if (!images.isEmpty()) {
+            chatImageService.validateImageUrls(images);
+            LlmModel chatModel = llmModelService.getChatModel(window.getLlmModelId());
+            if (!Boolean.TRUE.equals(chatModel.getSupportsVision())) {
+                throw new BusinessException("当前窗口模型不支持图片输入，请切换视觉模型（如 qwen-vl / gpt-4o）");
+            }
         }
 
         // 配额限流：发送前检查并计数（超限抛业务异常，请求线程内执行可取到登录用户）
@@ -122,18 +141,25 @@ public class RagChatService {
         emitter.onError(e -> log.error("SSE连接错误: session={}", session.getId(), e));
         emitter.onCompletion(() -> log.info("SSE连接完成: session={}", session.getId()));
 
-        // 保存用户消息
+        // 保存用户消息（多模态：图片序列化进 attachments）
         com.wgh.rag.chat.entity.ChatMessage userMsg = new com.wgh.rag.chat.entity.ChatMessage();
         userMsg.setSessionId(session.getId());
         userMsg.setRole("USER");
         userMsg.setContent(userMessage);
-        userMsg.setMessageType("TEXT");
+        userMsg.setMessageType(images.isEmpty() ? "TEXT" : "IMAGE");
+        if (!images.isEmpty()) {
+            try {
+                userMsg.setAttachments(objectMapper.writeValueAsString(images));
+            } catch (Exception e) {
+                log.warn("序列化图片附件失败", e);
+            }
+        }
         messageMapper.insert(userMsg);
 
         // 子线程执行 RAG + LLM 并推送 SSE
         new Thread(() -> {
             try {
-                doRagStreamChat(window, session, userMessage, emitter, userMsg, shareMode, quotaUsername);
+                doRagStreamChat(window, session, userMessage, emitter, userMsg, shareMode, quotaUsername, images);
             } catch (Exception e) {
                 log.error("流式聊天异常", e);
                 try {
@@ -163,6 +189,14 @@ public class RagChatService {
      * sessionId 为空时复用该匿名用户最近一次会话，否则使用指定会话（需校验归属）
      */
     public SseEmitter streamShareChat(String shareToken, String userMessage, String sessionKey, Long sessionId) {
+        return streamShareChat(shareToken, userMessage, sessionKey, sessionId, null);
+    }
+
+    /**
+     * 分享页面流式聊天（多模态）
+     */
+    public SseEmitter streamShareChat(String shareToken, String userMessage, String sessionKey,
+                                      Long sessionId, List<String> imageUrls) {
         ChatWindow window = windowMapper.selectOne(
                 new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<ChatWindow>()
                         .eq(ChatWindow::getShareToken, shareToken)
@@ -201,14 +235,15 @@ public class RagChatService {
             session = createSession(window, userIdentifier);
         }
 
-        return streamChat(window.getId(), session.getId(), userMessage, true);
+        return streamChat(window.getId(), session.getId(), userMessage, true, imageUrls);
     }
 
     // ============ 核心 RAG 链路 ============
 
     private void doRagStreamChat(ChatWindow window, ChatSession session, String userMessage,
                                   SseEmitter emitter, com.wgh.rag.chat.entity.ChatMessage userMsg,
-                                  boolean shareMode, String quotaUsername) throws Exception {
+                                  boolean shareMode, String quotaUsername,
+                                  List<String> imageUrls) throws Exception {
 
         // 1. 发送开始事件
         emitter.send(SseEmitter.event().name("start").data(Map.of("sessionId", session.getId())));
@@ -227,7 +262,8 @@ public class RagChatService {
         final boolean hasKb = !kbIds.isEmpty();
 
         // ===== 语义缓存：命中则直接返回缓存答案，跳过检索 + LLM =====
-        if (hasKb && Boolean.TRUE.equals(window.getSemanticCacheEnabled())) {
+        // （带图片的消息不做语义缓存：缓存仅按文本相似度匹配，图片内容无法参与比对）
+        if (hasKb && imageUrls.isEmpty() && Boolean.TRUE.equals(window.getSemanticCacheEnabled())) {
             SemanticCacheService.CacheHit cacheHit =
                     semanticCacheService.lookup(window.getId(), kbIds, userMessage);
             if (cacheHit != null) {
@@ -368,8 +404,9 @@ public class RagChatService {
             }
         }
 
-        // 5. 路线判断：无检索结果且无工具 → 直接返回兜底话术
-        if (retrievedMatches.isEmpty() && toolSpecs.isEmpty()) {
+        // 5. 路线判断：无检索结果且无工具且无图片 → 直接返回兜底话术
+        // （带图片时即使无检索结果也要走 LLM，让视觉模型基于图片作答）
+        if (retrievedMatches.isEmpty() && toolSpecs.isEmpty() && imageUrls.isEmpty()) {
             // 路线一：无搜索结果
             String noResultMsg = hasKb
                     ? "抱歉，我在知识库中没有找到相关内容。您可以尝试换个关键词提问。"
@@ -398,10 +435,10 @@ public class RagChatService {
         List<ChatMessage> messages = buildMessageHistory(session, systemPrompt, userMessage);
 
         // 有检索结果时把知识库内容拼进用户消息；只配了工具但没有知识库结果时用原始消息
-        ChatMessage currentUserMessage = UserMessage.from(userMessage);
+        String userPromptText = userMessage;
         if (!retrievedMatches.isEmpty()) {
             String finalContext = extractRagContext(retrievedMatches);
-            String enrichedUserMessage = """
+            userPromptText = """
                     已知知识库内容：
                     %s
 
@@ -409,8 +446,8 @@ public class RagChatService {
 
                     请基于知识库内容回答用户问题。如果知识库内容不足以回答，请明确说明。
                     """.formatted(finalContext, userMessage);
-            currentUserMessage = UserMessage.from(enrichedUserMessage);
         }
+        ChatMessage currentUserMessage = buildUserMessage(userPromptText, imageUrls);
         messages.set(messages.size() - 1, currentUserMessage);
 
         // 最大工具调用轮次（防死循环）
@@ -742,6 +779,21 @@ public class RagChatService {
         }
         
         return sb.toString();
+    }
+
+    /**
+     * 构建当前用户消息：无图片时纯文本；带图片时组装视觉消息（TextContent + ImageContent）
+     */
+    private UserMessage buildUserMessage(String text, List<String> imageUrls) {
+        if (imageUrls == null || imageUrls.isEmpty()) {
+            return UserMessage.from(text);
+        }
+        List<Content> contents = new ArrayList<>();
+        contents.add(TextContent.from(text));
+        for (String url : imageUrls) {
+            contents.add(ImageContent.from(url));
+        }
+        return UserMessage.from(contents);
     }
 
     private List<ChatMessage> buildMessageHistory(ChatSession session, String systemPrompt,

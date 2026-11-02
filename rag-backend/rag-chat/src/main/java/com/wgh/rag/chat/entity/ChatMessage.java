@@ -112,4 +112,9 @@ public class ChatMessage extends BaseEntity {
      * 差评补充说明（截断 500 字）
      */
     private String feedbackComment;
+
+    /**
+     * 消息附件 JSON 数组（图片 data URL 或公网 URL，多模态问答）
+     */
+    private String attachments;
 }

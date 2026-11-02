@@ -64,6 +64,11 @@
                :class="['message', msg.role === 'USER' ? 'user-msg' : 'assistant-msg']">
             <div class="avatar">{{ msg.role === 'USER' ? '🙂' : '🤖' }}</div>
             <div class="bubble">
+              <!-- 用户消息图片附件（多模态） -->
+              <div v-if="msg.images?.length" class="msg-images">
+                <img v-for="(img, i) in msg.images" :key="i" :src="img" class="msg-image"
+                     @click="previewImage(img)" />
+              </div>
               <div class="msg-content" v-html="renderMarkdown(msg.content)"></div>
               <div v-if="msg.streaming" class="typing">
                 <span></span><span></span><span></span>
@@ -161,13 +166,29 @@
         </div>
 
         <div class="input-area">
-          <el-input v-model="input" type="textarea" :rows="2"
-                    placeholder="输入消息，Ctrl+Enter 发送"
-                    @keydown.ctrl.enter="send"
-                    :disabled="streaming" />
-          <el-button type="primary" :icon="Promotion" :loading="streaming" @click="send">
-            发送
-          </el-button>
+          <!-- 待发送图片预览（多模态，仅视觉模型窗口可用） -->
+          <div v-if="pendingImages.length" class="pending-images">
+            <div v-for="(img, i) in pendingImages" :key="i" class="pending-img">
+              <img :src="img.dataUrl" :alt="img.name" />
+              <span class="remove-img" @click="pendingImages.splice(i, 1)">×</span>
+            </div>
+          </div>
+          <div class="input-row">
+            <el-tooltip :disabled="modelSupportsVision" placement="top"
+                        content="当前窗口模型不支持图片输入，请在大模型配置中开启视觉能力">
+              <el-button class="img-btn" :disabled="!modelSupportsVision || streaming || uploadingImage"
+                         :loading="uploadingImage" @click="imageInputRef?.click()">🖼</el-button>
+            </el-tooltip>
+            <input ref="imageInputRef" type="file" accept="image/png,image/jpeg,image/gif,image/webp"
+                   style="display:none" @change="onPickImage" />
+            <el-input v-model="input" type="textarea" :rows="2"
+                      placeholder="输入消息，Ctrl+Enter 发送"
+                      @keydown.ctrl.enter="send"
+                      :disabled="streaming" />
+            <el-button type="primary" :icon="Promotion" :loading="streaming" @click="send">
+              发送
+            </el-button>
+          </div>
         </div>
       </div>
 
@@ -246,7 +267,7 @@ import { marked } from 'marked'
 import { windowGet, streamChatApi, windowMessages, windowSessions, windowCreateSession, windowDeleteSession,
   agentGetPlanState, agentCancelPlan, agentRetryStep, agentSkipStep, agentGetPlanBySession,
   chatWorkflowState, streamChatWorkflowHitl, chatWorkflowCancel,
-  submitMessageFeedback, windowFeedbackStats } from '../../api'
+  submitMessageFeedback, windowFeedbackStats, chatUploadImage, chatModelGet } from '../../api'
 import AgentPlanTree from '../../components/AgentPlanTree.vue'
 import WorkflowRunPanel from '../../components/WorkflowRunPanel.vue'
 
@@ -258,6 +279,11 @@ const messages = ref([])
 const sessions = ref([])
 const input = ref('')
 const streaming = ref(false)
+// 多模态：待发送图片（已上传转为 dataUrl）与窗口模型视觉能力
+const pendingImages = ref([])
+const uploadingImage = ref(false)
+const modelSupportsVision = ref(false)
+const imageInputRef = ref(null)
 const currentSessionId = ref(null)
 const messagesRef = ref(null)
 let streamer = null
@@ -374,6 +400,7 @@ const toViewMessage = (m) => {
     feedback: m.feedback || 0,
     feedbackComment: m.feedbackComment || '',
     sources: m.sources ? dedupeSources(JSON.parse(m.sources)) : [],
+    images: m.attachments ? (safeParse(m.attachments) || []) : [],
     judgeDetails: m.judgeDetails ? safeParse(m.judgeDetails) : null
   }
   const metricsKeys = ['coverageRate', 'hitRate', 'accuracyRate', 'mrr', 'ndcg', 'faithfulness', 'answerRelevancy', 'judgeAgreement']
@@ -441,6 +468,13 @@ const judgeTooltip = (msg) => {
 const load = async () => {
   const res = await windowGet(windowId)
   window.value = res.data
+  // 查询窗口模型是否支持视觉（决定图片上传按钮可用性）
+  try {
+    if (window.value?.llmModelId) {
+      const modelRes = await chatModelGet(window.value.llmModelId)
+      modelSupportsVision.value = modelRes.data?.supportsVision === true
+    }
+  } catch { modelSupportsVision.value = false }
   await loadSessions()
   await loadHistory()
   await restoreAgentPlan()
@@ -581,10 +615,37 @@ const loadMoreHistory = async () => {
   }
 }
 
+// 选择图片 → 立即上传转 dataUrl 暂存（发送时随消息提交）
+const onPickImage = async (e) => {
+  const file = e.target.files?.[0]
+  e.target.value = ''
+  if (!file) return
+  if (pendingImages.value.length >= 5) {
+    ElMessage.warning('单条消息最多 5 张图片')
+    return
+  }
+  uploadingImage.value = true
+  try {
+    const res = await chatUploadImage(file)
+    pendingImages.value.push({ dataUrl: res.data.dataUrl, name: res.data.name })
+  } catch (err) {
+    ElMessage.error('图片上传失败: ' + (err.response?.data?.message || err.message))
+  } finally {
+    uploadingImage.value = false
+  }
+}
+
+const previewImage = (url) => {
+  const w = window.open()
+  if (w) w.document.write(`<img src="${url}" style="max-width:100%"/>`)
+}
+
 const send = async () => {
   const text = input.value.trim()
-  if (!text || streaming.value) return
+  const imageUrls = pendingImages.value.map(p => p.dataUrl)
+  if ((!text && !imageUrls.length) || streaming.value) return
   input.value = ''
+  pendingImages.value = []
 
   // 重置 Agent 计划状态（新对话）
   stopPlanPolling()
@@ -598,17 +659,17 @@ const send = async () => {
   workflowRun.value = null
   workflowPrompt.value = ''
 
-  // 添加用户消息
-  messages.value.push({ role: 'USER', content: text })
-  
+  // 添加用户消息（含图片附件展示）
+  messages.value.push({ role: 'USER', content: text || '[图片]', images: imageUrls })
+
   // 添加空 AI 消息（等待流式填充）
   const aiMsg = { role: 'ASSISTANT', content: '', streaming: true, metrics: null, sources: [], tools: [] }
   messages.value.push(aiMsg)
-  
+
   await scrollToBottom()
   streaming.value = true
 
-  streamer = streamChatApi(windowId, text, currentSessionId.value)
+  streamer = streamChatApi(windowId, text || '请描述这张图片', currentSessionId.value, imageUrls)
   
   streamer.doStream(
     (event, data) => handleEvent(event, data, aiMsg),
@@ -1405,10 +1466,62 @@ onUnmounted(() => {
 }
 .input-area {
   display: flex;
-  gap: 10px;
+  flex-direction: column;
+  gap: 8px;
   padding: 16px;
   border-top: 1px solid #ebeef5;
+}
+.input-row {
+  display: flex;
+  gap: 10px;
   align-items: flex-end;
+}
+.input-row .el-input { flex: 1; }
+.img-btn { flex-shrink: 0; }
+.pending-images {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.pending-img {
+  position: relative;
+  width: 64px;
+  height: 64px;
+}
+.pending-img img {
+  width: 64px;
+  height: 64px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid #dcdfe6;
+}
+.remove-img {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 16px;
+  height: 16px;
+  line-height: 14px;
+  text-align: center;
+  background: #f56c6c;
+  color: #fff;
+  border-radius: 50%;
+  font-size: 12px;
+  cursor: pointer;
+}
+.msg-images {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+.msg-image {
+  max-width: 160px;
+  max-height: 160px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid rgba(255,255,255,0.4);
+  cursor: zoom-in;
 }
 .typing {
   display: flex; gap: 4px;

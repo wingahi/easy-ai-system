@@ -19,6 +19,12 @@
             <span v-else>-</span>
           </template>
         </el-table-column>
+        <el-table-column label="视觉" width="80">
+          <template #default="{ row }">
+            <el-tag v-if="row.supportsVision" type="success">🖼 视觉</el-tag>
+            <span v-else>-</span>
+          </template>
+        </el-table-column>
         <el-table-column label="状态" width="80">
           <template #default="{ row }">
             <el-tag :type="row.status === 1 ? 'success' : 'danger'">{{ row.status === 1 ? '启用' : '禁用' }}</el-tag>
@@ -66,6 +72,10 @@
           <el-switch v-model="form.compressionModel" />
           <span style="margin-left:10px;color:#909399;font-size:12px">全局只能有一个</span>
         </el-form-item>
+        <el-form-item label="支持视觉">
+          <el-switch v-model="form.supportsVision" />
+          <span style="margin-left:10px;color:#909399;font-size:12px">开启后聊天窗口可上传图片问答（如 qwen-vl / gpt-4o）</span>
+        </el-form-item>
         <el-form-item label="状态">
           <el-switch v-model="form.status" :active-value="1" :inactive-value="0" />
         </el-form-item>
@@ -96,7 +106,8 @@ const formRef = ref()
 
 const form = reactive({
   name: '', provider: 'DEEPSEEK', modelName: '', baseUrl: '', apiKey: '',
-  maxContextTokens: 8192, temperature: 0.7, compressionModel: false, status: 1, modelType: 'CHAT'
+  maxContextTokens: 8192, temperature: 0.7, compressionModel: false, supportsVision: false,
+  status: 1, modelType: 'CHAT'
 })
 const rules = {
   name: [{ required: true, message: '请输入名称' }],
@@ -119,7 +130,8 @@ const openDialog = (row) => {
     Object.assign(form, row)
   } else {
     Object.assign(form, { name: '', provider: 'DEEPSEEK', modelName: '', baseUrl: '', apiKey: '',
-      maxContextTokens: 8192, temperature: 0.7, compressionModel: false, status: 1, modelType: 'CHAT' })
+      maxContextTokens: 8192, temperature: 0.7, compressionModel: false, supportsVision: false,
+      status: 1, modelType: 'CHAT' })
   }
   dialogVisible.value = true
 }

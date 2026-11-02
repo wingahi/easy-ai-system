@@ -62,6 +62,12 @@ public class LlmModel extends BaseEntity {
     private Boolean compressionModel;
 
     /**
+     * 是否支持图片输入（视觉模型）
+     */
+    @TableField(typeHandler = BooleanToSmallintTypeHandler.class)
+    private Boolean supportsVision;
+
+    /**
      * 状态：0-禁用，1-启用
      */
     private Integer status;

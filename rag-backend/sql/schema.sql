@@ -908,3 +908,10 @@ COMMENT ON COLUMN wgh_semantic_cache.answer_text IS '缓存的答案全文';
 COMMENT ON COLUMN wgh_semantic_cache.embedding_id IS 'wgh_semantic_cache_vec 中的向量 ID（uuid）';
 COMMENT ON COLUMN wgh_semantic_cache.hit_count IS '命中次数';
 
+-- ============ 多模态（图片问答） ============
+
+ALTER TABLE wgh_llm_model ADD COLUMN IF NOT EXISTS supports_vision SMALLINT DEFAULT 0;
+COMMENT ON COLUMN wgh_llm_model.supports_vision IS '是否支持图片输入（视觉模型，0 否 / 1 是）';
+ALTER TABLE wgh_chat_message ADD COLUMN IF NOT EXISTS attachments TEXT;
+COMMENT ON COLUMN wgh_chat_message.attachments IS '消息附件 JSON 数组（图片 data URL 或公网 URL）';
+
