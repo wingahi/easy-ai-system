@@ -183,6 +183,15 @@ class RagRetrieveServiceRerankTest {
     }
 
     @Test
+    void options_topK_overrides_configured_topK() {
+        mockVectorMatches(5);
+        RetrieveResult result = service.searchMultiple(List.of(1L), "q",
+                new RetrievalOptions(null, false, null, null, 4));
+        // 配置 topK=2，评测显式 K=4 时按 4 条返回
+        assertThat(result.matches()).hasSize(4);
+    }
+
+    @Test
     void transform_degraded_falls_back_to_original_query() {
         mockVectorMatches(3);
         // 变换服务降级：返回原查询、无变换产物

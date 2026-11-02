@@ -168,6 +168,31 @@ COMMENT ON COLUMN wgh_knowledge_file.create_by IS '创建人';
 COMMENT ON COLUMN wgh_knowledge_file.update_by IS '更新人';
 COMMENT ON COLUMN wgh_knowledge_file.deleted IS '逻辑删除（0 未删除 / 1 已删除）';
 
+-- ============ 检索评测标注 ============
+
+CREATE TABLE IF NOT EXISTS wgh_kb_ground_truth (
+  id BIGSERIAL PRIMARY KEY,
+  knowledge_base_id BIGINT NOT NULL,
+  query_text VARCHAR(500) NOT NULL,
+  relevant_chunks TEXT NOT NULL,
+  create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  create_by VARCHAR(50) DEFAULT 'system',
+  update_by VARCHAR(50) DEFAULT 'system',
+  deleted SMALLINT DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_gt_kb ON wgh_kb_ground_truth(knowledge_base_id, deleted);
+COMMENT ON TABLE wgh_kb_ground_truth IS '检索评测 ground truth（标注每个查询的相关 chunk，用于计算真实 Recall@K）';
+COMMENT ON COLUMN wgh_kb_ground_truth.id IS '主键';
+COMMENT ON COLUMN wgh_kb_ground_truth.knowledge_base_id IS '所属知识库 ID';
+COMMENT ON COLUMN wgh_kb_ground_truth.query_text IS '评测查询';
+COMMENT ON COLUMN wgh_kb_ground_truth.relevant_chunks IS '相关 chunk 键集合 JSON 数组，元素形如 "fileId:chunkIndex"';
+COMMENT ON COLUMN wgh_kb_ground_truth.create_time IS '创建时间';
+COMMENT ON COLUMN wgh_kb_ground_truth.update_time IS '更新时间';
+COMMENT ON COLUMN wgh_kb_ground_truth.create_by IS '创建人';
+COMMENT ON COLUMN wgh_kb_ground_truth.update_by IS '更新人';
+COMMENT ON COLUMN wgh_kb_ground_truth.deleted IS '逻辑删除（0 未删除 / 1 已删除）';
+
 -- ============ 聊天窗口 ============
 
 CREATE TABLE IF NOT EXISTS wgh_chat_window (

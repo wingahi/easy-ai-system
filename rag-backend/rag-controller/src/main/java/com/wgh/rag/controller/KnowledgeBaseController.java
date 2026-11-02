@@ -126,15 +126,18 @@ public class KnowledgeBaseController {
             @RequestParam(value = "rerankModelId", required = false) Long rerankModelId,
             @RequestParam(value = "hybrid", required = false, defaultValue = "false") boolean hybrid,
             @RequestParam(value = "queryTransformMode", required = false) String queryTransformMode,
-            @RequestParam(value = "rewriteModelId", required = false) Long rewriteModelId) {
+            @RequestParam(value = "rewriteModelId", required = false) Long rewriteModelId,
+            @RequestParam(value = "topK", required = false) Integer topK) {
+        int effectiveTopK = topK != null && topK > 0
+                ? topK
+                : (ragProperties.getRetrieve().getTopK() != null ? ragProperties.getRetrieve().getTopK() : 5);
         com.wgh.rag.kb.service.RetrieveResult retrieveResult = retrieveService.searchMultiple(
                 List.of(kbId), query, new com.wgh.rag.kb.service.RetrievalOptions(
-                        rerankModelId, hybrid, queryTransformMode, rewriteModelId));
+                        rerankModelId, hybrid, queryTransformMode, rewriteModelId, effectiveTopK));
         List<dev.langchain4j.store.embedding.EmbeddingMatch<dev.langchain4j.data.segment.TextSegment>> matches =
                 retrieveResult.matches();
 
         // 分数语义由检索层给出：只有 COSINE / RERANK 可与 minScore 阈值比较
-        int topK = ragProperties.getRetrieve().getTopK() != null ? ragProperties.getRetrieve().getTopK() : 5;
         double minScore = ragProperties.getRetrieve().getMinScore() != null
                 ? ragProperties.getRetrieve().getMinScore() : 0.55;
         String scoreType = retrieveResult.scoreType().name();
@@ -148,6 +151,7 @@ public class KnowledgeBaseController {
             item.put("hit", !thresholdComparable || (m.score() != null && m.score() >= minScore));
             item.put("content", m.embedded() != null ? m.embedded().text() : null);
             item.put("kbName", getMeta(m, "kbName"));
+            item.put("fileId", getMetaInt(m, "fileId"));
             item.put("fileName", getMeta(m, "fileName"));
             item.put("chunkIndex", getMetaInt(m, "chunkIndex"));
             // 召回来源：KEYWORD 表示仅关键词路命中（向量路未召回）
@@ -170,7 +174,7 @@ public class KnowledgeBaseController {
         resp.put("scoreType", scoreType);
         resp.put("relevantThreshold", thresholdComparable ? minScore : null);
         // 指标：在线无相关性标注，Recall@K 不可计算（需 ground truth），故只返回覆盖率与命中率
-        resp.put("coverageRate", round4(RetrievalQuality.coverage(matches.size(), topK)));
+        resp.put("coverageRate", round4(RetrievalQuality.coverage(matches.size(), effectiveTopK)));
         resp.put("hitRate", round4(RetrievalQuality.hitRate((int) hitCount, matches.size())));
         resp.put("recallRate", null);
         return Result.success(resp);

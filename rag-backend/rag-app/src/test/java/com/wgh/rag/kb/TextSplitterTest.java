@@ -190,7 +190,8 @@ class TextSplitterTest {
         List<String> input = List.of("只有一段内容。");
 
         for (TextSplitter.Strategy s : TextSplitter.Strategy.values()) {
-            if (s == TextSplitter.Strategy.CUSTOM) continue;
+            // CUSTOM 需配置；SEMANTIC 依赖 knowledge base 的 embedding 模型，手工组装链不注册
+            if (s == TextSplitter.Strategy.CUSTOM || s == TextSplitter.Strategy.SEMANTIC) continue;
             List<String> result = splitter.split(input, s, null);
             assertThat(result).hasSize(1).as("策略 %s 应该返回一段", s);
         }

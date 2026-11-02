@@ -1,14 +1,19 @@
 # -*- coding: utf-8 -*-
 """
 RAG 离线评估脚本
-Part 1: 检索指标 Recall@k / MRR / NDCG（ground truth = qa-1000.pdf 问答对）
+Part 1: 检索指标 Recall@K / MRR / NDCG（ground truth = qa-1000.pdf 问答对，chunk 级）
 Part 2: 双 Judge Faithfulness（DeepSeek + Qwen，报告一致性）
 Part 3: 解析器对比（pdfplumber vs PDFBox 提取质量）
+
+Recall@K 口径：|检索结果 ∩ 标注相关 chunk| / |标注相关 chunk|，分母是标注的相关 chunk 数，
+不是 topK（topK 作分母只是槽位填充率）。相关 chunk 由语料扫描（问答核心文本子串匹配）得到。
 """
-import json, re, math, time, urllib.parse, urllib.request
+import json, math, os, re, time, urllib.parse, urllib.request
 import pdfplumber
 
 BASE = "http://localhost:8080"
+KB_ID = int(os.environ.get("KB_ID", "2"))
+K = int(os.environ.get("EVAL_K", "5"))
 DS_KEY = "sk-"
 DS_URL = "https://api.deepseek.com/v1/chat/completions"
 QW_KEY = "sk-"
@@ -27,9 +32,23 @@ def login():
 
 def search(token, query):
     q = urllib.parse.quote(query)
-    d = http(f"{BASE}/api/kb/1/search?query={q}", headers={"Authorization": f"Bearer {TOKEN}"}) \
-        if False else http(f"{BASE}/api/kb/1/search?query={q}", headers={"Authorization": f"Bearer {token}"})
-    return d.get("data", [])
+    d = http(f"{BASE}/api/kb/{KB_ID}/search?query={q}&topK={K}",
+             headers={"Authorization": f"Bearer {token}"})
+    return d.get("data", {}).get("results", [])
+
+def all_chunks(token):
+    """分页拉取知识库全部 chunk，用于构建标注相关集合（分母）"""
+    chunks, page = [], 1
+    while True:
+        d = http(f"{BASE}/api/kb/{KB_ID}/chunks?page={page}&size=500",
+                 headers={"Authorization": f"Bearer {token}"})
+        data = d.get("data", {}) or {}
+        batch = data.get("chunks", [])
+        chunks.extend(batch)
+        if not batch or len(chunks) >= data.get("total", 0):
+            break
+        page += 1
+    return chunks
 
 def llm(url, key, model, prompt, temperature=0.1):
     d = http(url, {"model": model, "temperature": temperature,
@@ -50,29 +69,56 @@ for m in re.finditer(r"问(\d+)[：:](.+?)(?=（变体|？)", full):
 samples = questions[::25][:40]
 print(f"总问答 {len(questions)} 条，抽样 {len(samples)} 条")
 
-# ============ Part 1: 检索指标 ============
+# ============ Part 1: 检索指标（chunk 级 Recall@K） ============
 print("\n=== Part 1: 检索指标 ===")
 TOKEN = login()
-K = 5
-recall_hits, mrr_sum, ndcg_sum, evaluated = 0, 0.0, 0.0, 0
+
+def norm(s):
+    return re.sub(r"[\s，。？?（）()：:、]", "", s or "")
+
+def chunk_key(c):
+    return f"{c.get('fileId')}:{c.get('chunkIndex')}" if c.get("fileId") is not None else None
+
+# 扫描知识库全量 chunk，构建每个查询的标注相关集合（Recall 的分母）
+corpus = all_chunks(TOKEN)
+corpus_norm = [(chunk_key(c), norm(c.get("text"))) for c in corpus]
+corpus_norm = [(k, t) for k, t in corpus_norm if k]
+print(f"知识库 {KB_ID} 共 {len(corpus_norm)} 个 chunk")
+
+recall_sum, precision_sum, hit_rate_sum = 0.0, 0.0, 0.0
+mrr_sum, ndcg_sum, evaluated, skipped = 0.0, 0.0, 0, 0
 t0 = time.time()
 for i, item in enumerate(samples):
+    # 标注相关集合：语料中包含该问答核心文本的全部 chunk（通常为 1 条，重复时可为多条）
+    relevant = {k for k, text in corpus_norm if item["core"] in text}
+    if not relevant:
+        skipped += 1
+        print(f"  跳过问{item['num']}：语料中未找到相关 chunk")
+        continue
+
     results = search(TOKEN, item["query"])
-    rel = [1 if item["core"] in re.sub(r"[\s，。？?（）()：:、]", "", (r.get("content") or "")) else 0
-           for r in results[:K]]
-    hit = any(rel)
-    recall_hits += hit
-    rr = next((1.0 / (idx + 1) for idx, r in enumerate(rel) if r), 0.0)
-    mrr_sum += rr
+    retrieved = [chunk_key(r) for r in results[:K] if chunk_key(r)]
+    hit_keys = relevant & set(retrieved)
+
+    recall_sum += len(hit_keys) / len(relevant)          # 分母 = 标注相关 chunk 数
+    precision_sum += len(hit_keys) / len(retrieved) if retrieved else 0.0
+    hit_rate_sum += 1 if hit_keys else 0
+    rel = [1 if k in relevant else 0 for k in retrieved]
+    mrr_sum += next((1.0 / (idx + 1) for idx, r in enumerate(rel) if r), 0.0)
     dcg = sum(r / math.log2(idx + 2) for idx, r in enumerate(rel))
     ideal = sum(1 / math.log2(idx + 2) for idx in range(min(sum(rel) or 1, K)))
     ndcg_sum += dcg / ideal if ideal else 0
     evaluated += 1
     if (i + 1) % 10 == 0: print(f"  {i+1}/{len(samples)} ...")
+
 print(f"耗时 {time.time()-t0:.0f}s")
-print(f"Recall@{K} (查询级命中率): {recall_hits/evaluated:.3f}")
-print(f"MRR@{K}: {mrr_sum/evaluated:.3f}")
-print(f"NDCG@{K}: {ndcg_sum/evaluated:.3f}")
+if evaluated:
+    print(f"Recall@{K}（chunk 级，分母=标注相关 chunk 数）: {recall_sum/evaluated:.3f}")
+    print(f"Precision@{K}: {precision_sum/evaluated:.3f}")
+    print(f"命中率（topK 至少 1 条相关）: {hit_rate_sum/evaluated:.1%}")
+    print(f"MRR@{K}: {mrr_sum/evaluated:.3f}")
+    print(f"NDCG@{K}: {ndcg_sum/evaluated:.3f}")
+    print(f"参与评测 {evaluated} 条，跳过 {skipped} 条")
 
 # ============ Part 2: 双 Judge Faithfulness ============
 print("\n=== Part 2: 双 Judge Faithfulness ===")
@@ -124,10 +170,15 @@ print(f"两者均完整识别问答边界 → 对本类文本型 PDF，PDFBox �
 print(f"表格/多栏/扫描件场景再考虑 pdfplumber 的表格抽取或 Apache Tika。")
 
 print("\n=== 汇总 ===")
+n = evaluated or 1
 print(json.dumps({
-    "retrieval": {"recall@5": round(recall_hits/evaluated, 3),
-                  "mrr@5": round(mrr_sum/evaluated, 3),
-                  "ndcg@5": round(ndcg_sum/evaluated, 3), "queries": evaluated},
+    "retrieval": {f"recall@{K}": round(recall_sum/n, 3),
+                  f"precision@{K}": round(precision_sum/n, 3),
+                  f"hit_rate@{K}": round(hit_rate_sum/n, 3),
+                  f"mrr@{K}": round(mrr_sum/n, 3),
+                  f"ndcg@{K}": round(ndcg_sum/n, 3),
+                  "queries": evaluated, "skipped": skipped,
+                  "kb_id": KB_ID, "corpus_chunks": len(corpus_norm)},
     "faithfulness": {"deepseek_judge": round(ds_avg, 3), "qwen_judge": round(qw_avg, 3),
                      "judge_agreement": round(agree, 3), "samples": len(fs_samples)},
     "parser": {"pdfplumber_faq_lines": pdfplumber_faq, "pdfbox_faq_units": 1001}

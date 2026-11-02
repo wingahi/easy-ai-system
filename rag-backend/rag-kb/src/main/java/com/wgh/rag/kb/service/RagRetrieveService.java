@@ -57,7 +57,10 @@ public class RagRetrieveService {
         RetrievalOptions opts = options != null ? options : RetrievalOptions.defaults();
 
         RagProperties.Retrieve retrieve = ragProperties.getRetrieve();
-        int topK = retrieve.getTopK() != null ? retrieve.getTopK() : 5;
+        // 评测可显式指定 K；否则用全局配置
+        int topK = opts.topK() != null && opts.topK() > 0
+                ? opts.topK()
+                : (retrieve.getTopK() != null ? retrieve.getTopK() : 5);
         // minScore 默认 0.55：cosine 相似度下 0.3 噪声过多
         double minScore = retrieve.getMinScore() != null ? retrieve.getMinScore() : 0.55;
         // 查询变换（REWRITE / MULTI_QUERY / HYDE），任何失败降级为原查询
