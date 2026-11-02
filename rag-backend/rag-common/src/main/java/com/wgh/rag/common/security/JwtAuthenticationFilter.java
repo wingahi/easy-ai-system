@@ -1,5 +1,10 @@
 package com.wgh.rag.common.security;
 
+import com.wgh.rag.common.entity.WghUser;
+import com.wgh.rag.common.exception.BusinessException;
+import com.wgh.rag.common.mapper.RolePermissionMapper;
+import com.wgh.rag.common.mapper.UserMapper;
+import com.wgh.rag.common.mapper.UserRoleMapper;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -7,18 +12,18 @@ import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
-import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
 /**
- * JWT 鉴权过滤器
+ * JWT 鉴权过滤器 —— 解析 JWT → 从 DB 加载 roles/permissions → 填 LoginUser 上下文 + SecurityContext
  */
 @Slf4j
 @Component
@@ -26,14 +31,15 @@ import java.util.Set;
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtUtils jwtUtils;
+    private final UserMapper userMapper;
+    private final UserRoleMapper userRoleMapper;
+    private final RolePermissionMapper rolePermissionMapper;
 
-    /**
-     * 白名单路径（不需要鉴权）
-     * 注意：分享接口 /api/share/ 与 /api/chat/share/ 已移除 —— 分享页要求登录，userIdentifier 取当前用户名
-     */
     private static final List<String> WHITE_LIST = Arrays.asList(
             "/api/auth/login",
             "/api/auth/captcha",
+            // OIDC 授权入口免鉴权（回调端点也在 /api/auth/oidc 下，已被 SecurityConfig 的 /api/auth/** 放行覆盖）
+            "/api/auth/oidc/",
             // 工作流 Webhook 触发入口：凭路径中的 token 鉴权，免登录
             "/api/workflows/webhook/",
             "/doc.html",
@@ -48,17 +54,16 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest request,
                                     HttpServletResponse response,
                                     FilterChain filterChain) throws ServletException, IOException {
-        
+
         String requestURI = request.getRequestURI();
 
-        // 白名单路径放行
         if (isWhiteList(requestURI)) {
             filterChain.doFilter(request, response);
             return;
         }
 
-        // 分享接口需要登录（JWT 鉴权）—— 不再放行 /api/share 与 /api/chat/share
-        // 历史会话按当前登录用户名查询，与 shareToken 解耦
+        // 清理上一轮 ThreadLocal（异步/SSE 分发不会走到这里，主链路清理）
+        LoginUser.clear();
 
         String authHeader = request.getHeader("Authorization");
         if (authHeader == null || !authHeader.startsWith("Bearer ")) {
@@ -76,17 +81,43 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             return;
         }
 
-        // 将用户信息放入request attribute，供后续Controller使用
         try {
             Long userId = jwtUtils.getUserIdFromToken(token);
             String username = jwtUtils.getUsernameFromToken(token);
+
+            // 从 DB 加载 roles + permissions（幂等，无则空集合）
+            WghUser user = userMapper.selectById(userId);
+            if (user != null && user.getStatus() != null && user.getStatus() != 1) {
+                response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+                response.setContentType("application/json;charset=UTF-8");
+                response.getWriter().write("{\"code\":1003,\"message\":\"账号已被禁用\",\"data\":null}");
+                return;
+            }
+
+            Set<String> roles = new HashSet<>();
+            Set<String> permissions = new HashSet<>();
+            if (user != null) {
+                List<String> roleCodes = userRoleMapper.selectRoleCodesByUserId(userId);
+                List<String> permCodes = rolePermissionMapper.selectPermCodesByUserId(userId);
+                if (roleCodes != null) roles.addAll(roleCodes);
+                if (permCodes != null) permissions.addAll(permCodes);
+            }
+
+            LoginUser loginUser = new LoginUser();
+            loginUser.setUserId(userId);
+            loginUser.setUsername(username);
+            loginUser.setRoles(roles);
+            loginUser.setPermissions(permissions);
+            LoginUser.set(loginUser);
+
             request.setAttribute("userId", userId);
             request.setAttribute("username", username);
 
-            // 关键：把认证主体放入 SecurityContext，Spring Security 的 .authenticated() 才能放行
+            Set<SimpleGrantedAuthorityCompat> authorities = new HashSet<>();
+            authorities.add(new SimpleGrantedAuthorityCompat("ROLE_USER"));
+            for (String r : roles) authorities.add(new SimpleGrantedAuthorityCompat("ROLE_" + r));
             UsernamePasswordAuthenticationToken authentication =
-                    new UsernamePasswordAuthenticationToken(
-                            username, null, Set.of(new SimpleGrantedAuthority("ROLE_USER")));
+                    new UsernamePasswordAuthenticationToken(loginUser, null, authorities);
             SecurityContextHolder.getContext().setAuthentication(authentication);
         } catch (Exception e) {
             log.error("解析Token失败", e);
@@ -97,5 +128,12 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private boolean isWhiteList(String uri) {
         return WHITE_LIST.stream().anyMatch(uri::startsWith);
+    }
+
+    /** 兼容内部 Authority 实现，避免对 Spring Security GrantedAuthority 的硬依赖增加模块耦合 */
+    private static class SimpleGrantedAuthorityCompat implements org.springframework.security.core.GrantedAuthority {
+        private final String role;
+        SimpleGrantedAuthorityCompat(String role) { this.role = role; }
+        @Override public String getAuthority() { return role; }
     }
 }

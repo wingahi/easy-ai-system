@@ -30,4 +30,9 @@ public class BusinessException extends RuntimeException {
         super(message);
         this.code = ResultCode.FAIL.getCode();
     }
+
+    public BusinessException(String message, Throwable cause) {
+        super(message, cause);
+        this.code = ResultCode.FAIL.getCode();
+    }
 }
