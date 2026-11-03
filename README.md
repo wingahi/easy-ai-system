@@ -72,7 +72,8 @@
 - **语义缓存**：窗口级开关，相似度阈值命中后直接返回缓存答案，跳过检索与 LLM；每窗口条数上限，超出淘汰最旧。
 - **Prompt 模板中心**：模板 CRUD、变量提取、渲染预览；窗口系统提示可用 `template:{id}` 引用。输入框支持**前缀联想**：在聊天调试页输入框或工作流 LLM 节点的 User Prompt 中输入前缀（默认 `/`）即弹出模板候选，继续输入按名称/简述/分类模糊过滤，↑↓ 选择、Enter 填入、Esc 关闭。选中含 `{{变量}}` 的模板会进入变量填写态（占位符高亮、Tab/Enter 逐个填写，全部替换后才可发送；也可「跳过变量直接发送」，未填变量按后端 render 规则替换为空串）。前缀字符、最大候选数、是否启用可在「Prompt 模板中心」页顶部配置，保存在浏览器 localStorage（`wgh_prompt_trigger_config`，默认启用、前缀 `/`、最多 10 个）。
 - **模型路由与故障转移**：窗口可指定 `model_route_group`，同组模型按 `route_priority` 升序形成故障转移链；未配置时回退 `llm_model_id`。
-- **可观测性（未完成）**：暂无 Prometheus 指标与链路追踪，仓库不含 Dockerfile / docker-compose。
+- **可观测性**：Micrometer + Prometheus 自定义业务指标（对话/检索/LLM/配额/限流/工作流）；`X-Request-Id` 贯穿 MDC、SSE 与异步线程，日志统一携带 `rid`；管理端口独立（默认 `9090`），业务端口不再暴露 `/actuator`；提供 Prometheus/Grafana 编排与仪表盘，详见 [docs/design-observability.md](docs/design-observability.md)。
+- **容器化**：后端多阶段 Dockerfile（非 root、JVM 容器内存感知、9090 探活），前端 Node 构建 + Nginx（SPA 回退、`/api` 反代、SSE 关闭缓冲），`docker compose` 一键拉起 backend/frontend/redis/prometheus/grafana。
 
 ---
 
@@ -83,8 +84,10 @@
 ```
 wgh-rag-system/
 ├── rag-backend/                  # Spring Boot 多模块（Java 21）
-│   ├── rag-common/               # Result / RBAC 模型 / 审计切面 / 全局异常
-│   ├── rag-auth/                 # 认证能力归属：外部 OIDC token 资源服务器（JWKS 验签 + 角色映射）
+│   ├── rag-common/               # 纯契约层：Result / 异常 / 日志工具 / 指标 / 安全契约（无实体与 Mapper）
+│   ├── rag-data/                 # 持久层基础：BaseEntity / MyBatis-Plus 配置 / 类型处理器
+│   ├── rag-log/                  # 日志模块：@Audit 切面 + wgh_audit_log 写入与查询
+│   ├── rag-auth/                 # 认证与 RBAC：OIDC 资源服务器 + 用户/角色/权限实体与 Mapper
 │   ├── rag-quota/                # 配额模块（全局默认 + 用户日/月配置）
 │   ├── rag-config/               # RagProperties（RAG / PgVector / Agent / Context 配置映射）
 │   ├── rag-llm/                  # DB 动态模型 + 多厂商工厂 + 缓存热更新 + 模型路由
@@ -102,6 +105,23 @@ wgh-rag-system/
 ├── rag-frontend/                 # Vue 3 前端（含 public/widget.js、widget-demo.html）
 └── docs/                         # 设计文档、API 参考、测试用例与报告
 ```
+
+**模块依赖（缩进表示“被上层依赖”）**
+
+```
+rag-app
+└── rag-controller
+    ├── rag-auth ───┬── rag-log ─── rag-common
+    │               └── rag-data ─── rag-common
+    ├── rag-quota ───── rag-common / rag-data
+    ├── rag-workflow / rag-agent / rag-agent-multi / rag-tool
+    └── rag-chat ── rag-kb ── rag-llm ── rag-config ── rag-common
+```
+
+- `rag-common` 不依赖任何内部模块，也不含实体/Mapper/MyBatis 配置；
+- `rag-data` 仅被需要 `BaseEntity`、类型处理器或 MyBatis-Plus 配置的模块依赖；
+- `rag-log` 承载审计能力，`rag-auth` 与 `rag-controller` 通过它写入审计日志；
+- `rag-auth` 持有 `WghUser/WghRole/WghPermission` 及对应 Mapper，供 controller 的 RBAC 管理接口使用。
 
 ### 3.2 技术栈
 
@@ -222,7 +242,7 @@ python3 eval/eval_recall.py --kb 2 --k 5  # 离线召回率评测
 
 ### 4.7 生产部署要点
 
-- 仓库提供 `docker-compose.yml` 用于本地启动 **Redis 8.10.1**；应用本体仍为 **PostgreSQL + Spring Boot 进程 + Nginx 托管前端**（未提供应用 Dockerfile）。
+- 仓库提供完整的 `docker-compose.yml` 与前后端 Dockerfile，可一键拉起 **backend / frontend / redis / prometheus / grafana**（PostgreSQL 需单独部署并启用 pgvector，见 §4.9）。
 - Redis 推荐独立部署或托管服务，开启持久化与访问密码，通过 `WGH_REDIS_HOST/PORT/DATABASE/PASSWORD/TIMEOUT` 注入；生产需监控连接与内存。
 - 生产必须通过环境变量注入 `WGH_OIDC_ISSUER`、`WGH_OIDC_AUDIENCE`、`WGH_OIDC_JWKS_URI`、数据库口令与模型 Key；`WGH_PROFILE=prod`。
 - 分享 / 开放 API 的限流、密码锁定、嵌入 grant 已集中到 Redis，多实例共享；Redis 故障时自动降级为单机内存，此时各实例计数不共享。
@@ -261,6 +281,65 @@ token 无角色或映射后数据库不存在时按 `default-role`（viewer）�
 ```bash
 curl -H "Authorization: Bearer $IDP_TOKEN" http://localhost:8080/api/auth/me
 ```
+
+### 4.9 容器化部署（Docker Compose）
+
+前置条件：Docker 24+（含 Compose v2）；PostgreSQL 已启用 `pgvector`；如需外部 OIDC，准备好 issuer / audience / JWKS。
+
+```bash
+cp .env.example .env
+# 至少填写 WGH_AUTH_LOCAL_JWT_SECRET、WGH_INIT_ADMIN_PASSWORD 与数据库口令
+docker compose up -d --build
+docker compose ps          # 观察 backend / frontend 是否 healthy
+```
+
+| 服务 | 默认端口 | 说明 |
+| --- | --- | --- |
+| frontend | `8088` → 容器 80 | Nginx 托管 SPA，`/api` 反代到 backend，SSE 已关闭代理缓冲 |
+| backend | `8080` → 容器 8080 | 业务端口，**不暴露 actuator** |
+| backend 管理端口 | 容器内 `9090`，默认不映射宿主机 | 供 Prometheus 抓取；生产禁止对外发布 |
+| prometheus | `9091` → 容器 9090 | 抓取 `backend:9090/actuator/prometheus` |
+| grafana | `3000` | 预置数据源与「WGH RAG 业务总览」仪表盘 |
+| redis | `6379` | 公开访问分布式限流 / 密码锁定 / 嵌入授权 |
+
+单独构建镜像：
+
+```bash
+docker build -t wgh-rag-backend:local -f rag-backend/Dockerfile rag-backend
+docker build -t wgh-rag-frontend:local -f rag-frontend/Dockerfile rag-frontend
+```
+
+镜像要点：后端多阶段构建、非 root 运行、`-XX:MaxRAMPercentage=75.0` 按容器限额设置堆、`HEALTHCHECK` 打管理端口；前端 Node 构建后由 Nginx 托管。
+
+### 4.10 运维与监控
+
+**两个端口的职责**
+
+- `8080`：业务 API / SSE。`/actuator/*` 在此端口返回 **404**。
+- `9090`：管理端口，仅暴露 `health / info / metrics / prometheus`。可通过 `WGH_MANAGEMENT_PORT` 改端口、`WGH_MANAGEMENT_ADDRESS` 绑定内网网卡。生产应只允许监控网络访问，不要映射到公网。
+
+**常用环境变量**
+
+| 变量 | 默认 | 说明 |
+| --- | --- | --- |
+| `WGH_PROFILE` | `dev`（容器镜像默认 `prod`） | 运行环境 |
+| `SERVER_PORT` | `8080` | 业务端口 |
+| `WGH_MANAGEMENT_PORT` | `9090` | 管理端口 |
+| `WGH_MANAGEMENT_ADDRESS` | `0.0.0.0` | 管理端口监听地址，生产建议内网网卡 |
+| `PROD_DB_HOST/PORT/NAME/USERNAME/PASSWORD` | `localhost/5432/wgh_rag/postgres/空` | 容器（prod profile）PostgreSQL 连接，**密码必填** |
+| `WGH_DB_HOST/PORT/NAME/USERNAME/PASSWORD` | `localhost/5432/wgh_rag/postgres/123456` | 本地 dev profile 连接（非容器部署） |
+| `WGH_REDIS_ENABLED/HOST/PORT/PASSWORD` | `true/localhost/6379/空` | Redis 连接，不可用时自动降级单机内存 |
+| `WGH_AUTH_LOCAL_JWT_SECRET` | 空（随机密钥，重启失效） | 本地会话签名密钥，**生产必须注入，至少 32 字节** |
+| `WGH_JWT_SECRET` | 无 | 兼容 `prod` profile 的旧配置项，建议与上文同值 |
+| `WGH_INIT_ADMIN_PASSWORD` | 空 | 初始管理员口令，仅在库中无 admin 时创建，**禁止使用默认口令** |
+| `WGH_OIDC_ISSUER/AUDIENCE/JWKS_URI` | 空 | 外部 IdP 配置，不使用可留空 |
+
+**指标与日志**
+
+- 抓取：`curl http://<host>:9090/actuator/prometheus | grep wgh_`；
+- 指标字典、埋点位置、告警建议：见 [docs/design-observability.md](docs/design-observability.md)；
+- 请求关联：客户端可传 `X-Request-Id`（`[A-Za-z0-9._-]{8,64}`），响应头回写，日志中体现为 `[rid=...]`；
+- 敏感凭证（分享 token、嵌入 grant、API Key）日志已脱敏，仅保留首尾 4 位。
 
 ---
 
