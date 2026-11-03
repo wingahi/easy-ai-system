@@ -1,5 +1,8 @@
 package com.wgh.rag.agentmulti.graph;
 
+import com.wgh.rag.agentmulti.constant.MultiAgentConstants;
+import com.wgh.rag.workflow.constant.WorkflowConstants;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wgh.rag.agentmulti.constant.MultiAgentEvents;
 import com.wgh.rag.agentmulti.context.MultiAgentContext;
@@ -69,7 +72,7 @@ public class GraphCoordinator {
 
         // 初始化所有 LOOP 节点的迭代计数
         for (GraphNode n : graph.getNodes()) {
-            if ("LOOP".equals(n.getType())) ctx.loopIterations().put(n.getId(), 0);
+            if (WorkflowConstants.NODE_LOOP.equals(n.getType())) ctx.loopIterations().put(n.getId(), 0);
         }
 
         while (!frontier.isEmpty()) {
@@ -81,11 +84,11 @@ public class GraphCoordinator {
             boolean terminate = false;
 
             switch (type) {
-                case "START" -> {
+                case WorkflowConstants.NODE_START -> {
                     ctx.put(nodeId + ".text", run.getUserGoal() == null ? "" : run.getUserGoal());
                     ctx.setVars("lastOutput", run.getUserGoal() == null ? "" : run.getUserGoal());
                 }
-                case "AGENT" -> {
+                case WorkflowConstants.NODE_AGENT -> {
                     AgentInstance agent = agentMap.get(node.getAgentId());
                     if (agent == null) {
                         log.warn("Graph 节点 {} agentId={} 不存在", nodeId, node.getAgentId());
@@ -99,7 +102,7 @@ public class GraphCoordinator {
 
                     persistStep(run, agent, node, result, stepIdx++);
                 }
-                case "CONDITION" -> {
+                case WorkflowConstants.NODE_CONDITION -> {
                     String rendered = node.getExpression();
                     // VariableResolver 需要 RunContext；这里用简化的 VariableResolver.render（不 import RunContext）
                     // 直接复用 workflow 的 VariableResolver.render 会需要 RunContext，我们改用 MultiAgentContext.render
@@ -122,7 +125,7 @@ public class GraphCoordinator {
                     // CONDITION 不往后走
                     continue;
                 }
-                case "LOOP" -> {
+                case WorkflowConstants.NODE_LOOP -> {
                     int iteration = ctx.incrementLoop(nodeId);
                     ctx.put(nodeId + ".iteration", iteration);
                     int max = node.getMaxIterations() != null ? node.getMaxIterations() : 3;
@@ -147,7 +150,7 @@ public class GraphCoordinator {
                     step.setRunId(run.getRunId());
                     step.setAgentId("HITL");
                     step.setStepIndex(stepIdx++);
-                    step.setStatus("HITL_PENDING");
+                    step.setStatus(MultiAgentConstants.STATUS_HITL_PENDING);
                     step.setHitlExpectedInput(prompt);
                     // 记录暂停节点，供 resume 定位后继（ctx 内存状态在 resume 时已重建；列类型为 JSONB）
                     step.setInputContext(toNodeContext(nodeId));
@@ -159,13 +162,13 @@ public class GraphCoordinator {
                         ctx.getPendingAgents(nodeId).add(edge.getTarget());
                     }
 
-                    run.setStatus("PAUSED");
+                    run.setStatus(MultiAgentConstants.STATUS_PAUSED);
                     service.saveRun(run);
                     sse.send(emitter, MultiAgentEvents.AGENT_HITL_PENDING,
                             "runId", run.getRunId(), "nodeId", nodeId, "prompt", prompt);
                     throw new MultiAgentRuntime.PauseSignal("HITL 暂停：" + nodeId);
                 }
-                case "END" -> {
+                case WorkflowConstants.NODE_END -> {
                     String outTemplate = node.getConfig() != null ? String.valueOf(node.getConfig().getOrDefault("output", "")) : "";
                     String output;
                     if (outTemplate.isBlank()) {
@@ -175,8 +178,8 @@ public class GraphCoordinator {
                         output = ctx.render(outTemplate);
                     }
                     run.setOutputText(output);
-                    run.setStatus("COMPLETED");
-                    service.finishRun(run, "COMPLETED", null);
+                    run.setStatus(MultiAgentConstants.STATUS_COMPLETED);
+                    service.finishRun(run, MultiAgentConstants.STATUS_COMPLETED, null);
                     sse.send(emitter, MultiAgentEvents.MULTI_AGENT_COMPLETE, Map.of(
                             "runId", run.getRunId(), "output", output, "durationMs", run.getDurationMs()));
                     terminate = true;
@@ -211,7 +214,7 @@ public class GraphCoordinator {
         Set<String> allTargets = new LinkedHashSet<>();
         MultiAgentStep pausedStep = null;
         for (MultiAgentStep s : service.listSteps(run.getRunId())) {
-            if ("HITL_PENDING".equals(s.getStatus())) pausedStep = s;
+            if (MultiAgentConstants.STATUS_HITL_PENDING.equals(s.getStatus())) pausedStep = s;
         }
         if (pausedStep != null && pausedStep.getInputContext() != null
                 && !pausedStep.getInputContext().isBlank()) {
@@ -265,7 +268,7 @@ public class GraphCoordinator {
             String type = node.getType() == null ? "" : node.getType();
             boolean terminate = false;
             switch (type) {
-                case "AGENT" -> {
+                case WorkflowConstants.NODE_AGENT -> {
                     AgentInstance agent = agentMap.get(node.getAgentId());
                     if (agent == null) continue;
                     String input = buildNodeInput(node, ctx, run.getUserGoal());
@@ -275,7 +278,7 @@ public class GraphCoordinator {
                     ctx.setVars("lastOutput", result.getOutput());
                     persistStep(run, agent, node, result, stepIdx++);
                 }
-                case "CONDITION" -> {
+                case WorkflowConstants.NODE_CONDITION -> {
                     String expr = ctx.render(node.getExpression());
                     boolean bool = conditionEvaluator.evaluate(expr);
                     List<GraphEdge> edges = outEdges.getOrDefault(nodeId, List.of());
@@ -288,7 +291,7 @@ public class GraphCoordinator {
                     visited.add(nodeId);
                     continue;
                 }
-                case "LOOP" -> {
+                case WorkflowConstants.NODE_LOOP -> {
                     int iteration = ctx.incrementLoop(nodeId);
                     int max = node.getMaxIterations() != null ? node.getMaxIterations() : 3;
                     boolean breakNow = iteration >= max || evalBreakCondition(node, ctx);
@@ -308,7 +311,7 @@ public class GraphCoordinator {
                     step.setRunId(run.getRunId());
                     step.setAgentId("HITL");
                     step.setStepIndex(stepIdx++);
-                    step.setStatus("HITL_PENDING");
+                    step.setStatus(MultiAgentConstants.STATUS_HITL_PENDING);
                     step.setHitlExpectedInput(prompt);
                     step.setInputContext(toNodeContext(nodeId));
                     step.setStartTime(LocalDateTime.now());
@@ -318,19 +321,19 @@ public class GraphCoordinator {
                         ctx.getPendingAgents(nodeId).add(edge.getTarget());
                     }
 
-                    run.setStatus("PAUSED");
+                    run.setStatus(MultiAgentConstants.STATUS_PAUSED);
                     service.saveRun(run);
                     sse.send(emitter, MultiAgentEvents.AGENT_HITL_PENDING, Map.of("runId", run.getRunId(), "nodeId", nodeId, "prompt", prompt));
                     throw new MultiAgentRuntime.PauseSignal("HITL 暂停：" + nodeId);
                 }
-                case "END" -> {
+                case WorkflowConstants.NODE_END -> {
                     String outTemplate = node.getConfig() != null ? String.valueOf(node.getConfig().getOrDefault("output", "")) : "";
                     String output = outTemplate.isBlank()
                             ? ctx.stringify(ctx.resolvePath("last"))
                             : ctx.render(outTemplate);
                     run.setOutputText(output);
-                    run.setStatus("COMPLETED");
-                    service.finishRun(run, "COMPLETED", null);
+                    run.setStatus(MultiAgentConstants.STATUS_COMPLETED);
+                    service.finishRun(run, MultiAgentConstants.STATUS_COMPLETED, null);
                     sse.send(emitter, MultiAgentEvents.MULTI_AGENT_COMPLETE, Map.of("runId", run.getRunId(), "output", output, "durationMs", run.getDurationMs()));
                     terminate = true;
                 }

@@ -1,5 +1,7 @@
 package com.wgh.rag.agentmulti.runtime;
 
+import com.wgh.rag.agentmulti.constant.MultiAgentConstants;
+
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wgh.rag.agentmulti.constant.MultiAgentEvents;
@@ -70,7 +72,7 @@ public class MultiAgentRuntime {
                 "userGoal", run.getUserGoal());
 
         // 状态置为 RUNNING
-        run.setStatus("RUNNING");
+        run.setStatus(MultiAgentConstants.STATUS_RUNNING);
         run.setStartTime(run.getStartTime() != null ? run.getStartTime() : LocalDateTime.now());
         runMapper.updateById(run);
 
@@ -98,8 +100,8 @@ public class MultiAgentRuntime {
             // 兜底：如果 Coordinator 没设置终态
             if (runMapper.selectById(run.getId()) != null) {
                 MultiAgentRun latest = runMapper.selectById(run.getId());
-                if ("RUNNING".equals(latest.getStatus())) {
-                    finishRun(latest, "COMPLETED", null);
+                if (MultiAgentConstants.STATUS_RUNNING.equals(latest.getStatus())) {
+                    finishRun(latest, MultiAgentConstants.STATUS_COMPLETED, null);
                 }
             }
         } catch (PauseSignal pause) {
@@ -108,7 +110,7 @@ public class MultiAgentRuntime {
         } catch (Exception e) {
             log.error("run {} 执行异常", run.getRunId(), e);
             MultiAgentRun latest = runMapper.selectById(run.getId());
-            if (latest != null) finishRun(latest, "FAILED", e.getMessage());
+            if (latest != null) finishRun(latest, MultiAgentConstants.STATUS_FAILED, e.getMessage());
             sse.send(emitter, MultiAgentEvents.MULTI_AGENT_ERROR,
                     "runId", run.getRunId(), "error", e.getMessage());
         }
@@ -123,12 +125,12 @@ public class MultiAgentRuntime {
             sse.send(emitter, MultiAgentEvents.MULTI_AGENT_ERROR, Map.of("runId", runId, "error", "Run 不存在"));
             return runId;
         }
-        if (!"PAUSED".equals(run.getStatus())) {
+        if (!MultiAgentConstants.STATUS_PAUSED.equals(run.getStatus())) {
             sse.send(emitter, MultiAgentEvents.MULTI_AGENT_ERROR, Map.of("runId", runId, "error", "Run 非 PAUSED 状态"));
             return runId;
         }
 
-        run.setStatus("RUNNING");
+        run.setStatus(MultiAgentConstants.STATUS_RUNNING);
         runMapper.updateById(run);
 
         List<AgentInstance> agents = parseAgents(run.getAgentsJson());
@@ -161,7 +163,7 @@ public class MultiAgentRuntime {
         } catch (Exception e) {
             log.error("run {} 恢复执行异常", run.getRunId(), e);
             MultiAgentRun latest = runMapper.selectById(run.getId());
-            if (latest != null) finishRun(latest, "FAILED", e.getMessage());
+            if (latest != null) finishRun(latest, MultiAgentConstants.STATUS_FAILED, e.getMessage());
             sse.send(emitter, MultiAgentEvents.MULTI_AGENT_ERROR, "runId", runId, "error", e.getMessage());
         }
 
@@ -172,7 +174,7 @@ public class MultiAgentRuntime {
     public void cancelRun(String runId) {
         MultiAgentRun run = loadRun(runId);
         if (run == null) return;
-        run.setStatus("CANCELLED");
+        run.setStatus(MultiAgentConstants.STATUS_CANCELLED);
         run.setFinishTime(LocalDateTime.now());
         runMapper.updateById(run);
 
@@ -180,9 +182,10 @@ public class MultiAgentRuntime {
         List<MultiAgentStep> steps = stepMapper.selectList(
                 new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<MultiAgentStep>()
                         .eq(MultiAgentStep::getRunId, runId)
-                        .in(MultiAgentStep::getStatus, "PENDING", "HITL_PENDING", "RUNNING"));
+                        .in(MultiAgentStep::getStatus, MultiAgentConstants.STATUS_PENDING,
+                                MultiAgentConstants.STATUS_HITL_PENDING, MultiAgentConstants.STATUS_RUNNING));
         for (MultiAgentStep s : steps) {
-            s.setStatus("SKIPPED");
+            s.setStatus(MultiAgentConstants.STATUS_SKIPPED);
             stepMapper.updateById(s);
         }
     }

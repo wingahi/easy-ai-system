@@ -1,5 +1,8 @@
 package com.wgh.rag.agentmulti.crew;
 
+import com.wgh.rag.agentmulti.constant.MultiAgentConstants;
+import com.wgh.rag.workflow.constant.WorkflowConstants;
+
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wgh.rag.agentmulti.constant.MultiAgentEvents;
@@ -109,7 +112,7 @@ public class CrewCoordinator {
 
             GraphNode node = nodeMap.get(nodeId);
             if (node == null) continue;
-            if ("AGENT".equals(node.getType())) {
+            if (WorkflowConstants.NODE_AGENT.equals(node.getType())) {
                 AgentInstance agent = agentMap.get(node.getAgentId());
                 if (agent == null) {
                     log.warn("节点 {} 未找到 agentId={}", nodeId, node.getAgentId());
@@ -129,7 +132,7 @@ public class CrewCoordinator {
             List<GraphEdge> edges = outEdges.getOrDefault(nodeId, List.of());
             for (GraphEdge edge : edges) {
                 // condition 节点 Crew 模式不使用，但兼容
-                if ("CONDITION".equals(node.getType())) {
+                if (WorkflowConstants.NODE_CONDITION.equals(node.getType())) {
                     //  Crew 模式下不出现 CONDITION；若出现，则变量渲染后 true/false 简单判断
                     Object expr = ctx.resolvePath(nodeId + ".condition");
                     boolean bool = Boolean.TRUE.equals(expr);
@@ -303,7 +306,7 @@ public class CrewCoordinator {
         try {
             GraphNode node = nodeMap.get(nodeId);
             if (node == null) return;
-            if ("AGENT".equals(node.getType())) {
+            if (WorkflowConstants.NODE_AGENT.equals(node.getType())) {
                 AgentInstance agent = agentMap.get(node.getAgentId());
                 if (agent != null) {
                     String input = buildNodeInput(node, ctx, run.getUserGoal());
@@ -347,7 +350,7 @@ public class CrewCoordinator {
             output = sb.toString().trim();
         }
         run.setOutputText(output);
-        service.finishRun(run, "COMPLETED", null);
+        service.finishRun(run, MultiAgentConstants.STATUS_COMPLETED, null);
         sse.send(emitter, MultiAgentEvents.MULTI_AGENT_COMPLETE,
                 "runId", run.getRunId(),
                 "output", output,
@@ -370,7 +373,7 @@ public class CrewCoordinator {
         int i = 0;
         for (AgentInstance a : agents) {
             String nodeId = "agent-" + i++;
-            nodes.add(GraphNode.builder().id(nodeId).type("AGENT").agentId(a.getAgentId()).build());
+            nodes.add(GraphNode.builder().id(nodeId).type(WorkflowConstants.NODE_AGENT).agentId(a.getAgentId()).build());
             if (prev != null) {
                 edges.add(GraphEdge.builder().source(prev).target(nodeId).build());
             }

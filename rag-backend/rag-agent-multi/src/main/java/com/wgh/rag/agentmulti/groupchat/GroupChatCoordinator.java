@@ -1,5 +1,7 @@
 package com.wgh.rag.agentmulti.groupchat;
 
+import com.wgh.rag.agentmulti.constant.MultiAgentConstants;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wgh.rag.agentmulti.constant.MultiAgentEvents;
 import com.wgh.rag.agentmulti.context.MultiAgentContext;
@@ -47,7 +49,7 @@ public class GroupChatCoordinator {
         int round = run.getCurrentRound() != null ? run.getCurrentRound() : 0;
 
         try {
-            while (round < maxRounds && !"CANCELLED".equals(run.getStatus())) {
+            while (round < maxRounds && !MultiAgentConstants.STATUS_CANCELLED.equals(run.getStatus())) {
                 run.setCurrentRound(round);
 
                 // 终止判断
@@ -70,12 +72,12 @@ public class GroupChatCoordinator {
                     step.setRunId(run.getRunId());
                     step.setAgentId(speaker.getAgentId());
                     step.setStepIndex(round);
-                    step.setStatus("HITL_PENDING");
+                    step.setStatus(MultiAgentConstants.STATUS_HITL_PENDING);
                     step.setHitlExpectedInput(hitlPrompt);
                     step.setStartTime(LocalDateTime.now());
                     service.insertStep(step);
 
-                    run.setStatus("PAUSED");
+                    run.setStatus(MultiAgentConstants.STATUS_PAUSED);
                     service.saveRun(run);
                     sse.send(emitter, MultiAgentEvents.AGENT_HITL_PENDING,
                             "runId", run.getRunId(),
@@ -117,7 +119,7 @@ public class GroupChatCoordinator {
             throw pause;
         } catch (Exception e) {
             log.error("GroupChat 执行异常", e);
-            service.finishRun(run, "FAILED", e.getMessage());
+            service.finishRun(run, MultiAgentConstants.STATUS_FAILED, e.getMessage());
             return;
         }
 
@@ -142,7 +144,7 @@ public class GroupChatCoordinator {
         }
 
         run.setOutputText(finalAnswer);
-        service.finishRun(run, "COMPLETED", null);
+        service.finishRun(run, MultiAgentConstants.STATUS_COMPLETED, null);
         sse.send(emitter, MultiAgentEvents.MULTI_AGENT_COMPLETE,
                 "runId", run.getRunId(),
                 "output", finalAnswer,
@@ -156,7 +158,7 @@ public class GroupChatCoordinator {
         // 找到上一次暂停的 speaker 并放行一次，同时把待确认 step 置为 SUCCESS
         MultiAgentStep pausedStep = null;
         for (MultiAgentStep s : service.listSteps(run.getRunId())) {
-            if ("HITL_PENDING".equals(s.getStatus())) pausedStep = s;
+            if (MultiAgentConstants.STATUS_HITL_PENDING.equals(s.getStatus())) pausedStep = s;
         }
         if (pausedStep != null) {
             ctx.setVars("hitlApprovedAgent", pausedStep.getAgentId());
