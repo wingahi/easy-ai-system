@@ -94,6 +94,25 @@ wgh:
     allow-fallback-to-in-memory: ${WGH_PGVECTOR_FALLBACK:false}
   
   rag:
+    # ===== 文件存储（可插拔：local 本地磁盘 / oss 阿里云对象存储）=====
+    # 切换只改 type 与本段 OSS 配置，业务代码无需改动；OSS 配置为空时应用仍可启动（仅调用时返回明确错误）
+    storage:
+      type: ${WGH_STORAGE_TYPE:local}
+      local:
+        base-dir: ${WGH_UPLOAD_DIR:./uploads}          # 本地根目录（沿用历史 WGH_UPLOAD_DIR）
+        url-prefix: ${WGH_STORAGE_URL_PREFIX:/uploads} # 仅用于 resolveUrl 返回逻辑地址
+        max-file-size-mb: ${WGH_STORAGE_MAX_FILE_MB:50}
+      oss:
+        endpoint: ${WGH_OSS_ENDPOINT:}                 # 公网 endpoint，如 https://oss-cn-hangzhou.aliyuncs.com
+        internal-endpoint: ${WGH_OSS_INTERNAL_ENDPOINT:} # 可选：内网 endpoint，服务端读写优先使用
+        bucket: ${WGH_OSS_BUCKET:}
+        access-key-id: ${WGH_OSS_ACCESS_KEY_ID:}
+        access-key-secret: ${WGH_OSS_ACCESS_KEY_SECRET:}
+        key-prefix: ${WGH_OSS_KEY_PREFIX:}             # 对象 key 前缀，可为空
+        public-read: ${WGH_OSS_PUBLIC_READ:false}      # false 时 resolveUrl 返回签名 URL
+        signed-url-expire-minutes: ${WGH_OSS_SIGNED_URL_EXPIRE_MINUTES:60}
+        max-retries: ${WGH_OSS_MAX_RETRIES:3}
+        max-file-size-mb: ${WGH_STORAGE_MAX_FILE_MB:50}
     # ===== Redis（限流 / 分享密码锁定 / Widget 嵌入授权）=====
     # Redis 不可用时不阻断启动，公开访问能力自动降级为单机内存并输出 WARN。
     redis:
