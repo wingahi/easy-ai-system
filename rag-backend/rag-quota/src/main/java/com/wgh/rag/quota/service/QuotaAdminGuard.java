@@ -11,7 +11,7 @@ import java.util.Set;
 /**
  * 配额管理端权限守卫：仅管理员可操作。
  * <p>
- * 判定规则：LoginUser 角色含 "admin"（角色由 JwtAuthenticationFilter 从数据库加载），
+ * 判定规则：LoginUser 角色含 "admin"（角色由 OidcAuthenticationFilter 从外部 token roles claim 映射数据库角色），
  * 不再基于用户名做硬编码超级账号绕过。
  */
 @Component

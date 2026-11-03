@@ -3,8 +3,9 @@ package com.wgh.rag.quota;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wgh.rag.auth.config.SecurityConfig;
-import com.wgh.rag.auth.security.JwtAuthenticationFilter;
-import com.wgh.rag.auth.security.JwtUtils;
+import com.wgh.rag.auth.security.OidcAuthenticationFilter;
+import com.wgh.rag.auth.security.OidcProperties;
+import com.wgh.rag.auth.security.OidcTokenVerifier;
 import com.wgh.rag.common.config.MetaObjectHandlerImpl;
 import com.wgh.rag.common.exception.GlobalExceptionHandler;
 import com.wgh.rag.controller.QuotaAdminController;
@@ -13,6 +14,8 @@ import com.wgh.rag.quota.properties.QuotaProperties;
 import com.wgh.rag.quota.service.DefaultQuotaUserResolver;
 import com.wgh.rag.quota.service.QuotaAdminGuard;
 import com.wgh.rag.quota.service.QuotaService;
+import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.Jwts;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mybatis.spring.annotation.MapperScan;
@@ -24,12 +27,17 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Arrays;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
@@ -59,8 +67,8 @@ class QuotaApiTest {
     @EnableConfigurationProperties(QuotaProperties.class)
     @Import({
             SecurityConfig.class,
-            JwtAuthenticationFilter.class,
-            JwtUtils.class,
+            OidcAuthenticationFilter.class,
+            OidcProperties.class,
             MetaObjectHandlerImpl.class,
             GlobalExceptionHandler.class,
             QuotaService.class,
@@ -75,21 +83,32 @@ class QuotaApiTest {
     @Autowired
     private MockMvc mockMvc;
 
-    @Autowired
-    private JwtUtils jwtUtils;
+    @MockitoBean
+    private OidcTokenVerifier tokenVerifier;
 
     @Autowired
     private QuotaService quotaService;
 
     private final ObjectMapper om = new ObjectMapper();
 
-    private String bearer(Long userId, String username) {
-        return "Bearer " + jwtUtils.generateToken(userId, username);
+    /**
+     * 构造外部 token 形态的测试凭据（真实验签由 rag-auth 单测覆盖，这里 mock 验证器，
+     * 聚焦过滤器 roles → DB 角色 → 权限链路）。
+     */
+    private String bearer(Long userId, String username, String... roles) {
+        String token = userId + "|" + username + "|" + String.join(",", roles);
+        Claims claims = Jwts.claims()
+                .subject(username)
+                .add("userId", userId)
+                .add("roles", Arrays.asList(roles))
+                .build();
+        when(tokenVerifier.verify(anyString())).thenReturn(claims);
+        return "Bearer " + token;
     }
 
-    /** 内置超级账号（H2 种子 wgh_user.id=1，角色 admin） */
+    /** 管理员 token（roles claim 含 admin） */
     private String adminToken() {
-        return bearer(1L, "admin");
+        return bearer(1L, "admin", "admin");
     }
 
     private JsonNode putQuota(String username, String body) throws Exception {
@@ -135,7 +154,7 @@ class QuotaApiTest {
         assertThat(rows.get(0).path("tokenLimit").asLong()).isEqualTo(1000L);
         assertThat(rows.get(0).path("remark").asText()).isEqualTo("测试");
 
-        JsonNode my = getMy(bearer(99L, "alice"));
+        JsonNode my = getMy(bearer(99L, "alice", "viewer"));
         assertThat(my.path("data").path("source").asText()).isEqualTo("CUSTOM");
         assertThat(my.path("data").path("chatLimit").asInt()).isEqualTo(2);
         assertThat(my.path("data").path("chatRemaining").asLong()).isEqualTo(2L);
@@ -146,7 +165,7 @@ class QuotaApiTest {
     void nonAdmin_forbidden() throws Exception {
         // H2 种子：editor(id=2) 角色 editor，非管理员
         MvcResult res = mockMvc.perform(put("/api/admin/quota/users/alice")
-                        .header("Authorization", bearer(2L, "editor"))
+                        .header("Authorization", bearer(2L, "editor", "editor"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"chatLimit\":5}"))
                 .andExpect(status().isOk())
@@ -167,7 +186,7 @@ class QuotaApiTest {
         assertThat(om.readTree(del.getResponse().getContentAsString())
                 .path("data").path("restoredDefault").asBoolean()).isTrue();
 
-        JsonNode my = getMy(bearer(98L, "bob"));
+        JsonNode my = getMy(bearer(98L, "bob", "viewer"));
         assertThat(my.path("data").path("source").asText()).isEqualTo("DEFAULT");
         assertThat(my.path("data").path("chatLimit").asInt()).isEqualTo(200);
         assertThat(my.path("data").path("tokenLimit").asLong()).isEqualTo(2_000_000L);
@@ -179,11 +198,11 @@ class QuotaApiTest {
         putQuota("carol", "{\"period\":\"DAY\",\"chatLimit\":7,\"tokenLimit\":700,\"enabled\":true}");
         putQuota("carol", "{\"period\":\"DAY\",\"chatLimit\":7,\"tokenLimit\":700,\"enabled\":false}");
 
-        JsonNode myDisabled = getMy(bearer(97L, "carol"));
+        JsonNode myDisabled = getMy(bearer(97L, "carol", "viewer"));
         assertThat(myDisabled.path("data").path("source").asText()).isEqualTo("DEFAULT");
 
         putQuota("carol", "{\"period\":\"DAY\",\"chatLimit\":7,\"tokenLimit\":700,\"enabled\":true}");
-        JsonNode myEnabled = getMy(bearer(97L, "carol"));
+        JsonNode myEnabled = getMy(bearer(97L, "carol", "viewer"));
         assertThat(myEnabled.path("data").path("source").asText()).isEqualTo("CUSTOM");
         assertThat(myEnabled.path("data").path("chatLimit").asInt()).isEqualTo(7);
     }
@@ -193,7 +212,7 @@ class QuotaApiTest {
     void monthPeriodKeyVisible() throws Exception {
         putQuota("dave", "{\"period\":\"MONTH\",\"chatLimit\":30,\"tokenLimit\":3000,\"enabled\":true}");
 
-        JsonNode my = getMy(bearer(96L, "dave"));
+        JsonNode my = getMy(bearer(96L, "dave", "viewer"));
         assertThat(my.path("data").path("period").asText()).isEqualTo("MONTH");
         assertThat(my.path("data").path("periodKey").asText()).matches("\\d{4}-\\d{2}");
     }
@@ -235,7 +254,7 @@ class QuotaApiTest {
         assertThat(row.path("custom").asBoolean()).isTrue();
 
         // 5. 用户侧同步反映剩余为 0 且 nearLimit=true
-        JsonNode my = getMy(bearer(95L, "erin"));
+        JsonNode my = getMy(bearer(95L, "erin", "viewer"));
         assertThat(my.path("data").path("chatRemaining").asLong()).isEqualTo(0L);
         assertThat(my.path("data").path("nearLimit").asBoolean()).isTrue();
     }

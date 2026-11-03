@@ -3,6 +3,7 @@ package com.wgh.rag.tool;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wgh.rag.RagApplication;
+import com.wgh.rag.auth.security.OidcTokenVerifier;
 import com.wgh.rag.tool.entity.ToolConfig;
 import com.wgh.rag.tool.executor.SkillLlmClient;
 import com.wgh.rag.tool.executor.ToolExecutionEngine;
@@ -10,6 +11,8 @@ import com.wgh.rag.tool.service.SkillFileService;
 import com.wgh.rag.tool.service.ToolConfigService;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.data.message.ToolExecutionResultMessage;
+import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.Jwts;
 import org.junit.jupiter.api.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -64,6 +67,10 @@ class SkillManagementApiTest {
     @MockitoBean
     private SkillLlmClient skillLlmClient;
 
+    /** 外部 IdP 验签由 rag-auth 单测覆盖；这里 mock 验证器，聚焦业务链路 */
+    @MockitoBean
+    private OidcTokenVerifier oidcTokenVerifier;
+
     private final ObjectMapper om = new ObjectMapper();
     private final Path skillBase = Paths.get("target/test-skills-api").toAbsolutePath().normalize();
 
@@ -74,15 +81,14 @@ class SkillManagementApiTest {
 
     @BeforeEach
     void setup() throws Exception {
-        // 1. 登录拿 JWT
-        MvcResult login = mockMvc.perform(post("/api/auth/login")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"username\":\"admin\",\"password\":\"admin\"}"))
-                .andExpect(status().isOk())
-                .andReturn();
-        token = "Bearer " + om.readTree(login.getResponse().getContentAsString())
-                .path("data").path("token").asText();
-        assertThat(token).startsWith("Bearer ey");
+        // 1. 外部 token（roles claim 含 admin）
+        Claims claims = Jwts.claims()
+                .subject("admin")
+                .add("userId", 1L)
+                .add("roles", List.of("admin"))
+                .build();
+        when(oidcTokenVerifier.verify(anyString())).thenReturn(claims);
+        token = "Bearer external-admin-token";
 
         // 2. LLM stub：返回 userMessage 便于断言，同时捕获三参数
         capturedModelId = new AtomicReference<>();

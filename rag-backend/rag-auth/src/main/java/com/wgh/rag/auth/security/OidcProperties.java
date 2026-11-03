@@ -4,50 +4,51 @@ import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Configuration;
 
-import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 
 /**
- * OIDC 登录配置属性
+ * 外部 OIDC 资源服务器配置。
  * <p>
- * 默认 enabled=false，未配置时 /api/auth/oidc/** 入口返回 503。
+ * 本系统只验证外部 IdP 签发的 access/id token，不签发任何 token。
+ * 必填：{@code issuer} + {@code audience}；{@code jwks-uri} 可留空，留空时按
+ * {@code issuer}/.well-known/openid-configuration 自动发现。
  */
 @Data
 @Configuration
 @ConfigurationProperties(prefix = "wgh.auth.oidc")
 public class OidcProperties {
 
-    /** 是否启用 OIDC 登录（默认 false） */
-    private boolean enabled = false;
-
-    /** OIDC Issuer（例如 https://accounts.google.com） */
+    /** 期望的 issuer（token 的 iss 必须与之一致） */
     private String issuer;
 
-    /** OAuth2 Client ID */
-    private String clientId;
+    /** 期望的 audience（token 的 aud 必须包含该值） */
+    private String audience;
 
-    /** OAuth2 Client Secret */
-    private String clientSecret;
+    /** JWKS 端点；留空时通过 issuer 自动发现 */
+    private String jwksUri;
 
-    /** 请求 scopes（默认 openid email profile） */
-    private List<String> scopes = new ArrayList<>(List.of("openid", "email", "profile"));
+    /** token 中承载角色列表的 claim 名（默认 roles） */
+    private String rolesClaim = "roles";
 
-    /** 回调地址（必须与 IdP 配置完全一致） */
-    private String redirectUri;
+    /** token 中承载用户名的 claim 名（默认 sub） */
+    private String usernameClaim = "sub";
 
-    /** state / nonce 有效期（秒） */
-    private long stateTtlSeconds = 300;
+    /** token 未携带角色或角色在数据库不存在时的默认角色编码 */
+    private String defaultRole = "viewer";
 
     /**
-     * IdP groups/roles → 本系统角色映射。key = IdP 声明值；value = admin / editor / viewer。
+     * claim 角色值 → 数据库 role_code 映射。
+     * 未命中映射的 claim 值按原值直接匹配 role_code。
      */
     private Map<String, String> roleMapping = new HashMap<>();
 
-    /** 未命中 roleMapping 时的默认角色 */
-    private String defaultRole = "viewer";
+    /** JWKS 本地缓存有效期（秒） */
+    private long jwksCacheTtlSeconds = 300;
 
-    /** 是否启用 PKCE（推荐） */
-    private boolean enablePkce = true;
+    /** 未知 kid / 网络失败触发刷新时的最小间隔（秒），避免被伪造 kid 打爆 */
+    private long jwksRefreshMinIntervalSeconds = 30;
+
+    /** exp / nbf 校验的时钟偏差容忍（秒） */
+    private long clockSkewSeconds = 30;
 }

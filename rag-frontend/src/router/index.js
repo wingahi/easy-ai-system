@@ -45,33 +45,42 @@ const router = createRouter({
 })
 
 // 路由守卫
-router.beforeEach((to, from, next) => {
+router.beforeEach(async (to) => {
   const userStore = useUserStore()
 
   if (to.path.startsWith('/login')) {
-    next()
-    return
+    return true
   }
 
   // 免登录分享页：不需要登录（后端按 token 校验有效期/密码/范围）
   if (to.path.startsWith('/share/') && to.meta?.requiresAuth === false) {
-    next()
-    return
+    return true
   }
 
   if (!userStore.isLoggedIn) {
     // 未登录访问任何页面（含分享页）→ 跳登录页并带 redirect，登录后回跳
-    next({ path: '/login', query: { redirect: to.fullPath } })
-    return
+    return { path: '/login', query: { redirect: to.fullPath } }
   }
 
-  // 管理页面：按登录角色控制（前端权限体系尚未完善，后端接口仍有 admin 校验兜底）
+  // 外部 token 由宿主系统注入 localStorage 后，首次进入需拉取 /auth/me 填充角色
+  if (!userStore.hydrated) {
+    try {
+      // 动态引入，避免 router → api → request → router 的循环依赖
+      const { getMe } = await import('../api')
+      const res = await getMe()
+      userStore.hydrate(res.data)
+    } catch (e) {
+      userStore.logout()
+      return { path: '/login', query: { redirect: to.fullPath } }
+    }
+  }
+
+  // 管理页面：按后端返回的角色判断（后端接口另有 admin 校验）
   if (to.meta?.requiresAdmin && !userStore.isAdmin) {
-    next({ path: '/' })
-    return
+    return { path: '/' }
   }
 
-  next()
+  return true
 })
 
 export default router

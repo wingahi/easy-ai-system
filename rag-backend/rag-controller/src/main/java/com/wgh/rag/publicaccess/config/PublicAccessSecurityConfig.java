@@ -2,7 +2,7 @@ package com.wgh.rag.publicaccess.config;
 
 import com.wgh.rag.common.result.Result;
 import com.wgh.rag.common.result.ResultCode;
-import com.wgh.rag.auth.security.JwtAuthenticationFilter;
+import com.wgh.rag.auth.security.OidcAuthenticationFilter;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
@@ -22,9 +22,9 @@ import jakarta.servlet.DispatcherType;
  * 免登录分享 / 开放 API 专用安全过滤链。
  * <p>
  * 说明：
- * 1) 不修改既有 SecurityConfig（另一会话正在改造 auth），以 @Order(1) + securityMatcher 只接管
- *    /api/public/** 与 /api/open/**，其余路径仍走原过滤链（JWT 强制登录）。
- * 2) JwtAuthenticationFilter 是 @Component，Spring Boot 会把它自动注册为全局 Servlet Filter；
+ * 1) 以 @Order(1) + securityMatcher 只接管 /api/public/** 与 /api/open/**，
+ *    其余路径仍走主过滤链（外部 OIDC token 强制校验）。
+ * 2) OidcAuthenticationFilter 是 @Component，Spring Boot 会把它自动注册为全局 Servlet Filter；
  *    该过滤器对无 Bearer 的请求直接返回 401，会导致免登录入口不可用。这里通过
  *    FilterRegistrationBean#setEnabled(false) 关闭它的 Servlet 自动注册，只保留其在原
  *    SecurityConfig 过滤链中的显式注册，不改变原有鉴权行为。
@@ -35,7 +35,7 @@ import jakarta.servlet.DispatcherType;
 public class PublicAccessSecurityConfig {
 
     private final ApiKeyAuthenticationFilter apiKeyAuthenticationFilter;
-    private final JwtAuthenticationFilter jwtAuthenticationFilter;
+    private final OidcAuthenticationFilter oidcAuthenticationFilter;
     private final CorsConfigurationSource corsConfigurationSource;
 
     @Bean
@@ -64,13 +64,13 @@ public class PublicAccessSecurityConfig {
     }
 
     /**
-     * 关闭 JwtAuthenticationFilter 的 Servlet 自动注册，避免其拦截免登录入口。
+     * 关闭 OidcAuthenticationFilter 的 Servlet 自动注册，避免其拦截免登录入口。
      * 该过滤器仍在原 SecurityConfig 过滤链中生效（登录鉴权行为不变）。
      */
     @Bean
-    public FilterRegistrationBean<JwtAuthenticationFilter> jwtFilterServletRegistration(
-            JwtAuthenticationFilter filter) {
-        FilterRegistrationBean<JwtAuthenticationFilter> registration = new FilterRegistrationBean<>(filter);
+    public FilterRegistrationBean<OidcAuthenticationFilter> oidcFilterServletRegistration(
+            OidcAuthenticationFilter filter) {
+        FilterRegistrationBean<OidcAuthenticationFilter> registration = new FilterRegistrationBean<>(filter);
         registration.setEnabled(false);
         return registration;
     }

@@ -7,7 +7,7 @@ import lombok.NoArgsConstructor;
 import java.util.Set;
 
 /**
- * 登录 / 认证结果 DTO（返回给前端或内部 Service 使用）
+ * 当前用户信息 DTO（由外部 token claims + 数据库角色/权限装配）
  */
 @Data
 @NoArgsConstructor

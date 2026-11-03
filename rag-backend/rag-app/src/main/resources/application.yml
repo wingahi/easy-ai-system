@@ -62,12 +62,27 @@ mybatis-plus:
 
 # ===== WGH RAG 自定义配置 =====
 wgh:
-  jwt:
-    secret: ${WGH_JWT_SECRET:wgh-rag-system-secret-key-must-be-at-least-256-bits-long-for-hs256-algorithm}
-    expiration: 86400000     # 24小时
-    header: Authorization
-    prefix: "Bearer "
-  
+  # ===== 外部 OIDC 资源服务器（本系统只验签，不签发 token） =====
+  # token 由上游 IdP 签发；issuer / audience / jwks-uri 必配（jwks-uri 留空则自动发现）。
+  auth:
+    oidc:
+      issuer: ${WGH_OIDC_ISSUER:}
+      audience: ${WGH_OIDC_AUDIENCE:}
+      jwks-uri: ${WGH_OIDC_JWKS_URI:}
+      roles-claim: ${WGH_OIDC_ROLES_CLAIM:roles}
+      username-claim: ${WGH_OIDC_USERNAME_CLAIM:sub}
+      default-role: viewer
+      clock-skew-seconds: 30
+      jwks-cache-ttl-seconds: 300
+      jwks-refresh-min-interval-seconds: 30
+      # IdP claim 值 → 本系统 wgh_role.role_code；未命中映射时按 claim 原值匹配
+      role-mapping: {}
+      # role-mapping:
+      #   "wgh-admin": admin
+      #   "wgh-editor": editor
+      #   "wgh-viewer": viewer
+
+
   pgvector:
     default-dimension: 1536
     create-table: true

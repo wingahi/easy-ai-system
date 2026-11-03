@@ -29,9 +29,13 @@ mybatis-plus:
     log-impl: org.apache.ibatis.logging.nologging.NoLoggingImpl
 
 wgh:
-  jwt:
-    secret: test-jwt-secret-key-must-be-at-least-256-bits-long-for-hs256-algorithm-test
-    expiration: 86400000
+  auth:
+    oidc:
+      issuer: ""
+      audience: ""
+      jwks-uri: ""
+      roles-claim: roles
+      default-role: viewer
   pgvector:
     connect-on-startup: false
     allow-fallback-to-in-memory: true

@@ -1,8 +1,7 @@
 // API 统一入口 - 按需引入
 import request from '../utils/request'
 
-// 认证
-export const login = (data) => request.post('/auth/login', data)
+// 认证（本系统不签发 token，仅查询当前外部 token 对应的用户信息）
 export const getMe = () => request.get('/auth/me')
 
 // 知识库

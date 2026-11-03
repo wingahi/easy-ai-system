@@ -66,7 +66,7 @@
 
 ### 2.4 平台治理
 
-- **账号与权限（部分完成）**：本地账号登录 + OIDC（`id_token` 验签、PKCE、state/nonce 校验）+ RBAC（用户/角色/权限/关联表，`@RequiresPermission` 资源级校验）。尚未提供角色管理界面/接口，也不支持租户隔离与知识库/文档级权限的全量覆盖。
+- **账号与权限**：本系统**只验证外部 OIDC IdP 签发的 token，不签发任何 token**（JWKS 公钥验签 + iss/aud/exp/nbf 校验）；角色取自 token 的 `roles`/`groups` claim，经映射表匹配数据库 `wgh_role.role_code` 后加载权限，`@RequiresPermission` 做资源级校验。token 无角色时按默认 `viewer` 处理。尚未提供角色管理界面/接口，也不支持租户隔离与知识库/文档级权限的全量覆盖。
 - **审计与成本**：`@Audit` 切面异步记录写操作（含成功/失败、操作人、资源、IP，失败不阻断主流程）；模型价格表 + 消息成本/模型名回填，管理端聚合统计。
 - **配额与限流**：配额由独立 `rag-quota` 模块提供（全局默认 + 按用户日/月配置，超限 429，用量原子累加）；分享与开放 API 另有每分钟滑动窗口限流。
 - **语义缓存**：窗口级开关，相似度阈值命中后直接返回缓存答案，跳过检索与 LLM；每窗口条数上限，超出淘汰最旧。
@@ -83,8 +83,8 @@
 ```
 wgh-rag-system/
 ├── rag-backend/                  # Spring Boot 多模块（Java 21）
-│   ├── rag-common/               # Result / JWT / RBAC / 审计切面 / 全局异常 / SecurityConfig
-│   ├── rag-auth/                 # 认证相关（本地账号 + OIDC）
+│   ├── rag-common/               # Result / RBAC 模型 / 审计切面 / 全局异常
+│   ├── rag-auth/                 # 认证能力归属：外部 OIDC token 资源服务器（JWKS 验签 + 角色映射）
 │   ├── rag-quota/                # 配额模块（全局默认 + 用户日/月配置）
 │   ├── rag-config/               # RagProperties（RAG / PgVector / Agent / Context 配置映射）
 │   ├── rag-llm/                  # DB 动态模型 + 多厂商工厂 + 缓存热更新 + 模型路由
@@ -108,13 +108,13 @@ wgh-rag-system/
 | 层次 | 技术 |
 |------|------|
 | 前端 | Vue 3 · Vite · Pinia · Vue Router · Element Plus · SCSS · marked |
-| 后端 | Spring Boot 3.4 · Java 21 · Maven 多模块 · Spring Security（JWT + 独立开放 API 过滤链） |
+| 后端 | Spring Boot 3.4 · Java 21 · Maven 多模块 · Spring Security（外部 OIDC 资源服务器 + 独立开放 API 过滤链） |
 | 数据 | PostgreSQL 16+ · pgvector · MyBatis-Plus（逻辑删除 + 分页） |
 | LLM | LangChain4j · OpenAI / DASHSCOPE / DeepSeek / 自建 OpenAI 兼容端点 |
 | 工具 | LangChain4j Tool Calling · MCP（stdio / Streamable HTTP）· HTTP · 本地反射 · Skill |
 | Agent | Planner / StepExecutor / Reflection / HITL；多 Agent 另含 Crew / Graph / GroupChat 协调器 |
 | 工作流 | 自研 DAG 引擎：11 类节点、并行 fan-out/fan-in、版本快照、CRON/Webhook |
-| 鉴权 | JWT（本地账号）+ OIDC（可选）+ RBAC 注解校验 + API Key（SHA-256） |
+| 鉴权 | 外部 OIDC token（JWKS 非对称公钥验签）+ RBAC 注解校验 + API Key（SHA-256） |
 | 评估 | 检索侧 Recall@K / Precision@K / MRR / NDCG；生成侧 LLM-as-Judge |
 | 测试 | JUnit 5 + Mockito（75 个测试类 / 557 个 `@Test` 方法，以当前工作区统计）+ shell e2e/冒烟/压测脚本 |
 
@@ -150,8 +150,11 @@ docker exec -i postgres-with-vector psql -U postgres -d wgh_rag < rag-backend/sq
 cd rag-backend
 mvn install -DskipTests          # 多模块先安装，避免读到旧 jar
 mvn -f rag-app/pom.xml spring-boot:run
-# http://localhost:8080 ，默认账号 admin / admin
+# http://localhost:8080
 ```
+
+> 本系统不再提供本地登录接口。启动前需配置外部 IdP（`WGH_OIDC_ISSUER` / `WGH_OIDC_AUDIENCE` /
+> `WGH_OIDC_JWKS_URI`），前端携带 IdP 签发的 Bearer token 访问。
 
 ### 4.3 前端
 
@@ -197,9 +200,42 @@ python3 eval/eval_recall.py --kb 2 --k 5  # 离线召回率评测
 ### 4.7 生产部署要点
 
 - 仓库暂不含 Dockerfile / docker-compose；当前方式为 **PostgreSQL + Spring Boot 进程 + Nginx 托管前端**。
-- 生产必须通过环境变量注入 `WGH_JWT_SECRET`、数据库口令与模型 Key；`WGH_PROFILE=prod`。
+- 生产必须通过环境变量注入 `WGH_OIDC_ISSUER`、`WGH_OIDC_AUDIENCE`、`WGH_OIDC_JWKS_URI`、数据库口令与模型 Key；`WGH_PROFILE=prod`。
 - 分享/开放 API 的进程内限流不跨实例共享；多实例部署需在网关层补充限流。
 - 第三方页面嵌入 Widget 时，需在宿主 CSP 中放行 `script-src` 与 `frame-src` 指向本系统域名。
+
+### 4.8 对接外部 IdP（OIDC 资源服务器）
+
+本系统**不签发 token**，只验证外部 OIDC IdP 签发的 Bearer token：
+
+```yaml
+wgh:
+  auth:
+    oidc:
+      issuer: https://idp.example.com/realms/wgh
+      audience: wgh-rag
+      jwks-uri: https://idp.example.com/realms/wgh/protocol/openid-connect/certs  # 可留空自动发现
+      roles-claim: groups          # 也支持 roles；按 IdP 实际 claim 配置
+      username-claim: preferred_username
+      default-role: viewer
+      jwks-cache-ttl-seconds: 300
+      jwks-refresh-min-interval-seconds: 30
+      clock-skew-seconds: 30
+      role-mapping:
+        "wgh-admins": admin
+        "wgh-editors": editor
+```
+
+**验签与角色链路**：JWKS 取公钥（仅 RS/PS/ES，拒绝 HS256 与 none）→ 按 kid 选 key → 校验 iss/aud/exp/nbf →
+`roles-claim` 值经 `role-mapping` 得到 `role_code` → 匹配数据库 `wgh_role` → 查 `wgh_role_permission` 权限。
+token 无角色或映射后数据库不存在时按 `default-role`（viewer）处理。
+
+**宿主系统注入 token**：IdP 登录后将 token 写入 `localStorage.wgh_token`（可由宿主页面 `localStorage.setItem('wgh_token', idToken)`
+完成），或打开 `http://<host>/login?token=<token>`；前端会调用 `/api/auth/me` 拉取角色/权限。
+
+```bash
+curl -H "Authorization: Bearer $IDP_TOKEN" http://localhost:8080/api/auth/me
+```
 
 ---
 
@@ -215,7 +251,11 @@ python3 eval/eval_recall.py --kb 2 --k 5  # 离线召回率评测
 | `WGH_DB_NAME` | wgh_rag | 数据库名 |
 | `WGH_DB_USERNAME` | postgres | DB 用户 |
 | `WGH_DB_PASSWORD` | postgres | DB 密码 |
-| `WGH_JWT_SECRET` | (内置) | JWT 签名密钥（生产必须注入） |
+| `WGH_OIDC_ISSUER` | - | 外部 IdP issuer（token `iss` 必须一致，生产必填） |
+| `WGH_OIDC_AUDIENCE` | - | 期望 audience（token `aud` 必须包含，生产必填） |
+| `WGH_OIDC_JWKS_URI` | - | JWKS 端点；留空则由 issuer 自动发现 |
+| `WGH_OIDC_ROLES_CLAIM` | roles | token 中承载角色的 claim 名 |
+| `WGH_OIDC_USERNAME_CLAIM` | sub | token 中承载用户名的 claim 名 |
 | `WGH_UPLOAD_DIR` | ./uploads | 文件上传目录 |
 | `WGH_SKILL_BASE_PATH` | ./skills | Skill 磁盘目录 |
 | `OPENAI_API_KEY` | demo | OpenAI 兼容接口 Key |
@@ -236,7 +276,15 @@ python3 eval/eval_recall.py --kb 2 --k 5  # 离线召回率评测
 | `wgh.public-access.share-rate-limit-per-minute` | 20 | 分享入口每分钟请求上限（token + IP） |
 | `wgh.public-access.api-rate-limit-per-minute` | 60 | 开放 API 每分钟请求上限（API Key） |
 | `wgh.public-access.max-images-per-request` | 4 | 单次提问图片数量上限 |
-| `wgh.auth.oidc.enabled` | false | OIDC 登录开关（关闭时仅本地账号） |
+| `wgh.auth.oidc.issuer` | - | 外部 IdP issuer（必填） |
+| `wgh.auth.oidc.audience` | - | 期望 audience（必填） |
+| `wgh.auth.oidc.jwks-uri` | - | JWKS 端点；留空则按 issuer 自动发现 |
+| `wgh.auth.oidc.roles-claim` | roles | 角色 claim 名（也常用 `groups`） |
+| `wgh.auth.oidc.role-mapping` | {} | claim 值 → `wgh_role.role_code` 映射表 |
+| `wgh.auth.oidc.default-role` | viewer | token 无角色或映射不到数据库角色时的默认角色 |
+| `wgh.auth.oidc.jwks-cache-ttl-seconds` | 300 | JWKS 本地缓存 TTL |
+| `wgh.auth.oidc.jwks-refresh-min-interval-seconds` | 30 | 未知 kid/网络失败时刷新最小间隔（限频） |
+| `wgh.auth.oidc.clock-skew-seconds` | 30 | exp/nbf 时钟偏差容忍 |
 
 > 配额相关配置（全局默认/用户自定义）由 `rag-quota` 模块提供，见 [docs/quota-design.md](docs/quota-design.md)。
 

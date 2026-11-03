@@ -1,6 +1,6 @@
 package com.wgh.rag.auth.config;
 
-import com.wgh.rag.auth.security.JwtAuthenticationFilter;
+import com.wgh.rag.auth.security.OidcAuthenticationFilter;
 import jakarta.servlet.DispatcherType;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
@@ -22,14 +22,14 @@ import java.util.Arrays;
 import java.util.List;
 
 /**
- * 安全配置（JWT + CORS + OIDC扩展点）
+ * 安全配置（外部 OIDC token 资源服务器 + CORS）
  */
 @Configuration
 @EnableWebSecurity
 @RequiredArgsConstructor
 public class SecurityConfig {
 
-    private final JwtAuthenticationFilter jwtAuthenticationFilter;
+    private final OidcAuthenticationFilter oidcAuthenticationFilter;
 
     /**
      * 兜底过滤链：必须排在最末，否则会遮蔽带 securityMatcher 的专用过滤链
@@ -39,7 +39,7 @@ public class SecurityConfig {
     @Order(2)
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
-                // 禁用CSRF（使用JWT无状态鉴权）
+                // 禁用CSRF（外部 Bearer token 无状态鉴权）
                 .csrf(AbstractHttpConfigurer::disable)
                 // CORS
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
@@ -48,11 +48,11 @@ public class SecurityConfig {
                 // 放行路径配置
                 .authorizeHttpRequests(auth -> auth
                         // SSE 异步分发：鉴权已在初始 REQUEST 分发完成，
-                        // ASYNC/ERROR 分发时 JWT 过滤器（OncePerRequestFilter）不再执行，
+                        // ASYNC/ERROR 分发时 token 过滤器（OncePerRequestFilter）不再执行，
                         // 若不豁免会被 AuthorizationFilter 误判为匿名访问并打 ERROR 日志
                         .dispatcherTypeMatchers(DispatcherType.ASYNC, DispatcherType.ERROR).permitAll()
                         .requestMatchers(
-                                "/api/auth/**",
+                                "/api/auth/logout",
                                 "/api/workflows/webhook/**",
                                 "/doc.html",
                                 "/webjars/**",
@@ -63,8 +63,8 @@ public class SecurityConfig {
                         ).permitAll()
                         .anyRequest().authenticated()
                 )
-                // 添加JWT过滤器
-                .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
+                // 外部 OIDC token 资源服务器过滤器（JWKS 公钥验签）
+                .addFilterBefore(oidcAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
     }
@@ -87,11 +87,4 @@ public class SecurityConfig {
         source.registerCorsConfiguration("/**", config);
         return source;
     }
-
-    // OIDC扩展点：如需集成OAuth2/OIDC，可在此添加相关配置
-    // @Bean
-    // public SecurityFilterChain oidcSecurityFilterChain(HttpSecurity http) throws Exception {
-    //     http.oauth2Login(...);
-    //     return http.build();
-    // }
 }

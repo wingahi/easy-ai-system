@@ -24,7 +24,7 @@
 | 数据 | PostgreSQL 16 + pgvector | 16+ | 向量存储与业务数据统一，复用连接池，零额外运维 |
 | ORM | MyBatis-Plus | 3.5.x | 逻辑删除、分页、LambdaWrapper |
 | LLM | LangChain4j | 1.19.0 | Java 生态最完整的 LLM SDK，ToolSpecification / EmbeddingStore 抽象 |
-| 鉴权 | JWT (HS256) | - | 无状态、多租户友好、预留 OIDC |
+| 鉴权 | OIDC 资源服务器 | - | 仅验证外部 IdP token（JWKS 非对称公钥验签），不签发 token |
 | SSE | Spring SseEmitter | - | 流式响应原生支持，Agent / 工作流实时推送 |
 
 ---
@@ -127,7 +127,8 @@ rag-workflow ──→ rag-config（运行参数）
 rag-tool ──→ rag-llm（Skill 子模型）
 rag-tool ──→ rag-config（Skill base-path）
 
-rag-common ←── 所有模块（Result/JWT/Security/MyBatisPlus）
+rag-common ←── 所有模块（Result/RBAC 模型/MyBatisPlus）
+rag-auth   ←── rag-controller / rag-quota（外部 OIDC token 验签、LoginUser 上下文、@RequiresPermission）
 ```
 
 ---
@@ -293,7 +294,7 @@ ToolExecutionEngine.execute(request, toolRegistry)
 │  │   库: wgh_rag（15 张表 + 40+ 索引 + 种子数据）      │
 │  │                                                    │
 │  ├─ rag-app:8080  (Spring Boot)                      │
-│  │   JWT 默认 secret / admin 账号                     │
+│  │   OIDC issuer / audience / jwks-uri 由环境变量注入  │
 │  │                                                    │
 │  └─ vite dev:5173  (npm run dev)                     │
 │      代理 http://localhost:8080                       │
@@ -312,10 +313,10 @@ ToolExecutionEngine.execute(request, toolRegistry)
 
 ### 4.3 环境配置矩阵
 
-| Profile | DB 连接 | JWT Secret | LLM Key | 用途 |
+| Profile | DB 连接 | 外部 IdP | LLM Key | 用途 |
 |---------|---------|-----------|---------|------|
-| dev | 默认 localhost:5432 | 内置 | demo key | 本地开发 |
-| test | docker compose | 内置 | 真实 key | 集成测试 |
+| dev | 默认 localhost:5432 | 环境变量注入 issuer/audience/jwks-uri | demo key | 本地开发 |
+| test | docker compose / H2 | 测试内嵌 JWKS fixture | 真实 key | 集成测试 |
 | prod | 环境变量注入 | 环境变量（必须） | 环境变量 | 生产部署 |
 
 所有 `wgh.rag.*` / `wgh.agent.*` / `wgh.workflow.*` 配置均可通过环境变量覆盖。
@@ -338,13 +339,24 @@ ToolExecutionEngine.execute(request, toolRegistry)
 
 | 设计点 | 实现方式 |
 |--------|---------|
-| JWT 鉴权 | HS256 签名，`SecurityConfig` 放行白名单（login / 分享页 public 部分） |
+| token 鉴权 | 外部 OIDC 资源服务器：JWKS 非对称公钥验签（拒绝 HS256/none），校验 iss/aud/exp/nbf，失败 401 |
+| JWKS 缓存 | 本地缓存 TTL 300s；未知 kid 触发刷新但限频 30s；IdP 故障沿用旧缓存，启动不依赖 IdP |
+| 角色链路 | token roles claim → 配置映射 → `wgh_role.role_code` → `wgh_role_permission`；无角色/映射失败按 viewer |
 | SQL 注入 | MyBatis-Plus 参数化查询，禁止字符串拼接 SQL |
 | XSS | 后端不返回原始 HTML，前端 Vue 自动转义；content 事件 JSON 包装传输文本 |
 | 权限隔离 | 分享页按登录用户名隔离 userIdentifier，跨身份读不到对方会话 |
 | 工具执行权限 | 窗口级 toolIds 白名单，每个聊天窗口只能调用配置的工具 |
 | 逻辑删除 | 所有删除操作走 deleted 字段，物理删除需明确需求 |
 | HITL 防越权 | HITL 步骤在暂停前不发 step_start，前端收到 step_hitl_pending 需按 payload 补建（含 DB 主键 id，否则 confirm 接口 404） |
+
+#### 5.2.1 外部 IdP 接入（OIDC 资源服务器）
+
+- **定位**：系统只验证 token，不签发 token；没有本地账号登录、authorize/callback、PKCE/state/nonce。
+- **配置**：`wgh.auth.oidc.issuer`、`audience`、`jwks-uri`（留空则 `issuer/.well-known/openid-configuration` 自动发现）、
+  `roles-claim`、`role-mapping`、`default-role`、`jwks-cache-ttl-seconds`、`jwks-refresh-min-interval-seconds`、`clock-skew-seconds`。
+- **验签**：按 JWT header `kid` 从 JWKS 选公钥；算法白名单 RS256/384/512、PS256/384/512、ES256/384/512；拒绝 HS* 与 none。
+- **可用性**：启动不拉取 JWKS；IdP 不可达时请求返回 401，已缓存 key 在 TTL 内继续可用。
+- **前端**：宿主系统把 IdP token 写入 `localStorage.wgh_token` 或 `/login?token=...`，前端调用 `/api/auth/me` 获取角色/权限。
 
 ### 5.3 性能
 
@@ -379,7 +391,7 @@ ToolExecutionEngine.execute(request, toolRegistry)
 | 工作流节点类型 | NodeExecutor 按 nodeType switch，新增节点类型加 case + config 字段 | 已预留 TOOL/WORKFLOW 节点，未来可加 Webhook/Subgraph |
 | Embedding 模型热切换 | ModelCacheManager 已有 invalidate 入口 | 已支持 |
 | Skill 独立 Agent | SkillToolExecutor 已有 subModelId 字段 | 已支持 |
-| OIDC 鉴权 | SecurityConfig 注释已标记扩展点 | 预留 |
+| OIDC 鉴权 | 已实现为资源服务器（只验签不签发）；IdP 侧角色组通过 role-mapping 映射 | 已支持 |
 | 生产级可观测性 | 当前仅日志 + DB 记录；可接入 LangSmith / ELK | 未集成 |
 | 分布式调度 | CRON 触发器用 ThreadPoolTaskScheduler（单实例）；多实例需 ShedLock | 未实现 |
 | 向量索引优化 | pgvector 自动建表 + 可选 IVF 索引；大数据量可加 HNSW | 预留 |

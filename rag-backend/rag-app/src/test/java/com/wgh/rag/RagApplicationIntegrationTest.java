@@ -5,10 +5,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
-import static org.hamcrest.Matchers.is;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -48,36 +46,29 @@ class RagApplicationIntegrationTest {
                 .andExpect(status().isUnauthorized());
     }
 
-    /** 验证 admin/admin 登录成功并返回 code=200 与非空 token。 */
+    /** 验证未携带外部 token 访问 /api/auth/me 返回 401。 */
     @Test
-    @DisplayName("登录接口 - admin/admin 成功获取 token")
-    void login_success() throws Exception {
-        String loginBody = """
-                {"username":"admin","password":"admin"}
-                """;
-
-        mockMvc.perform(post("/api/auth/login")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(loginBody))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.code", is(200)))
-                .andExpect(jsonPath("$.data.token").exists())
-                .andExpect(jsonPath("$.data.token").isNotEmpty());
+    @DisplayName("当前用户接口 - 无 token 返回 401")
+    void me_requiresExternalToken() throws Exception {
+        mockMvc.perform(get("/api/auth/me"))
+                .andExpect(status().isUnauthorized());
     }
 
-    /** 验证错误密码登录返回 HTTP 200 且响应 code=500。 */
+    /** 验证本地登录端点已移除：无 token 访问 /api/auth/login 返回 401。 */
     @Test
-    @DisplayName("登录接口 - 错误密码")
-    void login_wrongPassword() throws Exception {
-        String loginBody = """
-                {"username":"admin","password":"wrong"}
-                """;
+    @DisplayName("本地登录端点已移除 - 返回 401")
+    void localLoginEndpoint_removed() throws Exception {
+        mockMvc.perform(post("/api/auth/login"))
+                .andExpect(status().isUnauthorized());
+    }
 
-        mockMvc.perform(post("/api/auth/login")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(loginBody))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.code", is(500)));
+    /** 验证非法外部 token 被资源服务器过滤器拒绝（401）。 */
+    @Test
+    @DisplayName("非法外部 token - 返回 401")
+    void malformedExternalToken_rejected() throws Exception {
+        mockMvc.perform(get("/api/auth/me")
+                        .header("Authorization", "Bearer invalid.token.value"))
+                .andExpect(status().isUnauthorized());
     }
 
     /** 验证访问不存在的分享链接无需鉴权，返回 HTTP 200 而非 401。 */
