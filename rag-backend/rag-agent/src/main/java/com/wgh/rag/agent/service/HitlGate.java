@@ -1,5 +1,7 @@
 package com.wgh.rag.agent.service;
 
+import com.wgh.rag.agent.constant.AgentConstants;
+
 import com.wgh.rag.agent.constant.AgentEvents;
 import com.wgh.rag.agent.dto.PlanDTO.StepDTO;
 import com.wgh.rag.agent.entity.AgentPlan;
@@ -54,7 +56,7 @@ public class HitlGate {
     /** 定位唯一 HITL_PENDING 步骤；没有则抛 AgentException。 */
     public AgentStep findHitlPendingStep(List<AgentStep> dbSteps) {
         return dbSteps.stream()
-                .filter(s -> "HITL_PENDING".equals(s.getStatus()))
+                .filter(s -> AgentConstants.STATUS_HITL_PENDING.equals(s.getStatus()))
                 .findFirst()
                 .orElseThrow(() -> new AgentException("没有 HITL_PENDING 步骤"));
     }
@@ -65,10 +67,10 @@ public class HitlGate {
      */
     public void confirmAndResumePlan(AgentPlan plan, AgentStep hitlStep, String userInput) {
         hitlStep.setResultSummary(userInput);
-        hitlStep.setStatus("SUCCESS"); // 用户确认后视为前置成功，继续执行
+        hitlStep.setStatus(AgentConstants.STATUS_SUCCESS); // 用户确认后视为前置成功，继续执行
         planLifecycleService.updateStep(hitlStep);
 
-        plan.setStatus("RUNNING");
+        plan.setStatus(AgentConstants.STATUS_RUNNING);
         plan.setUpdateTime(LocalDateTime.now());
         planLifecycleService.updatePlan(plan);
     }

@@ -1,5 +1,7 @@
 package com.wgh.rag.agent.service;
 
+import com.wgh.rag.agent.constant.AgentConstants;
+
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -67,7 +69,7 @@ public class PlanLifecycleService {
         return stepMapper.selectList(new LambdaQueryWrapper<AgentStep>()
                 .eq(AgentStep::getPlanId, planId)
                 .lt(AgentStep::getStepIndex, stepIndex)
-                .eq(AgentStep::getStatus, "SUCCESS")
+                .eq(AgentStep::getStatus, AgentConstants.STATUS_SUCCESS)
                 .orderByAsc(AgentStep::getStepIndex));
     }
 
@@ -75,7 +77,7 @@ public class PlanLifecycleService {
     public List<StepDTO> collectPendingRemaining(Long planId) {
         return stepMapper.selectList(new LambdaQueryWrapper<AgentStep>()
                         .eq(AgentStep::getPlanId, planId)
-                        .eq(AgentStep::getStatus, "PENDING")
+                        .eq(AgentStep::getStatus, AgentConstants.STATUS_PENDING)
                         .orderByAsc(AgentStep::getStepIndex))
                 .stream().map(s -> {
                     StepDTO dto = new StepDTO();
@@ -100,7 +102,7 @@ public class PlanLifecycleService {
             p.setSessionId(sessionId);
             p.setChatWindowId(windowId);
             p.setLlmModelId(windowModelId);
-            p.setStatus("RUNNING");
+            p.setStatus(AgentConstants.STATUS_RUNNING);
             p.setUserGoal(userGoal);
             p.setPlanJson(toJson(planDTO));
             p.setCurrentStepIndex(0);
@@ -121,7 +123,7 @@ public class PlanLifecycleService {
             step.setTitle(s.getTitle());
             step.setDescription(s.getDescription());
             step.setDependsOn(s.getDependsOn() != null ? String.join(",", s.getDependsOn()) : null);
-            step.setStatus("PENDING");
+            step.setStatus(AgentConstants.STATUS_PENDING);
             step.setMaxRetries(agentProperties.getDefaultReflectionRetries());
             step.setRetryCount(0);
             stepMapper.insert(step);
@@ -139,7 +141,7 @@ public class PlanLifecycleService {
             newDbStep.setTitle(newStep.getTitle());
             newDbStep.setDescription(newStep.getDescription());
             newDbStep.setDependsOn(newStep.getDependsOn() != null ? String.join(",", newStep.getDependsOn()) : null);
-            newDbStep.setStatus("PENDING");
+            newDbStep.setStatus(AgentConstants.STATUS_PENDING);
             newDbStep.setMaxRetries(agentProperties.getDefaultReflectionRetries());
             stepMapper.insert(newDbStep);
         }
@@ -158,7 +160,7 @@ public class PlanLifecycleService {
     /** 步骤开始执行：RUNNING + startTime，同步 plan.currentStepIndex（独立小事务）。 */
     public void markStepRunningTx(AgentPlan plan, AgentStep dbStep) {
         tx().executeWithoutResult(status -> {
-            dbStep.setStatus("RUNNING");
+            dbStep.setStatus(AgentConstants.STATUS_RUNNING);
             dbStep.setStartTime(LocalDateTime.now());
             stepMapper.updateById(dbStep);
             plan.setCurrentStepIndex(dbStep.getStepIndex());
@@ -169,10 +171,10 @@ public class PlanLifecycleService {
     /** HITL 暂停持久化：step=HITL_PENDING，plan=PAUSED（独立小事务）。 */
     public void markHitlPendingTx(AgentPlan plan, AgentStep dbStep, StepDTO stepDTO) {
         tx().executeWithoutResult(status -> {
-            dbStep.setStatus("HITL_PENDING");
+            dbStep.setStatus(AgentConstants.STATUS_HITL_PENDING);
             dbStep.setThought("HITL 节点等待用户确认: " + stepDTO.getDescription());
             stepMapper.updateById(dbStep);
-            plan.setStatus("PAUSED");
+            plan.setStatus(AgentConstants.STATUS_PAUSED);
             planMapper.updateById(plan);
         });
     }
@@ -207,13 +209,13 @@ public class PlanLifecycleService {
                     ? String.join(",", stepDTO.getRequiresTools()) : null);
 
             switch (result.getStatus()) {
-                case "SUCCESS" -> dbStep.setStatus("SUCCESS");
-                case "FAILED" -> dbStep.setStatus("FAILED");
-                case "HITL_PENDING" -> {
-                    dbStep.setStatus("HITL_PENDING");
-                    plan.setStatus("PAUSED");
+                case AgentConstants.STATUS_SUCCESS -> dbStep.setStatus(AgentConstants.STATUS_SUCCESS);
+                case AgentConstants.STATUS_FAILED -> dbStep.setStatus(AgentConstants.STATUS_FAILED);
+                case AgentConstants.STATUS_HITL_PENDING -> {
+                    dbStep.setStatus(AgentConstants.STATUS_HITL_PENDING);
+                    plan.setStatus(AgentConstants.STATUS_PAUSED);
                 }
-                default -> dbStep.setStatus("FAILED");
+                default -> dbStep.setStatus(AgentConstants.STATUS_FAILED);
             }
             stepMapper.updateById(dbStep);
             planMapper.updateById(plan);
@@ -235,7 +237,7 @@ public class PlanLifecycleService {
     /** plan 置 FAILED + finishTime（独立小事务）。 */
     public void failPlanTx(AgentPlan plan) {
         tx().executeWithoutResult(status -> {
-            plan.setStatus("FAILED");
+            plan.setStatus(AgentConstants.STATUS_FAILED);
             plan.setFinishTime(LocalDateTime.now());
             planMapper.updateById(plan);
         });
@@ -248,8 +250,8 @@ public class PlanLifecycleService {
         planMapper.updateById(plan);
         stepMapper.update(null, new LambdaUpdateWrapper<AgentStep>()
                 .eq(AgentStep::getPlanId, plan.getId())
-                .in(AgentStep::getStatus, "RUNNING", "PENDING", "HITL_PENDING")
-                .set(AgentStep::getStatus, "SKIPPED"));
+                .in(AgentStep::getStatus, AgentConstants.STATUS_RUNNING, AgentConstants.STATUS_PENDING, AgentConstants.STATUS_HITL_PENDING)
+                .set(AgentStep::getStatus, AgentConstants.STATUS_SKIPPED));
     }
 
     // ==================== plan_json 读写 ====================
@@ -295,7 +297,7 @@ public class PlanLifecycleService {
     private List<String> collectPendingStepIds(Long planId) {
         return stepMapper.selectList(new LambdaQueryWrapper<AgentStep>()
                         .eq(AgentStep::getPlanId, planId)
-                        .in(AgentStep::getStatus, "PENDING", "FAILED"))
+                        .in(AgentStep::getStatus, AgentConstants.STATUS_PENDING, AgentConstants.STATUS_FAILED))
                 .stream().map(AgentStep::getStepId).toList();
     }
 

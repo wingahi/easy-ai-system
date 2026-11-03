@@ -1,5 +1,7 @@
 package com.wgh.rag.agent.service;
 
+import com.wgh.rag.agent.constant.AgentConstants;
+
 import com.wgh.rag.agent.StepExecutor;
 import com.wgh.rag.agent.config.AgentProperties;
 import com.wgh.rag.agent.constant.AgentEvents;
@@ -86,9 +88,9 @@ public class AgentOrchestrator {
         // 3. 拓扑排序 + 持久化 steps
         List<StepDTO> orderedSteps = stepScheduler.topoSort(planDTO.getSteps());
         if (orderedSteps.isEmpty()) {
-            planLifecycleService.markPlanComplete(plan, "COMPLETED");
+            planLifecycleService.markPlanComplete(plan, AgentConstants.STATUS_COMPLETED);
             eventPublisher.emit(sse, AgentEvents.PLAN_COMPLETE, Map.of("planId", plan.getId()));
-            return AgentStepResult.builder().status("SUCCESS").finalText("").build();
+            return AgentStepResult.builder().status(AgentConstants.STATUS_SUCCESS).finalText("").build();
         }
         planLifecycleService.persistSteps(orderedSteps, plan.getId());
 
@@ -109,7 +111,7 @@ public class AgentOrchestrator {
                                    BiConsumer<String, Map<String, Object>> sse) {
         AgentPlan plan = planLifecycleService.findPlan(planId);
         if (plan == null) throw new AgentException("Plan 不存在: " + planId);
-        if (!"PAUSED".equals(plan.getStatus())) throw new AgentException("Plan 非 PAUSED 状态，无法 resume");
+        if (!AgentConstants.STATUS_PAUSED.equals(plan.getStatus())) throw new AgentException("Plan 非 PAUSED 状态，无法 resume");
 
         // 加载所有 step，找到 HITL_PENDING 的步骤
         List<AgentStep> dbSteps = planLifecycleService.loadSteps(planId);
@@ -118,7 +120,7 @@ public class AgentOrchestrator {
         // 构建上下文：已完成步骤的 resultSummary 聚合
         StringBuilder contextBuilder = new StringBuilder();
         for (AgentStep s : dbSteps) {
-            if ("SUCCESS".equals(s.getStatus()) && s.getResultSummary() != null) {
+            if (AgentConstants.STATUS_SUCCESS.equals(s.getStatus()) && s.getResultSummary() != null) {
                 contextBuilder.append("【步骤 ").append(s.getStepId()).append(" - ")
                         .append(s.getTitle()).append("】\n").append(s.getResultSummary()).append("\n\n");
             }
@@ -132,7 +134,7 @@ public class AgentOrchestrator {
         // 构建剩余步骤列表：HITL_PENDING 之后的 PENDING 步骤
         int hitlIndex = dbSteps.indexOf(hitlStep);
         List<AgentStep> remainingDbSteps = dbSteps.subList(hitlIndex + 1, dbSteps.size())
-                .stream().filter(s -> "PENDING".equals(s.getStatus())).toList();
+                .stream().filter(s -> AgentConstants.STATUS_PENDING.equals(s.getStatus())).toList();
 
         // 把 db step 转 StepDTO（从 plan_json 里读原来的完整 step 定义）
         PlanDTO fullPlan = planLifecycleService.parsePlanJsonOrThrow(plan);
@@ -169,11 +171,11 @@ public class AgentOrchestrator {
         if (plan == null || step == null) throw new AgentException("plan/step 不存在");
 
         // 恢复 plan 状态
-        plan.setStatus("RUNNING");
+        plan.setStatus(AgentConstants.STATUS_RUNNING);
         planLifecycleService.updatePlan(plan);
 
         // 重置 step
-        step.setStatus("PENDING");
+        step.setStatus(AgentConstants.STATUS_PENDING);
         step.setObservation(null);
         step.setResultSummary(null);
         step.setRetryCount(0);
@@ -200,7 +202,7 @@ public class AgentOrchestrator {
     public void skipStep(Long planId, String stepId, BiConsumer<String, Map<String, Object>> sse) {
         AgentStep step = planLifecycleService.findStep(planId, stepId);
         if (step == null) return;
-        step.setStatus("SKIPPED");
+        step.setStatus(AgentConstants.STATUS_SKIPPED);
         planLifecycleService.updateStep(step);
         // 继续后续步骤：调用 resume-like 逻辑
         eventPublisher.emit(sse, AgentEvents.STEP_SKIPPED, Map.of("stepId", stepId, "reason", "manual skip"));
@@ -235,7 +237,7 @@ public class AgentOrchestrator {
         AgentStepResult lastResult = null;
 
         for (StepDTO stepDTO : stepDTOs) {
-            if ("CANCELLED".equals(plan.getStatus())) {
+            if (AgentConstants.STATUS_CANCELLED.equals(plan.getStatus())) {
                 log.info("Plan 已取消，停止后续步骤");
                 break;
             }
@@ -243,7 +245,7 @@ public class AgentOrchestrator {
             // 找 DB 里的对应 AgentStep
             AgentStep dbStep = planLifecycleService.findStep(plan.getId(), stepDTO.getStepId());
             if (dbStep == null) continue;
-            if ("SKIPPED".equals(dbStep.getStatus()) || "SUCCESS".equals(dbStep.getStatus())) {
+            if (AgentConstants.STATUS_SKIPPED.equals(dbStep.getStatus()) || AgentConstants.STATUS_SUCCESS.equals(dbStep.getStatus())) {
                 continue; // 已完成或已跳过（resume 时可能存在）
             }
 
@@ -290,7 +292,7 @@ public class AgentOrchestrator {
                 stepLatencyMs = System.currentTimeMillis() - stepStartMs;
 
                 // Reflection 评估（仅对 SUCCESS 状态的结果做质量检查）
-                if ("SUCCESS".equals(result.getStatus()) && reflectionEngine != null) {
+                if (AgentConstants.STATUS_SUCCESS.equals(result.getStatus()) && reflectionEngine != null) {
                     // 优先用窗口配置的 executorModelId，否则 fallback 到 plan 的 llmModelId（Planner 用的模型）
                     Long criticModelId = executorModelId != null ? executorModelId : plan.getLlmModelId();
                     var reflection = reflectionEngine.evaluate(
@@ -325,7 +327,7 @@ public class AgentOrchestrator {
             planLifecycleService.persistStepResultTx(plan, dbStep, stepDTO, result);
 
             // 5f. 发 SSE 事件 + 状态处理
-            if ("SUCCESS".equals(finalStatus)) {
+            if (AgentConstants.STATUS_SUCCESS.equals(finalStatus)) {
                 eventPublisher.emit(sse, AgentEvents.STEP_SUCCESS, Map.of(
                         "stepId", stepDTO.getStepId(),
                         "stepTitle", stepDTO.getTitle(),
@@ -338,7 +340,7 @@ public class AgentOrchestrator {
                             .append(stepDTO.getTitle()).append("】\n")
                             .append(finalResultSummary).append("\n\n");
                 }
-            } else if ("HITL_PENDING".equals(finalStatus)) {
+            } else if (AgentConstants.STATUS_HITL_PENDING.equals(finalStatus)) {
                 eventPublisher.emit(sse, AgentEvents.PLAN_PAUSED, Map.of("planId", plan.getId(), "reason", "步骤内 HITL"));
                 return null;
             } else {
@@ -400,8 +402,8 @@ public class AgentOrchestrator {
         }
 
         // 6. Plan 完成
-        if ("RUNNING".equals(plan.getStatus())) {
-            planLifecycleService.markPlanCompleteTx(plan, "COMPLETED");
+        if (AgentConstants.STATUS_RUNNING.equals(plan.getStatus())) {
+            planLifecycleService.markPlanCompleteTx(plan, AgentConstants.STATUS_COMPLETED);
             eventPublisher.emit(sse, AgentEvents.PLAN_COMPLETE, Map.of(
                     "planId", plan.getId(),
                     "totalSteps", plan.getMaxSteps()));

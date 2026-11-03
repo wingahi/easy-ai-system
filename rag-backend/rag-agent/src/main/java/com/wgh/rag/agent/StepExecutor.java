@@ -1,5 +1,7 @@
 package com.wgh.rag.agent;
 
+import com.wgh.rag.agent.constant.AgentConstants;
+
 import com.wgh.rag.agent.dto.AgentStepResult;
 import com.wgh.rag.agent.dto.AgentStepResult.RagSourceRecord;
 import com.wgh.rag.agent.dto.AgentStepResult.ToolInvocationRecord;
@@ -158,7 +160,7 @@ public class StepExecutor {
             log.error("StepExecutor 执行异常", e);
             long latency = System.currentTimeMillis() - startMs;
             return AgentStepResult.builder()
-                    .status("FAILED")
+                    .status(AgentConstants.STATUS_FAILED)
                     .finalText("")
                     .toolInvocations(toolInvocations)
                     .ragSources(ragSources)
@@ -180,7 +182,7 @@ public class StepExecutor {
                 ? (finalText.length() > 500 ? finalText.substring(0, 500) + "..." : finalText)
                 : "";
         return AgentStepResult.builder()
-                .status("SUCCESS")
+                .status(AgentConstants.STATUS_SUCCESS)
                 .finalText(finalText != null ? finalText : "")
                 .toolInvocations(toolInvocations)
                 .ragSources(ragSources)
