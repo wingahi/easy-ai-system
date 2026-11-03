@@ -1,5 +1,7 @@
 package com.wgh.rag.tool.executor;
 
+import com.wgh.rag.tool.constant.ToolConstants;
+
 import dev.langchain4j.mcp.client.DefaultMcpClient;
 import dev.langchain4j.mcp.client.McpClient;
 import dev.langchain4j.mcp.client.transport.McpTransport;
@@ -128,7 +130,7 @@ public class McpClientManager {
     }
 
     private Duration parseTimeout(Object o) {
-        long ms = 10000; // 默认 10 秒
+        long ms = ToolConstants.DEFAULT_HTTP_TIMEOUT_MS; // 默认 10 秒
         if (o instanceof Number) ms = ((Number) o).longValue();
         else if (o != null) {
             try { ms = Long.parseLong(o.toString()); } catch (Exception ignored) {}

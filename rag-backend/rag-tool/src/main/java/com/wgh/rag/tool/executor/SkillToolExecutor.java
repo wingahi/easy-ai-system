@@ -1,5 +1,7 @@
 package com.wgh.rag.tool.executor;
 
+import com.wgh.rag.tool.constant.ToolConstants;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
@@ -76,7 +78,7 @@ public class SkillToolExecutor implements ToolExecutor {
 
     @Override
     public String supportedToolType() {
-        return "SKILL";
+        return ToolConstants.TYPE_SKILL;
     }
 
     @Override

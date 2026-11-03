@@ -1,5 +1,7 @@
 package com.wgh.rag.tool.executor;
 
+import com.wgh.rag.tool.constant.ToolConstants;
+
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
@@ -30,7 +32,7 @@ import java.util.Map;
 @Component
 public class FunctionCallingToolExecutor implements ToolExecutor {
 
-    private static final String TYPE = "FUNCTION_CALLING";
+    private static final String TYPE = ToolConstants.TYPE_FUNCTION_CALLING;
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     @Override

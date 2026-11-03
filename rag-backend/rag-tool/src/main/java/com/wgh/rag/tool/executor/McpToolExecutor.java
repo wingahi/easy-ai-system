@@ -1,5 +1,7 @@
 package com.wgh.rag.tool.executor;
 
+import com.wgh.rag.tool.constant.ToolConstants;
+
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.data.message.ToolExecutionResultMessage;
 import dev.langchain4j.mcp.client.McpClient;
@@ -39,7 +41,7 @@ public class McpToolExecutor implements ToolExecutor {
 
     @Override
     public String supportedToolType() {
-        return "MCP";
+        return ToolConstants.TYPE_MCP;
     }
 
     @Override

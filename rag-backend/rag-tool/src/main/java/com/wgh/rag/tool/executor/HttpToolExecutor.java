@@ -2,6 +2,8 @@ package com.wgh.rag.tool.executor;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.wgh.rag.common.constant.HttpConstants;
+import com.wgh.rag.tool.constant.ToolConstants;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.data.message.ToolExecutionResultMessage;
 import lombok.extern.slf4j.Slf4j;
@@ -42,7 +44,7 @@ public class HttpToolExecutor implements ToolExecutor {
 
     public HttpToolExecutor() {
         this.httpClient = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(5))
+                .connectTimeout(Duration.ofSeconds(ToolConstants.HTTP_CONNECT_TIMEOUT_SECONDS))
                 .build();
     }
 
@@ -58,7 +60,7 @@ public class HttpToolExecutor implements ToolExecutor {
             String url = (String) executorConfig.get("url");
             String method = String.valueOf(executorConfig.getOrDefault("method", "GET")).toUpperCase();
             Map<String, String> headers = parseHeaders(executorConfig.get("headers"));
-            int timeoutMs = ((Number) executorConfig.getOrDefault("timeoutMs", 10000)).intValue();
+            int timeoutMs = ((Number) executorConfig.getOrDefault("timeoutMs", ToolConstants.DEFAULT_HTTP_TIMEOUT_MS)).intValue();
 
             // 解析参数
             Map<String, Object> args = parseArguments(request.arguments());
@@ -82,7 +84,7 @@ public class HttpToolExecutor implements ToolExecutor {
             HttpRequest.BodyPublisher bodyPublisher = HttpRequest.BodyPublishers.noBody();
             if ("POST".equals(method) || "PUT".equals(method) || "PATCH".equals(method)) {
                 bodyPublisher = HttpRequest.BodyPublishers.ofString(MAPPER.writeValueAsString(args));
-                reqBuilder.header("Content-Type", "application/json");
+                reqBuilder.header(HttpConstants.HEADER_CONTENT_TYPE, HttpConstants.CONTENT_TYPE_JSON);
             }
 
             switch (method) {
@@ -105,8 +107,8 @@ public class HttpToolExecutor implements ToolExecutor {
             }
 
             // 截断过长结果避免撑爆上下文
-            if (result.length() > 4000) {
-                result = result.substring(0, 4000) + "...[truncated]";
+            if (result.length() > ToolConstants.MAX_RESULT_CHARS) {
+                result = result.substring(0, ToolConstants.MAX_RESULT_CHARS) + "...[truncated]";
             }
 
             return new ToolExecutionResultMessage(request.id(), request.name(), result);
