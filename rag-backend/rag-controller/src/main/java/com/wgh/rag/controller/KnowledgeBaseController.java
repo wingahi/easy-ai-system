@@ -1,8 +1,10 @@
 package com.wgh.rag.controller;
 
+import com.wgh.rag.auth.constant.AuthConstants;
 import com.wgh.rag.log.annotation.Audit;
 import com.wgh.rag.common.result.PageResult;
 import com.wgh.rag.common.result.Result;
+import com.wgh.rag.common.security.RequiresPermission;
 import com.wgh.rag.kb.entity.KnowledgeBase;
 import com.wgh.rag.kb.entity.KnowledgeFile;
 import com.wgh.rag.kb.service.KnowledgeBaseService;
@@ -39,6 +41,7 @@ public class KnowledgeBaseController {
 
     @Operation(summary = "分页查询知识库")
     @GetMapping
+    @RequiresPermission(AuthConstants.PERM_KB_READ)
     public Result<PageResult<KnowledgeBase>> page(
             @RequestParam(defaultValue = "1") Long page,
             @RequestParam(defaultValue = "10") Long size,
@@ -48,6 +51,7 @@ public class KnowledgeBaseController {
 
     @Operation(summary = "获取知识库详情")
     @GetMapping("/{id}")
+    @RequiresPermission(AuthConstants.PERM_KB_READ)
     public Result<KnowledgeBase> getById(@PathVariable Long id) {
         return Result.success(kbService.getById(id));
     }
@@ -55,6 +59,7 @@ public class KnowledgeBaseController {
     @Operation(summary = "新增知识库")
     @PostMapping
     @Audit(action = "KB_CREATE", resourceType = "KNOWLEDGE_BASE")
+    @RequiresPermission(AuthConstants.PERM_KB_WRITE)
     public Result<KnowledgeBase> create(@Valid @RequestBody KnowledgeBase kb) {
         return Result.success(kbService.create(kb));
     }
@@ -62,6 +67,7 @@ public class KnowledgeBaseController {
     @Operation(summary = "编辑知识库")
     @PutMapping
     @Audit(action = "KB_UPDATE", resourceType = "KNOWLEDGE_BASE")
+    @RequiresPermission(AuthConstants.PERM_KB_WRITE)
     public Result<KnowledgeBase> update(@Valid @RequestBody KnowledgeBase kb) {
         return Result.success(kbService.update(kb));
     }
@@ -69,6 +75,7 @@ public class KnowledgeBaseController {
     @Operation(summary = "删除知识库")
     @DeleteMapping("/{id}")
     @Audit(action = "KB_DELETE", resourceType = "KNOWLEDGE_BASE")
+    @RequiresPermission(AuthConstants.PERM_KB_DELETE)
     public Result<Void> delete(@PathVariable Long id) {
         kbService.delete(id);
         return Result.success();
@@ -85,6 +92,7 @@ public class KnowledgeBaseController {
     @Operation(summary = "上传文件到知识库")
     @PostMapping("/{kbId}/files")
     @Audit(action = "KB_FILE_UPLOAD", resourceType = "KNOWLEDGE_FILE")
+    @RequiresPermission(AuthConstants.PERM_KB_WRITE)
     public Result<KnowledgeFile> uploadFile(
             @PathVariable Long kbId,
             @RequestParam("file") MultipartFile file,
@@ -95,6 +103,7 @@ public class KnowledgeBaseController {
 
     @Operation(summary = "列出知识库文件")
     @GetMapping("/{kbId}/files")
+    @RequiresPermission(AuthConstants.PERM_KB_READ)
     public Result<List<KnowledgeFile>> listFiles(@PathVariable Long kbId) {
         return Result.success(fileService.listByKbId(kbId));
     }
@@ -102,6 +111,7 @@ public class KnowledgeBaseController {
     @Operation(summary = "删除知识库文件")
     @DeleteMapping("/files/{fileId}")
     @Audit(action = "KB_FILE_DELETE", resourceType = "KNOWLEDGE_FILE")
+    @RequiresPermission(AuthConstants.PERM_KB_DELETE)
     public Result<Void> deleteFile(@PathVariable Long fileId) {
         fileService.delete(fileId);
         return Result.success();
@@ -109,6 +119,7 @@ public class KnowledgeBaseController {
 
     @Operation(summary = "重新分割文件")
     @PostMapping("/files/{fileId}/resplit")
+    @RequiresPermission(AuthConstants.PERM_KB_WRITE)
     public Result<KnowledgeFile> reSplitFile(
             @PathVariable Long fileId,
             @RequestParam String splitStrategy,

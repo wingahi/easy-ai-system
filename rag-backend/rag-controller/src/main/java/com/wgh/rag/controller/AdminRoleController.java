@@ -1,5 +1,7 @@
 package com.wgh.rag.controller;
 
+import com.wgh.rag.auth.constant.AuthConstants;
+
 import com.wgh.rag.auth.service.LocalLoginService;
 import com.wgh.rag.auth.entity.WghPermission;
 import com.wgh.rag.auth.entity.WghRole;
@@ -70,16 +72,16 @@ public class AdminRoleController {
     );
     /** 权限描述随种子权限定义（权限表只读，无权限项增删接口） */
     private static final Map<String, String> PERMISSION_DESCRIPTIONS = Map.ofEntries(
-            Map.entry("kb:read", "查看/检索知识库"),
-            Map.entry("kb:write", "新增/编辑知识库与文件"),
-            Map.entry("kb:delete", "删除知识库与文件"),
-            Map.entry("agent:use", "使用 Agent 能力"),
-            Map.entry("workflow:use", "运行工作流"),
-            Map.entry("workflow:edit", "创建/编辑工作流"),
-            Map.entry("tool:use", "调用工具与 Skill"),
-            Map.entry("prompt:edit", "管理 Prompt 模板"),
-            Map.entry("model:manage", "管理大模型/嵌入/重排序模型"),
-            Map.entry("audit:view", "查看审计日志与统计")
+            Map.entry(AuthConstants.PERM_KB_READ, "查看/检索知识库"),
+            Map.entry(AuthConstants.PERM_KB_WRITE, "新增/编辑知识库与文件"),
+            Map.entry(AuthConstants.PERM_KB_DELETE, "删除知识库与文件"),
+            Map.entry(AuthConstants.PERM_AGENT_USE, "使用 Agent 能力"),
+            Map.entry(AuthConstants.PERM_WORKFLOW_USE, "运行工作流"),
+            Map.entry(AuthConstants.PERM_WORKFLOW_EDIT, "创建/编辑工作流"),
+            Map.entry(AuthConstants.PERM_TOOL_USE, "调用工具与 Skill"),
+            Map.entry(AuthConstants.PERM_PROMPT_EDIT, "管理 Prompt 模板"),
+            Map.entry(AuthConstants.PERM_MODEL_MANAGE, "管理大模型/嵌入/重排序模型"),
+            Map.entry(AuthConstants.PERM_AUDIT_VIEW, "查看审计日志与统计")
     );
 
     private final RoleMapper roleMapper;

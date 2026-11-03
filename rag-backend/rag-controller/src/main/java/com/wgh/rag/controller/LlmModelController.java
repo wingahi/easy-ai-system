@@ -1,8 +1,11 @@
 package com.wgh.rag.controller;
 
+import com.wgh.rag.auth.constant.AuthConstants;
+
 import com.wgh.rag.log.annotation.Audit;
 import com.wgh.rag.common.result.PageResult;
 import com.wgh.rag.common.result.Result;
+import com.wgh.rag.common.security.RequiresPermission;
 import com.wgh.rag.llm.entity.EmbeddingModelConfig;
 import com.wgh.rag.llm.entity.LlmModel;
 import com.wgh.rag.llm.service.LlmModelService;
@@ -42,6 +45,7 @@ public class LlmModelController {
     @Operation(summary = "新增 ChatModel")
     @PostMapping("/chat")
     @Audit(action = "MODEL_CREATE", resourceType = "LLM_MODEL")
+    @RequiresPermission(AuthConstants.PERM_MODEL_MANAGE)
     public Result<LlmModel> createChatModel(@Valid @RequestBody LlmModel model) {
         return Result.success(modelService.createChatModel(model));
     }
@@ -49,6 +53,7 @@ public class LlmModelController {
     @Operation(summary = "编辑 ChatModel")
     @PutMapping("/chat")
     @Audit(action = "MODEL_UPDATE", resourceType = "LLM_MODEL")
+    @RequiresPermission(AuthConstants.PERM_MODEL_MANAGE)
     public Result<LlmModel> updateChatModel(@Valid @RequestBody LlmModel model) {
         return Result.success(modelService.updateChatModel(model));
     }
@@ -56,6 +61,7 @@ public class LlmModelController {
     @Operation(summary = "删除 ChatModel")
     @DeleteMapping("/chat/{id}")
     @Audit(action = "MODEL_DELETE", resourceType = "LLM_MODEL")
+    @RequiresPermission(AuthConstants.PERM_MODEL_MANAGE)
     public Result<Void> deleteChatModel(@PathVariable Long id) {
         modelService.deleteChatModel(id);
         return Result.success();
@@ -85,18 +91,21 @@ public class LlmModelController {
 
     @Operation(summary = "新增 RerankModel")
     @PostMapping("/rerank")
+    @RequiresPermission(AuthConstants.PERM_MODEL_MANAGE)
     public Result<LlmModel> createRerankModel(@Valid @RequestBody LlmModel model) {
         return Result.success(modelService.createRerankModel(model));
     }
 
     @Operation(summary = "编辑 RerankModel")
     @PutMapping("/rerank")
+    @RequiresPermission(AuthConstants.PERM_MODEL_MANAGE)
     public Result<LlmModel> updateRerankModel(@Valid @RequestBody LlmModel model) {
         return Result.success(modelService.updateRerankModel(model));
     }
 
     @Operation(summary = "删除 RerankModel")
     @DeleteMapping("/rerank/{id}")
+    @RequiresPermission(AuthConstants.PERM_MODEL_MANAGE)
     public Result<Void> deleteRerankModel(@PathVariable Long id) {
         modelService.deleteRerankModel(id);
         return Result.success();
@@ -120,18 +129,21 @@ public class LlmModelController {
 
     @Operation(summary = "新增嵌入模型")
     @PostMapping("/embedding")
+    @RequiresPermission(AuthConstants.PERM_MODEL_MANAGE)
     public Result<EmbeddingModelConfig> createEmbeddingModel(@Valid @RequestBody EmbeddingModelConfig model) {
         return Result.success(modelService.createEmbeddingModel(model));
     }
 
     @Operation(summary = "编辑嵌入模型")
     @PutMapping("/embedding")
+    @RequiresPermission(AuthConstants.PERM_MODEL_MANAGE)
     public Result<EmbeddingModelConfig> updateEmbeddingModel(@Valid @RequestBody EmbeddingModelConfig model) {
         return Result.success(modelService.updateEmbeddingModel(model));
     }
 
     @Operation(summary = "删除嵌入模型")
     @DeleteMapping("/embedding/{id}")
+    @RequiresPermission(AuthConstants.PERM_MODEL_MANAGE)
     public Result<Void> deleteEmbeddingModel(@PathVariable Long id) {
         modelService.deleteEmbeddingModel(id);
         return Result.success();

@@ -1,5 +1,7 @@
 package com.wgh.rag.controller;
 
+import com.wgh.rag.auth.constant.AuthConstants;
+
 import com.wgh.rag.chat.mapper.ChatMessageMapper;
 import com.wgh.rag.chat.service.FeedbackService;
 import com.wgh.rag.log.entity.AuditLog;
@@ -31,7 +33,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/admin")
 @RequiredArgsConstructor
-@RequiresPermission("audit:view")
+@RequiresPermission(AuthConstants.PERM_AUDIT_VIEW)
 public class AdminStatsController {
 
     private final AuditLogService auditLogService;

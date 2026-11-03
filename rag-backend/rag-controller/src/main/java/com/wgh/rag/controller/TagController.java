@@ -1,11 +1,14 @@
 package com.wgh.rag.controller;
 
+import com.wgh.rag.auth.constant.AuthConstants;
+
 import com.wgh.rag.kb.entity.Tag;
 import com.wgh.rag.kb.service.FileVersionService;
 import com.wgh.rag.kb.service.TagService;
 import com.wgh.rag.log.annotation.Audit;
 import com.wgh.rag.common.result.PageResult;
 import com.wgh.rag.common.result.Result;
+import com.wgh.rag.common.security.RequiresPermission;
 import io.swagger.v3.oas.annotations.Operation;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
@@ -30,6 +33,7 @@ public class TagController {
 
     @Operation(summary = "分页查询标签")
     @GetMapping("/api/tags")
+    @RequiresPermission(AuthConstants.PERM_KB_READ)
     public Result<PageResult<Tag>> page(
             @RequestParam(defaultValue = "1") Long page,
             @RequestParam(defaultValue = "10") Long size,
@@ -52,6 +56,7 @@ public class TagController {
     @Operation(summary = "新增标签")
     @PostMapping("/api/tags")
     @Audit(action = "TAG_CREATE", resourceType = "TAG")
+    @RequiresPermission(AuthConstants.PERM_KB_WRITE)
     public Result<Tag> create(@RequestBody Tag tag) {
         return Result.success(tagService.create(tag));
     }
@@ -59,6 +64,7 @@ public class TagController {
     @Operation(summary = "更新标签")
     @PutMapping("/api/tags")
     @Audit(action = "TAG_UPDATE", resourceType = "TAG")
+    @RequiresPermission(AuthConstants.PERM_KB_WRITE)
     public Result<Tag> update(@RequestBody Tag tag) {
         return Result.success(tagService.update(tag));
     }
@@ -66,6 +72,7 @@ public class TagController {
     @Operation(summary = "删除标签")
     @DeleteMapping("/api/tags/{id}")
     @Audit(action = "TAG_DELETE", resourceType = "TAG")
+    @RequiresPermission(AuthConstants.PERM_KB_WRITE)
     public Result<Void> delete(@PathVariable Long id) {
         tagService.delete(id);
         return Result.success();
@@ -76,6 +83,7 @@ public class TagController {
     @Operation(summary = "设置知识库标签（完整覆盖）")
     @PutMapping("/api/kb/{kbId}/tags")
     @Audit(action = "KB_TAG_SET", resourceType = "KNOWLEDGE_BASE")
+    @RequiresPermission(AuthConstants.PERM_KB_WRITE)
     public Result<Void> setKbTags(@PathVariable Long kbId, @RequestBody Map<String, Object> body) {
         List<Long> tagIds = (List<Long>) body.get("tagIds");
         tagService.setKbTags(kbId, tagIds);
@@ -93,6 +101,7 @@ public class TagController {
     @Operation(summary = "设置文件标签（完整覆盖）")
     @PutMapping("/api/kb/files/{fileId}/tags")
     @Audit(action = "FILE_TAG_SET", resourceType = "KNOWLEDGE_FILE")
+    @RequiresPermission(AuthConstants.PERM_KB_WRITE)
     public Result<Void> setFileTags(@PathVariable Long fileId, @RequestBody Map<String, Object> body) {
         List<Long> tagIds = (List<Long>) body.get("tagIds");
         tagService.setFileTags(fileId, tagIds);
