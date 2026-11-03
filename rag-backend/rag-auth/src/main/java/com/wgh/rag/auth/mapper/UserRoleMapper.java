@@ -1,4 +1,4 @@
-package com.wgh.rag.common.mapper;
+package com.wgh.rag.auth.mapper;
 
 import org.apache.ibatis.annotations.Delete;
 import org.apache.ibatis.annotations.Insert;

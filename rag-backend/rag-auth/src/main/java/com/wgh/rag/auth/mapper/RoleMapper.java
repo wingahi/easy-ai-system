@@ -1,7 +1,7 @@
-package com.wgh.rag.common.mapper;
+package com.wgh.rag.auth.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
-import com.wgh.rag.common.entity.WghRole;
+import com.wgh.rag.auth.entity.WghRole;
 import org.apache.ibatis.annotations.Delete;
 import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;

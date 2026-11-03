@@ -1,7 +1,7 @@
-package com.wgh.rag.common.mapper;
+package com.wgh.rag.auth.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
-import com.wgh.rag.common.entity.WghPermission;
+import com.wgh.rag.auth.entity.WghPermission;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
