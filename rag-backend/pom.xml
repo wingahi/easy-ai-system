@@ -28,6 +28,10 @@
         <pgvector.version>1.19.3-beta29</pgvector.version>
         <jjwt.version>0.12.6</jjwt.version>
         <knife4j.version>4.5.0</knife4j.version>
+        <!-- knife4j 4.5.0 传递依赖 springdoc-openapi 2.3.0，其 GenericResponseService 仍调用
+             Spring Framework 6.2 已移除的 ControllerAdviceBean(Object) 构造器，导致 /v3/api-docs 抛
+             NoSuchMethodError。此处用 springdoc BOM 统一抬升到兼容 Spring Boot 3.4.x 的 2.8.6。 -->
+        <springdoc.version>2.8.6</springdoc.version>
         <docparser.version>2.9.4</docparser.version>
     </properties>
 
@@ -160,6 +164,23 @@
                 <groupId>dev.langchain4j</groupId>
                 <artifactId>langchain4j-pgvector</artifactId>
                 <version>${pgvector.version}</version>
+            </dependency>
+
+            <!-- SpringDoc 版本覆盖：knife4j 传递的是 2.3.0，需统一抬升到兼容 Spring Framework 6.2 的 2.8.6 -->
+            <dependency>
+                <groupId>org.springdoc</groupId>
+                <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+                <version>${springdoc.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.springdoc</groupId>
+                <artifactId>springdoc-openapi-starter-webmvc-api</artifactId>
+                <version>${springdoc.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.springdoc</groupId>
+                <artifactId>springdoc-openapi-starter-common</artifactId>
+                <version>${springdoc.version}</version>
             </dependency>
 
             <!-- Knife4j OpenAPI -->
