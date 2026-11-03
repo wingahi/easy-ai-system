@@ -77,12 +77,14 @@ public class RagMetrics {
         sample.stop(Timer.builder(CHAT_DURATION)
                 .tag("route", route)
                 .tag("share", String.valueOf(share))
+                .publishPercentileHistogram()
                 .register(registry));
     }
 
     public void recordFirstToken(String route, long nanos) {
         Timer.builder(CHAT_FIRST_TOKEN)
                 .tag("route", route)
+                .publishPercentileHistogram()
                 .register(registry)
                 .record(nanos, TimeUnit.NANOSECONDS);
     }
@@ -97,6 +99,7 @@ public class RagMetrics {
         Timer.builder(RETRIEVAL_DURATION)
                 .tag("hybrid", String.valueOf(hybrid))
                 .tag("rerank", String.valueOf(rerank))
+                .publishPercentileHistogram()
                 .register(registry)
                 .record(nanos, TimeUnit.NANOSECONDS);
         counter(RETRIEVAL_HITS, "hit", String.valueOf(hit)).increment();

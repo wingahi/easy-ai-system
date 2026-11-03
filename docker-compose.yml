@@ -1,7 +1,7 @@
-# 说明：仅用于本地开发，生产环境请使用托管 Redis 或独立部署。
-# 启动：docker compose up -d redis
+# 说明：本地开发 + 容器化部署编排。
+# 启动全部：cp .env.example .env && docker compose up -d --build
+# 仅启动 Redis（原本地开发方式）：docker compose up -d redis
 # 停止：docker compose down
-# 版本：Redis Open Source 8.10.1（2026-08 发布的最新稳定补丁版本，含安全修复）
 services:
   redis:
     image: redis:8.10.1-alpine
@@ -18,5 +18,93 @@ services:
       retries: 10
     restart: unless-stopped
 
+  backend:
+    build:
+      context: ./rag-backend
+      dockerfile: Dockerfile
+    image: wgh-rag-backend:local
+    container_name: wgh-rag-backend
+    # 管理端口 9090 只在容器网络内暴露给 Prometheus，不映射到宿主机
+    ports:
+      - "${WGH_BACKEND_PORT:-8080}:8080"
+    extra_hosts:
+      # 便于容器直接访问宿主机上的 PostgreSQL（Linux 需要 host-gateway）
+      - "host.docker.internal:host-gateway"
+    environment:
+      WGH_PROFILE: ${WGH_PROFILE:-prod}
+      SERVER_PORT: 8080
+      WGH_MANAGEMENT_PORT: 9090
+      # prod profile 读取 PROD_DB_*；dev profile 才读取 WGH_DB_*
+      PROD_DB_HOST: ${PROD_DB_HOST:-host.docker.internal}
+      PROD_DB_PORT: ${PROD_DB_PORT:-5432}
+      PROD_DB_NAME: ${PROD_DB_NAME:-wgh_rag}
+      PROD_DB_USERNAME: ${PROD_DB_USERNAME:-postgres}
+      PROD_DB_PASSWORD: ${PROD_DB_PASSWORD:?必须设置 PROD_DB_PASSWORD}
+      PROD_DB_POOL_MAX: ${PROD_DB_POOL_MAX:-50}
+      WGH_REDIS_ENABLED: "true"
+      WGH_REDIS_HOST: redis
+      WGH_REDIS_PORT: 6379
+      WGH_REDIS_PASSWORD: ${WGH_REDIS_PASSWORD:-}
+      WGH_PGVECTOR_SKIP_EXT: ${WGH_PGVECTOR_SKIP_EXT:-false}
+      # ===== 以下密钥生产环境必须注入，不得使用示例值 =====
+      WGH_AUTH_LOCAL_JWT_SECRET: ${WGH_AUTH_LOCAL_JWT_SECRET:?必须设置 WGH_AUTH_LOCAL_JWT_SECRET}
+      WGH_JWT_SECRET: ${WGH_JWT_SECRET:-}
+      WGH_INIT_ADMIN_PASSWORD: ${WGH_INIT_ADMIN_PASSWORD:?必须设置 WGH_INIT_ADMIN_PASSWORD}
+      WGH_OIDC_ISSUER: ${WGH_OIDC_ISSUER:-}
+      WGH_OIDC_AUDIENCE: ${WGH_OIDC_AUDIENCE:-}
+      WGH_OIDC_JWKS_URI: ${WGH_OIDC_JWKS_URI:-}
+      JAVA_OPTS: ${JAVA_OPTS:--XX:MaxRAMPercentage=75.0 -XX:+UseG1GC -XX:MaxMetaspaceSize=256m}
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./rag-frontend
+      dockerfile: Dockerfile
+    image: wgh-rag-frontend:local
+    container_name: wgh-rag-frontend
+    ports:
+      - "${WGH_FRONTEND_PORT:-8088}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    container_name: wgh-rag-prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=15d"
+    ports:
+      - "${WGH_PROMETHEUS_PORT:-9091}:9090"
+    volumes:
+      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - wgh-prometheus-data:/prometheus
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    container_name: wgh-rag-grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: ${WGH_GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${WGH_GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    ports:
+      - "${WGH_GRAFANA_PORT:-3000}:3000"
+    volumes:
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - wgh-grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
 volumes:
   wgh-redis-data:
+  wgh-prometheus-data:
+  wgh-grafana-data:

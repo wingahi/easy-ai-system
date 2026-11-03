@@ -1,0 +1,12 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: wgh-rag-backend
+    metrics_path: /actuator/prometheus
+    static_configs:
+      # 管理端口仅在容器网络内暴露，宿主机默认不映射
+      - targets: ["backend:9090"]
+        labels:
+          service: wgh-rag-backend
