@@ -82,7 +82,7 @@ public class MultiAgentController {
         emitter.onTimeout(() -> log.warn("SSE runId={} timeout", runId));
         emitter.onError(e -> log.warn("SSE runId={} error: {}", runId, e.getMessage()));
 
-        new Thread(() -> {
+        new Thread(com.wgh.rag.common.log.MdcContext.wrap(() -> {
             try {
                 runtime.execute(runId, emitter);
                 emitter.complete();
@@ -90,7 +90,7 @@ public class MultiAgentController {
                 log.error("runId={} 执行异常", runId, e);
                 emitter.completeWithError(e);
             }
-        }, "multi-agent-run-" + runId).start();
+        }), "multi-agent-run-" + runId).start();
 
         return emitter;
     }
@@ -111,7 +111,7 @@ public class MultiAgentController {
         SseEmitter emitter = new SseEmitter(10 * 60 * 1000L);
         emitter.onCompletion(() -> log.info("SSE resume runId={} completed", runId));
 
-        new Thread(() -> {
+        new Thread(com.wgh.rag.common.log.MdcContext.wrap(() -> {
             try {
                 runtime.resumeFromHitl(runId, userInput, emitter);
                 emitter.complete();
@@ -119,7 +119,7 @@ public class MultiAgentController {
                 log.error("runId={} resume 异常", runId, e);
                 emitter.completeWithError(e);
             }
-        }, "multi-agent-resume-" + runId).start();
+        }), "multi-agent-resume-" + runId).start();
 
         return emitter;
     }

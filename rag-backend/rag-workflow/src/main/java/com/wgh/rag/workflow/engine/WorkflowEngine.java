@@ -2,6 +2,7 @@ package com.wgh.rag.workflow.engine;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.wgh.rag.common.log.MdcContext;
 import com.wgh.rag.common.metrics.RagMetrics;
 import com.wgh.rag.workflow.constant.WorkflowEvents;
 import com.wgh.rag.workflow.dto.*;
@@ -151,7 +152,7 @@ public class WorkflowEngine {
 
         try {
             // 调度线程：持续从 frontier 取节点、判断 pendingIn、提交给 worker
-            Thread dispatcher = new Thread(() -> {
+            Thread dispatcher = new Thread(MdcContext.wrap(() -> {
                 try {
                     while (true) {
                         String nodeId;
@@ -182,14 +183,14 @@ public class WorkflowEngine {
                         }
 
                         // worker 执行节点
-                        executor.submit(() -> executeOneNode(run, graph, nodeMap, outEdges, nodeId,
+                        executor.submit(MdcContext.wrap(() -> executeOneNode(run, graph, nodeMap, outEdges, nodeId,
                                 ctx, sink, pendingIn, frontier, submitted, guard, executed,
-                                latch, nestingDepth, validation));
+                                latch, nestingDepth, validation)));
                     }
                 } catch (Throwable t) {
                     log.error("工作流调度线程异常", t);
                 }
-            }, "wf-dispatcher-" + run.getId());
+            }), "wf-dispatcher-" + run.getId());
             dispatcher.start();
             try {
                 dispatcher.join(5 * 60 * 1000L); // 最多等 5 分钟

@@ -14,6 +14,7 @@ import com.wgh.rag.chat.mapper.ChatSessionMapper;
 import com.wgh.rag.chat.mapper.ChatWindowMapper;
 import com.wgh.rag.agent.service.AgentOrchestrator;
 import com.wgh.rag.common.exception.BusinessException;
+import com.wgh.rag.common.log.MdcContext;
 import com.wgh.rag.common.metrics.RagMetrics;
 import com.wgh.rag.quota.service.QuotaService;
 import com.wgh.rag.common.security.SecurityUtils;
@@ -165,8 +166,8 @@ public class RagChatService {
         }
         messageMapper.insert(userMsg);
 
-        // 子线程执行 RAG + LLM 并推送 SSE
-        new Thread(() -> {
+        // 子线程执行 RAG + LLM 并推送 SSE（继承请求线程的 MDC，SSE 日志可按 requestId 串联）
+        new Thread(MdcContext.wrap(() -> {
             // 指标上下文：route 在链路分支处回填，首 token 延迟用于区分冷启动/模型抖动
             Timer.Sample sample = metrics.startSample();
             ChatMetricContext metricCtx = new ChatMetricContext(
@@ -189,7 +190,7 @@ public class RagChatService {
                 // 清理当前线程的工具注册（ThreadLocal）
                 toolExecutionEngine.clearWindowTools();
             }
-        }).start();
+        })).start();
 
         return emitter;
     }

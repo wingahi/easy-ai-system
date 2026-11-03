@@ -1,5 +1,6 @@
 package com.wgh.rag.workflow.config;
 
+import com.wgh.rag.common.log.MdcContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
@@ -18,6 +19,8 @@ public class WorkflowExecutorConfig {
         executor.setMaxPoolSize(8);
         executor.setQueueCapacity(100);
         executor.setThreadNamePrefix("workflow-run-");
+        // 工作流在独立线程池运行，需显式透传请求线程的 MDC（requestId）
+        executor.setTaskDecorator(MdcContext::wrap);
         executor.setWaitForTasksToCompleteOnShutdown(true);
         executor.setAwaitTerminationSeconds(30);
         executor.initialize();

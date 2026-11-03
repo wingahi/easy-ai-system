@@ -61,7 +61,9 @@ public class EmbedAccessService {
         store.setString(grantKey(link.getToken(), grant), clientIp, System.currentTimeMillis(),
                 Duration.ofMinutes(ttlMinutes));
         log.info("签发 Widget 嵌入授权: token={}, grant={}, origin={}, ip={}",
-                link.getToken(), grant, DomainWhitelistMatcher.resolveOriginHost(
+                com.wgh.rag.common.log.LogSanitizer.maskSecret(link.getToken()),
+                com.wgh.rag.common.log.LogSanitizer.maskSecret(grant),
+                DomainWhitelistMatcher.resolveOriginHost(
                         request.getHeader("Origin"), request.getHeader("Referer")), clientIp);
         return grant;
     }
@@ -140,7 +142,8 @@ public class EmbedAccessService {
                     }
                 }
             } catch (IllegalArgumentException e) {
-                log.warn("分享链接 {} 的嵌入 IP 白名单配置非法: {}", link.getToken(), e.getMessage());
+                log.warn("分享链接 {} 的嵌入 IP 白名单配置非法: {}",
+                        com.wgh.rag.common.log.LogSanitizer.maskSecret(link.getToken()), e.getMessage());
             }
         }
         return domainMatched || ipMatched;
