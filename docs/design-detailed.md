@@ -39,9 +39,9 @@
 
 ### 1.2 依赖设计要点
 
-- **单向依赖**：`controller → chat/agent/workflow/agent-multi/public-access/quota → kb/llm/tool/auth/log → data/common`，无反向边。
-- **`rag-tool` 与 `rag-llm` 解耦**：`SkillToolExecutor` 通过 `SkillLlmClient` 接口调用模型，实现类 `SkillLlmClientImpl` 位于 `rag-chat`，避免 `rag-tool → rag-llm` 依赖。
-- **`rag-public-access` 只被 `rag-controller` 直接依赖**：根 POM Enforcer 禁止其他模块声明该依赖；`rag-public-access` 自身 Enforcer 禁止依赖 `rag-controller`。
+- **核心 RAG 链**：`rag-chat → rag-kb → rag-llm`，`rag-kb → rag-storage`；上层不得被下层反向依赖。
+- **JDK 统一**：根 POM Enforcer 执行 `requireJavaVersion [21,22)`，CI 与本地构建固定 JDK 21。
+- **`rag-public-access` 只被 `rag-controller` 直接依赖**：根 POM 执行 `enforce-public-access-not-consumed`（`rag-controller` 跳过该执行），`rag-public-access` 自身再禁止依赖 `rag-controller`；`searchTransitive=false` 避免传递依赖误伤。
 - **`rag-common` 零 ORM**：仅依赖 Web/Security/AOP/Micrometer 等基础库与 `spring-tx`（映射 `DuplicateKeyException`），不引入 MyBatis-Plus。
 - **唯一组合根**：只有 `rag-controller` 同时依赖全部业务模块；`rag-app` 只依赖 `rag-controller`、`rag-data`、`rag-auth`、`rag-log`。
 
