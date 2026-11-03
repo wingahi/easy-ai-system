@@ -15,8 +15,11 @@ import com.wgh.rag.kb.service.RagRetrieveService;
 import com.wgh.rag.kb.service.RetrievalOptions;
 import com.wgh.rag.publicaccess.config.PublicAccessProperties;
 import com.wgh.rag.publicaccess.entity.ShareLink;
+import com.wgh.rag.publicaccess.service.ClientIpResolver;
+import com.wgh.rag.publicaccess.service.EmbedAccessService;
 import com.wgh.rag.publicaccess.service.PublicAccessRateLimiter;
 import com.wgh.rag.publicaccess.service.ShareLinkService;
+import com.wgh.rag.publicaccess.service.SharePasswordGuard;
 import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.store.embedding.EmbeddingMatch;
 import io.swagger.v3.oas.annotations.Operation;
@@ -63,6 +66,9 @@ public class PublicShareController {
     private final RagChatService ragChatService;
     private final KnowledgeBaseMapper knowledgeBaseMapper;
     private final RagRetrieveService retrieveService;
+    private final ClientIpResolver clientIpResolver;
+    private final EmbedAccessService embedAccessService;
+    private final SharePasswordGuard passwordGuard;
 
     @Operation(summary = "分享链接元信息（免登录）")
     @GetMapping("/{token}")
@@ -70,10 +76,12 @@ public class PublicShareController {
             @PathVariable String token,
             @RequestHeader(value = PASSWORD_HEADER, required = false) String password,
             HttpServletRequest request) {
-        rateLimiter.acquire("share:" + token + ":" + clientIp(request),
-                properties.getShareRateLimitPerMinute());
+        String clientIp = clientIpResolver.resolve(request);
+        rateLimit(token, clientIp, request);
         ShareLink link = shareLinkService.resolveActive(token);
+        embedAccessService.validate(link, request);
 
+        long lockRemainingSeconds = passwordGuard.lockRemainingSeconds(link.getToken(), clientIp);
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("token", link.getToken());
         data.put("name", link.getName());
@@ -81,7 +89,10 @@ public class PublicShareController {
         data.put("targetId", link.getTargetId());
         data.put("expiresAt", link.getExpiresAt());
         data.put("passwordRequired", link.getPasswordHash() != null && !link.getPasswordHash().isBlank());
-        data.put("passwordVerified", shareLinkService.matchesPassword(link, password));
+        data.put("passwordLocked", lockRemainingSeconds > 0);
+        data.put("lockRemainingSeconds", lockRemainingSeconds);
+        data.put("passwordVerified", lockRemainingSeconds <= 0 && shareLinkService.matchesPassword(link, password));
+        data.put("embedEnabled", Boolean.TRUE.equals(link.getEmbedEnabled()));
         data.put("maxUses", link.getMaxUses());
         data.put("useCount", link.getUseCount());
         data.put("readOnly", !ShareLinkService.SCOPE_WINDOW.equals(link.getScope()));
@@ -117,11 +128,27 @@ public class PublicShareController {
             @PathVariable String token,
             @RequestHeader(value = PASSWORD_HEADER, required = false) String password,
             HttpServletRequest request) {
-        rateLimiter.acquire("share:" + token + ":" + clientIp(request),
-                properties.getShareRateLimitPerMinute());
+        String clientIp = clientIpResolver.resolve(request);
+        rateLimit(token, clientIp, request);
         ShareLink link = shareLinkService.resolveActive(token);
-        shareLinkService.requirePassword(link, password);
+        embedAccessService.validate(link, request);
+        shareLinkService.requirePassword(link, password, clientIp);
         return Result.success();
+    }
+
+    @Operation(summary = "Widget 嵌入授权（服务端校验 Origin/Referer 与 IP 白名单）")
+    @GetMapping("/{token}/embed/authorize")
+    public Result<Map<String, Object>> authorizeEmbed(
+            @PathVariable String token,
+            HttpServletRequest request) {
+        String clientIp = clientIpResolver.resolve(request);
+        rateLimiter.acquire("share-embed", clientIp, request.getRequestURI());
+        ShareLink link = shareLinkService.resolveActive(token);
+        String grant = embedAccessService.authorize(link, request);
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("grant", grant);
+        data.put("expiresIn", embedAccessService.grantTtlSeconds());
+        return Result.success(data);
     }
 
     @Operation(summary = "分享链接：列出访客会话（WINDOW 范围）")
@@ -192,8 +219,8 @@ public class PublicShareController {
             @RequestBody Map<String, Object> body,
             HttpServletRequest request) {
         ShareLink link = access(token, password, ShareLinkService.SCOPE_WINDOW, request);
-        rateLimiter.acquire("share-chat:" + token + ":" + clientIp(request),
-                properties.getShareRateLimitPerMinute());
+        rateLimiter.acquire("share-chat", token + ":" + clientIpResolver.resolve(request),
+                request.getRequestURI());
         shareLinkService.consumeUse(link);
 
         ChatWindow window = loadTargetWindow(link);
@@ -225,8 +252,8 @@ public class PublicShareController {
             @RequestBody Map<String, Object> body,
             HttpServletRequest request) {
         ShareLink link = access(token, password, ShareLinkService.SCOPE_KB, request);
-        rateLimiter.acquire("share-kb:" + token + ":" + clientIp(request),
-                properties.getShareRateLimitPerMinute());
+        rateLimiter.acquire("share-kb", token + ":" + clientIpResolver.resolve(request),
+                request.getRequestURI());
         shareLinkService.consumeUse(link);
 
         String query = body.get("query") == null ? "" : String.valueOf(body.get("query")).trim();
@@ -257,12 +284,22 @@ public class PublicShareController {
     // ===== 内部方法 =====
 
     private ShareLink access(String token, String password, String requiredScope, HttpServletRequest request) {
-        rateLimiter.acquire("share:" + token + ":" + clientIp(request),
-                properties.getShareRateLimitPerMinute());
+        String clientIp = clientIpResolver.resolve(request);
+        rateLimit(token, clientIp, request);
         ShareLink link = shareLinkService.resolveActive(token);
-        shareLinkService.requirePassword(link, password);
+        embedAccessService.validate(link, request);
+        shareLinkService.requirePassword(link, password, clientIp);
         shareLinkService.requireScope(link, requiredScope);
         return link;
+    }
+
+    /**
+     * 分享访问按「token + IP」与「IP」两个维度分别限流，均包含接口路径。
+     */
+    private void rateLimit(String token, String clientIp, HttpServletRequest request) {
+        String path = request.getRequestURI();
+        rateLimiter.acquire("share-token", token + ":" + clientIp, path);
+        rateLimiter.acquire("share-ip", clientIp, path);
     }
 
     private ChatWindow loadTargetWindow(ShareLink link) {
@@ -325,11 +362,5 @@ public class PublicShareController {
         if (raw == null) return fallback;
         int v = Integer.parseInt(String.valueOf(raw));
         return Math.min(Math.max(v, 1), 20);
-    }
-
-    private String clientIp(HttpServletRequest request) {
-        String forwarded = request.getHeader("X-Forwarded-For");
-        if (forwarded != null && !forwarded.isBlank()) return forwarded.split(",")[0].trim();
-        return request.getRemoteAddr();
     }
 }

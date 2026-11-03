@@ -781,9 +781,9 @@
 
 ## 15. 免登录分享 / 嵌入 Widget / 开放 API
 
-> 特性组：阶段 H。后端 `com.wgh.rag.publicaccess`；前端 `PublicShareChat.vue`、`PublicAccess.vue`、`public/widget.js`。
-> 自动化：`PublicAccessUnitTest`（18 项，`mvn -o -pl rag-app -am test -Dtest=PublicAccessUnitTest -Dsurefire.failIfNoSpecifiedTests=false` 全绿）。
-> 设计说明见 `docs/design-public-access.md`；HTTP 层用例为「仅手工」（需后端 8080 + 前端 5173）。
+> 特性组：阶段 H。后端 `com.wgh.rag.publicaccess`；Redis 基础设施 `com.wgh.rag.config.redis`；前端 `PublicShareChat.vue`、`PublicAccess.vue`、`public/widget.js`。
+> 自动化：`PublicAccessUnitTest`（18 项）+ `PublicAccessRedisSecurityTest`（12 项，覆盖 Redis 限流原子性 / 掉线降级 / 嵌入白名单 / 密码锁定 / API Key IP 白名单，**无需 Docker**，使用脚本化 Redis 桩），`mvn -o -pl rag-app -am test -Dtest='PublicAccess*' -Dsurefire.failIfNoSpecifiedTests=false` 全绿。
+> 设计说明见 `docs/design-public-access.md`；HTTP 层用例为「仅手工」或「curl 实测」（需后端 8080/8090 + 前端 5173 + Redis）。
 
 ### 15.1 分享链接
 
@@ -804,10 +804,10 @@
 | SHARE-13 | 接口 | 已登录 admin，存在聊天窗口 | 「开放平台」→ 创建 WINDOW 分享（7 天、无密码）→ 复制链接 → 无痕窗口打开 | 免登录直接进入对话页，可提问并收到 SSE 回复 | 仅手工 | `PublicAccess.vue` / `PublicShareChat.vue` |
 | SHARE-14 | 接口 | 存在 SESSION 分享 | 无痕窗口打开链接 | 只展示目标会话历史消息，无输入框，标记「只读分享」 | 仅手工 | `PublicShareChat.vue` |
 | SHARE-15 | 接口 | 存在 KB 分享 | 无痕窗口打开链接，输入关键词检索 | 返回命中片段（知识库/文档/内容/score），无问答输入 | 仅手工 | `PublicShareChat.vue` |
-| SHARE-16 | 接口 | 创建时填写访问密码 | 打开链接 | 弹「该分享需要访问密码」；错误密码提示「访问密码错误」；正确密码进入 | 仅手工 | `PublicShareChat.vue#unlock` |
+| SHARE-16 | 接口 | 创建时填写访问密码 | 打开链接 | 弹「该分享需要访问密码」；错误密码提示剩余尝试次数；达阈值后锁定并展示剩余秒数；锁定期间正确密码仍拒绝；到期后可进入 | 仅手工 | `PublicShareChat.vue#unlock` / `SharePasswordGuard` |
 | SHARE-17 | 接口 | 已吊销 / 已过期 / 次数用尽 | 打开链接 | 页面展示对应明确错误（吊销/过期/次数用尽），不进入对话 | 仅手工 | `PublicShareChat.vue#loadError` |
 | SHARE-18 | 接口 | WINDOW 分享，配额耗尽 | 匿名发送消息 | 页面提示可读的配额信息而非静默结束 | 仅手工 | `streamPublicShareChat` 错误分支 |
-| SHARE-19 | 接口 | 同一分享链接 | 1 分钟内 >20 次请求 | 返回 429「请求过于频繁」 | 仅手工 | `PublicAccessRateLimiter` |
+| SHARE-19 | 接口 | 同一分享链接 + 同一 IP | 1 分钟内 >20 次请求 | 业务码 429「请求过于频繁」，`data.dimension=share-token`、`data.store=redis` | curl 实测 | `PublicAccessRateLimiter` / `DefaultPublicAccessStore` |
 | SHARE-20 | 回归 | 登录态访问 `/share/{token}` | 直接打开 | 仍按 token 校验，不要求登录、不回跳登录页 | 仅手工 | `router/index.js` 免登录守卫 |
 
 ### 15.2 开放 API
@@ -825,7 +825,7 @@
 | OPEN-09 | 接口 | 任意有效 Key | 调 `/api/open/v1/kb/search` | 返回命中片段；`topK` 生效 | 仅手工 | `OpenApiController#kbSearch` |
 | OPEN-10 | 接口 | 任意有效 Key | 调 `/api/open/v1/usage` | 返回当日用量、调用总数、最近 20 条日志 | 仅手工 | `OpenApiController#usage` |
 | OPEN-11 | 接口 | 已吊销 Key / 过期 Key | 任意 `/api/open/v1/**` | 401/403 + JSON 错误体，不进入业务 | 仅手工 | `ApiKeyAuthenticationFilter` |
-| OPEN-12 | 接口 | 有效 Key | 1 分钟内 >60 次 | 返回 429 | 仅手工 | `PublicAccessRateLimiter` |
+| OPEN-12 | 接口 | 有效 Key | 1 分钟内 >60 次（同一路径） | 业务码 429，`data.dimension=api-key`、`limitPerMinute=60`、`store=redis`；单 IP 阈值 120 不在本用例触发 | curl 实测 | `PublicAccessRateLimiter` / `DefaultPublicAccessStore` |
 | OPEN-13 | 接口 | 有效 Key | 调用后查看「调用日志」 | 记录 Key、方法、路径、状态码、耗时、IP | 仅手工 | `ApiCallLogService#record` |
 | OPEN-14 | 回归 | 无 Key 直接访问 `/api/open/v1/me` | curl | 401，且不会被 JWT 过滤器二次拦截（返回 JSON 而非空 401） | 仅手工 | `PublicAccessSecurityConfig` |
 
@@ -837,8 +837,35 @@
 | WID-02 | 接口 | 任意第三方页面 | 引入 `widget.js` 并配置 `data-token/data-base/data-container/data-height` | 在指定容器注入 iframe（宽 100%、圆角、阴影）；iframe 内样式不受宿主影响 | 仅手工 | `public/widget.js` |
 | WID-03 | 接口 | 宿主页面使用深色背景/自定义 CSS | 同上 | iframe 内分享页样式不被宿主 CSS 覆盖（iframe 独立文档隔离） | 仅手工 | `widget.js` / `PublicShareChat.vue` `embed` 样式 |
 | WID-04 | 接口 | 无 token 或 token 无效 | 打开 demo 页 | 提示需填写 token / 分享页展示「分享链接无效」 | 仅手工 | `widget-demo.html` |
+| WID-05 | 接口 | `embed_enabled=1`，域名白名单含宿主域 | demo 页加载 Widget | `widget.js` 先请求 `/embed/authorize` 获 grant，再注入 `?embed=1&grant=...` iframe；可正常问答 | curl 实测 | `public/widget.js` / `EmbedAccessService` |
+| WID-06 | 接口 | 宿主域不在域名白名单 | 同上 | 不注入 iframe，容器内展示「来源 xxx 不在嵌入白名单内」 | curl 实测 | `EmbedAccessService#authorize` |
+| WID-07 | 接口 | 请求缺少 `Origin` 与 `Referer`，IP 未命中白名单 | `GET /embed/authorize` | 拒绝，提示缺少来源信息（默认拒绝） | curl 实测 | `EmbedAccessService` |
+| WID-08 | 接口 | 已获 grant 的 iframe | 清空 / 篡改 `X-Embed-Grant` 后调用分享接口 | 拒绝，code=1004 | 单元 | `PublicAccessRedisSecurityTest#embedAuthorizeHitAndReject` |
+| WID-09 | 接口 | `embed_enabled=0` | 带 `X-Embed-Mode: 1` 访问分享页 | 拒绝嵌入模式 | 单元 | `PublicAccessRedisSecurityTest#embedDisabled` |
 
 > 实测（2026-11-02）：WID-01 初测失败——`widget-demo.html` 内联脚本字符串含字面量 `</script>` 导致脚本被提前闭合、整段不执行；已修复（`'</scr' + 'ipt>'`）并复测通过（详见 §25 F1）。
+
+### 15.4 Redis 限流 / 嵌入白名单 / 密码锁定 / API Key IP 白名单
+
+| 编号 | 分类 | 前置条件 | 用例 / 步骤 | 预期结果 | 覆盖类型 | 自动化落点 |
+|------|------|---------|------------|---------|---------|-----------|
+| RL-01 | 单元 | 脚本化 Redis，limit=3 | 连续 3 次 `acquireSliding` | 前 3 次通过，第 4 次返回 -1（超限），窗口内不重复计数 | 单元 | `PublicAccessRedisSecurityTest#redisLuaSlidingWindowOverLimit` |
+| RL-02 | 单元 | 限流后 Redis 抛连接异常 | 再次 `acquire` | 自动降级内存，不抛异常；输出 WARN | 单元 | `#redisFailureFallsBackToMemory` |
+| RL-03 | 单元 | `enabled=false` | 直接构造 store | `distributed=false`，内存限流生效 | 单元 | `#redisDisabledUsesMemory` |
+| RL-04 | curl | Redis 8.10.1 已启动，分享链接有效 | 同一 token + IP 1 分钟内请求 `/api/public/share/{token}` 22 次 | 第 21 次起 `code=429`，`data.store=redis`；Redis ZSET 长度=20 | curl 实测 | `DefaultPublicAccessStore` Lua |
+| RL-05 | curl | 有效 API Key | 1 分钟内调用 `/api/open/v1/chat/stream` 61 次（空 body） | 第 61 次 `code=429`，`data.dimension=api-key`；前 60 次为参数错误 | curl 实测 | `PublicAccessRateLimiter` |
+| RL-06 | 运维 | Redis 宕机 | 停止容器后访问公开接口 | 应用不重启；限流 / 计数转为内存；恢复后自动回到 Redis | 仅手工 | `DefaultPublicAccessStore` |
+| EMB-01 | 单元 | 域名白名单 `*.example.com` | `Origin: https://a.example.com` | 命中 | 单元 | `#domainWhitelistMatching` |
+| EMB-02 | 单元 | 同上 | `Origin: https://example.com` / `https://evil.com` | 均不命中（通配仅匹配子域） | 单元 | `#domainWhitelistMatching` |
+| EMB-03 | 单元 | IP 白名单 `10.0.0.0/8` | 客户端 `10.1.2.3` / `192.168.1.1` | 前者命中、后者拒绝 | 单元 | `#embedIpWhitelist` |
+| EMB-04 | 单元 | IPv6 白名单 | `::1/128` 校验 `0:0:0:0:0:0:0:1` | 命中 | 单元 | `#cidrMatching` |
+| PWD-01 | 单元 | 阈值 5，锁定 15 分钟 | 连续 5 次错误 + 1 次正确 | 第 5 次返回 `PUBLIC_ACCESS_LOCKED`（3004）；正确密码仍被拒，`lockRemainingSeconds>0` | 单元 | `#passwordLockAndUnlock` |
+| PWD-02 | curl | 锁定 1 分钟（运行参数覆盖） | 5 次错误 → 正确密码 → 等待 61 秒 → 正确密码 | 锁定期间 3004；到期后 200，失败计数清零 | curl 实测 | `SharePasswordGuard` |
+| KEYIP-01 | 单元 | Key IP 白名单 `10.0.0.0/8` | `requireIpAllowed(key, "10.1.2.3")` / `"192.168.1.1"` | 前者放行，后者 403 可读文案 | 单元 | `#apiKeyIpWhitelist` |
+| KEYIP-02 | 单元 | 创建 Key 时传入 CIDR 列表 | `create(..., ipWhitelist)` | 列表规范化（单 IP 补 `/32`），空值存 NULL | 单元 | `#apiKeyCreateIpWhitelist` |
+| KEYIP-03 | curl | 白名单 `::1/128,127.0.0.1/32` / `10.0.0.0/8` | `GET /api/open/v1/me` | 前者 HTTP 200；后者 HTTP 403、`code=1004` | curl 实测 | `ApiKeyAuthenticationFilter` |
+| IP-01 | 单元 | `trusted-proxies=10.0.0.0/8`，对端可信 | XFF=`1.2.3.4, 10.0.0.5` | 解析为 `1.2.3.4`（从右向左跳过可信代理） | 单元 | `#trustedProxyOnly` |
+| IP-02 | 单元 | `trusted-proxies` 为空 | 伪造 `X-Forwarded-For: 1.2.3.4` | 仍使用 TCP 对端地址，伪造头不生效 | 单元 | `ClientIpResolver` |
 
 ---
 

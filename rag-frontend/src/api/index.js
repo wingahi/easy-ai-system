@@ -569,10 +569,20 @@ export function getVisitorId() {
   return id
 }
 
+let publicShareEmbedGrant = null
+
+/** Widget 嵌入模式设置授权 grant（由分享页从 URL 读取后调用） */
+export const setPublicShareEmbedGrant = (grant) => {
+  publicShareEmbedGrant = grant || null
+}
+
 const publicShareConfig = (password) => ({
   headers: {
     'X-Visitor-Id': getVisitorId(),
-    ...(password ? { 'X-Share-Password': password } : {})
+    ...(password ? { 'X-Share-Password': password } : {}),
+    ...(publicShareEmbedGrant
+      ? { 'X-Embed-Grant': publicShareEmbedGrant, 'X-Embed-Mode': '1' }
+      : {})
   }
 })
 
@@ -601,7 +611,10 @@ export function streamPublicShareChat(token, message, sessionId, password, image
         headers: {
           'Content-Type': 'application/json',
           'X-Visitor-Id': getVisitorId(),
-          ...(password ? { 'X-Share-Password': password } : {})
+          ...(password ? { 'X-Share-Password': password } : {}),
+          ...(publicShareEmbedGrant
+            ? { 'X-Embed-Grant': publicShareEmbedGrant, 'X-Embed-Mode': '1' }
+            : {})
         },
         body: JSON.stringify({ message, sessionId, ...(imageUrls?.length ? { imageUrls } : {}) }),
         signal: controller.signal
@@ -645,8 +658,11 @@ export function streamPublicShareChat(token, message, sessionId, password, image
 export const shareLinkPage = (params) => request.get('/admin/share-links', { params })
 export const shareLinkCreate = (data) => request.post('/admin/share-links', data)
 export const shareLinkRevoke = (id) => request.post(`/admin/share-links/${id}/revoke`)
+export const shareLinkUpdateEmbed = (id, data) => request.put(`/admin/share-links/${id}/embed`, data)
 
 export const apiKeyPage = (params) => request.get('/admin/api-keys', { params })
 export const apiKeyCreate = (data) => request.post('/admin/api-keys', data)
 export const apiKeyRevoke = (id) => request.post(`/admin/api-keys/${id}/revoke`)
+export const apiKeyUpdateIpWhitelist = (id, ipWhitelist) =>
+  request.put(`/admin/api-keys/${id}/ip-whitelist`, { ipWhitelist })
 export const apiKeyCallLogs = (id, params) => request.get(`/admin/api-keys/${id}/call-logs`, { params })

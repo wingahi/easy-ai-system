@@ -50,6 +50,16 @@ public class ShareLink extends BaseEntity {
     @TableField(typeHandler = BooleanToSmallintTypeHandler.class)
     private Boolean revoked;
 
+    /** 是否允许被 Widget 嵌入 */
+    @TableField(typeHandler = BooleanToSmallintTypeHandler.class)
+    private Boolean embedEnabled;
+
+    /** 允许嵌入的域名白名单（逗号分隔，支持 *.example.com） */
+    private String embedOriginWhitelist;
+
+    /** 允许嵌入的 IP 白名单（逗号分隔，CIDR） */
+    private String embedIpWhitelist;
+
     /** 创建人 */
     private String createdBy;
 }

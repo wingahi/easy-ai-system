@@ -41,4 +41,7 @@ public class ApiKey extends BaseEntity {
 
     /** 最近调用时间 */
     private LocalDateTime lastUsedTime;
+
+    /** IP 白名单（逗号分隔 CIDR，为空表示不限制来源 IP） */
+    private String ipWhitelist;
 }

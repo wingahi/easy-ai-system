@@ -94,6 +94,15 @@ wgh:
     allow-fallback-to-in-memory: ${WGH_PGVECTOR_FALLBACK:false}
   
   rag:
+    # ===== Redis（限流 / 分享密码锁定 / Widget 嵌入授权）=====
+    # Redis 不可用时不阻断启动，公开访问能力自动降级为单机内存并输出 WARN。
+    redis:
+      enabled: ${WGH_REDIS_ENABLED:true}
+      host: ${WGH_REDIS_HOST:localhost}
+      port: ${WGH_REDIS_PORT:6379}
+      database: ${WGH_REDIS_DATABASE:0}
+      timeout: ${WGH_REDIS_TIMEOUT:2s}
+      password: ${WGH_REDIS_PASSWORD:}
     retrieve:
       top-k: 5
       min-score: 0.3
@@ -128,9 +137,33 @@ wgh:
   public-access:
     share-max-expire-days: 30          # 分享链接有效期上限（天）
     share-default-expire-days: 7       # 未指定有效期时的默认天数
-    share-rate-limit-per-minute: 20    # 分享入口每分钟请求上限（按 token + IP）
-    api-rate-limit-per-minute: 60      # 开放 API 每分钟请求上限（按 API Key）
+    share-rate-limit-per-minute: 20    # 旧版分享限流默认值（rate-limit.overrides 未命中时生效）
+    api-rate-limit-per-minute: 60      # 旧版开放 API 限流默认值（rate-limit.overrides 未命中时生效）
     max-images-per-request: 4          # 分享/开放 API 单次提问图片数量上限
+
+    # 分布式限流：按“维度 + 主体 + 接口路径”滑动窗口计数
+    rate-limit:
+      default-per-minute: ${WGH_RL_DEFAULT:60}
+      overrides:
+        share-token: ${WGH_RL_SHARE_TOKEN:20}    # 分享：token + IP
+        share-ip: ${WGH_RL_SHARE_IP:60}          # 分享：单 IP
+        share-chat: ${WGH_RL_SHARE_CHAT:20}      # 分享：聊天接口
+        share-kb: ${WGH_RL_SHARE_KB:20}          # 分享：知识库检索接口
+        share-embed: ${WGH_RL_SHARE_EMBED:30}    # Widget 嵌入授权
+        api-key: ${WGH_RL_API_KEY:60}            # 开放 API：单个 Key
+        api-ip: ${WGH_RL_API_IP:120}             # 开放 API：单 IP
+
+    # 分享密码失败锁定（计数按 token + 客户端 IP 存 Redis）
+    share-password:
+      max-failures: ${WGH_SHARE_PWD_MAX_FAILURES:5}
+      lock-minutes: ${WGH_SHARE_PWD_LOCK_MINUTES:15}
+      reset-on-success: ${WGH_SHARE_PWD_RESET_ON_SUCCESS:true}
+
+    embed:
+      grant-ttl-minutes: ${WGH_EMBED_GRANT_TTL_MINUTES:30}
+
+    # 可信反向代理 CIDR；为空时不采信任何 X-Forwarded-For / X-Real-IP
+    trusted-proxies: []
 
   skill:
     # Skill 目录根路径（directory 模式从这里扫描/导入/写入）

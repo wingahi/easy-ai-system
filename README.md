@@ -30,7 +30,7 @@
 
 | 维度 | 主流产品（Dify / Coze / RAGFlow / FastGPT） | 本系统取舍 |
 |------|-------------------------------------------|-----------|
-| 部署形态 | SaaS 为主或依赖多中间件 | **单库单进程**：PostgreSQL + pgvector 承载业务与向量；pgvector 不可用不阻断启动 |
+| 部署形态 | SaaS 为主或依赖多中间件 | **单库 + 可选 Redis**：PostgreSQL + pgvector 承载业务与向量，Redis 承载分布式限流 / 密码锁定 / 嵌入授权；两者不可用均不阻断启动（Redis 自动降级为单机内存） |
 | 检索质量 | 多数只给相似度分数 | 对话实时输出召回覆盖率/命中率；ground truth 标注后可算真实 Recall@K，并支持离线评测脚本 |
 | 长对话成本 | 依赖外部缓存或简单截断 | 三层上下文压缩（近期原文/中期摘要/远期事实），压缩结果持久化与 Prompt 版本失效重算 |
 | 编排一致性 | 对话、Agent、工作流常是两套体系 | 聊天窗口、Agent、工作流、多 Agent 共用 SSE 风格、HITL、落库与刷新恢复约定 |
@@ -54,9 +54,9 @@
 - **分层上下文压缩**：超过 `max-history-messages`（默认 20）触发三层压缩：近期 4 轮原文、中期 6 轮摘要、远期 ≤8 条关键事实；模型缺失或超时自动降级为截断。
 - **多模态图片问答**：视觉模型（`supports_vision`）支持图片 + 文本提问，附件地址落 `wgh_chat_message.attachments`。
 - **反馈闭环**：消息点赞/点踩 + 备注，窗口满意度统计与差评运营列表（A/B 对比与数据集版本管理未实现）。
-- **免登录分享**：带 token 链接，支持有效期（默认 7 天、上限 30 天）、可选访问密码、只读范围（`WINDOW` 匿名问答 / `SESSION` 只读会话 / `KB` 只读检索）、使用次数与即时吊销。匿名问答复用完整 RAG 链路并计入配额。
-- **嵌入 Widget**：`widget.js` 一行脚本在第三方页面注入 iframe（`?embed=1`），样式靠 iframe 文档隔离；提供本地可打开的 `widget-demo.html`。
-- **开放 API**：API Key（仅存 SHA-256，明文创建时返回一次）、`chat:write` / `kb:read` / `usage:read` 权限范围、独立鉴权过滤链、按 Key 限流、调用日志（谁/接口/状态码/耗时/IP），并复用配额校验。
+- **免登录分享**：带 token 链接，支持有效期（默认 7 天、上限 30 天）、可选访问密码（失败 5 次锁定 15 分钟，可配置）、只读范围（`WINDOW` 匿名问答 / `SESSION` 只读会话 / `KB` 只读检索）、使用次数与即时吊销。匿名问答复用完整 RAG 链路并计入配额。
+- **嵌入 Widget**：`widget.js` 一行脚本在第三方页面注入 iframe；服务端先按域名（支持 `*.example.com` 通配）与 IP/CIDR 白名单校验来源并签发短期 grant（`?embed=1&grant=...`），未授权来源返回可读拒绝原因；样式靠 iframe 文档隔离；提供本地可打开的 `widget-demo.html`。
+- **开放 API**：API Key（仅存 SHA-256，明文创建时返回一次）、`chat:write` / `kb:read` / `usage:read` 权限范围、可选 IP/CIDR 白名单（不命中返回 403）、独立鉴权过滤链、按 Key + IP + 路径的 Redis 分布式限流、调用日志（谁/接口/状态码/耗时/IP），并复用配额校验。
 
 ### 2.3 Agent 与工作流编排
 
@@ -144,19 +144,40 @@ docker run -d --name postgres-with-vector \
 docker exec -i postgres-with-vector psql -U postgres -d wgh_rag < rag-backend/sql/init.sql
 ```
 
-### 4.2 后端
+### 4.2 后端（含可选 Redis）
 
 ```bash
+# 可选：启动 Redis（公开访问的分布式限流 / 密码锁定 / 嵌入授权使用）
+docker compose up -d redis       # redis:8.10.1-alpine，默认 localhost:6379
+docker exec wgh-rag-redis redis-cli ping   # PONG
+
 cd rag-backend
 mvn install -DskipTests          # 多模块先安装，避免读到旧 jar
 mvn -f rag-app/pom.xml spring-boot:run
 # http://localhost:8080
 ```
 
+> Redis 未启动也能正常启动应用：首次公开访问请求失败后自动降级为**单机内存**限流/计数，并每 30 秒最多输出一次 WARN。恢复 Redis 后自动回到 Redis（详见 [docs/design-public-access.md](docs/design-public-access.md) §4.3）。
+> 关闭 Redis 接入：`WGH_REDIS_ENABLED=false`。
+
 > 双认证并存：
 > - **本地管理员 / 体验账号**：登录页输入账号密码，后端 `POST /api/auth/login` 校验 BCrypt 密码并签发内部会话凭证（HS256，独立 `wgh.auth.local.jwt-secret`，有效期默认 2 小时）。仅 `wgh_user.source=local` 且为 admin 角色或体验账号（`trial=1`）可登录。
 > - **外部 OIDC 用户**：由 IdP 签发 Bearer token，后端按 JWKS 公钥验签；启动前需配置 `WGH_OIDC_ISSUER` / `WGH_OIDC_AUDIENCE` / `WGH_OIDC_JWKS_URI`。
 > 两种凭证都经统一认证过滤器识别，角色/权限统一查数据库角色表与权限表。
+>
+> **生产部署不得使用默认口令**：`sql/data.sql` 只包含角色/权限等幂等种子，不再硬编码任何可登录账号。
+> 初始管理员由启动参数注入后创建：
+>
+> ```bash
+> export WGH_INIT_ADMIN_PASSWORD='<至少 8 位且含字母与数字>'
+> mvn -f rag-app/pom.xml spring-boot:run
+> ```
+>
+> 未注入该变量时**不会创建默认管理员**（启动日志输出 ERROR 提示）；首次启动创建的 admin 账号带
+> `password_must_change=1`，登录后必须先调用 `POST /api/auth/password` 改密，改密前除只读接口、
+> 登出与改密接口外的写请求都会被拒绝（业务码 1006）。已存在的 admin 账号不会被覆盖口令。
+> 本地会话凭证密钥 `wgh.auth.local.jwt-secret` 在生产 profile（`prod`/`production`）下必须显式配置，
+> 否则启动失败（fail-closed）；开发环境未配置时会生成随机密钥并打印 WARN（重启后旧会话全部失效）。
 
 ### 4.3 前端
 
@@ -201,10 +222,12 @@ python3 eval/eval_recall.py --kb 2 --k 5  # 离线召回率评测
 
 ### 4.7 生产部署要点
 
-- 仓库暂不含 Dockerfile / docker-compose；当前方式为 **PostgreSQL + Spring Boot 进程 + Nginx 托管前端**。
+- 仓库提供 `docker-compose.yml` 用于本地启动 **Redis 8.10.1**；应用本体仍为 **PostgreSQL + Spring Boot 进程 + Nginx 托管前端**（未提供应用 Dockerfile）。
+- Redis 推荐独立部署或托管服务，开启持久化与访问密码，通过 `WGH_REDIS_HOST/PORT/DATABASE/PASSWORD/TIMEOUT` 注入；生产需监控连接与内存。
 - 生产必须通过环境变量注入 `WGH_OIDC_ISSUER`、`WGH_OIDC_AUDIENCE`、`WGH_OIDC_JWKS_URI`、数据库口令与模型 Key；`WGH_PROFILE=prod`。
-- 分享/开放 API 的进程内限流不跨实例共享；多实例部署需在网关层补充限流。
-- 第三方页面嵌入 Widget 时，需在宿主 CSP 中放行 `script-src` 与 `frame-src` 指向本系统域名。
+- 分享 / 开放 API 的限流、密码锁定、嵌入 grant 已集中到 Redis，多实例共享；Redis 故障时自动降级为单机内存，此时各实例计数不共享。
+- 客户端真实 IP：默认只信任 TCP 对端地址。若部署在 Nginx / 网关后，需配置 `wgh.public-access.trusted-proxies`（如 `10.0.0.10/32`、`172.17.0.0/16`），**不要配置为 `0.0.0.0/0`**，否则客户端可伪造 `X-Forwarded-For` 绕过 IP 白名单与限流。
+- 第三方页面嵌入 Widget 时，需在宿主 CSP 中放行 `script-src` 与 `frame-src` 指向本系统域名；如需禁止任意站点手工 iframe 分享页，请在网关/静态服务为分享页下发 `CSP frame-ancestors <白名单域名>`。
 
 ### 4.8 对接外部 IdP（OIDC 资源服务器）
 
@@ -258,6 +281,24 @@ curl -H "Authorization: Bearer $IDP_TOKEN" http://localhost:8080/api/auth/me
 | `WGH_OIDC_JWKS_URI` | - | JWKS 端点；留空则由 issuer 自动发现 |
 | `WGH_OIDC_ROLES_CLAIM` | roles | token 中承载角色的 claim 名 |
 | `WGH_OIDC_USERNAME_CLAIM` | sub | token 中承载用户名的 claim 名 |
+| `WGH_REDIS_ENABLED` | true | 是否启用 Redis；false 时公开访问直接使用单机内存 |
+| `WGH_REDIS_HOST` | localhost | Redis 主机 |
+| `WGH_REDIS_PORT` | 6379 | Redis 端口 |
+| `WGH_REDIS_DATABASE` | 0 | Redis 逻辑库 |
+| `WGH_REDIS_TIMEOUT` | 2s | Redis 连接 / 命令超时（影响故障降级延迟） |
+| `WGH_REDIS_PASSWORD` | - | Redis 访问密码 |
+| `WGH_RL_DEFAULT` | 60 | 限流默认每分钟上限 |
+| `WGH_RL_SHARE_TOKEN` | 20 | 分享 token + IP 每分钟上限 |
+| `WGH_RL_SHARE_IP` | 60 | 分享单 IP 每分钟上限 |
+| `WGH_RL_SHARE_CHAT` | 20 | 分享聊天接口每分钟上限 |
+| `WGH_RL_SHARE_KB` | 20 | 分享知识库检索每分钟上限 |
+| `WGH_RL_SHARE_EMBED` | 30 | Widget 嵌入授权每分钟上限 |
+| `WGH_RL_API_KEY` | 60 | 单个 API Key 每分钟上限 |
+| `WGH_RL_API_IP` | 120 | 开放 API 单 IP 每分钟上限 |
+| `WGH_SHARE_PWD_MAX_FAILURES` | 5 | 分享密码失败阈值 |
+| `WGH_SHARE_PWD_LOCK_MINUTES` | 15 | 分享密码锁定时长（分钟） |
+| `WGH_SHARE_PWD_RESET_ON_SUCCESS` | true | 密码验证成功后清零失败计数 |
+| `WGH_EMBED_GRANT_TTL_MINUTES` | 30 | Widget 嵌入 grant 有效期（分钟） |
 | `WGH_UPLOAD_DIR` | ./uploads | 文件上传目录 |
 | `WGH_SKILL_BASE_PATH` | ./skills | Skill 磁盘目录 |
 | `OPENAI_API_KEY` | demo | OpenAI 兼容接口 Key |
@@ -275,9 +316,16 @@ curl -H "Authorization: Bearer $IDP_TOKEN" http://localhost:8080/api/auth/me
 | `wgh.rag.cache.max-per-window` | 500 | 每窗口缓存条数上限 |
 | `wgh.public-access.share-max-expire-days` | 30 | 分享链接有效期上限（天） |
 | `wgh.public-access.share-default-expire-days` | 7 | 分享链接默认有效期（天） |
-| `wgh.public-access.share-rate-limit-per-minute` | 20 | 分享入口每分钟请求上限（token + IP） |
-| `wgh.public-access.api-rate-limit-per-minute` | 60 | 开放 API 每分钟请求上限（API Key） |
 | `wgh.public-access.max-images-per-request` | 4 | 单次提问图片数量上限 |
+| `wgh.rag.redis.enabled` | true | 启用 Redis（分布式限流 / 密码锁定 / 嵌入授权） |
+| `wgh.rag.redis.host/port/database/timeout/password` | localhost / 6379 / 0 / 2s / - | Redis 连接参数 |
+| `wgh.public-access.rate-limit.default-per-minute` | 60 | 未命中覆盖配置时的限流默认值 |
+| `wgh.public-access.rate-limit.overrides.*` | 见下表 | 按维度（`share-token` / `share-ip` / `share-chat` / `share-kb` / `share-embed` / `api-key` / `api-ip`）或 `维度:路径` 覆盖每分钟上限 |
+| `wgh.public-access.share-password.max-failures` | 5 | 密码错误阈值 |
+| `wgh.public-access.share-password.lock-minutes` | 15 | 锁定分钟数 |
+| `wgh.public-access.share-password.reset-on-success` | true | 验证成功后清零失败计数 |
+| `wgh.public-access.embed.grant-ttl-minutes` | 30 | Widget 嵌入 grant 有效期（分钟） |
+| `wgh.public-access.trusted-proxies` | `[]` | 可信反向代理 CIDR 列表；为空时不采信 `X-Forwarded-For` |
 | `wgh.auth.oidc.issuer` | - | 外部 IdP issuer（必填） |
 | `wgh.auth.oidc.audience` | - | 期望 audience（必填） |
 | `wgh.auth.oidc.jwks-uri` | - | JWKS 端点；留空则按 issuer 自动发现 |
@@ -288,6 +336,8 @@ curl -H "Authorization: Bearer $IDP_TOKEN" http://localhost:8080/api/auth/me
 | `wgh.auth.oidc.jwks-refresh-min-interval-seconds` | 30 | 未知 kid/网络失败时刷新最小间隔（限频） |
 | `wgh.auth.oidc.clock-skew-seconds` | 30 | exp/nbf 时钟偏差容忍 |
 
+> 限流覆盖默认值：`share-token=20`、`share-ip=60`、`share-chat=20`、`share-kb=20`、`share-embed=30`、`api-key=60`、`api-ip=120`；支持 `wgh.public-access.rate-limit.overrides["维度:路径"]` 做更细粒度覆盖。
+> 完整规则、原子性实现与降级策略见 [docs/design-public-access.md](docs/design-public-access.md)。
 > 配额相关配置（全局默认/用户自定义）由 `rag-quota` 模块提供，见 [docs/quota-design.md](docs/quota-design.md)。
 
 ---
@@ -321,11 +371,12 @@ curl -H "Authorization: Bearer $IDP_TOKEN" http://localhost:8080/api/auth/me
 |------|------|------------|
 | 权限体系 | 无角色管理界面/接口，无租户隔离，资源级权限仅覆盖部分 Controller | 多团队共用需在网关或后续迭代补足 |
 | 可观测性 | 无 Prometheus 指标、链路追踪 | 生产排障依赖日志与审计表 |
-| 部署编排 | 无 Dockerfile / docker-compose | 需手工部署 PostgreSQL + 后端进程 + Nginx |
-| 限流 | 分享/开放 API 为进程内滑动窗口 | 多实例不共享计数，重启清零 |
-| Widget | 仅 iframe 注入，无 `postMessage` 双向通信；未做 `frame-ancestors` 域名白名单 | 宿主页无法读取对话事件；任意站点可嵌入已授权链接 |
-| 分享密码 | 无失败次数限制与验证码 | 暴力破解防护依赖网关层 |
-| API Key | 无自动轮换、无 IP 白名单 | 泄露后需人工吊销 |
+| 部署编排 | 仅提供 Redis 的 docker-compose；应用无 Dockerfile | 需手工部署 PostgreSQL + Redis + 后端进程 + Nginx |
+| 限流 | Redis Lua 分布式滑动窗口，故障时降级单机内存 | Redis 故障期间多实例计数不共享、重启清零；建议 Redis 高可用 |
+| Widget | 仅 iframe 注入，无 `postMessage` 双向通信；`frame-ancestors` 需网关/静态服务配置 | 宿主页无法读取对话事件；手工 iframe 仍可能绕过 `widget.js`，需 CSP 兜底 |
+| 分享密码 | 失败 5 次锁定 15 分钟（可配置），无验证码 | 换 IP 可继续尝试；强防护可叠加网关限流/验证码 |
+| API Key | 无自动轮换；已有可选 IP 白名单 | 泄露后需人工吊销；建议始终配置 IP 白名单 |
+| 真实 IP | 默认只信任 TCP 对端，XFF 仅在可信代理下生效 | 代理拓扑变化时需同步 `trusted-proxies`，配置过宽会引入伪造风险 |
 | 反馈与评测 | 无数据集版本管理、无 A/B 对比 | 离线评测只能脚本化执行 |
 | 多模态 | 仅视觉模型图片输入，无 OCR | 扫描件/图片型 PDF 无法直接提取文字 |
 | 检索 | 单库 PostgreSQL + pgvector，无独立向量库/搜索引擎 | 超大规模语料需评估性能上限 |

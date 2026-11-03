@@ -100,9 +100,12 @@
     <el-dialog v-model="passwordDialog" title="该分享需要访问密码" width="360px"
                :close-on-click-modal="false" :show-close="false">
       <el-input v-model="passwordInput" type="password" show-password placeholder="请输入访问密码"
-                @keydown.enter="unlock" />
+                :disabled="passwordLocked" @keydown.enter="unlock" />
+      <div v-if="passwordLocked" class="pwd-lock-hint">
+        密码错误次数过多，请 {{ lockRemainingSeconds }} 秒后重试
+      </div>
       <template #footer>
-        <el-button type="primary" :loading="unlocking" @click="unlock">进入</el-button>
+        <el-button type="primary" :loading="unlocking" :disabled="passwordLocked" @click="unlock">进入</el-button>
       </template>
     </el-dialog>
   </div>
@@ -116,12 +119,17 @@ import { Promotion, Plus, Delete } from '@element-plus/icons-vue'
 import { marked } from 'marked'
 import {
   publicShareInfo, publicShareUnlock, publicShareSessions, publicShareCreateSession,
-  publicShareDeleteSession, publicShareMessages, publicShareKbSearch, streamPublicShareChat
+  publicShareDeleteSession, publicShareMessages, publicShareKbSearch, streamPublicShareChat,
+  setPublicShareEmbedGrant
 } from '../../api'
 
 const route = useRoute()
 const token = route.params.token
 const isEmbed = computed(() => route.query.embed === '1')
+const embedGrant = typeof route.query.grant === 'string' ? route.query.grant : null
+if (isEmbed.value && embedGrant) {
+  setPublicShareEmbedGrant(embedGrant)
+}
 
 const info = ref(null)
 const loadError = ref('')
@@ -129,6 +137,8 @@ const passwordDialog = ref(false)
 const passwordInput = ref('')
 const password = ref('')
 const unlocking = ref(false)
+const passwordLocked = computed(() => !!info.value?.passwordLocked)
+const lockRemainingSeconds = computed(() => info.value?.lockRemainingSeconds || 0)
 
 const sessions = ref([])
 const currentSessionId = ref(null)
@@ -150,11 +160,18 @@ const title = computed(() => info.value?.title || 'AI 助手')
 const subtitle = computed(() => info.value?.description || (readOnly.value ? '只读分享' : '基于知识库的 AI 助手'))
 
 const load = async () => {
+  if (isEmbed.value && !embedGrant) {
+    loadError.value = '缺少 Widget 嵌入授权，请通过 widget.js 加载分享页'
+    return
+  }
   try {
     const res = await publicShareInfo(token, password.value || null)
     info.value = res.data
     if (info.value.passwordRequired && !info.value.passwordVerified) {
       passwordDialog.value = true
+      if (info.value.passwordLocked) {
+        ElMessage.warning(`访问密码错误次数过多，请 ${info.value.lockRemainingSeconds} 秒后重试`)
+      }
       return
     }
     await loadContent()
@@ -377,6 +394,7 @@ onUnmounted(() => {
   span:nth-child(3) { animation-delay: 0.4s; } }
 @keyframes blink { 0%, 80%, 100% { opacity: 0.2; } 40% { opacity: 1; } }
 .error-panel { flex: 1; display: flex; align-items: center; justify-content: center; }
+.pwd-lock-hint { margin-top: 8px; font-size: 12px; color: #f56c6c; line-height: 1.5; }
 .kb-panel { padding: 16px; gap: 12px; }
 .kb-search-bar { display: flex; gap: 10px; }
 .kb-results { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }

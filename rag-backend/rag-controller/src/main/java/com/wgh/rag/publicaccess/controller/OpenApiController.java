@@ -15,6 +15,7 @@ import com.wgh.rag.publicaccess.entity.ApiCallLog;
 import com.wgh.rag.publicaccess.entity.ApiKey;
 import com.wgh.rag.publicaccess.service.ApiCallLogService;
 import com.wgh.rag.publicaccess.service.ApiKeyService;
+import com.wgh.rag.publicaccess.service.ClientIpResolver;
 import com.wgh.rag.publicaccess.service.PublicAccessRateLimiter;
 import com.wgh.rag.quota.entity.QuotaUsage;
 import com.wgh.rag.quota.service.QuotaService;
@@ -22,6 +23,7 @@ import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.store.embedding.EmbeddingMatch;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -56,6 +58,7 @@ public class OpenApiController {
     private final RagChatService ragChatService;
     private final RagRetrieveService retrieveService;
     private final QuotaService quotaService;
+    private final ClientIpResolver clientIpResolver;
 
     @Operation(summary = "当前 API Key 信息")
     @GetMapping("/me")
@@ -72,9 +75,9 @@ public class OpenApiController {
 
     @Operation(summary = "开放 API：匿名流式问答（scope=chat:write）")
     @PostMapping(value = "/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public SseEmitter chatStream(@RequestBody Map<String, Object> body) {
+    public SseEmitter chatStream(@RequestBody Map<String, Object> body, HttpServletRequest request) {
         ApiKey key = currentKey();
-        rateLimiter.acquire("api:" + key.getId(), properties.getApiRateLimitPerMinute());
+        rateLimit(key, request);
 
         Long windowId = body.get("windowId") == null ? null
                 : Long.parseLong(String.valueOf(body.get("windowId")));
@@ -110,9 +113,10 @@ public class OpenApiController {
     public Result<Map<String, Object>> kbSearch(
             @RequestParam Long kbId,
             @RequestParam String query,
-            @RequestParam(defaultValue = "5") Integer topK) {
+            @RequestParam(defaultValue = "5") Integer topK,
+            HttpServletRequest request) {
         ApiKey key = currentKey();
-        rateLimiter.acquire("api:" + key.getId(), properties.getApiRateLimitPerMinute());
+        rateLimit(key, request);
         if (query == null || query.isBlank()) {
             throw new BusinessException(ResultCode.PARAM_ERROR, "query 不能为空");
         }
@@ -156,6 +160,15 @@ public class OpenApiController {
     }
 
     // ===== 内部方法 =====
+
+    /**
+     * 开放 API 按 API Key 与客户端 IP 两个维度分别限流，均包含接口路径。
+     */
+    private void rateLimit(ApiKey key, HttpServletRequest request) {
+        String path = request.getRequestURI();
+        rateLimiter.acquire("api-key", String.valueOf(key.getId()), path);
+        rateLimiter.acquire("api-ip", clientIpResolver.resolve(request), path);
+    }
 
     private ApiKey currentKey() {
         String username = SecurityContextHolder.getContext().getAuthentication() == null

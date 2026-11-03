@@ -20,6 +20,7 @@ import java.util.List;
 public class ApiCallLogService {
 
     private final ApiCallLogMapper apiCallLogMapper;
+    private final ClientIpResolver clientIpResolver;
 
     public void record(ApiKey key, HttpServletRequest request, int statusCode, long durationMs) {
         try {
@@ -31,7 +32,7 @@ public class ApiCallLogService {
             logRow.setPath(request.getRequestURI());
             logRow.setStatusCode(statusCode);
             logRow.setDurationMs(durationMs);
-            logRow.setIp(clientIp(request));
+            logRow.setIp(clientIpResolver.resolve(request));
             apiCallLogMapper.insert(logRow);
         } catch (Exception e) {
             log.warn("API 调用日志写入失败: keyId={}, path={}, reason={}",
@@ -49,13 +50,5 @@ public class ApiCallLogService {
     public Long countByKey(Long keyId) {
         return apiCallLogMapper.selectCount(new LambdaQueryWrapper<ApiCallLog>()
                 .eq(ApiCallLog::getApiKeyId, keyId));
-    }
-
-    private String clientIp(HttpServletRequest request) {
-        String forwarded = request.getHeader("X-Forwarded-For");
-        if (forwarded != null && !forwarded.isBlank()) {
-            return forwarded.split(",")[0].trim();
-        }
-        return request.getRemoteAddr();
     }
 }

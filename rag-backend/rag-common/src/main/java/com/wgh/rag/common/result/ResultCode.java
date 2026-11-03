@@ -28,6 +28,7 @@ public enum ResultCode {
     RESOURCE_NOT_FOUND(3001, "资源不存在"),
     RESOURCE_ALREADY_EXISTS(3002, "资源已存在"),
     OPERATION_NOT_ALLOWED(3003, "操作不允许"),
+    PUBLIC_ACCESS_LOCKED(3004, "公开访问已锁定"),
 
     // 限流配额 429
     QUOTA_EXCEEDED(429, "请求超出配额限制"),

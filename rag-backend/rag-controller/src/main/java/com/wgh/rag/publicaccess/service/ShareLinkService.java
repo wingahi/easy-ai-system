@@ -20,6 +20,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
@@ -41,6 +43,7 @@ public class ShareLinkService {
     private final ChatSessionMapper sessionMapper;
     private final KnowledgeBaseMapper knowledgeBaseMapper;
     private final PublicAccessProperties properties;
+    private final SharePasswordGuard passwordGuard;
 
     private final BCryptPasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
 
@@ -104,6 +107,9 @@ public class ShareLinkService {
         link.setMaxUses(req.getMaxUses() == null ? 0 : req.getMaxUses());
         link.setUseCount(0);
         link.setRevoked(false);
+        link.setEmbedEnabled(Boolean.TRUE.equals(req.getEmbedEnabled()));
+        link.setEmbedOriginWhitelist(normalizeDomainWhitelist(req.getEmbedOriginWhitelist()));
+        link.setEmbedIpWhitelist(normalizeIpWhitelist(req.getEmbedIpWhitelist()));
         link.setCreatedBy(creator);
         shareLinkMapper.insert(link);
         log.info("创建分享链接: id={}, scope={}, target={}, creator={}", link.getId(), scope, req.getTargetId(), creator);
@@ -137,16 +143,79 @@ public class ShareLinkService {
     }
 
     /**
-     * 校验访问密码；链接本身不需要密码时直接通过
+     * 校验访问密码（不启用失败锁定，兼容旧调用）
      */
     public void requirePassword(ShareLink link, String password) {
+        requirePassword(link, password, null);
+    }
+
+    /**
+     * 校验访问密码，并按「token + 客户端 IP」累计失败次数、触发锁定。
+     */
+    public void requirePassword(ShareLink link, String password, String clientIp) {
         if (link.getPasswordHash() == null || link.getPasswordHash().isBlank()) return;
+        if (clientIp != null && !clientIp.isBlank()) {
+            long lockSeconds = passwordGuard.lockRemainingSeconds(link.getToken(), clientIp);
+            if (lockSeconds > 0) {
+                throw passwordGuard.lockedException(lockSeconds);
+            }
+        }
         if (password == null || password.isBlank()) {
             // 不使用 1001/1002，避免前端拦截器把匿名访客误判为登录失效
             throw new BusinessException(ResultCode.OPERATION_NOT_ALLOWED, "该分享链接需要访问密码");
         }
         if (!passwordEncoder.matches(password, link.getPasswordHash())) {
-            throw new BusinessException(ResultCode.PERMISSION_DENIED, "访问密码错误");
+            if (clientIp == null || clientIp.isBlank()) {
+                throw new BusinessException(ResultCode.PERMISSION_DENIED, "访问密码错误");
+            }
+            // 达到阈值时抛出锁定异常，否则抛出带剩余次数的异常
+            passwordGuard.onFailure(link, clientIp);
+        }
+        if (clientIp != null && !clientIp.isBlank()) {
+            passwordGuard.onSuccess(link, clientIp);
+        }
+    }
+
+    /**
+     * 更新分享链接的嵌入白名单配置。
+     */
+    @Transactional
+    public ShareLink updateEmbedConfig(Long id, Boolean embedEnabled, String embedOriginWhitelist,
+                                       String embedIpWhitelist) {
+        ShareLink link = shareLinkMapper.selectById(id);
+        if (link == null) {
+            throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "分享链接不存在");
+        }
+        link.setEmbedEnabled(Boolean.TRUE.equals(embedEnabled));
+        link.setEmbedOriginWhitelist(normalizeDomainWhitelist(embedOriginWhitelist));
+        link.setEmbedIpWhitelist(normalizeIpWhitelist(embedIpWhitelist));
+        shareLinkMapper.updateById(link);
+        return link;
+    }
+
+    private String normalizeDomainWhitelist(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        List<String> hosts = new ArrayList<>();
+        for (String part : raw.split("[,;\\s]+")) {
+            if (part.isBlank()) {
+                continue;
+            }
+            String host = DomainWhitelistMatcher.extractHost(part);
+            if (host == null) {
+                throw new BusinessException(ResultCode.PARAM_ERROR, "域名白名单格式错误：" + part);
+            }
+            hosts.add(host);
+        }
+        return hosts.isEmpty() ? null : String.join(",", hosts);
+    }
+
+    private String normalizeIpWhitelist(String raw) {
+        try {
+            return IpCidrMatcher.normalizeList(raw);
+        } catch (IllegalArgumentException e) {
+            throw new BusinessException(ResultCode.PARAM_ERROR, "IP 白名单格式错误：" + e.getMessage());
         }
     }
 

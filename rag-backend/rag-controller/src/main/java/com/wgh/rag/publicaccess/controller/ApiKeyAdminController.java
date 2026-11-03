@@ -58,14 +58,23 @@ public class ApiKeyAdminController {
             if (days > 0) expiresAt = LocalDateTime.now().plusDays(days);
         }
         ApiKeyService.CreatedKey created = apiKeyService.create(
-                name, scopes, expiresAt, SecurityUtils.currentUsername());
+                name, scopes, expiresAt, rawList(body.get("ipWhitelist")), SecurityUtils.currentUsername());
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("id", created.record().getId());
         data.put("name", created.record().getName());
         data.put("scopes", created.record().getScopes());
+        data.put("ipWhitelist", created.record().getIpWhitelist());
         data.put("plainKey", created.plainKey());
         data.put("expiresAt", created.record().getExpiresAt());
         return Result.success(data);
+    }
+
+    @Operation(summary = "设置 / 更新 API Key IP 白名单（空表示不限制）")
+    @PutMapping("/{id}/ip-whitelist")
+    @Audit(action = "API_KEY_UPDATE_IP_WHITELIST", resourceType = "API_KEY")
+    public Result<ApiKey> updateIpWhitelist(@PathVariable Long id, @RequestBody Map<String, Object> body) {
+        return Result.success(apiKeyService.updateIpWhitelist(
+                id, rawList(body.get("ipWhitelist")), SecurityUtils.currentUsername()));
     }
 
     @Operation(summary = "吊销 API Key")
@@ -81,5 +90,15 @@ public class ApiKeyAdminController {
     public Result<List<ApiCallLog>> callLogs(@PathVariable Long id,
                                              @RequestParam(defaultValue = "20") Integer limit) {
         return Result.success(apiCallLogService.recent(id, limit));
+    }
+
+    private String rawList(Object raw) {
+        if (raw == null) {
+            return null;
+        }
+        if (raw instanceof List<?> list) {
+            return list.stream().map(String::valueOf).reduce((a, b) -> a + "," + b).orElse(null);
+        }
+        return String.valueOf(raw);
     }
 }

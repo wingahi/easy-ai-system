@@ -12,6 +12,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -46,6 +47,9 @@ public class ShareLinkAdminController {
         // 前端传密码明文（字段名沿用实体列名 passwordHash，落库前由 Service 做 BCrypt）
         req.setPasswordHash(body.get("password") == null ? null : String.valueOf(body.get("password")));
         req.setMaxUses(body.get("maxUses") == null ? null : Integer.parseInt(String.valueOf(body.get("maxUses"))));
+        req.setEmbedEnabled(Boolean.TRUE.equals(body.get("embedEnabled")));
+        req.setEmbedOriginWhitelist(rawList(body.get("embedOriginWhitelist")));
+        req.setEmbedIpWhitelist(rawList(body.get("embedIpWhitelist")));
         if (body.get("expiresDays") != null) {
             int days = Integer.parseInt(String.valueOf(body.get("expiresDays")));
             if (days > 0) req.setExpiresAt(LocalDateTime.now().plusDays(days));
@@ -59,5 +63,26 @@ public class ShareLinkAdminController {
     public Result<Void> revoke(@PathVariable Long id) {
         shareLinkService.revoke(id, SecurityUtils.currentUsername());
         return Result.success();
+    }
+
+    @Operation(summary = "更新分享链接嵌入白名单配置")
+    @PutMapping("/{id}/embed")
+    @Audit(action = "SHARE_LINK_UPDATE_EMBED", resourceType = "SHARE_LINK")
+    public Result<ShareLink> updateEmbed(@PathVariable Long id, @RequestBody Map<String, Object> body) {
+        return Result.success(shareLinkService.updateEmbedConfig(
+                id,
+                Boolean.TRUE.equals(body.get("embedEnabled")),
+                rawList(body.get("embedOriginWhitelist")),
+                rawList(body.get("embedIpWhitelist"))));
+    }
+
+    private String rawList(Object raw) {
+        if (raw == null) {
+            return null;
+        }
+        if (raw instanceof List<?> list) {
+            return list.stream().map(String::valueOf).reduce((a, b) -> a + "," + b).orElse(null);
+        }
+        return String.valueOf(raw);
     }
 }

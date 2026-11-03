@@ -41,6 +41,15 @@ public class ApiKeyService {
      */
     @Transactional
     public CreatedKey create(String name, List<String> scopes, LocalDateTime expiresAt, String creator) {
+        return create(name, scopes, expiresAt, null, creator);
+    }
+
+    /**
+     * 创建 API Key，返回明文（仅此一次），可同时设置 IP 白名单。
+     */
+    @Transactional
+    public CreatedKey create(String name, List<String> scopes, LocalDateTime expiresAt,
+                             String ipWhitelist, String creator) {
         if (name == null || name.isBlank()) {
             throw new BusinessException(ResultCode.PARAM_ERROR, "API Key 名称不能为空");
         }
@@ -56,6 +65,7 @@ public class ApiKeyService {
         if (normalized.isEmpty()) {
             throw new BusinessException(ResultCode.PARAM_ERROR, "至少需要指定一个权限范围");
         }
+        String normalizedIpWhitelist = normalizeIpWhitelist(ipWhitelist);
 
         byte[] bytes = new byte[16];
         RANDOM.nextBytes(bytes);
@@ -70,11 +80,60 @@ public class ApiKeyService {
         key.setScopes(String.join(",", normalized));
         key.setExpiresAt(expiresAt);
         key.setRevoked(false);
+        key.setIpWhitelist(normalizedIpWhitelist);
         key.setCreatedBy(creator);
         apiKeyMapper.insert(key);
-        log.info("创建 API Key: id={}, prefix={}, scopes={}, creator={}",
-                key.getId(), key.getKeyPrefix(), key.getScopes(), creator);
+        log.info("创建 API Key: id={}, prefix={}, scopes={}, ipWhitelist={}, creator={}",
+                key.getId(), key.getKeyPrefix(), key.getScopes(), key.getIpWhitelist(), creator);
         return new CreatedKey(key, plain);
+    }
+
+    /**
+     * 更新 API Key 的 IP 白名单；传空表示取消限制。
+     */
+    @Transactional
+    public ApiKey updateIpWhitelist(Long id, String ipWhitelist, String operator) {
+        ApiKey key = apiKeyMapper.selectById(id);
+        if (key == null) {
+            throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "API Key 不存在");
+        }
+        key.setIpWhitelist(normalizeIpWhitelist(ipWhitelist));
+        apiKeyMapper.updateById(key);
+        log.info("更新 API Key IP 白名单: id={}, ipWhitelist={}, operator={}",
+                id, key.getIpWhitelist(), operator);
+        key.setKeyHash(null);
+        return key;
+    }
+
+    /**
+     * 校验客户端 IP 是否命中 API Key 的 IP 白名单；未配置表示不限制。
+     */
+    public void requireIpAllowed(ApiKey key, String clientIp) {
+        if (key.getIpWhitelist() == null || key.getIpWhitelist().isBlank()) {
+            return;
+        }
+        List<IpCidrMatcher> matchers;
+        try {
+            matchers = IpCidrMatcher.parseList(key.getIpWhitelist());
+        } catch (IllegalArgumentException e) {
+            log.warn("API Key {} 的 IP 白名单配置非法: {}", key.getId(), e.getMessage());
+            throw new BusinessException(ResultCode.PERMISSION_DENIED, "API Key IP 白名单配置非法，请联系管理员");
+        }
+        for (IpCidrMatcher matcher : matchers) {
+            if (matcher.matches(clientIp)) {
+                return;
+            }
+        }
+        throw new BusinessException(ResultCode.PERMISSION_DENIED,
+                "客户端 IP " + clientIp + " 不在该 API Key 的 IP 白名单内");
+    }
+
+    private String normalizeIpWhitelist(String raw) {
+        try {
+            return IpCidrMatcher.normalizeList(raw);
+        } catch (IllegalArgumentException e) {
+            throw new BusinessException(ResultCode.PARAM_ERROR, "IP 白名单格式错误：" + e.getMessage());
+        }
     }
 
     /**

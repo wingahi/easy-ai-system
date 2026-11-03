@@ -12,8 +12,11 @@ import com.wgh.rag.publicaccess.entity.ShareLink;
 import com.wgh.rag.publicaccess.mapper.ApiKeyMapper;
 import com.wgh.rag.publicaccess.mapper.ShareLinkMapper;
 import com.wgh.rag.publicaccess.service.ApiKeyService;
+import com.wgh.rag.publicaccess.service.DefaultPublicAccessStore;
 import com.wgh.rag.publicaccess.service.PublicAccessRateLimiter;
 import com.wgh.rag.publicaccess.service.ShareLinkService;
+import com.wgh.rag.publicaccess.service.SharePasswordGuard;
+import com.wgh.rag.config.redis.RedisCommandPort;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
@@ -38,12 +41,14 @@ class PublicAccessUnitTest {
     private final ChatSessionMapper sessionMapper = mock(ChatSessionMapper.class);
     private final KnowledgeBaseMapper knowledgeBaseMapper = mock(KnowledgeBaseMapper.class);
     private final PublicAccessProperties properties = new PublicAccessProperties();
+    private final DefaultPublicAccessStore store = new DefaultPublicAccessStore(RedisCommandPort.disabled());
+    private final SharePasswordGuard passwordGuard = new SharePasswordGuard(store, properties);
     private final ShareLinkService shareLinkService = new ShareLinkService(
-            shareLinkMapper, windowService, sessionMapper, knowledgeBaseMapper, properties);
+            shareLinkMapper, windowService, sessionMapper, knowledgeBaseMapper, properties, passwordGuard);
 
     private final ApiKeyMapper apiKeyMapper = mock(ApiKeyMapper.class);
     private final ApiKeyService apiKeyService = new ApiKeyService(apiKeyMapper);
-    private final PublicAccessRateLimiter rateLimiter = new PublicAccessRateLimiter();
+    private final PublicAccessRateLimiter rateLimiter = new PublicAccessRateLimiter(store, properties);
 
     private ShareLink link(String token, boolean revoked, LocalDateTime expiresAt, boolean withPassword) {
         ShareLink link = new ShareLink();
@@ -264,12 +269,12 @@ class PublicAccessUnitTest {
     @DisplayName("SHARE-UNIT-13 限流：窗口内超限返回 429，窗口外恢复")
     void rateLimiter() {
         for (int i = 0; i < 3; i++) {
-            rateLimiter.acquire("k1", 3);
+            rateLimiter.acquire("test", "k1", "/api/public/share/t1", 3);
         }
         BusinessException e = assertThrows(BusinessException.class,
-                () -> rateLimiter.acquire("k1", 3));
+                () -> rateLimiter.acquire("test", "k1", "/api/public/share/t1", 3));
         assertEquals(ResultCode.QUOTA_EXCEEDED.getCode(), e.getCode());
         // 不同 key 独立计数
-        assertDoesNotThrow(() -> rateLimiter.acquire("k2", 3));
+        assertDoesNotThrow(() -> rateLimiter.acquire("test", "k2", "/api/public/share/t1", 3));
     }
 }

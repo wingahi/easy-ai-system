@@ -7,6 +7,7 @@ import com.wgh.rag.common.result.ResultCode;
 import com.wgh.rag.publicaccess.entity.ApiKey;
 import com.wgh.rag.publicaccess.service.ApiCallLogService;
 import com.wgh.rag.publicaccess.service.ApiKeyService;
+import com.wgh.rag.publicaccess.service.ClientIpResolver;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -34,6 +35,7 @@ public class ApiKeyAuthenticationFilter extends OncePerRequestFilter {
 
     private final ApiKeyService apiKeyService;
     private final ApiCallLogService apiCallLogService;
+    private final ClientIpResolver clientIpResolver;
     private final ObjectMapper objectMapper;
 
     @Override
@@ -54,6 +56,7 @@ public class ApiKeyAuthenticationFilter extends OncePerRequestFilter {
                 return;
             }
             key = apiKeyService.verify(rawKey);
+            apiKeyService.requireIpAllowed(key, clientIpResolver.resolve(request));
             apiKeyService.requireScope(key, requiredScope(request.getRequestURI()));
 
             var authentication = new UsernamePasswordAuthenticationToken(

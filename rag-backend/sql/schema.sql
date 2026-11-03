@@ -1135,6 +1135,9 @@ CREATE TABLE IF NOT EXISTS wgh_share_link (
   max_uses      INT DEFAULT 0,
   use_count     INT DEFAULT 0,
   revoked       SMALLINT NOT NULL DEFAULT 0,
+  embed_enabled SMALLINT NOT NULL DEFAULT 0,
+  embed_origin_whitelist TEXT,
+  embed_ip_whitelist TEXT,
   created_by    VARCHAR(64),
   create_time   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   update_time   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -1146,6 +1149,13 @@ COMMENT ON TABLE wgh_share_link IS '免登录分享链接（有效期/密码/范
 COMMENT ON COLUMN wgh_share_link.scope IS 'WINDOW=匿名问答 / SESSION=只读会话记录 / KB=只读知识库检索';
 COMMENT ON COLUMN wgh_share_link.target_id IS 'WINDOW: chat_window_id；SESSION: chat_session_id；KB: knowledge_base_id';
 COMMENT ON COLUMN wgh_share_link.max_uses IS '最大使用次数，0 表示不限';
+-- 兼容已存在的库：新增 Widget 嵌入授权字段（幂等）
+ALTER TABLE wgh_share_link ADD COLUMN IF NOT EXISTS embed_enabled SMALLINT NOT NULL DEFAULT 0;
+ALTER TABLE wgh_share_link ADD COLUMN IF NOT EXISTS embed_origin_whitelist TEXT;
+ALTER TABLE wgh_share_link ADD COLUMN IF NOT EXISTS embed_ip_whitelist TEXT;
+COMMENT ON COLUMN wgh_share_link.embed_enabled IS '是否允许 Widget 嵌入，0=禁止，1=允许';
+COMMENT ON COLUMN wgh_share_link.embed_origin_whitelist IS '嵌入域名白名单，逗号分隔，支持 *.example.com';
+COMMENT ON COLUMN wgh_share_link.embed_ip_whitelist IS '嵌入 IP 白名单，逗号分隔 CIDR';
 CREATE INDEX IF NOT EXISTS idx_share_link_token ON wgh_share_link(token);
 CREATE INDEX IF NOT EXISTS idx_share_link_target ON wgh_share_link(scope, target_id);
 
@@ -1159,6 +1169,7 @@ CREATE TABLE IF NOT EXISTS wgh_api_key (
   revoked        SMALLINT NOT NULL DEFAULT 0,
   created_by     VARCHAR(64),
   last_used_time TIMESTAMP,
+  ip_whitelist   TEXT,
   create_time    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   update_time    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   create_by      VARCHAR(64),
@@ -1167,6 +1178,9 @@ CREATE TABLE IF NOT EXISTS wgh_api_key (
 );
 COMMENT ON TABLE wgh_api_key IS '开放 API Key（仅存 SHA-256 哈希，明文创建时返回一次）';
 COMMENT ON COLUMN wgh_api_key.scopes IS '权限范围，逗号分隔：chat:write,kb:read,usage:read；* 表示全部';
+-- 兼容已存在的库：新增 IP 白名单字段（幂等）
+ALTER TABLE wgh_api_key ADD COLUMN IF NOT EXISTS ip_whitelist TEXT;
+COMMENT ON COLUMN wgh_api_key.ip_whitelist IS '调用来源 IP 白名单，逗号分隔 CIDR；为空表示不限制';
 CREATE INDEX IF NOT EXISTS idx_api_key_hash ON wgh_api_key(key_hash);
 
 CREATE TABLE IF NOT EXISTS wgh_api_call_log (

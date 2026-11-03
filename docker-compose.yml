@@ -1,0 +1,22 @@
+# 说明：仅用于本地开发，生产环境请使用托管 Redis 或独立部署。
+# 启动：docker compose up -d redis
+# 停止：docker compose down
+# 版本：Redis Open Source 8.10.1（2026-08 发布的最新稳定补丁版本，含安全修复）
+services:
+  redis:
+    image: redis:8.10.1-alpine
+    container_name: wgh-rag-redis
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    ports:
+      - "${WGH_REDIS_PORT:-6379}:6379"
+    volumes:
+      - wgh-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  wgh-redis-data:
