@@ -12,6 +12,18 @@
           <el-option v-for="c in categories" :key="c" :label="c" :value="c" />
         </el-select>
       </div>
+
+      <!-- 输入框前缀联想配置（本地生效，无需后端改动） -->
+      <div class="trigger-config">
+        <span class="cfg-title">输入框前缀联想</span>
+        <el-switch v-model="triggerCfg.enabled" />
+        <span class="cfg-label">前缀</span>
+        <el-input v-model="triggerCfg.prefix" maxlength="1" style="width:64px" />
+        <span class="cfg-label">最大候选数</span>
+        <el-input-number v-model="triggerCfg.maxCandidates" :min="1" :max="50" size="small" style="width:110px" />
+        <el-button size="small" type="primary" @click="saveTriggerCfg">保存设置</el-button>
+        <span class="cfg-note">在聊天输入框输入前缀即弹出模板候选；配置保存在当前浏览器</span>
+      </div>
       <el-table :data="list" v-loading="loading" stripe>
         <el-table-column prop="id" label="ID" width="70" />
         <el-table-column prop="name" label="模板名" width="180">
@@ -101,6 +113,7 @@ import { ElMessage } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import { promptTemplatePage, promptTemplateCreate, promptTemplateUpdate, promptTemplateDelete,
   promptTemplateRender } from '../../api'
+import { loadPromptTriggerConfig, savePromptTriggerConfig } from '../../utils/promptTrigger'
 
 const loading = ref(false)
 const submitting = ref(false)
@@ -116,6 +129,14 @@ const formRef = ref()
 const previewVars = ref({})
 const preview = ref('')
 const previewing = ref(false)
+// 输入框前缀联想配置（localStorage，默认开启、前缀 /、最多 10 个候选）
+const triggerCfg = reactive(loadPromptTriggerConfig())
+
+const saveTriggerCfg = () => {
+  const saved = savePromptTriggerConfig(triggerCfg)
+  Object.assign(triggerCfg, saved)
+  ElMessage.success(`已保存：${saved.enabled ? '启用' : '停用'}，前缀 ${saved.prefix}，最多 ${saved.maxCandidates} 个候选`)
+}
 
 const form = reactive({ name: '', category: '', content: '', remark: '' })
 const rules = {
@@ -201,6 +222,19 @@ onMounted(load)
 </script>
 
 <style scoped>
+.trigger-config {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  background: #f5f7fa;
+  border-radius: 6px;
+}
+.cfg-title { font-size: 13px; font-weight: 600; color: #303133; }
+.cfg-label { font-size: 13px; color: #606266; }
+.cfg-note { font-size: 12px; color: #909399; }
 .preview-box {
   margin-top: 8px;
   padding: 10px;

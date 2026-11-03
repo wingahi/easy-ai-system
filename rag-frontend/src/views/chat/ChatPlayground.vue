@@ -181,10 +181,10 @@
             </el-tooltip>
             <input ref="imageInputRef" type="file" accept="image/png,image/jpeg,image/gif,image/webp"
                    style="display:none" @change="onPickImage" />
-            <el-input v-model="input" type="textarea" :rows="2"
-                      placeholder="输入消息，Ctrl+Enter 发送"
-                      @keydown.ctrl.enter="send"
-                      :disabled="streaming" />
+            <PromptTemplateInput ref="promptInputRef" v-model="input" :rows="2"
+                                 placeholder="输入消息，Ctrl+Enter 发送；输入 / 可联想 Prompt 模板"
+                                 :disabled="streaming"
+                                 @submit="send" />
             <el-button type="primary" :icon="Promotion" :loading="streaming" @click="send">
               发送
             </el-button>
@@ -270,6 +270,7 @@ import { windowGet, streamChatApi, windowMessages, windowSessions, windowCreateS
   submitMessageFeedback, windowFeedbackStats, chatUploadImage, chatModelGet } from '../../api'
 import AgentPlanTree from '../../components/AgentPlanTree.vue'
 import WorkflowRunPanel from '../../components/WorkflowRunPanel.vue'
+import PromptTemplateInput from '../../components/PromptTemplateInput.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -278,6 +279,7 @@ const window = ref(null)
 const messages = ref([])
 const sessions = ref([])
 const input = ref('')
+const promptInputRef = ref(null)
 const streaming = ref(false)
 // 多模态：待发送图片（已上传转为 dataUrl）与窗口模型视觉能力
 const pendingImages = ref([])
@@ -641,6 +643,12 @@ const previewImage = (url) => {
 }
 
 const send = async () => {
+  // 先把变量面板中已输入未提交的值落到正文，再判断是否仍有未填写的占位符
+  promptInputRef.value?.flushPendingVar?.()
+  if (promptInputRef.value?.hasUnfilledVars?.()) {
+    ElMessage.warning('模板变量还没填完：可在变量面板逐个填写，或点「跳过变量直接发送」')
+    return
+  }
   const text = input.value.trim()
   const imageUrls = pendingImages.value.map(p => p.dataUrl)
   if ((!text && !imageUrls.length) || streaming.value) return
@@ -1477,6 +1485,7 @@ onUnmounted(() => {
   align-items: flex-end;
 }
 .input-row .el-input { flex: 1; }
+.input-row .pt-input { flex: 1; }
 .img-btn { flex-shrink: 0; }
 .pending-images {
   display: flex;

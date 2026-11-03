@@ -2,7 +2,9 @@ package com.wgh.rag.chat.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.wgh.rag.chat.dto.PromptTemplateSuggestion;
 import com.wgh.rag.chat.entity.PromptTemplate;
 import com.wgh.rag.chat.mapper.PromptTemplateMapper;
 import com.wgh.rag.common.exception.BusinessException;
@@ -34,6 +36,12 @@ public class PromptTemplateService {
     /** system_prompt 引用模板的前缀 */
     public static final String TEMPLATE_PREFIX = "template:";
 
+    /** 前缀联想默认候选数 */
+    public static final int SUGGEST_DEFAULT_LIMIT = 10;
+
+    /** 前缀联想候选数上限（防止一次拉取过多） */
+    public static final int SUGGEST_MAX_LIMIT = 50;
+
     private final PromptTemplateMapper mapper;
     private final ObjectMapper objectMapper;
 
@@ -53,6 +61,59 @@ public class PromptTemplateService {
         return mapper.selectList(new LambdaQueryWrapper<PromptTemplate>()
                 .orderByDesc(PromptTemplate::getBuiltin)
                 .orderByAsc(PromptTemplate::getName));
+    }
+
+    /**
+     * 输入框前缀联想的轻量候选查询（只读，不改动模板与版本）。
+     * <p>
+     * - query 为空：按 updateTime 倒序返回最近的 N 条（现表无使用次数统计，无法按热度排序）
+     * - query 非空：对 name / remark（简述）/ category（标签）做模糊匹配
+     * - limit 归一化到 [1, {@link #SUGGEST_MAX_LIMIT}]，为空取 {@link #SUGGEST_DEFAULT_LIMIT}
+     */
+    public List<PromptTemplateSuggestion> suggest(String query, Integer limit) {
+        int size = normalizeSuggestLimit(limit);
+        String keyword = query == null ? "" : query.trim();
+        LambdaQueryWrapper<PromptTemplate> qw = new LambdaQueryWrapper<>();
+        if (!keyword.isEmpty()) {
+            qw.and(w -> w.like(PromptTemplate::getName, keyword)
+                    .or().like(PromptTemplate::getRemark, keyword)
+                    .or().like(PromptTemplate::getCategory, keyword));
+        }
+        // 内置模板优先，其余按最近更新
+        qw.orderByDesc(PromptTemplate::getBuiltin)
+                .orderByDesc(PromptTemplate::getUpdateTime);
+        List<PromptTemplate> records = mapper.selectPage(Page.of(1, size), qw).getRecords();
+        return records.stream().map(this::toSuggestion).toList();
+    }
+
+    private int normalizeSuggestLimit(Integer limit) {
+        if (limit == null) {
+            return SUGGEST_DEFAULT_LIMIT;
+        }
+        return Math.max(1, Math.min(limit, SUGGEST_MAX_LIMIT));
+    }
+
+    private PromptTemplateSuggestion toSuggestion(PromptTemplate t) {
+        List<String> vars = parseVariables(t.getVariables());
+        if (vars.isEmpty()) {
+            vars = extractVariables(t.getContent());
+        }
+        String description = t.getRemark() == null || t.getRemark().isBlank()
+                ? t.getCategory() : t.getRemark();
+        return new PromptTemplateSuggestion(t.getId(), t.getName(), description, t.getCategory(),
+                vars, t.getVersion(), t.getContent());
+    }
+
+    private List<String> parseVariables(String variablesJson) {
+        if (variablesJson == null || variablesJson.isBlank()) {
+            return List.of();
+        }
+        try {
+            return objectMapper.readValue(variablesJson, new TypeReference<List<String>>() { });
+        } catch (Exception e) {
+            log.warn("Prompt 模板 variables 字段解析失败，回退按内容提取: {}", variablesJson);
+            return List.of();
+        }
     }
 
     public PromptTemplate getById(Long id) {

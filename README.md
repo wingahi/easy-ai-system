@@ -70,7 +70,7 @@
 - **审计与成本**：`@Audit` 切面异步记录写操作（含成功/失败、操作人、资源、IP，失败不阻断主流程）；模型价格表 + 消息成本/模型名回填，管理端聚合统计。
 - **配额与限流**：配额由独立 `rag-quota` 模块提供（全局默认 + 按用户日/月配置，超限 429，用量原子累加）；分享与开放 API 另有每分钟滑动窗口限流。
 - **语义缓存**：窗口级开关，相似度阈值命中后直接返回缓存答案，跳过检索与 LLM；每窗口条数上限，超出淘汰最旧。
-- **Prompt 模板中心**：模板 CRUD、变量提取、渲染预览；窗口系统提示可用 `template:{id}` 引用。
+- **Prompt 模板中心**：模板 CRUD、变量提取、渲染预览；窗口系统提示可用 `template:{id}` 引用。输入框支持**前缀联想**：在聊天调试页输入框或工作流 LLM 节点的 User Prompt 中输入前缀（默认 `/`）即弹出模板候选，继续输入按名称/简述/分类模糊过滤，↑↓ 选择、Enter 填入、Esc 关闭。选中含 `{{变量}}` 的模板会进入变量填写态（占位符高亮、Tab/Enter 逐个填写，全部替换后才可发送；也可「跳过变量直接发送」，未填变量按后端 render 规则替换为空串）。前缀字符、最大候选数、是否启用可在「Prompt 模板中心」页顶部配置，保存在浏览器 localStorage（`wgh_prompt_trigger_config`，默认启用、前缀 `/`、最多 10 个）。
 - **模型路由与故障转移**：窗口可指定 `model_route_group`，同组模型按 `route_priority` 升序形成故障转移链；未配置时回退 `llm_model_id`。
 - **可观测性（未完成）**：暂无 Prometheus 指标与链路追踪，仓库不含 Dockerfile / docker-compose。
 
@@ -357,7 +357,7 @@ curl -H "Authorization: Bearer $IDP_TOKEN" http://localhost:8080/api/auth/me
 | Agent | `/api/agent` | 计划状态、HITL 确认、取消/重试/跳过 |
 | 工作流 | `/api/workflows` | CRUD、校验、运行、HITL、版本、触发器、模板 |
 | 多 Agent | `/api/agent-multi` | Crew CRUD/校验、运行、SSE、state、HITL |
-| Prompt 模板 | `/api/prompt-templates` | CRUD、渲染预览 |
+| Prompt 模板 | `/api/prompt-templates` | CRUD、渲染预览、输入框前缀联想候选（`/suggest`） |
 | 标签 / 版本 | `/api/tags`、`/api/kb/files/{id}/versions` | 标签 CRUD 与绑定、版本列表与回滚 |
 | 管理端 | `/api/admin` | 审计日志、成本/配额统计、差评、用户配额、分享链接、API Key |
 | 免登录分享 | `/api/public/share/{token}` | 信息/解锁/会话/消息/SSE 问答/知识库检索 |

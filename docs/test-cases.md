@@ -941,8 +941,9 @@
 
 ## 20. Prompt 模板中心
 
-> 实现：`PromptTemplateService` + `PromptTemplateController`（`/api/prompt-templates` 增删改查、`/{id}/render`）；表 `wgh_prompt_template`；窗口 systemPrompt 支持 `template:{id}` 引用。
-> 自动化：`PromptTemplateServiceTest`（9 项，rag-chat）。
+> 实现：`PromptTemplateService` + `PromptTemplateController`（`/api/prompt-templates` 增删改查、`/{id}/render`、`/suggest` 前缀联想）；表 `wgh_prompt_template`；窗口 systemPrompt 支持 `template:{id}` 引用。
+> 前端：`src/components/PromptTemplateInput.vue`（前缀触发/联想过滤/键盘选择/填入/变量填写），配置项存 localStorage（`wgh_prompt_trigger_config`：启用、前缀字符、最大候选数）。
+> 自动化：`PromptTemplateServiceTest`（9 项）+ `PromptTemplateSuggestTest`（6 项，覆盖 name/remark/category 模糊匹配、limit 归一化与上限、无结果、variables 解析回退；rag-chat）；浏览器实测见 `docs/browser-evidence/prompt-prefix-open.png`。
 
 | 编号 | 分类 | 前置条件 | 用例 / 步骤 | 预期结果 | 覆盖类型 | 自动化落点 |
 |------|------|---------|------------|---------|---------|-----------|
@@ -952,6 +953,16 @@
 | PT-04 | 接口 | 同上 | 新建 / 编辑 / 删除模板 | 保存成功，列表刷新 | 仅手工 | `PromptTemplateController` |
 | PT-05 | 接口 | 有模板 | `POST /api/prompt-templates/{id}/render` | 返回渲染后的文本，供预览 | 仅手工 | `PromptTemplates.vue` 实时预览 |
 | PT-06 | 接口 | 窗口 systemPrompt 设为 `template:{id}` | 发起对话 | 实际系统提示为模板渲染结果；模板不存在时报错 | 仅手工 | `RagChatService` |
+| PT-07 | 接口 | 已登录 | `GET /api/prompt-templates/suggest?query=&limit=` | 返回 id/名称/简述/变量/版本/内容；空 query 按更新时间倒序；无匹配返回 `[]` | 单元 + 手工 | `PromptTemplateSuggestTest` |
+| PT-08 | 边界 | 已登录 | `limit=0`、`limit=999` | 归一化为 1 / 50（`SUGGEST_MAX_LIMIT`） | 单元 | `PromptTemplateSuggestTest` |
+| PT-09 | 安全 | 未携带 token | 请求 `/suggest` | 401，沿用全局登录态，未放宽权限 | 手工（curl） | 全局 `SecurityConfig` |
+| PT-10 | 功能 | 调试对话页 | 输入框中输入 `/` | 输入框上方弹出「Prompt 模板」候选面板，展示名称/分类/版本/变量预览 | 手工 | 浏览器实测 |
+| PT-11 | 功能 | 候选面板已弹出 | 继续输入「客服」 | 候选按名称/简述/分类模糊过滤（`/suggest` 服务端匹配） | 手工 | 浏览器实测 |
+| PT-12 | 交互 | 候选面板已弹出 | ↑↓ 切换、Enter 选中 | 选中模板内容替换「前缀+关键词」，光标落在插入内容末尾 | 手工 | 浏览器实测 |
+| PT-13 | 交互 | 候选面板已弹出 | 按 Esc / 删除前缀 / 输入空格 | 面板关闭；无前缀时输入普通文字不弹面板 | 手工 | 浏览器实测 |
+| PT-14 | 功能 | 模板含 `{{kbName}}` | 选中后填写变量 | 占位符高亮、逐个 Tab/Enter 填写，变量替换后正文不再含双花括号 | 手工 | 浏览器实测 |
+| PT-15 | 边界 | 变量未全部填写 | 点发送 | 拦截并提示；可点「跳过变量直接发送」，未填变量按 render 规则替换为空串后发送 | 手工 | 浏览器实测 |
+| PT-16 | 配置 | Prompt 模板中心页 | 修改启用开关/前缀字符/最大候选数 | 保存到 localStorage，输入框按新配置触发 | 手工 | `PromptTemplates.vue` + `promptTrigger.js` |
 
 ---
 

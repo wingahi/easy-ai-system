@@ -1,5 +1,6 @@
 package com.wgh.rag.controller;
 
+import com.wgh.rag.chat.dto.PromptTemplateSuggestion;
 import com.wgh.rag.chat.entity.PromptTemplate;
 import com.wgh.rag.chat.service.PromptTemplateService;
 import com.wgh.rag.log.annotation.Audit;
@@ -38,6 +39,14 @@ public class PromptTemplateController {
     @GetMapping("/list")
     public Result<List<PromptTemplate>> listAll() {
         return Result.success(templateService.listAll());
+    }
+
+    @Operation(summary = "前缀联想候选（轻量只读查询，limit 上限 50）")
+    @GetMapping("/suggest")
+    public Result<List<PromptTemplateSuggestion>> suggest(
+            @RequestParam(required = false) String query,
+            @RequestParam(required = false) Integer limit) {
+        return Result.success(templateService.suggest(query, limit));
     }
 
     @Operation(summary = "模板详情")

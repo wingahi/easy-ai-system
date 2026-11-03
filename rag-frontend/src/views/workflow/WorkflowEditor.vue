@@ -87,8 +87,8 @@
                 </div>
                 <div class="field">
                   <label>User Prompt</label>
-                  <el-input v-model="cfg.prompt" type="textarea" :rows="6"
-                            placeholder="支持变量：{{input}}、{{n_rag_1.text}}" />
+                  <PromptTemplateInput v-model="cfg.prompt" :rows="6" :variable-fill="false"
+                                       placeholder="支持变量：{{input}}、{{n_rag_1.text}}；输入 / 可联想 Prompt 模板" />
                 </div>
               </template>
 
@@ -244,6 +244,7 @@ import { VueFlow, MarkerType, useVueFlow } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
 import WorkflowNodeCard from '../../components/WorkflowNodeCard.vue'
+import PromptTemplateInput from '../../components/PromptTemplateInput.vue'
 import {
   chatModelList, kbList, toolList,
   workflowGet, workflowUpdate, workflowValidate, workflowPageRuns,
