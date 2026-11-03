@@ -52,7 +52,7 @@ class KnowledgeFileServiceListTest {
                 Mockito.mock(VectorStoreService.class),
                 Mockito.mock(SemanticCacheService.class),
                 new ObjectMapper(),
-                Mockito.mock(com.wgh.rag.storage.FileStorageService.class));
+                Mockito.mock(com.wgh.rag.storage.service.FileStorageService.class));
     }
 
     @Test

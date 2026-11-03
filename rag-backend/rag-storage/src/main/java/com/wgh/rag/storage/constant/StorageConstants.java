@@ -1,4 +1,4 @@
-package com.wgh.rag.storage;
+package com.wgh.rag.storage.constant;
 
 /**
  * 存储模块常量：存储类型、配置前缀、key 规则与默认参数。

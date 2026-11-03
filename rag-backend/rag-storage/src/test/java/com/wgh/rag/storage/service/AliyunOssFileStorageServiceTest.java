@@ -1,10 +1,11 @@
-package com.wgh.rag.storage;
+package com.wgh.rag.storage.service;
 
 import com.aliyun.oss.OSS;
 import com.aliyun.oss.model.OSSObject;
 import com.aliyun.oss.model.ObjectMetadata;
 import com.aliyun.oss.model.PutObjectResult;
 import com.wgh.rag.common.exception.BusinessException;
+import com.wgh.rag.storage.properties.StorageProperties;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;

@@ -1,5 +1,6 @@
-package com.wgh.rag.storage;
+package com.wgh.rag.storage.properties;
 
+import com.wgh.rag.storage.constant.StorageConstants;
 import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;

@@ -1,6 +1,7 @@
-package com.wgh.rag.storage;
+package com.wgh.rag.storage.service;
 
 import com.wgh.rag.common.exception.BusinessException;
+import com.wgh.rag.storage.properties.StorageProperties;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;

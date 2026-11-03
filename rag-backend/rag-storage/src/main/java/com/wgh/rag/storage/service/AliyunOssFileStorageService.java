@@ -1,9 +1,11 @@
-package com.wgh.rag.storage;
+package com.wgh.rag.storage.service;
 
 import com.aliyun.oss.OSS;
 import com.aliyun.oss.OSSClientBuilder;
 import com.aliyun.oss.model.ObjectMetadata;
 import com.wgh.rag.common.exception.BusinessException;
+import com.wgh.rag.storage.constant.StorageConstants;
+import com.wgh.rag.storage.properties.StorageProperties;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;

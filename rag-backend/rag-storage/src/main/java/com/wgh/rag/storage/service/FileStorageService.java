@@ -1,4 +1,4 @@
-package com.wgh.rag.storage;
+package com.wgh.rag.storage.service;
 
 import java.io.InputStream;
 

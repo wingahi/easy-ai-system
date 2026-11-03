@@ -1,6 +1,8 @@
-package com.wgh.rag.storage;
+package com.wgh.rag.storage.service;
 
 import com.wgh.rag.common.exception.BusinessException;
+import com.wgh.rag.storage.constant.StorageConstants;
+import com.wgh.rag.storage.properties.StorageProperties;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;

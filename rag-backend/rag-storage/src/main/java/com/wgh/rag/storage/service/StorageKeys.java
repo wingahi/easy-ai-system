@@ -1,4 +1,6 @@
-package com.wgh.rag.storage;
+package com.wgh.rag.storage.service;
+
+import com.wgh.rag.storage.constant.StorageConstants;
 
 /**
  * 存储 key 规则：{@code kb/{kbId}/{fileUuid}/{安全化后的原始文件名}}。
