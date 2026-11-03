@@ -79,6 +79,19 @@ public class GlobalExceptionHandler {
                 .body(Result.fail(ResultCode.RESOURCE_ALREADY_EXISTS.getCode(), "资源已存在（唯一键冲突）"));
     }
 
+    /**
+     * 路径变量/查询参数类型不匹配（如 /api/kb/abc/files）统一返回 400 + 参数错误码，
+     * 避免落入兜底 500。
+     */
+    @ExceptionHandler(org.springframework.web.method.annotation.MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<Result<Void>> handleTypeMismatchException(
+            org.springframework.web.method.annotation.MethodArgumentTypeMismatchException e) {
+        log.warn("参数类型不匹配: {}", e.getMessage());
+        return ResponseEntity
+                .status(HttpStatus.BAD_REQUEST)
+                .body(Result.fail(ResultCode.PARAM_ERROR.getCode(), "参数类型不合法: " + e.getName()));
+    }
+
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<Result<Void>> handleIllegalArgumentException(IllegalArgumentException e) {
         log.warn("参数非法: {}", e.getMessage());

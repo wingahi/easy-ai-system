@@ -117,6 +117,10 @@ public class TagService {
      * 列出知识库已绑定标签
      */
     public List<Tag> listKbTags(Long kbId) {
+        // kbId 不存在时明确返回业务码 3001，避免前端把空数组误判为“该知识库无标签”
+        if (knowledgeBaseMapper.selectById(kbId) == null) {
+            throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "知识库不存在");
+        }
         List<Long> ids = jdbcTemplate.queryForList(
                 "SELECT tag_id FROM wgh_kb_tag_rel WHERE kb_id = ?", Long.class, kbId);
         if (ids.isEmpty()) return List.of();

@@ -222,6 +222,8 @@ public class KnowledgeFileService {
      * 列出知识库文件
      */
     public List<KnowledgeFile> listByKbId(Long kbId) {
+        // kbId 不存在时明确返回业务码 3001，避免前端把空数组误判为“该知识库无文件”
+        kbService.getById(kbId);
         return fileMapper.selectList(new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<KnowledgeFile>()
                 .eq(KnowledgeFile::getKnowledgeBaseId, kbId)
                 .orderByDesc(KnowledgeFile::getCreateTime));
