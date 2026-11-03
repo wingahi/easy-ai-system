@@ -92,6 +92,8 @@ export const promptTemplateCreate = (data) => request.post('/prompt-templates', 
 export const promptTemplateUpdate = (data) => request.put('/prompt-templates', data)
 export const promptTemplateDelete = (id) => request.delete(`/prompt-templates/${id}`)
 export const promptTemplateRender = (id, vars) => request.post(`/prompt-templates/${id}/render`, { vars })
+// 输入框前缀联想的轻量候选查询（query 为空时返回最近更新的模板）
+export const promptTemplateSuggest = (params) => request.get('/prompt-templates/suggest', { params })
 
 // SSE 流式聊天（需要原生 fetch）
 export function streamChatApi(windowId, message, sessionId, imageUrls) {
@@ -536,6 +538,15 @@ export const adminUsersPage = (params) => request.get('/admin/users', { params }
 export const adminUserCreate = (data) => request.post('/admin/users', data)
 export const adminUserUpdate = (username, data) => request.put(`/admin/users/${encodeURIComponent(username)}`, data)
 export const adminUserDisable = (username) => request.delete(`/admin/users/${encodeURIComponent(username)}`)
+
+// ===== 管理端：角色与权限 =====
+export const adminRolesList = () => request.get('/admin/roles')
+export const adminRoleCreate = (data) => request.post('/admin/roles', data)
+export const adminRoleUpdate = (roleCode, data) => request.put(`/admin/roles/${encodeURIComponent(roleCode)}`, data)
+export const adminRoleDelete = (roleCode) => request.delete(`/admin/roles/${encodeURIComponent(roleCode)}`)
+export const adminPermissionsList = () => request.get('/admin/permissions')
+export const adminRolePermissionsUpdate = (roleCode, permCodes) =>
+  request.put(`/admin/roles/${encodeURIComponent(roleCode)}/permissions`, { permCodes })
 
 // ===== 配额管理（管理端 + 用户自查） =====
 export const quotaAdminPage = (params) => request.get('/admin/quota/users', { params })

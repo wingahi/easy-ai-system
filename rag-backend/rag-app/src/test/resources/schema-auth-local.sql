@@ -6,6 +6,11 @@ ALTER TABLE wgh_user ADD COLUMN IF NOT EXISTS remark VARCHAR(500);
 ALTER TABLE wgh_user ADD COLUMN IF NOT EXISTS password_must_change INT DEFAULT 0;
 ALTER TABLE wgh_user ADD COLUMN IF NOT EXISTS password_version INT DEFAULT 1;
 
+-- 共享 schema.sql 用显式 id（MERGE）写入角色/权限种子，H2 序列不会随之前移；
+-- 这里重置序列，避免新建角色/权限时主键冲突（仅测试环境）
+ALTER TABLE wgh_role ALTER COLUMN id RESTART WITH 1000;
+ALTER TABLE wgh_permission ALTER COLUMN id RESTART WITH 1000;
+
 CREATE TABLE IF NOT EXISTS wgh_audit_log (
     id BIGSERIAL PRIMARY KEY,
     username VARCHAR(64),

@@ -10,13 +10,18 @@ import com.wgh.rag.auth.security.OidcProperties;
 import com.wgh.rag.auth.security.OidcTokenVerifier;
 import com.wgh.rag.auth.security.PasswordPolicy;
 import com.wgh.rag.auth.security.PasswordProperties;
+import com.wgh.rag.auth.security.PermissionAspect;
 import com.wgh.rag.auth.security.TokenVerificationException;
 import com.wgh.rag.auth.service.AccountAuditService;
 import com.wgh.rag.auth.service.LocalLoginService;
 import com.wgh.rag.auth.service.LocalPasswordService;
+import com.wgh.rag.common.metrics.RagMetrics;
+import com.wgh.rag.common.result.Result;
+import com.wgh.rag.common.security.RequiresPermission;
 import com.wgh.rag.common.service.AuditLogService;
 import com.wgh.rag.common.config.MetaObjectHandlerImpl;
 import com.wgh.rag.common.exception.GlobalExceptionHandler;
+import com.wgh.rag.controller.AdminRoleController;
 import com.wgh.rag.controller.AdminUserController;
 import com.wgh.rag.controller.AuthController;
 import com.wgh.rag.controller.QuotaAdminController;
@@ -46,12 +51,15 @@ import org.springframework.test.context.jdbc.Sql;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Arrays;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
@@ -88,15 +96,30 @@ class LocalAuthApiTest {
             AuditLogService.class,
             MetaObjectHandlerImpl.class,
             GlobalExceptionHandler.class,
+            RagMetrics.class,
             QuotaService.class,
             DefaultQuotaUserResolver.class,
             QuotaAdminGuard.class,
+            PermissionAspect.class,
             AuthController.class,
             AdminUserController.class,
+            AdminRoleController.class,
             QuotaAdminController.class,
-            QuotaUserController.class
+            QuotaUserController.class,
+            TestPermissionController.class
     })
     static class TestApp {
+    }
+
+    /** 测试专用：验证"权限变更立即生效"的最小受保护接口 */
+    @RestController
+    static class TestPermissionController {
+
+        @GetMapping("/api/test/permission")
+        @RequiresPermission("kb:read")
+        public Result<String> check() {
+            return Result.success("ok");
+        }
     }
 
     @Autowired
@@ -454,7 +477,182 @@ class LocalAuthApiTest {
         assertThat(actions).contains("ACCOUNT_LOGIN_SUCCESS");
     }
 
+    // ==================== 未映射路径 ====================
+
+    @Test
+    @DisplayName("未映射 /api 路径：HTTP 404 + 业务码 3001（不再落兜底 500）")
+    void unmappedApiPathReturns404() throws Exception {
+        String adminToken = login("admin", "admin").path("data").path("token").asText();
+
+        MvcResult res = mockMvc.perform(get("/api/not-exists")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isNotFound())
+                .andReturn();
+        JsonNode body = om.readTree(res.getResponse().getContentAsString());
+        assertThat(body.path("code").asInt()).isEqualTo(3001);
+        assertThat(body.path("message").asText()).contains("接口不存在");
+    }
+
+    @Test
+    @DisplayName("/api/admin/quota 根路径未映射 → 404；/api/admin/quota/users 仍 200")
+    void quotaRootPathReturns404() throws Exception {
+        String adminToken = login("admin", "admin").path("data").path("token").asText();
+
+        mockMvc.perform(get("/api/admin/quota")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isNotFound());
+
+        assertThat(getJson("/api/admin/quota/users", adminToken).path("code").asInt()).isEqualTo(200);
+    }
+
+    // ==================== 角色权限管理 ====================
+
+    @Test
+    @DisplayName("角色 CRUD：创建 → 改名 → 列表含内置标记/用户数/权限数")
+    void roleCrud() throws Exception {
+        String adminToken = login("admin", "admin").path("data").path("token").asText();
+
+        JsonNode created = postJson("/api/admin/roles", adminToken,
+                "{\"roleCode\":\"auditor\",\"roleName\":\"审计员\",\"description\":\"只读审计\"}");
+        assertThat(created.path("code").asInt()).isEqualTo(200);
+        assertThat(created.path("data").path("builtIn").asBoolean()).isFalse();
+        assertThat(created.path("data").path("userCount").asInt()).isZero();
+        assertThat(created.path("data").path("permissionCount").asInt()).isZero();
+
+        JsonNode updated = putJson("/api/admin/roles/auditor", adminToken,
+                "{\"roleName\":\"审计角色\",\"description\":\"查看审计日志\"}");
+        assertThat(updated.path("data").path("roleName").asText()).isEqualTo("审计角色");
+
+        JsonNode roles = getJson("/api/admin/roles", adminToken).path("data");
+        assertThat(findRole(roles, "auditor").path("description").asText()).isEqualTo("查看审计日志");
+        assertThat(findRole(roles, "admin").path("builtIn").asBoolean()).isTrue();
+    }
+
+    @Test
+    @DisplayName("role_code 冲突返回 HTTP 409")
+    void duplicateRoleCodeReturns409() throws Exception {
+        String adminToken = login("admin", "admin").path("data").path("token").asText();
+        String body = "{\"roleCode\":\"dup_role\",\"roleName\":\"重复角色\"}";
+        postJson("/api/admin/roles", adminToken, body);
+
+        mockMvc.perform(post("/api/admin/roles")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isConflict());
+    }
+
+    @Test
+    @DisplayName("删除仍有用户绑定的角色：HTTP 409 + 3003，不静默解绑")
+    void deleteBoundRoleRejected() throws Exception {
+        String adminToken = login("admin", "admin").path("data").path("token").asText();
+        postJson("/api/admin/roles", adminToken,
+                "{\"roleCode\":\"bound_role\",\"roleName\":\"绑定角色\"}");
+        postJson("/api/admin/users", adminToken,
+                "{\"username\":\"trial-bound\",\"password\":\"trial-pass\",\"role\":\"bound_role\"}");
+
+        MvcResult res = mockMvc.perform(delete("/api/admin/roles/bound_role")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isConflict())
+                .andReturn();
+        JsonNode body = om.readTree(res.getResponse().getContentAsString());
+        assertThat(body.path("code").asInt()).isEqualTo(3003);
+        assertThat(body.path("message").asText()).contains("绑定");
+    }
+
+    @Test
+    @DisplayName("内置 admin：不可改名、不可删除、不可削减权限；提交全量权限幂等放行")
+    void builtInAdminRoleProtected() throws Exception {
+        String adminToken = login("admin", "admin").path("data").path("token").asText();
+
+        assertThat(putJson("/api/admin/roles/admin", adminToken,
+                "{\"roleName\":\"超级管理员\"}").path("code").asInt()).isEqualTo(3003);
+        assertThat(deleteJson("/api/admin/roles/admin", adminToken).path("code").asInt()).isEqualTo(3003);
+        assertThat(putJson("/api/admin/roles/admin/permissions", adminToken,
+                "{\"permCodes\":[\"kb:read\"]}").path("code").asInt()).isEqualTo(3003);
+
+        // 提交全量权限：等价于无变更，幂等放行
+        JsonNode allPermissions = getJson("/api/admin/permissions", adminToken).path("data");
+        String fullSet = buildPermCodesJson(allPermissions);
+        assertThat(putJson("/api/admin/roles/admin/permissions", adminToken,
+                "{\"permCodes\":" + fullSet + "}").path("code").asInt()).isEqualTo(200);
+    }
+
+    @Test
+    @DisplayName("角色接口鉴权：未登录 401，体验账号访问返回 1004")
+    void roleEndpointsRejectUnauthorized() throws Exception {
+        mockMvc.perform(get("/api/admin/roles"))
+                .andExpect(status().isUnauthorized());
+
+        postJson("/api/admin/users", login("admin", "admin").path("data").path("token").asText(),
+                "{\"username\":\"trial-role-guard\",\"password\":\"trial-pass\",\"role\":\"viewer\"}");
+        String trialToken = login("trial-role-guard", "trial-pass").path("data").path("token").asText();
+        assertThat(getJson("/api/admin/roles", trialToken).path("code").asInt()).isEqualTo(1004);
+    }
+
+    @Test
+    @DisplayName("未知权限码直接拒绝（2001），不写入脏数据")
+    void unknownPermissionCodeRejected() throws Exception {
+        String adminToken = login("admin", "admin").path("data").path("token").asText();
+        postJson("/api/admin/roles", adminToken,
+                "{\"roleCode\":\"unknown_perm_role\",\"roleName\":\"测试角色\"}");
+
+        JsonNode body = putJson("/api/admin/roles/unknown_perm_role/permissions", adminToken,
+                "{\"permCodes\":[\"kb:read\",\"bogus:perm\"]}");
+        assertThat(body.path("code").asInt()).isEqualTo(2001);
+        assertThat(body.path("message").asText()).contains("未知权限码");
+    }
+
+    @Test
+    @DisplayName("权限变更对已登录用户立即生效：同一 token 下一个请求 200 → 1004")
+    void permissionChangeTakesEffectImmediately() throws Exception {
+        String adminToken = login("admin", "admin").path("data").path("token").asText();
+        postJson("/api/admin/roles", adminToken,
+                "{\"roleCode\":\"kb_reader\",\"roleName\":\"知识库只读\"}");
+        putJson("/api/admin/roles/kb_reader/permissions", adminToken,
+                "{\"permCodes\":[\"kb:read\"]}");
+        postJson("/api/admin/users", adminToken,
+                "{\"username\":\"trial-kb\",\"password\":\"trial-pass\",\"role\":\"kb_reader\"}");
+
+        String trialToken = login("trial-kb", "trial-pass").path("data").path("token").asText();
+        assertThat(getJson("/api/test/permission", trialToken).path("code").asInt()).isEqualTo(200);
+
+        // 削减权限：已登录 token 无需重新登录，下一次请求即被拒
+        putJson("/api/admin/roles/kb_reader/permissions", adminToken, "{\"permCodes\":[]}");
+        assertThat(getJson("/api/test/permission", trialToken).path("code").asInt()).isEqualTo(1004);
+    }
+
     // ==================== helpers ====================
+
+    private JsonNode deleteJson(String url, String token) throws Exception {
+        MvcResult res = mockMvc.perform(delete(url)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andReturn();
+        return om.readTree(res.getResponse().getContentAsString());
+    }
+
+    private JsonNode findRole(JsonNode roles, String roleCode) {
+        for (JsonNode role : roles) {
+            if (roleCode.equals(role.path("roleCode").asText())) {
+                return role;
+            }
+        }
+        return null;
+    }
+
+    private String buildPermCodesJson(JsonNode groupedPermissions) {
+        StringBuilder sb = new StringBuilder("[");
+        for (JsonNode group : groupedPermissions) {
+            for (JsonNode permission : group.path("permissions")) {
+                if (sb.length() > 1) {
+                    sb.append(',');
+                }
+                sb.append('"').append(permission.path("permCode").asText()).append('"');
+            }
+        }
+        return sb.append(']').toString();
+    }
 
     private JsonNode login(String username, String password) throws Exception {
         MvcResult res = mockMvc.perform(post("/api/auth/login")
