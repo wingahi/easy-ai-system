@@ -1,5 +1,6 @@
 package com.wgh.rag.publicaccess.service;
 
+import com.wgh.rag.common.metrics.RagMetrics;
 import com.wgh.rag.common.result.ResultCode;
 import com.wgh.rag.publicaccess.config.PublicAccessProperties;
 import com.wgh.rag.publicaccess.exception.PublicAccessException;
@@ -22,10 +23,13 @@ public class PublicAccessRateLimiter {
 
     private final PublicAccessStore store;
     private final PublicAccessProperties properties;
+    private final RagMetrics metrics;
 
-    public PublicAccessRateLimiter(PublicAccessStore store, PublicAccessProperties properties) {
+    public PublicAccessRateLimiter(PublicAccessStore store, PublicAccessProperties properties,
+                                   RagMetrics metrics) {
         this.store = store;
         this.properties = properties;
+        this.metrics = metrics;
     }
 
     /**
@@ -40,12 +44,14 @@ public class PublicAccessRateLimiter {
     }
 
     public void acquire(String dimension, String subject, String path, int limitPerMinute) {
+        metrics.recordPublicAccess(dimension);
         if (limitPerMinute <= 0) {
             return;
         }
         String key = buildKey(dimension, subject, path);
         long remaining = store.acquireSliding(key, System.currentTimeMillis(), WINDOW_MS, limitPerMinute);
         if (remaining < 0) {
+            metrics.recordRateLimitRejected(dimension);
             Map<String, Object> data = new LinkedHashMap<>();
             data.put("dimension", dimension);
             data.put("limitPerMinute", limitPerMinute);

@@ -14,6 +14,7 @@ import com.wgh.rag.chat.mapper.ChatSessionMapper;
 import com.wgh.rag.chat.mapper.ChatWindowMapper;
 import com.wgh.rag.agent.service.AgentOrchestrator;
 import com.wgh.rag.common.exception.BusinessException;
+import com.wgh.rag.common.metrics.RagMetrics;
 import com.wgh.rag.quota.service.QuotaService;
 import com.wgh.rag.common.security.SecurityUtils;
 import com.wgh.rag.config.property.RagProperties;
@@ -47,9 +48,11 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import io.micrometer.core.instrument.Timer;
 import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -86,6 +89,7 @@ public class RagChatService {
     private final PromptTemplateService promptTemplateService;
     private final com.wgh.rag.kb.mapper.KnowledgeBaseMapper knowledgeBaseMapper;
     private final ModelRouter modelRouter;
+    private final RagMetrics metrics;
 
     /**
      * 流式聊天 - SSE
@@ -163,9 +167,15 @@ public class RagChatService {
 
         // 子线程执行 RAG + LLM 并推送 SSE
         new Thread(() -> {
+            // 指标上下文：route 在链路分支处回填，首 token 延迟用于区分冷启动/模型抖动
+            Timer.Sample sample = metrics.startSample();
+            ChatMetricContext metricCtx = new ChatMetricContext(
+                    new AtomicReference<>("rag"), new AtomicBoolean(false), System.nanoTime());
             try {
-                doRagStreamChat(window, session, userMessage, emitter, userMsg, shareMode, quotaUsername, images);
+                doRagStreamChat(window, session, userMessage, emitter, userMsg, shareMode, quotaUsername, images,
+                        metricCtx);
             } catch (Exception e) {
+                metrics.recordChatError("stream");
                 log.error("流式聊天异常", e);
                 try {
                     emitter.send(SseEmitter.event().name("error").data(Map.of("text", e.getMessage() != null ? e.getMessage() : "未知错误")));
@@ -174,6 +184,8 @@ public class RagChatService {
                     log.error("发送错误消息失败", ex);
                 }
             } finally {
+                metrics.recordChatRequest(metricCtx.route().get(), shareMode);
+                metrics.recordChatDuration(sample, metricCtx.route().get(), shareMode);
                 // 清理当前线程的工具注册（ThreadLocal）
                 toolExecutionEngine.clearWindowTools();
             }
@@ -245,16 +257,21 @@ public class RagChatService {
 
     // ============ 核心 RAG 链路 ============
 
+    /** 单次对话的指标上下文（线程内传递，避免被并发请求串用） */
+    private record ChatMetricContext(AtomicReference<String> route, AtomicBoolean firstToken, long startNanos) {
+    }
+
     private void doRagStreamChat(ChatWindow window, ChatSession session, String userMessage,
                                   SseEmitter emitter, com.wgh.rag.chat.entity.ChatMessage userMsg,
                                   boolean shareMode, String quotaUsername,
-                                  List<String> imageUrls) throws Exception {
+                                  List<String> imageUrls, ChatMetricContext metricCtx) throws Exception {
 
         // 1. 发送开始事件
         emitter.send(SseEmitter.event().name("start").data(Map.of("sessionId", session.getId())));
 
         // ===== 工作流分支：窗口绑定了工作流时，每条用户消息触发一次完整工作流运行 =====
         if (window.getWorkflowId() != null) {
+            metricCtx.route().set("workflow");
             chatWorkflowService.stream(window, session, userMessage, emitter, shareMode);
             return;
         }
@@ -272,16 +289,23 @@ public class RagChatService {
             SemanticCacheService.CacheHit cacheHit =
                     semanticCacheService.lookup(window.getId(), kbIds, userMessage);
             if (cacheHit != null) {
+                metricCtx.route().set("cache");
                 sendCachedAnswer(session, emitter, cacheHit);
                 return;
             }
         }
 
-        final RetrieveResult retrieveResult = hasKb
-                ? ragRetrieveService.searchMultiple(kbIds, userMessage,
-                        new RetrievalOptions(resolveRerankModelId(window), resolveHybridEnabled(window),
-                                window.getQueryTransformMode(), resolveTransformModelId(window)))
-                : RetrieveResult.empty();
+        RetrieveResult retrieveResult;
+        try {
+            retrieveResult = hasKb
+                    ? ragRetrieveService.searchMultiple(kbIds, userMessage,
+                            new RetrievalOptions(resolveRerankModelId(window), resolveHybridEnabled(window),
+                                    window.getQueryTransformMode(), resolveTransformModelId(window)))
+                    : RetrieveResult.empty();
+        } catch (RuntimeException e) {
+            metrics.recordChatError("retrieve");
+            throw e;
+        }
         final List<EmbeddingMatch<TextSegment>> retrievedMatches = new ArrayList<>(retrieveResult.matches());
 
         // 检索指标（在线链路无相关性标注，Recall@K 不可计算，故不下发 recallRate）：
@@ -402,8 +426,10 @@ public class RagChatService {
                 if (agentAccuracy != null) doneData.put("accuracyRate", agentAccuracy);
                 safeSend(emitter, "done", doneData);
                 safeComplete(emitter);
+                metricCtx.route().set("agent");
                 return; // Agent 路线结束，不再走下面的普通 RAG
             } catch (Exception ex) {
+                metrics.recordChatError("agent");
                 log.warn("Agent 分支启动/执行失败，降级为普通 RAG: {}", ex.getMessage());
                 // 不 return，继续走下面的普通 RAG 路线
             }
@@ -489,15 +515,16 @@ public class RagChatService {
                 runWithFailover(request, toolSpecs, messages, fullResponse, emitter,
                         retrievedMatches, hitRate, evaluationScheme, session, window, userMessage,
                         toolRoundCount, MAX_TOOL_ROUNDS, toolRegistry, windowModelId, tokenUsageAcc,
-                        quotaUsername, modelChain, actualModel, onModelSwitch);
+                        quotaUsername, modelChain, actualModel, onModelSwitch, metricCtx);
             } else {
                 streamChatWithTools(streamingModel, request, toolSpecs, messages, fullResponse,
                         emitter, retrievedMatches, hitRate, evaluationScheme, session, window,
                         userMessage, toolRoundCount, MAX_TOOL_ROUNDS, toolRegistry, windowModelId,
-                        tokenUsageAcc, quotaUsername, actualModel);
+                        tokenUsageAcc, quotaUsername, actualModel, metricCtx);
             }
 
         } catch (Exception e) {
+            metrics.recordChatError("llm");
             log.error("LLM调用异常", e);
             try {
                 emitter.send(SseEmitter.event().name("content").data(Map.of("text", "抱歉，大模型调用出现异常: " + e.getMessage())));
@@ -526,7 +553,8 @@ public class RagChatService {
                                   long[] tokenUsageAcc, String quotaUsername,
                                   List<LlmModel> chain,
                                   AtomicReference<LlmModel> actualModel,
-                                  java.util.function.BiConsumer<LlmModel, String> onModelSwitch) {
+                                  java.util.function.BiConsumer<LlmModel, String> onModelSwitch,
+                                  ChatMetricContext metricCtx) {
         Throwable lastError = null;
         for (int i = 0; i < chain.size(); i++) {
             LlmModel candidate = chain.get(i);
@@ -542,7 +570,7 @@ public class RagChatService {
                 streamChatWithTools(model, request, toolSpecs, messages, fullResponse,
                         emitter, retrievedMatches, hitRate, evaluationScheme, session, window,
                         originalUserMessage, toolRoundCount, maxToolRounds, toolRegistry, windowModelId,
-                        tokenUsageAcc, quotaUsername, actualModel);
+                        tokenUsageAcc, quotaUsername, actualModel, metricCtx);
                 return; // 成功
             } catch (Throwable t) {
                 lastError = t;
@@ -569,11 +597,17 @@ public class RagChatService {
                                       int[] toolRoundCount, int maxToolRounds,
                                       Map<String, ToolConfig> toolRegistry, Long windowModelId,
                                       long[] tokenUsageAcc, String quotaUsername,
-                                      AtomicReference<LlmModel> actualModelRef) {
+                                      AtomicReference<LlmModel> actualModelRef,
+                                      ChatMetricContext metricCtx) {
 
         streamingModel.chat(request, new StreamingChatResponseHandler() {
             @Override
             public void onPartialResponse(String partialResponse) {
+                // 首个流式片段：记录首 token 延迟（仅一次，重试时按首次成功片段计）
+                if (metricCtx.firstToken().compareAndSet(false, true)) {
+                    metrics.recordFirstToken(metricCtx.route().get(),
+                            System.nanoTime() - metricCtx.startNanos());
+                }
                 fullResponse.append(partialResponse);
                 try {
                     emitter.send(SseEmitter.event().name("content").data(Map.of("text", partialResponse)));
@@ -659,7 +693,7 @@ public class RagChatService {
                     streamChatWithTools(streamingModel, nextRequest, toolSpecs, messages, fullResponse,
                             emitter, retrievedMatches, hitRate, evaluationScheme, session, window,
                             originalUserMessage, toolRoundCount, maxToolRounds,
-                            toolRegistry, windowModelId, tokenUsageAcc, quotaUsername, actualModelRef);
+                            toolRegistry, windowModelId, tokenUsageAcc, quotaUsername, actualModelRef, metricCtx);
                     return;
                 }
 
@@ -675,6 +709,7 @@ public class RagChatService {
 
             @Override
             public void onError(Throwable error) {
+                metrics.recordChatError("llm");
                 log.error("LLM流式响应错误", error);
                 try {
                     emitter.send(SseEmitter.event().name("error").data(Map.of("text", error.getMessage() != null ? error.getMessage() : "未知错误")));
@@ -771,6 +806,7 @@ public class RagChatService {
                 outputTokens = TokenEstimator.estimate(fullAnswer);
             }
             long total = inputTokens + outputTokens;
+            metrics.recordLlmTokens(inputTokens, outputTokens);
 
             Double cost = null;
             String modelName = null;
@@ -785,6 +821,8 @@ public class RagChatService {
                     modelName = model.getModelName();
                     cost = modelPriceService.estimateCost(model.getProvider(), model.getModelName(),
                             inputTokens, outputTokens);
+                    metrics.recordLlmCall(model.getProvider());
+                    if (cost != null) metrics.recordLlmCost(cost);
                 }
             } catch (Exception e) {
                 log.warn("成本估算失败: windowId={}, reason={}", window.getId(), e.getMessage());

@@ -1,5 +1,6 @@
 package com.wgh.rag.kb.service;
 
+import com.wgh.rag.common.metrics.RagMetrics;
 import com.wgh.rag.config.property.RagProperties;
 import com.wgh.rag.kb.entity.KnowledgeBase;
 import com.wgh.rag.kb.mapper.KnowledgeBaseMapper;
@@ -44,7 +45,7 @@ class RagRetrieveServiceRerankTest {
         props.getRetrieve().setTopK(2);
         props.getRetrieve().setMinScore(0.0);
         service = new RagRetrieveService(kbMapper, modelCacheManager, vectorStoreService, props,
-                rerankService, keywordSearchService, queryTransformService);
+                rerankService, keywordSearchService, queryTransformService, Mockito.mock(RagMetrics.class));
 
         KnowledgeBase kb = new KnowledgeBase();
         kb.setId(1L);

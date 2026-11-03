@@ -48,7 +48,9 @@ class PublicAccessUnitTest {
 
     private final ApiKeyMapper apiKeyMapper = mock(ApiKeyMapper.class);
     private final ApiKeyService apiKeyService = new ApiKeyService(apiKeyMapper);
-    private final PublicAccessRateLimiter rateLimiter = new PublicAccessRateLimiter(store, properties);
+    private final PublicAccessRateLimiter rateLimiter = new PublicAccessRateLimiter(store, properties,
+            new com.wgh.rag.common.metrics.RagMetrics(
+                    new io.micrometer.core.instrument.simple.SimpleMeterRegistry()));
 
     private ShareLink link(String token, boolean revoked, LocalDateTime expiresAt, boolean withPassword) {
         ShareLink link = new ShareLink();

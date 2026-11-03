@@ -1,5 +1,6 @@
 package com.wgh.rag.kb.service;
 
+import com.wgh.rag.common.metrics.RagMetrics;
 import com.wgh.rag.config.property.RagProperties;
 import com.wgh.rag.kb.entity.KnowledgeBase;
 import com.wgh.rag.kb.mapper.KnowledgeBaseMapper;
@@ -40,6 +41,7 @@ public class RagRetrieveService {
     private final RerankService rerankService;
     private final KeywordSearchService keywordSearchService;
     private final QueryTransformService queryTransformService;
+    private final RagMetrics metrics;
 
     /**
      * 多知识库联合检索（默认配置，不做增强）
@@ -49,12 +51,29 @@ public class RagRetrieveService {
     }
 
     /**
+     * 多知识库联合检索（带耗时/命中指标埋点）。
+     */
+    public RetrieveResult searchMultiple(List<Long> kbIds, String queryText, RetrievalOptions options) {
+        RetrievalOptions opts = options != null ? options : RetrievalOptions.defaults();
+        long start = System.nanoTime();
+        try {
+            RetrieveResult result = doSearchMultiple(kbIds, queryText, opts);
+            metrics.recordRetrieval(System.nanoTime() - start,
+                    opts.hybridEnabled(), opts.rerankEnabled(), !result.matches().isEmpty());
+            return result;
+        } catch (RuntimeException e) {
+            metrics.recordRetrieval(System.nanoTime() - start, opts.hybridEnabled(), opts.rerankEnabled(), false);
+            metrics.recordRetrievalError();
+            throw e;
+        }
+    }
+
+    /**
      * 多知识库联合检索 - 按 embeddingModelId 分组（不同模型维度不同，不能共享 query 向量）。
      * 开启 Rerank 时：向量候选放大至 min(topK*3, 30)，重排序后取 topK；失败降级为原始向量序。
      */
-    public RetrieveResult searchMultiple(List<Long> kbIds, String queryText, RetrievalOptions options) {
+    private RetrieveResult doSearchMultiple(List<Long> kbIds, String queryText, RetrievalOptions opts) {
         if (kbIds == null || kbIds.isEmpty()) return RetrieveResult.empty();
-        RetrievalOptions opts = options != null ? options : RetrievalOptions.defaults();
 
         RagProperties.Retrieve retrieve = ragProperties.getRetrieve();
         // 评测可显式指定 K；否则用全局配置

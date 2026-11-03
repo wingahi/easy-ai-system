@@ -55,6 +55,9 @@ class QuotaServiceTest {
     @Spy
     private QuotaProperties quotaProperties = new QuotaProperties();
 
+    @Mock
+    private com.wgh.rag.common.metrics.RagMetrics ragMetrics;
+
     @InjectMocks
     private QuotaService quotaService;
 

@@ -2,6 +2,7 @@ package com.wgh.rag.workflow.engine;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.wgh.rag.common.metrics.RagMetrics;
 import com.wgh.rag.workflow.constant.WorkflowEvents;
 import com.wgh.rag.workflow.dto.*;
 import com.wgh.rag.workflow.engine.executor.NodeExecutionContext;
@@ -47,6 +48,7 @@ public class WorkflowEngine {
     private final ConditionEvaluator conditionEvaluator;
     private final NodeExecutorRegistry nodeExecutorRegistry;
     private final ObjectMapper objectMapper;
+    private final RagMetrics metrics;
 
     // ==================== 入口 ====================
 
@@ -271,6 +273,7 @@ public class WorkflowEngine {
                 // HITL 已在 returnFromHitl 内部处理并持久化，直接向上抛出给调度器
                 throw ps;
             } catch (Exception e) {
+                metrics.recordWorkflowNodeFailure(node.getType());
                 long duration = System.currentTimeMillis() - t0;
                 nr.setStatus("FAILED");
                 nr.setEndTime(LocalDateTime.now());
@@ -415,6 +418,7 @@ public class WorkflowEngine {
 
         ctx.setPendingNodeIds(allTargets(edges));
         persistContext(run, ctx, "PAUSED");
+        metrics.recordWorkflowRun("paused");
 
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("runId", run.getId());
@@ -498,6 +502,7 @@ public class WorkflowEngine {
         run.setFinishTime(LocalDateTime.now());
         run.setDurationMs(elapsed(run));
         runMapper.updateById(run);
+        metrics.recordWorkflowRun(status);
     }
 
     private long elapsed(WorkflowRun run) {

@@ -26,6 +26,11 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-aop</artifactId>
         </dependency>
+        <!-- 指标 API（具体 registry 由启动模块通过 micrometer-registry-prometheus 提供） -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-core</artifactId>
+        </dependency>
         <!-- Spring Security (JWT 鉴权) -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

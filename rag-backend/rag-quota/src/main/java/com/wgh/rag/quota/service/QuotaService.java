@@ -2,6 +2,7 @@ package com.wgh.rag.quota.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wgh.rag.common.exception.BusinessException;
+import com.wgh.rag.common.metrics.RagMetrics;
 import com.wgh.rag.common.result.ResultCode;
 import com.wgh.rag.quota.entity.QuotaUsage;
 import com.wgh.rag.quota.entity.UserQuotaConfig;
@@ -34,6 +35,7 @@ public class QuotaService {
     private final QuotaUsageMapper quotaUsageMapper;
     private final UserQuotaConfigMapper userQuotaConfigMapper;
     private final QuotaProperties quotaProperties;
+    private final RagMetrics metrics;
 
     private static final DateTimeFormatter DAY_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd");
     private static final DateTimeFormatter MONTH_FMT = DateTimeFormatter.ofPattern("yyyy-MM");
@@ -96,11 +98,13 @@ public class QuotaService {
         if (usage != null) {
             if (quota.getChatLimit() != null && quota.getChatLimit() > 0
                     && usage.getChatCount() != null && usage.getChatCount() >= quota.getChatLimit()) {
+                metrics.recordQuotaExceeded("chat");
                 throw new BusinessException(ResultCode.QUOTA_EXCEEDED,
                         periodLabel + "对话次数已达上限（" + quota.getChatLimit() + " 条），请下期再试");
             }
             if (quota.getTokenLimit() != null && quota.getTokenLimit() > 0
                     && usage.getTokenUsed() != null && usage.getTokenUsed() >= quota.getTokenLimit()) {
+                metrics.recordQuotaExceeded("token");
                 throw new BusinessException(ResultCode.QUOTA_EXCEEDED,
                         periodLabel + " token 用量已达上限（" + quota.getTokenLimit() + "），请下期再试");
             }

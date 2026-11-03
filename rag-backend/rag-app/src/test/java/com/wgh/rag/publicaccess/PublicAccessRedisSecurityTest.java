@@ -3,6 +3,7 @@ package com.wgh.rag.publicaccess;
 import com.wgh.rag.chat.mapper.ChatSessionMapper;
 import com.wgh.rag.chat.service.ChatWindowService;
 import com.wgh.rag.common.exception.BusinessException;
+import com.wgh.rag.common.metrics.RagMetrics;
 import com.wgh.rag.common.result.ResultCode;
 import com.wgh.rag.config.redis.RedisCommandPort;
 import com.wgh.rag.kb.mapper.KnowledgeBaseMapper;
@@ -46,6 +47,10 @@ class PublicAccessRedisSecurityTest {
 
     private final PublicAccessProperties properties = new PublicAccessProperties();
 
+    private static RagMetrics metrics() {
+        return new RagMetrics(new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
+    }
+
     // ===== Redis 限流 / 降级 =====
 
     @Test
@@ -54,7 +59,7 @@ class PublicAccessRedisSecurityTest {
         ScriptedRedisPort port = new ScriptedRedisPort();
         port.scriptResult = 0L;
         DefaultPublicAccessStore store = new DefaultPublicAccessStore(port);
-        PublicAccessRateLimiter limiter = new PublicAccessRateLimiter(store, properties);
+        PublicAccessRateLimiter limiter = new PublicAccessRateLimiter(store, properties, metrics());
 
         limiter.acquire("api-key", "1", "/api/open/v1/chat", 3);
         assertEquals(1, port.scriptCalls);
@@ -75,7 +80,7 @@ class PublicAccessRedisSecurityTest {
         ScriptedRedisPort port = new ScriptedRedisPort();
         port.failure = new RuntimeException("connection refused");
         DefaultPublicAccessStore store = new DefaultPublicAccessStore(port);
-        PublicAccessRateLimiter limiter = new PublicAccessRateLimiter(store, properties);
+        PublicAccessRateLimiter limiter = new PublicAccessRateLimiter(store, properties, metrics());
 
         limiter.acquire("share-ip", "127.0.0.1", "/api/public/share/t", 2);
         limiter.acquire("share-ip", "127.0.0.1", "/api/public/share/t", 2);
@@ -88,7 +93,7 @@ class PublicAccessRedisSecurityTest {
     @DisplayName("REDIS-UNIT-03 Redis 显式关闭时使用内存存储")
     void redisDisabledUsesMemory() {
         DefaultPublicAccessStore store = new DefaultPublicAccessStore(RedisCommandPort.disabled());
-        PublicAccessRateLimiter limiter = new PublicAccessRateLimiter(store, properties);
+        PublicAccessRateLimiter limiter = new PublicAccessRateLimiter(store, properties, metrics());
         assertDoesNotThrow(() -> limiter.acquire("share-token", "t", "/api/public/share/t", 1));
         assertThrows(PublicAccessException.class,
                 () -> limiter.acquire("share-token", "t", "/api/public/share/t", 1));

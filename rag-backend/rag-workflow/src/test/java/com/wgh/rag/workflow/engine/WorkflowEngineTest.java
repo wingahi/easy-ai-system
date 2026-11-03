@@ -113,7 +113,8 @@ class WorkflowEngineTest {
                 new VariableNodeExecutor(variableResolver),
                 new EndNodeExecutor(variableResolver)));
         engine = new WorkflowEngine(runMapper, nodeRunMapper, variableResolver,
-                conditionEvaluator, registry, objectMapper);
+                conditionEvaluator, registry, objectMapper,
+                org.mockito.Mockito.mock(com.wgh.rag.common.metrics.RagMetrics.class));
         events = new ConcurrentLinkedQueue<>();
 
         lenient().when(runMapper.selectById(any())).thenAnswer(inv -> {
