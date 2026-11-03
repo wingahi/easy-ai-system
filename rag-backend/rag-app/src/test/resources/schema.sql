@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS wgh_user (
     oidc_subject VARCHAR(200),
     oidc_issuer VARCHAR(500),
     password_must_change INT DEFAULT 0,
+    password_version INT DEFAULT 1,
     create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     create_by VARCHAR(100),

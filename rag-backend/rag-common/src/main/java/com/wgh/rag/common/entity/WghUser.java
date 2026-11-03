@@ -78,4 +78,16 @@ public class WghUser extends BaseEntity {
      * 是否必须先改密：1-是（初始化创建/管理员重置的账号），0-否
      */
     private Integer passwordMustChange;
+
+    /**
+     * 口令版本号：改密/重置/禁用时自增，用于让已签发的本地会话凭证立即失效
+     */
+    private Integer passwordVersion;
+
+    /**
+     * 自增口令版本号（改密/重置/禁用后调用）
+     */
+    public void bumpPasswordVersion() {
+        this.passwordVersion = (this.passwordVersion == null ? 0 : this.passwordVersion) + 1;
+    }
 }

@@ -278,9 +278,20 @@ class LocalAuthApiTest {
                 "{\"oldPassword\":\"admin\",\"newPassword\":\"newAdmin123\"}");
         assertThat(changed.path("code").asInt()).isEqualTo(200);
 
-        JsonNode me = getJson("/api/auth/me", token);
-        assertThat(me.path("data").path("passwordMustChange").asBoolean()).isFalse();
-        assertThat(getJson("/api/admin/users", token).path("code").asInt()).isEqualTo(200);
+        // password_version 自增：改密前的旧凭证立即失效（401 + 1007）
+        MvcResult invalid = mockMvc.perform(get("/api/auth/me")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isUnauthorized())
+                .andReturn();
+        assertThat(om.readTree(invalid.getResponse().getContentAsString()).path("code").asInt())
+                .isEqualTo(1007);
+
+        // 新凭证正常，且强制改密标记已清除
+        JsonNode relogin = login("admin", "newAdmin123");
+        assertThat(relogin.path("code").asInt()).isEqualTo(200);
+        assertThat(relogin.path("data").path("passwordMustChange").asBoolean()).isFalse();
+        String newToken = relogin.path("data").path("token").asText();
+        assertThat(getJson("/api/admin/users", newToken).path("code").asInt()).isEqualTo(200);
     }
 
     @Test
@@ -290,11 +301,12 @@ class LocalAuthApiTest {
         postJson("/api/admin/users", adminToken,
                 "{\"username\":\"trial06\",\"password\":\"trial-pass\",\"role\":\"viewer\"}");
 
-        // 本人改密
+        // 本人改密（改密后旧凭证失效，需重新登录）
         postJson("/api/auth/password", adminToken,
                 "{\"oldPassword\":\"admin\",\"newPassword\":\"newAdmin123\"}");
+        String freshAdminToken = login("admin", "newAdmin123").path("data").path("token").asText();
         // 管理员重置体验账号口令
-        JsonNode reset = putJson("/api/admin/users/trial06/password", adminToken,
+        JsonNode reset = putJson("/api/admin/users/trial06/password", freshAdminToken,
                 "{\"newPassword\":\"resetPass123\"}");
         assertThat(reset.path("code").asInt()).isEqualTo(200);
 
@@ -314,11 +326,21 @@ class LocalAuthApiTest {
         String adminToken = login("admin", "admin").path("data").path("token").asText();
         postJson("/api/admin/users", adminToken,
                 "{\"username\":\"trial07\",\"password\":\"trial-pass\",\"role\":\"viewer\"}");
-        assertThat(login("trial07", "trial-pass").path("code").asInt()).isEqualTo(200);
+        JsonNode firstLogin = login("trial07", "trial-pass");
+        assertThat(firstLogin.path("code").asInt()).isEqualTo(200);
+        String oldTrialToken = firstLogin.path("data").path("token").asText();
 
         JsonNode reset = putJson("/api/admin/users/trial07/password", adminToken,
                 "{\"newPassword\":\"resetPass123\"}");
         assertThat(reset.path("code").asInt()).isEqualTo(200);
+
+        // 重置口令后旧凭证立即失效（password_version 自增）
+        MvcResult invalid = mockMvc.perform(get("/api/quota/my")
+                        .header("Authorization", "Bearer " + oldTrialToken))
+                .andExpect(status().isUnauthorized())
+                .andReturn();
+        assertThat(om.readTree(invalid.getResponse().getContentAsString()).path("code").asInt())
+                .isEqualTo(1007);
 
         assertThat(login("trial07", "trial-pass").path("code").asInt()).isEqualTo(1005);
 
@@ -378,7 +400,7 @@ class LocalAuthApiTest {
         LocalAuthProperties other = new LocalAuthProperties();
         other.setJwtSecret("attacker-secret-0123456789abcdef0123456789abcdef");
         String forged = new LocalTokenService(other)
-                .issue("admin", 1L, java.util.Set.of("admin")).token();
+                .issue("admin", 1L, java.util.Set.of("admin"), 1).token();
 
         mockMvc.perform(get("/api/auth/me").header("Authorization", "Bearer " + forged))
                 .andExpect(status().isUnauthorized());

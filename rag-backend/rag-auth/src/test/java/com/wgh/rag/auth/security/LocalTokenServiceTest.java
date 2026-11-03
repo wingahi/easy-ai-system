@@ -43,7 +43,7 @@ class LocalTokenServiceTest {
     @DisplayName("签发后可校验，claims 含 userId/roles/tokenType=local")
     void issueThenVerify() {
         LocalTokenService.IssuedToken issued =
-                localTokenService.issue("admin", 1L, Set.of("admin"));
+                localTokenService.issue("admin", 1L, Set.of("admin"), 1);
 
         Claims claims = localTokenService.verify(issued.token());
 
@@ -57,7 +57,7 @@ class LocalTokenServiceTest {
     @Test
     @DisplayName("篡改本地凭证签名后被拒绝")
     void tamperedLocalTokenRejected() {
-        String token = localTokenService.issue("admin", 1L, Set.of("admin")).token();
+        String token = localTokenService.issue("admin", 1L, Set.of("admin"), 1).token();
         String tampered = token.substring(0, token.length() - 2) + "xy";
 
         assertThatThrownBy(() -> localTokenService.verify(tampered))
@@ -67,7 +67,7 @@ class LocalTokenServiceTest {
     @Test
     @DisplayName("本地凭证不能当作外部 OIDC token 使用（外部算法白名单拒绝 HS256）")
     void localTokenRejectedByOidcVerifier() {
-        String token = localTokenService.issue("admin", 1L, Set.of("admin")).token();
+        String token = localTokenService.issue("admin", 1L, Set.of("admin"), 1).token();
 
         assertThatThrownBy(() -> oidcTokenVerifier.verify(token))
                 .isInstanceOf(TokenVerificationException.class)
@@ -103,7 +103,7 @@ class LocalTokenServiceTest {
         other.setAudience("wgh-local");
         LocalTokenService otherService = new LocalTokenService(other);
 
-        String token = otherService.issue("admin", 1L, Set.of("admin")).token();
+        String token = otherService.issue("admin", 1L, Set.of("admin"), 1).token();
 
         assertThatThrownBy(() -> localTokenService.verify(token))
                 .isInstanceOf(TokenVerificationException.class);

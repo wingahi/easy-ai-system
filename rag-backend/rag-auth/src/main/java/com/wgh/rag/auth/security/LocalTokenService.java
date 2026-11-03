@@ -37,6 +37,8 @@ public class LocalTokenService {
     private static final String LOCAL_ALGORITHM = "HS256";
     private static final String TOKEN_TYPE = "local";
     private static final String CLAIM_TOKEN_TYPE = "tokenType";
+    /** 口令版本号 claim：与数据库 wgh_user.password_version 比对，不一致则凭证失效 */
+    public static final String CLAIM_PASSWORD_VERSION = "pv";
 
     private final LocalAuthProperties properties;
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -46,7 +48,7 @@ public class LocalTokenService {
     /**
      * 签发本地会话凭证
      */
-    public IssuedToken issue(String username, Long userId, Set<String> roles) {
+    public IssuedToken issue(String username, Long userId, Set<String> roles, Integer passwordVersion) {
         Date now = new Date();
         long ttlSeconds = Math.max(60L, properties.getTokenTtlSeconds());
         Date expiration = new Date(now.getTime() + ttlSeconds * 1000L);
@@ -57,6 +59,7 @@ public class LocalTokenService {
                 .subject(username)
                 .claim("userId", userId)
                 .claim("roles", roles == null ? Set.of() : new LinkedHashSet<>(roles))
+                .claim(CLAIM_PASSWORD_VERSION, passwordVersion == null ? 1 : passwordVersion)
                 .claim(CLAIM_TOKEN_TYPE, TOKEN_TYPE)
                 .issuedAt(now)
                 .expiration(expiration)

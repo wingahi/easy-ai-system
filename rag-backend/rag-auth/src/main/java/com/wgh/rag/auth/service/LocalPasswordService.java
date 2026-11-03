@@ -58,6 +58,7 @@ public class LocalPasswordService {
 
         user.setPasswordHash(passwordEncoder.encode(newPassword));
         user.setPasswordMustChange(0);
+        user.bumpPasswordVersion();
         userMapper.updateById(user);
         accountAuditService.success(AccountAuditService.ACTION_PASSWORD_CHANGE, user.getUsername());
         log.info("本地账号改密成功 username={}", user.getUsername());
@@ -83,6 +84,7 @@ public class LocalPasswordService {
 
         target.setPasswordHash(passwordEncoder.encode(newPassword));
         target.setPasswordMustChange(1);
+        target.bumpPasswordVersion();
         userMapper.updateById(target);
         accountAuditService.success(AccountAuditService.ACTION_PASSWORD_RESET, target.getUsername());
         log.info("管理员重置体验账号口令 username={}，下次登录需先改密", target.getUsername());

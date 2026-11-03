@@ -80,6 +80,7 @@ public class InitialAdminAccountInitializer implements ApplicationRunner {
         user.setSource("local");
         user.setTrial(0);
         user.setPasswordMustChange(1);
+        user.setPasswordVersion(1);
 
         try {
             userMapper.insert(user);

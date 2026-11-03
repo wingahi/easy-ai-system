@@ -85,7 +85,7 @@ public class LocalLoginService {
         }
 
         LocalTokenService.IssuedToken issued =
-                localTokenService.issue(user.getUsername(), user.getId(), roles);
+                localTokenService.issue(user.getUsername(), user.getId(), roles, user.getPasswordVersion());
         Set<String> permissions = loadPermissions(user.getId());
         boolean passwordMustChange = user.getPasswordMustChange() != null && user.getPasswordMustChange() == 1;
         log.info("本地登录成功 username={}, roles={}, trial={}, passwordMustChange={}",

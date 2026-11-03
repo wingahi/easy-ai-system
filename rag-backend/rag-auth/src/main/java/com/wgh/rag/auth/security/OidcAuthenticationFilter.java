@@ -181,6 +181,17 @@ public class OidcAuthenticationFilter extends OncePerRequestFilter {
             return;
         }
 
+        // 口令版本校验：改密/重置/禁用后旧凭证立即失效（外部 OIDC token 不进入本分支）
+        Long tokenPv = claimAsLong(claims, LocalTokenService.CLAIM_PASSWORD_VERSION);
+        int currentPv = user.getPasswordVersion() == null ? 1 : user.getPasswordVersion();
+        if (tokenPv == null || tokenPv.intValue() != currentPv) {
+            log.warn("本地会话凭证已失效：口令版本不一致 username={}, tokenPv={}, currentPv={}",
+                    user.getUsername(), tokenPv, currentPv);
+            writeUnauthorized(response, ResultCode.SESSION_INVALID.getCode(),
+                    ResultCode.SESSION_INVALID.getMessage());
+            return;
+        }
+
         Set<String> roles = new LinkedHashSet<>();
         List<String> dbRoles = userRoleMapper.selectRoleCodesByUserId(userId);
         if (dbRoles != null) {

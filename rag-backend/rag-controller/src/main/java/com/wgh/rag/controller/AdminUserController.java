@@ -167,6 +167,10 @@ public class AdminUserController {
         }
         if (request.getEnabled() != null) {
             user.setStatus(request.getEnabled() ? 1 : 0);
+            if (!request.getEnabled()) {
+                // 禁用后旧会话凭证立即失效
+                user.bumpPasswordVersion();
+            }
         }
         if (request.getRemark() != null) {
             user.setRemark(request.getRemark());
@@ -198,6 +202,7 @@ public class AdminUserController {
 
         WghUser user = requireTrialAccount(username);
         user.setStatus(0);
+        user.bumpPasswordVersion();
         userMapper.updateById(user);
         log.info("禁用体验账号 username={}", username);
         return Result.success(buildRow(userMapper.selectById(user.getId()), rolesOf(user.getId())));
