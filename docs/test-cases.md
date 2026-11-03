@@ -781,7 +781,7 @@
 
 ## 15. 免登录分享 / 嵌入 Widget / 开放 API
 
-> 特性组：阶段 H。后端 `com.wgh.rag.publicaccess`；Redis 基础设施 `com.wgh.rag.config.redis`；前端 `PublicShareChat.vue`、`PublicAccess.vue`、`public/widget.js`。
+> 特性组：阶段 H。后端实现层 `rag-public-access`（`com.wgh.rag.publicaccess`），Controller 在 `rag-controller`（`com.wgh.rag.controller`）；Redis 基础设施 `com.wgh.rag.config.redis`；前端 `PublicShareChat.vue`、`PublicAccess.vue`、`public/widget.js`。
 > 自动化：`PublicAccessUnitTest`（18 项）+ `PublicAccessRedisSecurityTest`（12 项，覆盖 Redis 限流原子性 / 掉线降级 / 嵌入白名单 / 密码锁定 / API Key IP 白名单，**无需 Docker**，使用脚本化 Redis 桩），`mvn -o -pl rag-app -am test -Dtest='PublicAccess*' -Dsurefire.failIfNoSpecifiedTests=false` 全绿。
 > 设计说明见 `docs/design-public-access.md`；HTTP 层用例为「仅手工」或「curl 实测」（需后端 8080/8090 + 前端 5173 + Redis）。
 

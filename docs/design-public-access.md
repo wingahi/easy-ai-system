@@ -1,7 +1,7 @@
 # 免登录分享 / 嵌入 Widget / 开放 API 设计说明
 
 > 特性组：阶段 H（免登录分享、嵌入 Widget、开放 API）
-> 实现位置：后端 `rag-controller`（`com.wgh.rag.publicaccess`），Redis 基础设施 `rag-config`（`com.wgh.rag.config.redis`），前端 `PublicShareChat.vue` / `PublicAccess.vue` / `public/widget.js`
+> 实现位置：后端实现层 `rag-public-access`（`com.wgh.rag.publicaccess`），Controller 在 `rag-controller`（`com.wgh.rag.controller`），Redis 基础设施 `rag-config`（`com.wgh.rag.config.redis`），前端 `PublicShareChat.vue` / `PublicAccess.vue` / `public/widget.js`
 > 代码版本：随特性提交；DDL 见 `rag-backend/sql/schema.sql` 末尾「免登录分享 / Widget / 开放 API」段
 
 ---

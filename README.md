@@ -97,7 +97,8 @@ wgh-rag-system/
 │   ├── rag-agent/                # 单 Agent：Planner / Executor / Reflection / HITL
 │   ├── rag-agent-multi/          # 多 Agent：Crew / Graph / GroupChat / runtime
 │   ├── rag-workflow/             # 工作流引擎：调度、节点执行器（含 AGENT）、触发器、模板
-│   ├── rag-controller/           # REST 层 + publicaccess（分享 / 开放 API / Widget 鉴权）
+│   ├── rag-public-access/        # 公开访问实现层：分享链接 / Widget 嵌入 / 开放 API Key（无 Controller）
+│   ├── rag-controller/           # REST 层（含 /api/public、/api/open/v1、分享链接与 API Key 管理接口）
 │   ├── rag-app/                  # 启动模块 + application*.yml + 集成测试
 │   ├── sql/                      # schema.sql（37 张表 + 索引 + COMMENT）/ data.sql（种子）
 │   ├── eval/                     # eval_recall.py（零依赖 Recall@K）、eval_rag.py（含 LLM Judge）
@@ -111,6 +112,10 @@ wgh-rag-system/
 ```
 rag-app
 └── rag-controller
+    ├── rag-public-access ─┬── rag-chat ── rag-kb ── rag-llm ── rag-config ── rag-common
+    │                      ├── rag-auth ─┬── rag-log ─── rag-common
+    │                      │             └── rag-data ─── rag-common
+    │                      └── rag-data ─── rag-common
     ├── rag-auth ───┬── rag-log ─── rag-common
     │               └── rag-data ─── rag-common
     ├── rag-quota ───── rag-common / rag-data
@@ -120,8 +125,9 @@ rag-app
 
 - `rag-common` 不依赖任何内部模块，也不含实体/Mapper/MyBatis 配置；
 - `rag-data` 仅被需要 `BaseEntity`、类型处理器或 MyBatis-Plus 配置的模块依赖；
-- `rag-log` 承载审计能力，`rag-auth` 与 `rag-controller` 通过它写入审计日志；
-- `rag-auth` 持有 `WghUser/WghRole/WghPermission` 及对应 Mapper，供 controller 的 RBAC 管理接口使用。
+- `rag-log` 承载审计能力，`rag-auth`、`rag-public-access` 与 `rag-controller` 通过它写入审计日志；
+- `rag-auth` 持有 `WghUser/WghRole/WghPermission` 及对应 Mapper，供 controller 的 RBAC 管理接口使用；
+- `rag-public-access` 承载分享链接 / Widget 嵌入 / 开放 API Key 的实现层（Service、Store、安全链、过滤器、实体与 Mapper），Controller 仍留在 `rag-controller`，依赖方向固定为 `rag-controller → rag-public-access`。
 
 ### 3.2 技术栈
 
