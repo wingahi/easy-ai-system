@@ -4,6 +4,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wgh.rag.common.exception.BusinessException;
 import com.wgh.rag.common.result.PageResult;
 import com.wgh.rag.common.result.ResultCode;
+import com.wgh.rag.storage.FileStorageService;
+import com.wgh.rag.storage.StorageKeys;
+import com.wgh.rag.storage.StoredObject;
 import com.wgh.rag.kb.entity.KnowledgeBase;
 import com.wgh.rag.kb.entity.KnowledgeFile;
 import com.wgh.rag.kb.entity.KnowledgeFileVersion;
@@ -18,16 +21,15 @@ import dev.langchain4j.data.document.Metadata;
 import dev.langchain4j.data.segment.TextSegment;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.util.*;
 
@@ -46,9 +48,7 @@ public class KnowledgeFileService {
     private final TextSplitter textSplitter;
     private final VectorStoreService vectorStoreService;
     private final ObjectMapper objectMapper;
-
-    @Value("${wgh.file.upload-dir:/tmp/wgh-rag/uploads}")
-    private String uploadDir;
+    private final FileStorageService fileStorageService;
 
     /**
      * 文件处理线程池：core=4, max=8, queue=50，避免裸 new Thread() 导致并发失控
@@ -72,25 +72,18 @@ public class KnowledgeFileService {
     public KnowledgeFile upload(Long kbId, MultipartFile multipartFile, 
                                  String splitStrategy, String splitConfig) {
         KnowledgeBase kb = kbService.getById(kbId);
-        
-        // 确保上传目录存在
-        Path kbDir = Paths.get(uploadDir, String.valueOf(kbId));
-        try {
-            Files.createDirectories(kbDir);
-        } catch (IOException e) {
-            throw new BusinessException("创建上传目录失败: " + e.getMessage());
-        }
 
-        // 保存文件
         String originalName = multipartFile.getOriginalFilename();
         String fileType = getExtension(originalName);
-        String storedName = System.currentTimeMillis() + "_" + originalName;
-        Path targetPath = kbDir.resolve(storedName);
-        
-        try {
-            Files.copy(multipartFile.getInputStream(), targetPath, StandardCopyOption.REPLACE_EXISTING);
+        String storedKey = StorageKeys.kbKey(kbId, UUID.randomUUID().toString(), originalName);
+
+        // 通过可插拔存储服务写入（本地/OSS 由配置决定），上层不拼接本地路径
+        try (InputStream in = multipartFile.getInputStream()) {
+            StoredObject stored = fileStorageService.store(
+                    storedKey, in, multipartFile.getSize(), multipartFile.getContentType());
+            storedKey = stored.key();
         } catch (IOException e) {
-            throw new BusinessException("文件保存失败: " + e.getMessage());
+            throw new BusinessException("文件读取失败: " + e.getMessage(), e);
         }
 
         // 保存记录
@@ -99,16 +92,22 @@ public class KnowledgeFileService {
         file.setFileName(originalName);
         file.setFileType(fileType);
         file.setFileSize(multipartFile.getSize());
-        file.setFilePath(targetPath.toString());
+        file.setFilePath(storedKey);
         file.setSplitStrategy(splitStrategy != null ? splitStrategy : "AUTO");
         file.setSplitConfig(splitConfig);
         file.setStatus("PENDING");
-        
-        fileMapper.insert(file);
-        
+
+        try {
+            fileMapper.insert(file);
+        } catch (RuntimeException e) {
+            // 入库失败时清理已写入的对象，避免孤儿文件
+            deleteStorageQuietly(storedKey);
+            throw e;
+        }
+
         // 异步处理
         processFileAsync(file, kb);
-        
+
         return file;
     }
 
@@ -133,6 +132,7 @@ public class KnowledgeFileService {
         // 清理该文件的旧向量，避免重复入库
         KnowledgeBase kb = kbService.getById(file.getKnowledgeBaseId());
         vectorStoreService.deleteByFileId(kb.getCollectionName(), fileId);
+
 
         // 升级版本号 + 记录旧版本快照（回滚时按此版本的策略重切）
         Integer oldVersion = file.getVersion() == null ? 1 : file.getVersion();
@@ -172,7 +172,11 @@ public class KnowledgeFileService {
             vectorStoreService.deleteByFileId(kb.getCollectionName(), fileId);
         }
 
+
         fileMapper.deleteById(fileId);
+
+        // 逻辑删除已入库；对象存储清理为尽力而为，失败只记录 WARN（残留风险见设计文档）
+        deleteStorageQuietly(file.getFilePath());
 
         kbService.updateCounts(file.getKnowledgeBaseId());
     }
@@ -182,42 +186,43 @@ public class KnowledgeFileService {
      */
     public Map<String, Object> previewSplit(Long fileId) {
         KnowledgeFile file = getById(fileId);
-        
-        File parsedFile = new File(file.getFilePath());
-        if (!parsedFile.exists()) {
-            throw new BusinessException("文件不存在于磁盘: " + file.getFilePath());
-        }
-        
-        ParsedDocument parsed = documentParser.parseDocument(parsedFile, file.getFileType());
-        List<String> paragraphs = parsed.paragraphs();
-        TextSplitter.Strategy strategy = TextSplitter.Strategy.valueOf(file.getSplitStrategy());
-        // 与异步入库链路一致：传入 embedding 模型上下文（SEMANTIC 需要）
-        KnowledgeBase kb = kbService.getById(file.getKnowledgeBaseId());
-        SplitContext context = new SplitContext(kb != null ? kb.getEmbeddingModelId() : null);
-        List<ChunkOutput> chunks = textSplitter.splitDetailed(paragraphs, strategy, file.getSplitConfig(), context);
 
-        Map<String, Object> result = new HashMap<>();
-        result.put("fileName", file.getFileName());
-        result.put("fileType", file.getFileType());
-        result.put("paragraphCount", paragraphs.size());
-        result.put("chunkCount", chunks.size());
+        File parsedFile = materializeToTempFile(file.getFilePath(), file.getFileType());
+        try {
+            ParsedDocument parsed = documentParser.parseDocument(parsedFile, file.getFileType());
+            List<String> paragraphs = parsed.paragraphs();
+            TextSplitter.Strategy strategy = TextSplitter.Strategy.valueOf(file.getSplitStrategy());
+            // 与异步入库链路一致：传入 embedding 模型上下文（SEMANTIC 需要）
+            KnowledgeBase kb = kbService.getById(file.getKnowledgeBaseId());
+            SplitContext context = new SplitContext(kb != null ? kb.getEmbeddingModelId() : null);
+            List<ChunkOutput> chunks = textSplitter.splitDetailed(paragraphs, strategy, file.getSplitConfig(), context);
 
-        // 返回前 100 个片段（含坐标信息）
-        List<Map<String, Object>> chunkPreviews = new ArrayList<>();
-        int previewSize = Math.min(chunks.size(), 100);
-        for (int i = 0; i < previewSize; i++) {
-            Map<String, Object> chunk = new HashMap<>();
-            chunk.put("index", i);
-            chunk.put("text", chunks.get(i).text());
-            chunk.put("length", chunks.get(i).text().length());
-            if (!chunks.get(i).attributes().isEmpty()) {
-                chunk.put("attributes", chunks.get(i).attributes());
+            Map<String, Object> result = new HashMap<>();
+            result.put("fileName", file.getFileName());
+            result.put("fileType", file.getFileType());
+            result.put("paragraphCount", paragraphs.size());
+            result.put("documentMetadata", parsed.metadata());
+            result.put("chunkCount", chunks.size());
+
+            // 返回前 100 个片段（含坐标信息）
+            List<Map<String, Object>> chunkPreviews = new ArrayList<>();
+            int previewSize = Math.min(chunks.size(), 100);
+            for (int i = 0; i < previewSize; i++) {
+                Map<String, Object> chunk = new HashMap<>();
+                chunk.put("index", i);
+                chunk.put("text", chunks.get(i).text());
+                chunk.put("length", chunks.get(i).text().length());
+                if (!chunks.get(i).attributes().isEmpty()) {
+                    chunk.put("attributes", chunks.get(i).attributes());
+                }
+                chunkPreviews.add(chunk);
             }
-            chunkPreviews.add(chunk);
+            result.put("chunks", chunkPreviews);
+
+            return result;
+        } finally {
+            deleteTempQuietly(parsedFile);
         }
-        result.put("chunks", chunkPreviews);
-        
-        return result;
     }
 
     /**
@@ -242,11 +247,12 @@ public class KnowledgeFileService {
     private void processFileAsync(KnowledgeFile file, KnowledgeBase kb) {
         // 使用线程池异步处理（避免裸 new Thread 导致并发失控）
         FILE_PROCESSOR.submit(() -> {
+            File parsedFile = null;
             try {
                 file.setStatus("PROCESSING");
                 fileMapper.updateById(file);
 
-                File parsedFile = new File(file.getFilePath());
+                parsedFile = materializeToTempFile(file.getFilePath(), file.getFileType());
                 List<String> paragraphs = documentParser.parse(parsedFile, file.getFileType());
                 TextSplitter.Strategy strategy = TextSplitter.Strategy.valueOf(file.getSplitStrategy());
                 // SEMANTIC 需要知识库绑定的 embedding 模型；STRUCTURED/SEMANTIC 会产出 chunk 属性
@@ -285,7 +291,51 @@ public class KnowledgeFileService {
                 file.setStatus("FAILED");
                 file.setErrorMessage(e.getMessage());
                 fileMapper.updateById(file);
+            } finally {
+                deleteTempQuietly(parsedFile);
             }
         });
+    }
+
+    /**
+     * 从存储后端读取对象到临时文件：现有解析器均面向 File（Tika/PDFBox/POI），
+     * 由本服务通过 {@link FileStorageService#openStream} 物化，避免上层感知存储根目录。
+     */
+    private File materializeToTempFile(String storageKey, String fileType) {
+        if (storageKey == null || storageKey.isBlank()) {
+            throw new BusinessException("文件存储 key 为空，无法读取");
+        }
+        String suffix = (fileType == null || fileType.isBlank()) ? ".bin" : "." + fileType;
+        Path temp = null;
+        try (InputStream in = fileStorageService.openStream(storageKey)) {
+            temp = Files.createTempFile("wgh-kb-parse-", suffix);
+            Files.copy(in, temp, StandardCopyOption.REPLACE_EXISTING);
+            return temp.toFile();
+        } catch (IOException e) {
+            deleteTempQuietly(temp == null ? null : temp.toFile());
+            throw new BusinessException("读取存储文件失败: " + e.getMessage(), e);
+        }
+    }
+
+    private void deleteTempQuietly(File temp) {
+        if (temp == null) {
+            return;
+        }
+        try {
+            Files.deleteIfExists(temp.toPath());
+        } catch (IOException e) {
+            log.warn("清理解析临时文件失败: {} ({})", temp, e.getMessage());
+        }
+    }
+
+    private void deleteStorageQuietly(String storageKey) {
+        if (storageKey == null || storageKey.isBlank()) {
+            return;
+        }
+        try {
+            fileStorageService.delete(storageKey);
+        } catch (Exception e) {
+            log.warn("清理存储对象失败（可能残留）: {} ({})", storageKey, e.getMessage());
+        }
     }
 }

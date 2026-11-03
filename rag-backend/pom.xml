@@ -44,6 +44,7 @@
         <module>rag-auth</module>
         <module>rag-quota</module>
         <module>rag-config</module>
+        <module>rag-storage</module>
         <module>rag-llm</module>
         <module>rag-kb</module>
         <module>rag-chat</module>
@@ -105,6 +106,11 @@
             <dependency>
                 <groupId>com.wgh</groupId>
                 <artifactId>rag-config</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.wgh</groupId>
+                <artifactId>rag-storage</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
@@ -286,6 +292,26 @@
                                     <version>[21,22)</version>
                                     <message>本项目要求 JDK 21（构建与测试统一固定）。请将 JAVA_HOME 指向 JDK 21 后重试，例如 macOS：export JAVA_HOME=$(/usr/libexec/java_home -v 21)；Linux：export JAVA_HOME=/path/to/jdk-21。</message>
                                 </requireJavaVersion>
+                            </rules>
+                        </configuration>
+                    </execution>
+                    <!-- 依赖方向约束：仅 rag-controller 可以直接依赖 rag-public-access。
+                         该执行在 rag-controller 中显式 skip；searchTransitive=false 避免误伤
+                         间接依赖（如 rag-app -> rag-controller -> rag-public-access）。 -->
+                    <execution>
+                        <id>enforce-public-access-not-consumed</id>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <bannedDependencies>
+                                    <searchTransitive>false</searchTransitive>
+                                    <excludes>
+                                        <exclude>com.wgh:rag-public-access</exclude>
+                                    </excludes>
+                                    <message>依赖方向约束：仅 rag-controller 可以直接依赖 rag-public-access；rag-auth/rag-quota/rag-log/rag-data/rag-config 等模块不得直接依赖它。</message>
+                                </bannedDependencies>
                             </rules>
                         </configuration>
                     </execution>
