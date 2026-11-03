@@ -47,6 +47,7 @@ public class KnowledgeFileService {
     private final DocumentParserDispatcher documentParser;
     private final TextSplitter textSplitter;
     private final VectorStoreService vectorStoreService;
+    private final SemanticCacheService semanticCacheService;
     private final ObjectMapper objectMapper;
     private final FileStorageService fileStorageService;
 
@@ -133,6 +134,8 @@ public class KnowledgeFileService {
         KnowledgeBase kb = kbService.getById(file.getKnowledgeBaseId());
         vectorStoreService.deleteByFileId(kb.getCollectionName(), fileId);
 
+        // 知识库内容已变更：清理引用该知识库的窗口语义缓存，避免继续返回旧答案
+        semanticCacheService.invalidateByKbId(file.getKnowledgeBaseId());
 
         // 升级版本号 + 记录旧版本快照（回滚时按此版本的策略重切）
         Integer oldVersion = file.getVersion() == null ? 1 : file.getVersion();
@@ -172,6 +175,8 @@ public class KnowledgeFileService {
             vectorStoreService.deleteByFileId(kb.getCollectionName(), fileId);
         }
 
+        // 知识库内容已变更：清理引用该知识库的窗口语义缓存
+        semanticCacheService.invalidateByKbId(file.getKnowledgeBaseId());
 
         fileMapper.deleteById(fileId);
 

@@ -18,7 +18,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
+import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -154,6 +156,82 @@ class SemanticCacheServiceTest {
         verify(cacheMapper).physicalDeleteById(2L);
         verify(vectorStoreService).deleteByEmbeddingIds(eq(SemanticCacheService.VEC_TABLE),
                 eq(List.of("vec-1", "vec-2")));
+    }
+
+    @Test
+    void lookup_skips_expired_row() {
+        props.getCache().setTtlMinutes(60);
+        when(store.search(any())).thenReturn(new EmbeddingSearchResult<>(List.of(
+                new EmbeddingMatch<>(0.98, "vec-old", null, TextSegment.from("q")))));
+        SemanticCache row = new SemanticCache();
+        row.setId(12L);
+        row.setWindowId(1L);
+        row.setEmbeddingId("vec-old");
+        row.setAnswerText("旧答案");
+        row.setCreateTime(LocalDateTime.now().minusHours(2));
+        when(cacheMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(row);
+
+        assertThat(service.lookup(1L, List.of(1L), "问题")).isNull();
+        verify(cacheMapper, never()).updateById(any(SemanticCache.class));
+    }
+
+    @Test
+    void cleanupExpired_deletes_rows_and_vectors() {
+        props.getCache().setTtlMinutes(60);
+        SemanticCache expired = new SemanticCache();
+        expired.setId(21L);
+        expired.setWindowId(1L);
+        expired.setEmbeddingId("vec-expired");
+        when(cacheMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(List.of(expired));
+
+        int removed = service.cleanupExpired();
+
+        assertThat(removed).isEqualTo(1);
+        verify(cacheMapper).physicalDeleteById(21L);
+        verify(vectorStoreService).deleteByEmbeddingIds(SemanticCacheService.VEC_TABLE, List.of("vec-expired"));
+    }
+
+    @Test
+    void cleanupExpired_skips_when_ttl_disabled() {
+        props.getCache().setTtlMinutes(0);
+        assertThat(service.cleanupExpired()).isZero();
+        verifyNoInteractions(cacheMapper);
+    }
+
+    @Test
+    void invalidateByWindow_removes_window_cache_and_vectors() {
+        SemanticCache row = new SemanticCache();
+        row.setId(31L);
+        row.setWindowId(7L);
+        row.setEmbeddingId("vec-w7");
+        when(cacheMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(List.of(row));
+
+        int removed = service.invalidateByWindow(7L);
+
+        assertThat(removed).isEqualTo(1);
+        verify(cacheMapper).physicalDeleteById(31L);
+        verify(vectorStoreService).deleteByEmbeddingIds(SemanticCacheService.VEC_TABLE, List.of("vec-w7"));
+    }
+
+    @Test
+    void invalidateByKb_clears_only_windows_referencing_kb_and_next_lookup_misses() {
+        when(cacheMapper.selectWindowKbMappings()).thenReturn(List.of(
+                Map.of("windowId", 1L, "kbIds", "[1,2]"),
+                Map.of("windowId", 2L, "kbIds", "[3]")));
+        SemanticCache row = new SemanticCache();
+        row.setId(41L);
+        row.setWindowId(1L);
+        row.setEmbeddingId("vec-w1");
+        when(cacheMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(List.of(row));
+
+        int removed = service.invalidateByKbId(1L);
+
+        assertThat(removed).isEqualTo(1);
+        verify(cacheMapper).physicalDeleteById(41L);
+        verify(vectorStoreService).deleteByEmbeddingIds(SemanticCacheService.VEC_TABLE, List.of("vec-w1"));
+        // 变更后缓存向量已清理，再次查询不应命中旧答案
+        when(store.search(any())).thenReturn(new EmbeddingSearchResult<>(List.of()));
+        assertThat(service.lookup(1L, List.of(1L), "问题")).isNull();
     }
 
     @Test

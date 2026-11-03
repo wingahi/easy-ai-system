@@ -89,5 +89,9 @@ public class RagProperties {
         private Double similarityThreshold = 0.95;
         /** 每窗口最大缓存条数，超出删除最旧 */
         private Integer maxPerWindow = 500;
+        /** 缓存有效期（分钟，<=0 表示不过期） */
+        private Integer ttlMinutes = 1440;
+        /** 过期缓存单次清理条数（避免一次删除过多） */
+        private Integer cleanupBatchSize = 200;
     }
 }

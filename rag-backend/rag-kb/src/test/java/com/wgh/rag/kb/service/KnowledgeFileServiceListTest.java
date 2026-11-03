@@ -41,7 +41,8 @@ class KnowledgeFileServiceListTest {
                 kbMapper,
                 fileMapper,
                 Mockito.mock(LlmModelService.class),
-                Mockito.mock(VectorStoreService.class));
+                Mockito.mock(VectorStoreService.class),
+                Mockito.mock(SemanticCacheService.class));
         service = new KnowledgeFileService(
                 fileMapper,
                 Mockito.mock(KnowledgeFileVersionMapper.class),
@@ -49,6 +50,7 @@ class KnowledgeFileServiceListTest {
                 Mockito.mock(DocumentParserDispatcher.class),
                 Mockito.mock(TextSplitter.class),
                 Mockito.mock(VectorStoreService.class),
+                Mockito.mock(SemanticCacheService.class),
                 new ObjectMapper(),
                 Mockito.mock(com.wgh.rag.storage.FileStorageService.class));
     }

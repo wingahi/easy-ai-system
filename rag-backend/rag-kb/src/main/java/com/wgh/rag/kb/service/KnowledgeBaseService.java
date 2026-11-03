@@ -31,6 +31,7 @@ public class KnowledgeBaseService {
     private final KnowledgeFileMapper fileMapper;
     private final LlmModelService llmModelService;
     private final VectorStoreService vectorStoreService;
+    private final SemanticCacheService semanticCacheService;
 
     public PageResult<KnowledgeBase> page(Long page, Long size, String keyword) {
         LambdaQueryWrapper<KnowledgeBase> wrapper = new LambdaQueryWrapper<>();
@@ -94,6 +95,9 @@ public class KnowledgeBaseService {
         } catch (Exception e) {
             log.warn("删除 pgvector 向量表失败: {}", e.getMessage());
         }
+
+        // 知识库已删除：清理引用该知识库的窗口语义缓存
+        semanticCacheService.invalidateByKbId(id);
         
         // 逻辑删除关联文件
         fileMapper.delete(new LambdaQueryWrapper<KnowledgeFile>()
