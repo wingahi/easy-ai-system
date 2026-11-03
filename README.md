@@ -1,4 +1,4 @@
-# WGH RAG System
+# Easy AI System
 
 > 面向私有化部署的企业知识库问答与 RAG 中台：把文档治理、检索增强、流式问答、Agent / 工作流编排、分享与开放接入收敛到一套可审计、可配额管理的系统。
 
@@ -111,7 +111,7 @@
 | 能力 | 状态 | 说明 |
 |------|------|------|
 | 模型管理 | 已完成 | DB 动态模型 + OpenAI / DASHSCOPE / DeepSeek / 自建 OpenAI 兼容端点；缓存热更新 |
-| 模型路由与故障转移 | **部分完成（存在已知缺陷）** | `ModelRouter#resolveChain` + `RagChatService#runWithFailover` 支持普通 RAG 按 `route_group` 切链；但流式回调 `onError`（含首个 token 前的异步连接失败）只发送 `error` 事件并结束，不会回到切链循环；Agent / 工作流仍只用主模型 |
+| 模型路由与故障转移 | 已完成 | `ModelRouter#resolveChain` + `RagChatService` 回调驱动故障转移：按 `route_group` 切链，首个 token 前的连接失败 / 超时 / 4xx / 5xx 由 `onError` 进入 `handleAttemptFailure` 并切到下一候选；每次尝试使用独立输出缓冲，`active` + CAS 防止重复 `onError` 多次切链；全部候选失败返回明确业务错误。部分输出后失败不切链（避免拼接两段输出）。Agent / 工作流仍只用主模型（见 §8） |
 | 多实例 JWKS 缓存共享 | **未实现** | `JwksProvider` 为进程内缓存，密钥轮换后各实例刷新时间不一致 |
 | `rag-public-access` 独立模块 + Enforcer 禁反向依赖 | 已完成 | 分享 / Widget / API Key 实现层独立；Controller 留在 `rag-controller`，依赖方向受 Enforcer 约束 |
 | `rag-storage` 独立模块（local / OSS 可插拔） | 已完成 | `FileStorageService` + `LocalFileStorageService` / `AliyunOssFileStorageService` |
@@ -385,7 +385,7 @@ OSS 配置不完整时不阻断启动，仅在真正调用存储操作时返回�
 | 反馈与评测 | 无数据集版本管理、无 A/B 对比 | 离线评测只能脚本化执行 |
 | 多模态 | 仅视觉模型图片输入，无 OCR | 扫描件 / 图片型 PDF 无法直接提取文字 |
 | 检索 | 单库 PostgreSQL + pgvector，无独立向量库 / 搜索引擎 | 超大规模语料需评估性能上限 |
-| **模型故障转移** | **仅普通 RAG 在发起调用前的同步异常会切链；流式 `onError`（含首个 token 前的异步连接失败）不回切链；Agent / 工作流只用主模型** | **已知缺陷，后续优先修复（见 §9）** |
+| 模型故障转移 | 普通 RAG 已覆盖首个 token 前的失败切链；**已产生部分输出后失败不切链、不回滚、不拼接第二个模型输出**，直接 `error` 结束；**Agent / 工作流仍只用主模型** | Agent / 工作流需另行接入切链（见 §9）；部分输出后的续接策略暂不提供 |
 | 存储切换 | `local` ↔ `oss` 切换不自动迁移历史对象 | 需手工迁移或重新上传并重建向量 |
 | OSS 删除 | 删除失败仅 WARN，数据库仍逻辑删除，可能残留孤儿对象 | 需离线清理脚本 |
 | 大文件上传 | 未实现分片上传 / 断点续传，OSS 仅单次 `putObject`；默认上限 50MB | 超大文件与弱网场景需另行接入 |
@@ -401,7 +401,8 @@ OSS 配置不完整时不阻断启动，仅在真正调用存储操作时返回�
 
 | 优先级 | 方向 | 当前状态 | 说明 |
 |--------|------|----------|------|
-| P0 | 模型故障转移补全 | 部分完成 | 让流式 `onError`（含首个 token 前的异步连接失败）可回到切链循环；逐步扩展到 Agent / 工作流 |
+| P0 | 模型故障转移补全 | 已完成（首 token 前切链） | 首个 token 前的连接失败 / 超时 / 4xx / 5xx 已进入切链；部分输出后失败与全部候选失败均有明确错误收口（commit `e496f71`） |
+| P1 | Agent / 工作流接入故障转移 | 未实现 | 两条链路当前仍只用主模型，需复用普通 RAG 的回调驱动切链能力 |
 | P1 | 大文件分片上传 / 断点续传 | 未实现 | OSS multipart 与失败续传；业务侧分片大小与并发控制 |
 | P1 | 存储迁移与孤儿对象清理 | 未实现 | `local` ↔ `oss` 历史对象迁移工具；按 `file_path` 比对清理 OSS 残留对象 |
 | P2 | 多实例 JWKS 缓存共享 | 未实现 | 将 JWKS 缓存放至 Redis 或共享缓存，统一密钥轮换后的刷新时机 |

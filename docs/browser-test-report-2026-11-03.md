@@ -5,13 +5,13 @@
 | 项 | 值 |
 | --- | --- |
 | 前端 | http://localhost:5173（Vite dev server，`/api` 代理到 8080），进程 node PID 90478 |
-| 后端 | http://localhost:8080，进程 java PID 19927（`target/rag-app-1.0.0-SNAPSHOT.jar`） |
+| 后端 | http://localhost:8080，测试时段进程 java PID 19927；测试结束后已重新打包并重启为 PID 41603（jar 22:05:05，见 §八-3） |
 | 管理端口 | http://localhost:9090（`/actuator/health`、`/actuator/prometheus`） |
 | 账号 | `admin` / `admin`（本地测试库） |
 | 测试方式 | 浏览器自动化真实操作页面（导航、点击、输入、上传/下载、网络与控制台观测、截图） |
-| 测试时间 | 2026-11-03 |
+| 测试时间 | 2026-11-03（复验与重新打包同为当日） |
 
-全程未执行 `mvn install` / `package`，未重启 8080 / 5173 进程。
+本次浏览器用例执行期间未执行 `mvn install` / `package`，未重启 8080 / 5173 进程；测试结束后的重新打包与后端重启见 §八-3。
 
 ## 二、用例总览
 
@@ -19,6 +19,17 @@
 - PASS：**43**
 - FAIL：**1**
 - BLOCKED：**2**
+
+> 统计口径说明：§八 的修复与复验结果**未新增或删除**本报告用例，故 46 / 43 / 1 / 2 保持不变。用例级状态变化如下：
+>
+> | 用例 | 当前状态 | 是否变化 | 说明 |
+> | --- | --- | --- | --- |
+> | C3 文件预览 | FAIL | 未变 | 用户已决定暂不处理，见 §八-4 |
+> | C2 文件上传 | BLOCKED | 未变 | 工具限制，未新增证据 |
+> | A7 首登强制改密 | BLOCKED | 未变 | 无可用体验账号密码 |
+> | F4 工作流保存 | PASS | 未变 | 原「版本跳号 / 疑似重复提交」备注已被推翻，根因与修复见 §八-1 |
+>
+> 模型故障转移 P0 的修复属于后端能力修复，不在本报告 46 条浏览器用例内，且真实模型 SSE 切链未验证，见 §八-2。
 
 ## 三、用例明细
 
@@ -49,7 +60,7 @@
 | F1 | 工作流列表 | PASS | 2026-11-03-16-workflow-list.png | 列表、状态、入口正常 |
 | F2 | 打开工作流编辑器 | PASS | 2026-11-03-17-workflow-editor-agent.png | `/workflows/129/edit` 打开「浏览器验证-AGENT工作流」 |
 | F3 | AGENT 节点配置 | PASS | 2026-11-03-18-workflow-agent-config.png | Start → Agent → End 连线完整，节点配置面板可编辑 |
-| F4 | 校验并保存工作流 | PASS | 2026-11-03-19-workflow-saved-v5.png | 校验通过、保存成功；版本号有跳号/重复现象，见备注第 2 条 |
+| F4 | 校验并保存工作流 | PASS | 2026-11-03-19-workflow-saved-v5.png | 校验通过、保存成功。原备注「版本号跳号 / 疑似重复提交」已被推翻：实际为「校验」「运行」内部的隐式保存，见 §八-1 |
 | G1 | 多 Agent Crew 列表 | PASS | 2026-11-03-20-multiagent-crew-list.png | 8 个 Crew 正常展示 |
 | G2 | 创建 Crew | PASS | 2026-11-03-21-multiagent-create-dialog.png、2026-11-03-22-multiagent-crew-created.png | 新建「浏览器验证-Crew-20261103」，Agent 1（验证员/verifier）保存成功 |
 | G3 | Crew 运行入口 | PASS | 2026-11-03-23-multiagent-playground.png | `/multi-agent/playground` 正常加载所选 Crew、Agents(1) 与开始运行入口 |
@@ -80,10 +91,11 @@
 - 实际表现：未打开预览，弹出 toast「存储对象不存在: ./uploads/1/1793688741615_Wen Guanhai_….pdf」，控制台同文案
 - 初判：数据库 `storage_path` 记录为相对路径 `./uploads/1/...`，但当前运行实例的本地存储目录中该文件已不存在。与仓库中 `rag-storage` 模块正被他人重构（`LocalFileStorageService` 等文件处于删除状态）相印证，怀疑为存量数据文件缺失或存储根目录与 DB 记录不一致（例如 `rag.storage.local.root` 指向变化）。属**数据/环境问题**，不是本次前端改动引入，未修改业务代码。
 
-### 2. 工作流保存版本跳号/疑似重复（备注，F4）
+### 2. 工作流保存版本跳号 / 疑似重复提交（备注，F4）——**原初判已被推翻**
 
 - 现象：保存后版本由 v3 变为 v5；`/workflows/129/versions` 中 v4（18:48:58.818）与 v5（18:49:03.742）的 `graphJson` 长度均为 630，间隔约 5 秒
-- 初判：一次保存操作可能触发了两次提交（保存按钮重复点击或编辑器内部二次触发），或后端每次保存均生成新版本且前端编辑过程本身触发一次。**未确认归因**，仅记录，不改代码。建议后续为保存接口做幂等/前端防抖。
+- **原初判（已推翻）**：「一次保存可能触发了两次提交（保存按钮重复点击或编辑器内部二次触发）」。
+- 复验结论：点一次「保存」只发 1 条 `PUT`，版本只 +1，不存在一次点击发两次请求。真实原因是保存入口有三个（手动保存、`校验` 内部 `save(true)`、`运行` 内部 `save(true)`），后两者无提示写库并递增版本；数据库中工作流 129 的 v1~v5 快照 md5 完全相同，印证为隐式保存造成的版本空转。已由 commit `a48f11d` 修复，详见 §八-1。
 
 ### 3. 分享错误密码提示重复（Minor UI）
 
@@ -109,11 +121,49 @@
 
 | 服务 | 端口 | 状态 |
 | --- | --- | --- |
-| 后端 jar（PID 19927，已运行 02:42:19） | 8080 / 9090 | 全程监听，测试结束时仍在运行 |
-| 前端 Vite（PID 90478） | 5173 | 全程监听，测试结束时仍在运行 |
+| 后端 jar（测试时段 PID 19927；当前 PID 41603，jar 22:05:05） | 8080 / 9090 | 测试全程监听；测试后重新打包重启，见 §八-3 |
+| 前端 Vite（PID 90478） | 5173 | 全程监听，未重启 |
 
-测试结束后 `9090/actuator/health` 仍返回 UP，8080 业务接口正常响应。
+测试结束后 `9090/actuator/health` 仍返回 UP，8080 业务接口正常响应。重新打包重启后复验：`9090/actuator/health` = 200，`8080/actuator/health` = 404（管理端点未暴露在业务端口，与 J3 一致）。
 
 ## 七、证据目录
 
 所有截图位于 `docs/browser-evidence/`，统一前缀 `2026-11-03-`，共 43 个文件（01 ~ 43）。既有旧截图未修改、未恢复、未 checkout。
+
+> 说明：当前工作区中该目录的旧截图已被他人删除（未提交改动），不在本次文档提交范围内；本报告仅记录测试时的证据文件名。
+
+## 八、修复与复验（2026-11-03 晚）
+
+本节记录测试报告产出后的三项修复与复验，证据来源为对应 commit 与实际验收输出；**不新增、不删除** §三 的 46 条用例。
+
+### 1. 工作流保存「重复提交」已查明并修复（commit `a48f11d`，对应 F4）
+
+- **结论：推翻 §四-2 的猜测。** 不是一次点击发两次请求——复验时点一次「保存」只发 1 条 `PUT /api/workflows/{id}`，版本只 +1。
+- **真实原因**：保存入口有三个——手动保存、`校验` 内部 `save(true)`、`运行` 内部 `save(true)`；后两者无提示写库并递增版本。数据库中工作流 129 的 v1~v5 快照 md5 完全相同，印证是隐式保存造成的版本空转。
+- **附带修复**：`@click="save"` 把 MouseEvent 当作 `silent` 参数传入，导致保存成功没有 toast。
+- **修法**：保存收敛为单一入口 + 内容指纹（`graphKey` / `savedGraphKey`）去重 + `saving` 互斥；内容未变不发请求并提示「内容未变更，无需保存」。「校验」改为只读：前端 `POST /api/workflows/{id}/validate` 携带画布草稿，后端新增可选 body，不写库、不递增版本，不传 body 保持旧行为（`WorkflowController#validate` → `WorkflowService#validateGraph`）。
+- **验证**：`rag-workflow` 83 项测试全过（含新增 `WorkflowServiceSaveVersionTest`），`npm run build` 通过；浏览器复验「不改内容点保存 → 0 条 `PUT`、版本不动」「点校验 → 0 条 `PUT` / 1 条 `POST`、版本不动」。
+
+### 2. 模型故障转移 P0 已修复（commit `e496f71`）
+
+- **根因**：LangChain4j 的 `StreamingChatModel.chat()` 是异步的，请求提交后立即返回；旧的 `runWithFailover` 把「`chat()` 正常返回」当作成功，第一轮就 `return`，导致首 token 前的连接失败 / 超时 / 4xx / 5xx 走 `onError` 时切链循环早已退出，只能发 `error` 结束。
+- **修法**：改为回调驱动的故障转移。`StreamAttempt` 记录每次尝试的 started / active 状态与独立输出缓冲；`onError` 统一进入 `handleAttemptFailure`；`active` + CAS 防止重复 `onError` 触发多次切链；每次尝试独立缓冲，避免内容污染。
+- **部分输出后失败策略**：不切链、不回滚、不重发、不拼接第二个模型输出，发 `error` 如实结束，不产生第二个 `done`。
+- **全部候选失败**：返回明确业务错误「所有候选模型均调用失败（共 N 个，最后错误: …）」，不空响应、不挂起。
+- **测试**：新增 4 项（切链成功 / 全部失败 / 部分输出后失败 / 重复 `onError` 只切一次），`rag-chat` 59 项全过。
+- **仍保留的边界**：Agent / 工作流链路仍只用主模型，未纳入切链。
+- **未验证**：真实模型连通性与浏览器端 SSE 切链未测（本地无可用 key），故本节不声明浏览器用例通过。
+
+### 3. 后端已重新打包重启，两处修复生效（无回滚）
+
+- 旧 jar 备份为 `rag-app-1.0.0-SNAPSHOT.old-20261103.jar`；新 jar 时间 `22:05:05`；`mvn -o -pl rag-app -am package -DskipTests` BUILD SUCCESS（63s，16 模块）。
+- 新进程 PID **41603**；8080 中断约 4 分 31 秒；复验 `9090/actuator/health` = 200、`8080/actuator/health` = 404。
+- **新 validate 逻辑生效证据**：工作流 130 草稿校验，不传 body → `data: []`；传含悬空连线草稿 → `data: ["连线目标节点不存在：missing_node"]`（旧 jar 忽略 body，不可能返回该错误）。校验后 `version` 仍为 1、`updateTime` 未变、日志中 `version=?` 的 UPDATE 计数为 0。
+- jar 内嵌 `rag-chat` / `rag-workflow` lib 时间戳 `22:04`；`javap` 确认包含 `RagChatService$FailoverContext` 与 `RagChatService$StreamAttempt`。
+- `admin/admin` 登录返回 200，响应与 JWT 均含 `roles=['admin']`。
+
+### 4. 保持原状的项（未修复，不做美化）
+
+- **C3 文件预览仍为 FAIL**：`./uploads/1/...pdf` 存储对象不存在；**用户已决定暂不处理**，本次重新打包与重启未改变该数据/环境问题。
+- **C2 文件上传、A7 首登强制改密仍为 BLOCKED**：维持原判定，未新增证据。
+- **分享错误密码双 toast**：仍为已知 minor 现象，未修复。
