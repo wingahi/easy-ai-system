@@ -113,14 +113,22 @@ public class KnowledgeFileService {
     }
 
     /**
-     * 重新分割文件
+     * 按 ID 获取文件，不存在时统一抛 3001「文件不存在」。
      */
-    @Transactional
-    public KnowledgeFile reSplit(Long fileId, String splitStrategy, String splitConfig) {
+    public KnowledgeFile getById(Long fileId) {
         KnowledgeFile file = fileMapper.selectById(fileId);
         if (file == null) {
             throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "文件不存在");
         }
+        return file;
+    }
+
+    /**
+     * 重新分割文件
+     */
+    @Transactional
+    public KnowledgeFile reSplit(Long fileId, String splitStrategy, String splitConfig) {
+        KnowledgeFile file = getById(fileId);
 
         // 清理该文件的旧向量，避免重复入库
         KnowledgeBase kb = kbService.getById(file.getKnowledgeBaseId());
@@ -156,10 +164,7 @@ public class KnowledgeFileService {
      */
     @Transactional
     public void delete(Long fileId) {
-        KnowledgeFile file = fileMapper.selectById(fileId);
-        if (file == null) {
-            throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "文件不存在");
-        }
+        KnowledgeFile file = getById(fileId);
 
         // 清理 pgvector 中该文件的向量
         KnowledgeBase kb = kbService.getById(file.getKnowledgeBaseId());
@@ -176,10 +181,7 @@ public class KnowledgeFileService {
      * 预览分割情况
      */
     public Map<String, Object> previewSplit(Long fileId) {
-        KnowledgeFile file = fileMapper.selectById(fileId);
-        if (file == null) {
-            throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "文件不存在");
-        }
+        KnowledgeFile file = getById(fileId);
         
         File parsedFile = new File(file.getFilePath());
         if (!parsedFile.exists()) {

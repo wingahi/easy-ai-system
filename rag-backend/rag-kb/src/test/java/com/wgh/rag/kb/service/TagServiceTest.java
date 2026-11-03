@@ -3,6 +3,7 @@ package com.wgh.rag.kb.service;
 import com.wgh.rag.common.exception.BusinessException;
 import com.wgh.rag.common.result.ResultCode;
 import com.wgh.rag.kb.entity.KnowledgeBase;
+import com.wgh.rag.kb.entity.KnowledgeFile;
 import com.wgh.rag.kb.entity.Tag;
 import com.wgh.rag.kb.mapper.KnowledgeBaseMapper;
 import com.wgh.rag.kb.mapper.TagMapper;
@@ -30,12 +31,13 @@ class TagServiceTest {
     private final TagMapper tagMapper = Mockito.mock(TagMapper.class);
     private final JdbcTemplate jdbcTemplate = Mockito.mock(JdbcTemplate.class);
     private final KnowledgeBaseMapper kbMapper = Mockito.mock(KnowledgeBaseMapper.class);
+    private final KnowledgeFileService fileService = Mockito.mock(KnowledgeFileService.class);
 
     private TagService service;
 
     @BeforeEach
     void setUp() {
-        service = new TagService(tagMapper, jdbcTemplate, kbMapper);
+        service = new TagService(tagMapper, jdbcTemplate, kbMapper, fileService);
     }
 
     @Test
@@ -78,6 +80,57 @@ class TagServiceTest {
                 .hasMessage("知识库不存在");
 
         verifyNoInteractions(jdbcTemplate);
+    }
+
+    @Test
+    @DisplayName("kb 不存在：设置标签抛 3001，且不执行删除/写入")
+    void setKbTags_missingKb() {
+        when(kbMapper.selectById(99999L)).thenReturn(null);
+
+        assertThatThrownBy(() -> service.setKbTags(99999L, List.of(1L)))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(e -> assertThat(((BusinessException) e).getCode())
+                        .isEqualTo(ResultCode.RESOURCE_NOT_FOUND.getCode()))
+                .hasMessage("知识库不存在");
+
+        verifyNoInteractions(jdbcTemplate);
+    }
+
+    @Test
+    @DisplayName("file 不存在：文件标签列表抛 3001，且不查询关系表")
+    void listFileTags_missingFile() {
+        when(fileService.getById(999999L)).thenThrow(new BusinessException(
+                ResultCode.RESOURCE_NOT_FOUND, "文件不存在"));
+
+        assertThatThrownBy(() -> service.listFileTags(999999L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("文件不存在");
+
+        verifyNoInteractions(jdbcTemplate);
+    }
+
+    @Test
+    @DisplayName("file 不存在：设置文件标签抛 3001，且不执行删除/写入")
+    void setFileTags_missingFile() {
+        when(fileService.getById(999999L)).thenThrow(new BusinessException(
+                ResultCode.RESOURCE_NOT_FOUND, "文件不存在"));
+
+        assertThatThrownBy(() -> service.setFileTags(999999L, List.of(1L)))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("文件不存在");
+
+        verifyNoInteractions(jdbcTemplate);
+    }
+
+    @Test
+    @DisplayName("file 存在：返回文件标签数组")
+    void listFileTags_existingFile() {
+        when(fileService.getById(2L)).thenReturn(new KnowledgeFile());
+        when(jdbcTemplate.queryForList("SELECT tag_id FROM wgh_file_tag_rel WHERE file_id = ?",
+                Long.class, 2L)).thenReturn(List.of(3L));
+        when(tagMapper.selectBatchIds(any())).thenReturn(List.of(tag(3L, "简历")));
+
+        assertThat(service.listFileTags(2L)).extracting(Tag::getName).containsExactly("简历");
     }
 
     private static Tag tag(Long id, String name) {

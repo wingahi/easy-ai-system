@@ -95,4 +95,79 @@ class KnowledgeBaseEndpointTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value(2001));
     }
+
+    @Test
+    @DisplayName("kb 不存在：设置知识库标签返回 3001，不静默成功")
+    void setKbTags_missingKb() throws Exception {
+        mockMvc.perform(put("/api/kb/99999/tags")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType("application/json")
+                        .content("{\"tagIds\":[]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(3001))
+                .andExpect(jsonPath("$.message").value("知识库不存在"));
+    }
+
+    @Test
+    @DisplayName("file 不存在：文件标签列表返回 3001")
+    void listFileTags_missingFile() throws Exception {
+        mockMvc.perform(get("/api/kb/files/999999/tags")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(3001))
+                .andExpect(jsonPath("$.message").value("文件不存在"));
+    }
+
+    @Test
+    @DisplayName("file 不存在：设置文件标签返回 3001")
+    void setFileTags_missingFile() throws Exception {
+        mockMvc.perform(put("/api/kb/files/999999/tags")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType("application/json")
+                        .content("{\"tagIds\":[]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(3001))
+                .andExpect(jsonPath("$.message").value("文件不存在"));
+    }
+
+    @Test
+    @DisplayName("file 不存在：版本列表返回 3001")
+    void listVersions_missingFile() throws Exception {
+        mockMvc.perform(get("/api/kb/files/999999/versions")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(3001))
+                .andExpect(jsonPath("$.message").value("文件不存在"));
+    }
+
+    @Test
+    @DisplayName("kb 不存在：检索接口返回 3001，不返回空结果")
+    void search_missingKb() throws Exception {
+        mockMvc.perform(get("/api/kb/999999/search")
+                        .param("query", "测试")
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(3001))
+                .andExpect(jsonPath("$.message").value("知识库不存在"));
+    }
+
+    @Test
+    @DisplayName("无 token 访问文件标签/版本/检索接口：HTTP 401")
+    void newlyCoveredEndpoints_withoutToken() throws Exception {
+        mockMvc.perform(get("/api/kb/files/2/tags")).andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/api/kb/files/2/versions")).andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/api/kb/1/search").param("query", "测试"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    @DisplayName("viewer 缺少 kb:write：设置文件标签返回 1004")
+    void setFileTags_viewerForbidden() throws Exception {
+        mockMvc.perform(put("/api/kb/files/2/tags")
+                        .header("Authorization", "Bearer " + viewerToken)
+                        .contentType("application/json")
+                        .content("{\"tagIds\":[]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(1004));
+    }
 }

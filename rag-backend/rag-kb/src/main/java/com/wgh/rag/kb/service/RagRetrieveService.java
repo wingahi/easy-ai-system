@@ -1,6 +1,8 @@
 package com.wgh.rag.kb.service;
 
+import com.wgh.rag.common.exception.BusinessException;
 import com.wgh.rag.common.metrics.RagMetrics;
+import com.wgh.rag.common.result.ResultCode;
 import com.wgh.rag.config.property.RagProperties;
 import com.wgh.rag.kb.entity.KnowledgeBase;
 import com.wgh.rag.kb.mapper.KnowledgeBaseMapper;
@@ -57,6 +59,7 @@ public class RagRetrieveService {
         RetrievalOptions opts = options != null ? options : RetrievalOptions.defaults();
         long start = System.nanoTime();
         try {
+            requireKbsExist(kbIds);
             RetrieveResult result = doSearchMultiple(kbIds, queryText, opts);
             metrics.recordRetrieval(System.nanoTime() - start,
                     opts.hybridEnabled(), opts.rerankEnabled(), !result.matches().isEmpty());
@@ -65,6 +68,18 @@ public class RagRetrieveService {
             metrics.recordRetrieval(System.nanoTime() - start, opts.hybridEnabled(), opts.rerankEnabled(), false);
             metrics.recordRetrievalError();
             throw e;
+        }
+    }
+
+    /**
+     * 检索入口统一校验知识库存在性，避免各调用方各自漏判后返回空结果。
+     */
+    private void requireKbsExist(List<Long> kbIds) {
+        if (kbIds == null || kbIds.isEmpty()) return;
+        for (Long kbId : kbIds) {
+            if (kbId == null || knowledgeBaseMapper.selectById(kbId) == null) {
+                throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "知识库不存在");
+            }
         }
     }
 

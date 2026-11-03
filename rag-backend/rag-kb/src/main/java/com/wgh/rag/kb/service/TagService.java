@@ -28,6 +28,7 @@ public class TagService {
     private final TagMapper tagMapper;
     private final JdbcTemplate jdbcTemplate;
     private final KnowledgeBaseMapper knowledgeBaseMapper;
+    private final KnowledgeFileService knowledgeFileService;
 
     public PageResult<Tag> page(Long page, Long size, String keyword) {
         LambdaQueryWrapper<Tag> qw = new LambdaQueryWrapper<>();
@@ -88,6 +89,7 @@ public class TagService {
      */
     @Transactional
     public void setKbTags(Long kbId, List<?> rawTagIds) {
+        requireKbExists(kbId);
         jdbcTemplate.update("DELETE FROM wgh_kb_tag_rel WHERE kb_id = ?", kbId);
         if (rawTagIds == null || rawTagIds.isEmpty()) return;
         List<Long> tagIds = rawTagIds.stream().map(o -> ((Number) o).longValue()).toList();
@@ -103,6 +105,7 @@ public class TagService {
      */
     @Transactional
     public void setFileTags(Long fileId, List<?> rawTagIds) {
+        requireFileExists(fileId);
         jdbcTemplate.update("DELETE FROM wgh_file_tag_rel WHERE file_id = ?", fileId);
         if (rawTagIds == null || rawTagIds.isEmpty()) return;
         List<Long> tagIds = rawTagIds.stream().map(o -> ((Number) o).longValue()).toList();
@@ -117,10 +120,7 @@ public class TagService {
      * 列出知识库已绑定标签
      */
     public List<Tag> listKbTags(Long kbId) {
-        // kbId 不存在时明确返回业务码 3001，避免前端把空数组误判为“该知识库无标签”
-        if (knowledgeBaseMapper.selectById(kbId) == null) {
-            throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "知识库不存在");
-        }
+        requireKbExists(kbId);
         List<Long> ids = jdbcTemplate.queryForList(
                 "SELECT tag_id FROM wgh_kb_tag_rel WHERE kb_id = ?", Long.class, kbId);
         if (ids.isEmpty()) return List.of();
@@ -131,6 +131,7 @@ public class TagService {
      * 列出文件已绑定标签
      */
     public List<Tag> listFileTags(Long fileId) {
+        requireFileExists(fileId);
         List<Long> ids = jdbcTemplate.queryForList(
                 "SELECT tag_id FROM wgh_file_tag_rel WHERE file_id = ?", Long.class, fileId);
         if (ids.isEmpty()) return List.of();
@@ -143,5 +144,21 @@ public class TagService {
     public List<Long> filterKbIdsByTag(Long tagId) {
         return jdbcTemplate.queryForList(
                 "SELECT DISTINCT kb_id FROM wgh_kb_tag_rel WHERE tag_id = ?", Long.class, tagId);
+    }
+
+    /**
+     * 统一的知识库存在性校验入口，避免各子路径重复实现或漏校验。
+     */
+    private void requireKbExists(Long kbId) {
+        if (knowledgeBaseMapper.selectById(kbId) == null) {
+            throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "知识库不存在");
+        }
+    }
+
+    /**
+     * 统一的文件存在性校验入口，直接复用 KnowledgeFileService 的读取口径。
+     */
+    private void requireFileExists(Long fileId) {
+        knowledgeFileService.getById(fileId);
     }
 }

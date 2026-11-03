@@ -24,6 +24,7 @@ public class FileVersionService {
     private final KnowledgeFileService knowledgeFileService;
 
     public List<KnowledgeFileVersion> list(Long fileId) {
+        knowledgeFileService.getById(fileId);
         return versionMapper.selectList(
                 new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<KnowledgeFileVersion>()
                         .eq(KnowledgeFileVersion::getFileId, fileId)
