@@ -30,6 +30,11 @@
             <groupId>com.wgh</groupId>
             <artifactId>rag-log</artifactId>
         </dependency>
+        <!-- 公开访问实现层（分享链接 / Widget / 开放 API Key），Controller 仅保留在此模块 -->
+        <dependency>
+            <groupId>com.wgh</groupId>
+            <artifactId>rag-public-access</artifactId>
+        </dependency>
         <dependency>
             <groupId>com.wgh</groupId>
             <artifactId>rag-chat</artifactId>

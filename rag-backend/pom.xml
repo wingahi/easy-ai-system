@@ -51,6 +51,7 @@
         <module>rag-agent</module>
         <module>rag-workflow</module>
         <module>rag-agent-multi</module>
+        <module>rag-public-access</module>
         <module>rag-controller</module>
         <module>rag-app</module>
     </modules>
@@ -139,6 +140,11 @@
             <dependency>
                 <groupId>com.wgh</groupId>
                 <artifactId>rag-agent-multi</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.wgh</groupId>
+                <artifactId>rag-public-access</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>

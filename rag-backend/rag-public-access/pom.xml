@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>com.wgh</groupId>
+        <artifactId>rag-backend</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>rag-public-access</artifactId>
+    <name>rag-public-access</name>
+    <description>公开访问模块 - 分享链接/Widget 嵌入/开放 API Key 的实现层（不含 Controller）</description>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.wgh</groupId>
+            <artifactId>rag-common</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.wgh</groupId>
+            <artifactId>rag-data</artifactId>
+        </dependency>
+        <!-- OidcAuthenticationFilter（公开访问链关闭其 Servlet 自动注册时引用）与 CORS 配置 -->
+        <dependency>
+            <groupId>com.wgh</groupId>
+            <artifactId>rag-auth</artifactId>
+        </dependency>
+        <!-- RedisCommandPort（限流/密码锁定/grant 的 Redis 降级实现入口） -->
+        <dependency>
+            <groupId>com.wgh</groupId>
+            <artifactId>rag-config</artifactId>
+        </dependency>
+        <!-- 分享链接范围校验需要窗口/会话；KB 范围需要知识库 -->
+        <dependency>
+            <groupId>com.wgh</groupId>
+            <artifactId>rag-chat</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.wgh</groupId>
+            <artifactId>rag-kb</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+        <!-- SecurityFilterChain(@Order(1)) / OncePerRequestFilter -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.baomidou</groupId>
+            <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <optional>true</optional>
+        </dependency>
+    </dependencies>
+</project>
