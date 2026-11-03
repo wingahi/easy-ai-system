@@ -1,4 +1,4 @@
-package com.wgh.rag.publicaccess.controller;
+package com.wgh.rag.controller;
 
 import com.wgh.rag.chat.entity.ChatSession;
 import com.wgh.rag.chat.entity.ChatWindow;

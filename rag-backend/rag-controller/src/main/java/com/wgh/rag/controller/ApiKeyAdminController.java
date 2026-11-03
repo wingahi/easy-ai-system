@@ -1,4 +1,4 @@
-package com.wgh.rag.publicaccess.controller;
+package com.wgh.rag.controller;
 
 import com.wgh.rag.log.annotation.Audit;
 import com.wgh.rag.common.result.PageResult;
