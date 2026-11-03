@@ -44,7 +44,7 @@ class QuotaConcurrencyTest {
 
     @SpringBootConfiguration
     @EnableAutoConfiguration
-    @MapperScan({"com.wgh.rag.quota.mapper", "com.wgh.rag.common.mapper"})
+    @MapperScan({"com.wgh.rag.quota.mapper", "com.wgh.rag.auth.mapper"})
     @EnableConfigurationProperties(QuotaProperties.class)
     @Import({
             MetaObjectHandlerImpl.class,

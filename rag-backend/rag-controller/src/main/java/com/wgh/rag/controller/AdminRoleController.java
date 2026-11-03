@@ -1,13 +1,13 @@
 package com.wgh.rag.controller;
 
 import com.wgh.rag.auth.service.LocalLoginService;
-import com.wgh.rag.common.entity.WghPermission;
-import com.wgh.rag.common.entity.WghRole;
+import com.wgh.rag.auth.entity.WghPermission;
+import com.wgh.rag.auth.entity.WghRole;
 import com.wgh.rag.common.exception.BusinessException;
-import com.wgh.rag.common.mapper.PermissionMapper;
-import com.wgh.rag.common.mapper.RoleMapper;
-import com.wgh.rag.common.mapper.RolePermissionMapper;
-import com.wgh.rag.common.mapper.UserRoleMapper;
+import com.wgh.rag.auth.mapper.PermissionMapper;
+import com.wgh.rag.auth.mapper.RoleMapper;
+import com.wgh.rag.auth.mapper.RolePermissionMapper;
+import com.wgh.rag.auth.mapper.UserRoleMapper;
 import com.wgh.rag.common.result.Result;
 import com.wgh.rag.common.result.ResultCode;
 import com.wgh.rag.controller.dto.RolePermissionRequest;

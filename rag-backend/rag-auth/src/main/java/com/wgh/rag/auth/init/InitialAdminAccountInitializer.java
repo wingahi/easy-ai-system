@@ -2,12 +2,12 @@ package com.wgh.rag.auth.init;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wgh.rag.auth.security.PasswordPolicy;
-import com.wgh.rag.common.entity.WghRole;
-import com.wgh.rag.common.entity.WghUser;
+import com.wgh.rag.auth.entity.WghRole;
+import com.wgh.rag.auth.entity.WghUser;
 import com.wgh.rag.common.exception.BusinessException;
-import com.wgh.rag.common.mapper.RoleMapper;
-import com.wgh.rag.common.mapper.UserMapper;
-import com.wgh.rag.common.mapper.UserRoleMapper;
+import com.wgh.rag.auth.mapper.RoleMapper;
+import com.wgh.rag.auth.mapper.UserMapper;
+import com.wgh.rag.auth.mapper.UserRoleMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;

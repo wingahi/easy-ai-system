@@ -65,7 +65,7 @@ class QuotaApiTest {
 
     @SpringBootConfiguration
     @EnableAutoConfiguration
-    @MapperScan({"com.wgh.rag.quota.mapper", "com.wgh.rag.common.mapper"})
+    @MapperScan({"com.wgh.rag.quota.mapper", "com.wgh.rag.auth.mapper"})
     @EnableConfigurationProperties(QuotaProperties.class)
     @Import({
             SecurityConfig.class,

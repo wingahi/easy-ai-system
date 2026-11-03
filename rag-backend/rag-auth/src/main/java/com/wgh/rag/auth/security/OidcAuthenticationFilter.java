@@ -1,12 +1,12 @@
 package com.wgh.rag.auth.security;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.wgh.rag.common.entity.WghRole;
-import com.wgh.rag.common.entity.WghUser;
-import com.wgh.rag.common.mapper.RoleMapper;
-import com.wgh.rag.common.mapper.RolePermissionMapper;
-import com.wgh.rag.common.mapper.UserMapper;
-import com.wgh.rag.common.mapper.UserRoleMapper;
+import com.wgh.rag.auth.entity.WghRole;
+import com.wgh.rag.auth.entity.WghUser;
+import com.wgh.rag.auth.mapper.RoleMapper;
+import com.wgh.rag.auth.mapper.RolePermissionMapper;
+import com.wgh.rag.auth.mapper.UserMapper;
+import com.wgh.rag.auth.mapper.UserRoleMapper;
 import com.wgh.rag.common.result.ResultCode;
 import com.wgh.rag.common.security.LoginUser;
 import io.jsonwebtoken.Claims;

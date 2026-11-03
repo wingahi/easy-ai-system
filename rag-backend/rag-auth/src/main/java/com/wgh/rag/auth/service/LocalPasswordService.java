@@ -1,9 +1,9 @@
 package com.wgh.rag.auth.service;
 
 import com.wgh.rag.auth.security.PasswordPolicy;
-import com.wgh.rag.common.entity.WghUser;
+import com.wgh.rag.auth.entity.WghUser;
 import com.wgh.rag.common.exception.BusinessException;
-import com.wgh.rag.common.mapper.UserMapper;
+import com.wgh.rag.auth.mapper.UserMapper;
 import com.wgh.rag.common.result.ResultCode;
 import com.wgh.rag.common.security.LoginUser;
 import lombok.RequiredArgsConstructor;

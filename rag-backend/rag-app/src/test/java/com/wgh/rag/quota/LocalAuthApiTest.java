@@ -80,7 +80,7 @@ class LocalAuthApiTest {
 
     @SpringBootConfiguration
     @EnableAutoConfiguration
-    @MapperScan({"com.wgh.rag.quota.mapper", "com.wgh.rag.common.mapper", "com.wgh.rag.log.mapper"})
+    @MapperScan({"com.wgh.rag.quota.mapper", "com.wgh.rag.auth.mapper", "com.wgh.rag.log.mapper"})
     @EnableConfigurationProperties(QuotaProperties.class)
     @Import({
             SecurityConfig.class,
