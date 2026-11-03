@@ -153,8 +153,10 @@ mvn -f rag-app/pom.xml spring-boot:run
 # http://localhost:8080
 ```
 
-> 本系统不再提供本地登录接口。启动前需配置外部 IdP（`WGH_OIDC_ISSUER` / `WGH_OIDC_AUDIENCE` /
-> `WGH_OIDC_JWKS_URI`），前端携带 IdP 签发的 Bearer token 访问。
+> 双认证并存：
+> - **本地管理员 / 体验账号**：登录页输入账号密码，后端 `POST /api/auth/login` 校验 BCrypt 密码并签发内部会话凭证（HS256，独立 `wgh.auth.local.jwt-secret`，有效期默认 2 小时）。仅 `wgh_user.source=local` 且为 admin 角色或体验账号（`trial=1`）可登录。
+> - **外部 OIDC 用户**：由 IdP 签发 Bearer token，后端按 JWKS 公钥验签；启动前需配置 `WGH_OIDC_ISSUER` / `WGH_OIDC_AUDIENCE` / `WGH_OIDC_JWKS_URI`。
+> 两种凭证都经统一认证过滤器识别，角色/权限统一查数据库角色表与权限表。
 
 ### 4.3 前端
 

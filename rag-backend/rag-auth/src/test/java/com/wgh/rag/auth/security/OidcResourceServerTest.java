@@ -10,6 +10,8 @@ import com.sun.net.httpserver.HttpServer;
 import com.wgh.rag.common.entity.WghRole;
 import com.wgh.rag.common.mapper.RoleMapper;
 import com.wgh.rag.common.mapper.RolePermissionMapper;
+import com.wgh.rag.common.mapper.UserMapper;
+import com.wgh.rag.common.mapper.UserRoleMapper;
 import com.wgh.rag.common.security.LoginUser;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
@@ -71,6 +73,9 @@ class OidcResourceServerTest {
 
     private RoleMapper roleMapper;
     private RolePermissionMapper rolePermissionMapper;
+    private UserMapper userMapper;
+    private UserRoleMapper userRoleMapper;
+    private LocalTokenService localTokenService;
     private TestJwksServer jwksServer;
     private OidcProperties properties;
     private OidcTokenVerifier verifier;
@@ -81,6 +86,11 @@ class OidcResourceServerTest {
     void setUp() throws Exception {
         roleMapper = mock(RoleMapper.class);
         rolePermissionMapper = mock(RolePermissionMapper.class);
+        userMapper = mock(UserMapper.class);
+        userRoleMapper = mock(UserRoleMapper.class);
+        LocalAuthProperties localAuthProperties = new LocalAuthProperties();
+        localAuthProperties.setJwtSecret("test-local-secret-0123456789abcdef0123456789abcdef");
+        localTokenService = new LocalTokenService(localAuthProperties);
         when(roleMapper.selectList(any())).thenAnswer(invocation -> {
             LambdaQueryWrapper<WghRole> wrapper = invocation.getArgument(0);
             // 触发 SQL 片段生成，使 in 条件的参数进入 paramNameValuePairs
@@ -122,7 +132,8 @@ class OidcResourceServerTest {
         properties.setClockSkewSeconds(30);
 
         verifier = new OidcTokenVerifier(properties, new JwksProvider(properties));
-        filter = new OidcAuthenticationFilter(verifier, roleMapper, rolePermissionMapper, properties);
+        filter = new OidcAuthenticationFilter(verifier, localTokenService, userMapper, userRoleMapper,
+                roleMapper, rolePermissionMapper, properties);
     }
 
     @AfterEach
@@ -335,7 +346,8 @@ class OidcResourceServerTest {
 
         OidcTokenVerifier unreachableVerifier = new OidcTokenVerifier(properties, new JwksProvider(properties));
         OidcAuthenticationFilter unreachableFilter =
-                new OidcAuthenticationFilter(unreachableVerifier, roleMapper, rolePermissionMapper, properties);
+                new OidcAuthenticationFilter(unreachableVerifier, localTokenService, userMapper, userRoleMapper,
+                        roleMapper, rolePermissionMapper, properties);
 
         MockHttpServletResponse response = doFilter(unreachableFilter, "Bearer " + token(KID_1, KEY_PAIR_1,
                 ISSUER, AUDIENCE, "alice", List.of("admin"), null, null));

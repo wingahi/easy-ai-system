@@ -2,8 +2,11 @@ package com.wgh.rag.auth.security;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wgh.rag.common.entity.WghRole;
+import com.wgh.rag.common.entity.WghUser;
 import com.wgh.rag.common.mapper.RoleMapper;
 import com.wgh.rag.common.mapper.RolePermissionMapper;
+import com.wgh.rag.common.mapper.UserMapper;
+import com.wgh.rag.common.mapper.UserRoleMapper;
 import com.wgh.rag.common.security.LoginUser;
 import io.jsonwebtoken.Claims;
 import jakarta.servlet.FilterChain;
@@ -20,20 +23,26 @@ import org.springframework.util.StringUtils;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
+import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 
 /**
- * 外部 OIDC token 鉴权过滤器（资源服务器形态）。
+ * 认证过滤器（双认证并存）。
  * <p>
- * 仅验证外部 IdP 签发的 token：从 {@code Authorization: Bearer} 取 token → JWKS 公钥验签
- * → 校验 iss / aud / exp / nbf。验不过直接 401。
+ * 按凭证 header 的 alg 区分来源：
+ * <ul>
+ *   <li>HS256 → 本地账号登录签发的内部会话凭证，走 {@link LocalTokenService#verify}；</li>
+ *   <li>其他 → 外部 IdP 签发的 OIDC token，走 JWKS 公钥验签。</li>
+ * </ul>
+ * 外部验签算法白名单拒绝 HS256，本地验签只接受 HS256 且校验本地 issuer/audience，
+ * 因此两种凭证无法互相冒充。
  * <p>
- * 角色链路：token 角色 claim（默认 roles）→ 配置的角色映射 → 数据库 {@code wgh_role.role_code}
- * → {@code wgh_role_permission} 权限。token 不带角色或映射不到数据库角色时按默认角色（viewer）处理，
- * 不拒绝请求本身。
+ * 角色链路：外部 token 角色 claim（默认 roles）→ 配置的角色映射 → 数据库
+ * {@code wgh_role.role_code}；本地凭证按用户 ID 实时查数据库角色。权限统一由
+ * {@code wgh_role_permission} 解析。token 不带角色或映射不到数据库角色时按默认角色（viewer）处理。
  */
 @Slf4j
 @Component
@@ -41,11 +50,16 @@ import java.util.Set;
 public class OidcAuthenticationFilter extends OncePerRequestFilter {
 
     private final OidcTokenVerifier tokenVerifier;
+    private final LocalTokenService localTokenService;
+    private final UserMapper userMapper;
+    private final UserRoleMapper userRoleMapper;
     private final RoleMapper roleMapper;
     private final RolePermissionMapper rolePermissionMapper;
     private final OidcProperties properties;
 
     private static final List<String> WHITE_LIST = List.of(
+            // 本地账号密码登录入口（登录本身不需要凭证）
+            "/api/auth/login",
             // 登出仅清客户端 token，服务端无状态
             "/api/auth/logout",
             // 工作流 Webhook 触发入口：凭路径中的 token 鉴权，免登录
@@ -78,6 +92,11 @@ public class OidcAuthenticationFilter extends OncePerRequestFilter {
         }
 
         String token = authHeader.substring(7);
+        if (localTokenService.isLocalToken(token)) {
+            authenticateLocal(token, request, response, filterChain);
+            return;
+        }
+
         Claims claims;
         try {
             claims = tokenVerifier.verify(token);
@@ -110,6 +129,78 @@ public class OidcAuthenticationFilter extends OncePerRequestFilter {
 
         request.setAttribute("userId", userId);
         request.setAttribute("username", username);
+
+        Set<SimpleGrantedAuthority> authorities = new LinkedHashSet<>();
+        authorities.add(new SimpleGrantedAuthority("ROLE_USER"));
+        for (String role : roles) {
+            authorities.add(new SimpleGrantedAuthority("ROLE_" + role));
+        }
+        UsernamePasswordAuthenticationToken authentication =
+                new UsernamePasswordAuthenticationToken(loginUser, null, authorities);
+        SecurityContextHolder.getContext().setAuthentication(authentication);
+
+        filterChain.doFilter(request, response);
+    }
+
+    /**
+     * 本地会话凭证认证：凭证签名通过后，用户状态/角色/权限全部实时查库。
+     */
+    private void authenticateLocal(String token,
+                                   HttpServletRequest request,
+                                   HttpServletResponse response,
+                                   FilterChain filterChain) throws ServletException, IOException {
+        Claims claims;
+        try {
+            claims = localTokenService.verify(token);
+        } catch (TokenVerificationException e) {
+            log.warn("本地会话凭证校验失败: {}", e.getMessage());
+            writeUnauthorized(response, 1002, "会话凭证已失效，请重新登录");
+            return;
+        }
+
+        Long userId = claimAsLong(claims, "userId");
+        if (userId == null) {
+            writeUnauthorized(response, 1002, "会话凭证无效");
+            return;
+        }
+        WghUser user = userMapper.selectById(userId);
+        if (user == null) {
+            log.warn("本地会话凭证无效：用户不存在 userId={}", userId);
+            writeUnauthorized(response, 1002, "账号不存在，请重新登录");
+            return;
+        }
+        if (user.getStatus() == null || user.getStatus() != 1) {
+            log.warn("本地会话凭证被拒：账号已禁用 username={}", user.getUsername());
+            writeUnauthorized(response, 1002, "账号已禁用");
+            return;
+        }
+        if (user.getExpireAt() != null && LocalDateTime.now().isAfter(user.getExpireAt())) {
+            log.warn("本地会话凭证被拒：账号已过期 username={}", user.getUsername());
+            writeUnauthorized(response, 1002, "账号已过期");
+            return;
+        }
+
+        Set<String> roles = new LinkedHashSet<>();
+        List<String> dbRoles = userRoleMapper.selectRoleCodesByUserId(userId);
+        if (dbRoles != null) {
+            roles.addAll(dbRoles);
+        }
+        if (roles.isEmpty()) {
+            roles.add(LoginUser.DEFAULT_ROLE);
+        }
+        List<String> permCodes = rolePermissionMapper.selectPermCodesByUserId(userId);
+        Set<String> permissions = permCodes == null
+                ? new LinkedHashSet<>() : new LinkedHashSet<>(permCodes);
+
+        LoginUser loginUser = new LoginUser();
+        loginUser.setUserId(userId);
+        loginUser.setUsername(user.getUsername());
+        loginUser.setRoles(roles);
+        loginUser.setPermissions(permissions);
+        LoginUser.set(loginUser);
+
+        request.setAttribute("userId", userId);
+        request.setAttribute("username", user.getUsername());
 
         Set<SimpleGrantedAuthority> authorities = new LinkedHashSet<>();
         authorities.add(new SimpleGrantedAuthority("ROLE_USER"));

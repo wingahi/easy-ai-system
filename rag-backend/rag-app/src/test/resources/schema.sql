@@ -1,19 +1,95 @@
 -- H2 内存数据库 (MODE=PostgreSQL, H2 2.2+)
 -- 使用 PostgreSQL SERIAL 方言（H2 MODE=PostgreSQL 支持）
 
+-- ===== 用户 / RBAC =====
+
 CREATE TABLE IF NOT EXISTS wgh_user (
     id SERIAL PRIMARY KEY,
     username VARCHAR(50) NOT NULL UNIQUE,
-    password VARCHAR(100) NOT NULL,
-    nickname VARCHAR(100),
-    role VARCHAR(20) DEFAULT 'USER',
+    password_hash VARCHAR(200),
+    name VARCHAR(100),
+    email VARCHAR(200),
+    tenant_id BIGINT,
     status INT DEFAULT 1,
+    oidc_subject VARCHAR(200),
+    oidc_issuer VARCHAR(500),
     create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     create_by VARCHAR(100),
     update_by VARCHAR(100),
     deleted INT DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS wgh_role (
+    id SERIAL PRIMARY KEY,
+    role_code VARCHAR(50) NOT NULL UNIQUE,
+    role_name VARCHAR(100) NOT NULL,
+    description VARCHAR(500),
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    create_by VARCHAR(100),
+    update_by VARCHAR(100),
+    deleted INT DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS wgh_permission (
+    id SERIAL PRIMARY KEY,
+    perm_code VARCHAR(100) NOT NULL UNIQUE,
+    perm_name VARCHAR(100) NOT NULL,
+    resource_type VARCHAR(50),
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS wgh_user_role (
+    user_id BIGINT NOT NULL,
+    role_id BIGINT NOT NULL,
+    PRIMARY KEY (user_id, role_id)
+);
+
+CREATE TABLE IF NOT EXISTS wgh_role_permission (
+    role_id BIGINT NOT NULL,
+    permission_id BIGINT NOT NULL,
+    PRIMARY KEY (role_id, permission_id)
+);
+
+-- ===== 种子数据 =====
+
+MERGE INTO wgh_user (id, username, password_hash, name, status) KEY(id) VALUES
+    (1, 'admin', 'admin', 'Admin', 1),
+    (2, 'editor', 'admin', 'Editor', 1),
+    (3, 'viewer', 'admin', 'Viewer', 1);
+
+MERGE INTO wgh_role (id, role_code, role_name, description) KEY(id) VALUES
+    (1, 'admin', '管理员', '拥有全部权限'),
+    (2, 'editor', '编辑者', '可读写知识库/工作流/工具'),
+    (3, 'viewer', '浏览者', '只读访问');
+
+MERGE INTO wgh_permission (id, perm_code, perm_name, resource_type) KEY(id) VALUES
+    (1, 'kb:read', '知识库读取', 'KNOWLEDGE_BASE'),
+    (2, 'kb:write', '知识库写入', 'KNOWLEDGE_BASE'),
+    (3, 'kb:delete', '知识库删除', 'KNOWLEDGE_BASE'),
+    (4, 'agent:use', 'Agent 使用', 'AGENT'),
+    (5, 'workflow:use', '工作流执行', 'WORKFLOW'),
+    (6, 'workflow:edit', '工作流编辑', 'WORKFLOW'),
+    (7, 'tool:use', '工具调用', 'TOOL'),
+    (8, 'prompt:edit', 'Prompt 编辑', 'PROMPT'),
+    (9, 'model:manage', '模型管理', 'MODEL'),
+    (10, 'audit:view', '审计查看', 'AUDIT');
+
+MERGE INTO wgh_user_role (user_id, role_id) KEY(user_id, role_id) VALUES
+    (1, 1),  -- admin → admin
+    (2, 2),  -- editor → editor
+    (3, 3);  -- viewer → viewer
+
+MERGE INTO wgh_role_permission (role_id, permission_id) KEY(role_id, permission_id) VALUES
+    -- admin: all 10
+    (1, 1), (1, 2), (1, 3), (1, 4), (1, 5), (1, 6), (1, 7), (1, 8), (1, 9), (1, 10),
+    -- editor: kb读写 + agent + workflow + tool + prompt (7)
+    (2, 1), (2, 2), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8),
+    -- viewer: 只读 (3)
+    (3, 1);
+
+-- ===== 原有业务表 =====
 
 CREATE TABLE IF NOT EXISTS wgh_tool (
     id SERIAL PRIMARY KEY,

@@ -3,6 +3,8 @@ package com.wgh.rag.quota;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wgh.rag.auth.config.SecurityConfig;
+import com.wgh.rag.auth.security.LocalAuthProperties;
+import com.wgh.rag.auth.security.LocalTokenService;
 import com.wgh.rag.auth.security.OidcAuthenticationFilter;
 import com.wgh.rag.auth.security.OidcProperties;
 import com.wgh.rag.auth.security.OidcTokenVerifier;
@@ -69,6 +71,8 @@ class QuotaApiTest {
             SecurityConfig.class,
             OidcAuthenticationFilter.class,
             OidcProperties.class,
+            LocalAuthProperties.class,
+            LocalTokenService.class,
             MetaObjectHandlerImpl.class,
             GlobalExceptionHandler.class,
             QuotaService.class,

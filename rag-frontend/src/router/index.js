@@ -33,6 +33,7 @@ const routes = [
       { path: 'admin/stats', name: 'AdminStats', component: () => import('../views/admin/AdminStats.vue'), meta: { title: '审计与统计' } },
       { path: 'open-access', name: 'OpenAccess', component: () => import('../views/open/PublicAccess.vue'), meta: { title: '开放平台' } },
       { path: 'admin/quota', name: 'QuotaManagement', component: () => import('../views/admin/QuotaManagement.vue'), meta: { title: '用户配额管理', requiresAdmin: true } },
+      { path: 'admin/users', name: 'UserManagement', component: () => import('../views/admin/UserManagement.vue'), meta: { title: '用户管理', requiresAdmin: true } },
       { path: 'my/quota', name: 'MyQuota', component: () => import('../views/admin/MyQuota.vue'), meta: { title: '我的配额' } }
     ]
   },

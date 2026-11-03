@@ -71,6 +71,11 @@
           <el-icon><Odometer /></el-icon>
           <template #title>用户配额</template>
         </el-menu-item>
+
+        <el-menu-item v-if="userStore.isAdmin" index="/admin/users">
+          <el-icon><User /></el-icon>
+          <template #title>用户管理</template>
+        </el-menu-item>
       </el-menu>
     </el-aside>
 
@@ -121,7 +126,7 @@ import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { 
   FolderOpened, Cpu, ChatDotRound, SetUp, Share, Connection,
-  Fold, Expand, SwitchButton, DataAnalysis, Odometer, Link
+  Fold, Expand, SwitchButton, DataAnalysis, Odometer, Link, User
 } from '@element-plus/icons-vue'
 import { useUserStore } from '../stores/user'
 

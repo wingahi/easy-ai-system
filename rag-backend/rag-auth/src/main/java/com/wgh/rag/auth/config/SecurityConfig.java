@@ -52,6 +52,7 @@ public class SecurityConfig {
                         // 若不豁免会被 AuthorizationFilter 误判为匿名访问并打 ERROR 日志
                         .dispatcherTypeMatchers(DispatcherType.ASYNC, DispatcherType.ERROR).permitAll()
                         .requestMatchers(
+                                "/api/auth/login",
                                 "/api/auth/logout",
                                 "/api/workflows/webhook/**",
                                 "/doc.html",

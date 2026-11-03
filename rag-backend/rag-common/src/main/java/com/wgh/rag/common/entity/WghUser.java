@@ -4,6 +4,8 @@ import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
+import java.time.LocalDateTime;
+
 /**
  * 用户实体
  */
@@ -51,4 +53,24 @@ public class WghUser extends BaseEntity {
      * OIDC issuer（第三方登录颁发者）
      */
     private String oidcIssuer;
+
+    /**
+     * 账号来源：local=本地账号（本地管理员/体验账号，可密码登录），oidc=外部 OIDC（仅 token 进入）
+     */
+    private String source;
+
+    /**
+     * 是否体验账号：1-是，0-否
+     */
+    private Integer trial;
+
+    /**
+     * 账号有效期，null 表示长期有效；到期后不可登录
+     */
+    private LocalDateTime expireAt;
+
+    /**
+     * 备注
+     */
+    private String remark;
 }

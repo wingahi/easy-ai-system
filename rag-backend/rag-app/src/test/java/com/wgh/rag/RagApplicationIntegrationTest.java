@@ -54,12 +54,15 @@ class RagApplicationIntegrationTest {
                 .andExpect(status().isUnauthorized());
     }
 
-    /** 验证本地登录端点已移除：无 token 访问 /api/auth/login 返回 401。 */
+    /** 验证本地账号密码登录入口存在且免 token 放行：空凭据返回参数错误。 */
     @Test
-    @DisplayName("本地登录端点已移除 - 返回 401")
-    void localLoginEndpoint_removed() throws Exception {
-        mockMvc.perform(post("/api/auth/login"))
-                .andExpect(status().isUnauthorized());
+    @DisplayName("本地登录入口 - 空凭据返回参数错误")
+    void localLoginEndpoint_available() throws Exception {
+        mockMvc.perform(post("/api/auth/login")
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(2001));
     }
 
     /** 验证非法外部 token 被资源服务器过滤器拒绝（401）。 */

@@ -1,7 +1,8 @@
 // API 统一入口 - 按需引入
 import request from '../utils/request'
 
-// 认证（本系统不签发 token，仅查询当前外部 token 对应的用户信息）
+// 认证：本地管理员/体验账号密码登录（返回内部会话凭证）；getMe 查询当前凭证用户信息
+export const login = (data) => request.post('/auth/login', data)
 export const getMe = () => request.get('/auth/me')
 
 // 知识库
@@ -528,6 +529,12 @@ export const modelPricePage = (params) => request.get('/admin/model-prices', { p
 export const modelPriceCreate = (data) => request.post('/admin/model-prices', data)
 export const modelPriceUpdate = (data) => request.put('/admin/model-prices', data)
 export const modelPriceDelete = (id) => request.delete(`/admin/model-prices/${id}`)
+
+// ===== 管理端：体验账号（用户管理） =====
+export const adminUsersPage = (params) => request.get('/admin/users', { params })
+export const adminUserCreate = (data) => request.post('/admin/users', data)
+export const adminUserUpdate = (username, data) => request.put(`/admin/users/${encodeURIComponent(username)}`, data)
+export const adminUserDisable = (username) => request.delete(`/admin/users/${encodeURIComponent(username)}`)
 
 // ===== 配额管理（管理端 + 用户自查） =====
 export const quotaAdminPage = (params) => request.get('/admin/quota/users', { params })

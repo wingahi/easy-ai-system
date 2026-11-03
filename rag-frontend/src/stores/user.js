@@ -2,8 +2,10 @@ import { defineStore } from 'pinia'
 
 /**
  * 当前用户状态。
- * 本系统不签发 token：token 由外部 OIDC IdP 签发，通过宿主系统注入
- * localStorage.wgh_token（或登录页粘贴 / ?token= 参数），随后调用 /auth/me 拉取角色与权限。
+ * 双认证并存：
+ * - 本地管理员/体验账号通过 /auth/login 换取内部会话凭证（HS256，后端校验）；
+ * - 外部 OIDC 用户由宿主系统注入 token（localStorage.wgh_token 或 /login?token=），后端按 JWKS 验签。
+ * 两种凭证统一存放在 wgh_token，随后调用 /auth/me 拉取角色与权限。
  */
 export const useUserStore = defineStore('user', {
   state: () => ({
