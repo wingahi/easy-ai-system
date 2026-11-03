@@ -24,6 +24,10 @@
         </dependency>
         <dependency>
             <groupId>com.wgh</groupId>
+            <artifactId>rag-data</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.wgh</groupId>
             <artifactId>rag-llm</artifactId>
         </dependency>
         <dependency>

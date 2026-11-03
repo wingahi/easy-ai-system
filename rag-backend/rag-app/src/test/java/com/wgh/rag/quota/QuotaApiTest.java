@@ -8,7 +8,7 @@ import com.wgh.rag.auth.security.LocalTokenService;
 import com.wgh.rag.auth.security.OidcAuthenticationFilter;
 import com.wgh.rag.auth.security.OidcProperties;
 import com.wgh.rag.auth.security.OidcTokenVerifier;
-import com.wgh.rag.common.config.MetaObjectHandlerImpl;
+import com.wgh.rag.data.mybatis.MetaObjectHandlerImpl;
 import com.wgh.rag.common.exception.GlobalExceptionHandler;
 import com.wgh.rag.controller.QuotaAdminController;
 import com.wgh.rag.controller.QuotaUserController;

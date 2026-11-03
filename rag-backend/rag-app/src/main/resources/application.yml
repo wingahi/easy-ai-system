@@ -44,8 +44,8 @@ spring:
 mybatis-plus:
   mapper-locations: classpath*:/mapper/**/*.xml
   type-aliases-package: com.wgh.rag.**.entity
-  type-aliases-super-type: com.wgh.rag.common.entity.BaseEntity
-  type-handlers-package: com.wgh.rag.common.handler
+  type-aliases-super-type: com.wgh.rag.data.entity.BaseEntity
+  type-handlers-package: com.wgh.rag.data.handler
   configuration:
     map-underscore-to-camel-case: true
     cache-enabled: true

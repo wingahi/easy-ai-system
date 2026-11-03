@@ -2,7 +2,7 @@ package com.wgh.rag.llm.entity;
 
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableName;
-import com.wgh.rag.common.entity.BaseEntity;
+import com.wgh.rag.data.entity.BaseEntity;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 

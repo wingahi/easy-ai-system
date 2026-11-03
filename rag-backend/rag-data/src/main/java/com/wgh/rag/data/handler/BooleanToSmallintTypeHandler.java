@@ -1,4 +1,4 @@
-package com.wgh.rag.common.handler;
+package com.wgh.rag.data.handler;
 
 import org.apache.ibatis.type.BaseTypeHandler;
 import org.apache.ibatis.type.JdbcType;

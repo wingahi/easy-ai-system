@@ -14,6 +14,10 @@
     <description>工具管理模块 - ToolConfig / MCP / Function Calling 等扩展工具配置</description>
 
     <dependencies>
+        <dependency>
+            <groupId>com.wgh</groupId>
+            <artifactId>rag-data</artifactId>
+        </dependency>
         <!-- rag-tool 提供 ToolConfig 实体和执行器，是 rag-chat 的上游 -->
         <dependency>
             <groupId>com.wgh</groupId>

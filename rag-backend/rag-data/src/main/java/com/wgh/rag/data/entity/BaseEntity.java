@@ -1,4 +1,4 @@
-package com.wgh.rag.common.entity;
+package com.wgh.rag.data.entity;
 
 import com.baomidou.mybatisplus.annotation.FieldFill;
 import com.baomidou.mybatisplus.annotation.IdType;

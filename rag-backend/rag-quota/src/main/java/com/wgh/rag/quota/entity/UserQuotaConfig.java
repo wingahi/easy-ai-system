@@ -2,8 +2,8 @@ package com.wgh.rag.quota.entity;
 
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableName;
-import com.wgh.rag.common.entity.BaseEntity;
-import com.wgh.rag.common.handler.BooleanToSmallintTypeHandler;
+import com.wgh.rag.data.entity.BaseEntity;
+import com.wgh.rag.data.handler.BooleanToSmallintTypeHandler;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 

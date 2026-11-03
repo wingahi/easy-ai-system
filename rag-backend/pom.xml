@@ -37,6 +37,7 @@
 
     <modules>
         <module>rag-common</module>
+        <module>rag-data</module>
         <module>rag-log</module>
         <module>rag-auth</module>
         <module>rag-quota</module>
@@ -76,6 +77,11 @@
             <dependency>
                 <groupId>com.wgh</groupId>
                 <artifactId>rag-common</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.wgh</groupId>
+                <artifactId>rag-data</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>

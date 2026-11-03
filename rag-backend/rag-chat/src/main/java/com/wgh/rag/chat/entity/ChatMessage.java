@@ -1,7 +1,7 @@
 package com.wgh.rag.chat.entity;
 
 import com.baomidou.mybatisplus.annotation.TableName;
-import com.wgh.rag.common.entity.BaseEntity;
+import com.wgh.rag.data.entity.BaseEntity;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 

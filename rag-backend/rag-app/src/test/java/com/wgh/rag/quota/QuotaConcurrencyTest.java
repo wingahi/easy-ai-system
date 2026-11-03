@@ -1,7 +1,7 @@
 package com.wgh.rag.quota;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.wgh.rag.common.config.MetaObjectHandlerImpl;
+import com.wgh.rag.data.mybatis.MetaObjectHandlerImpl;
 import com.wgh.rag.quota.entity.QuotaUsage;
 import com.wgh.rag.quota.entity.UserQuotaConfig;
 import com.wgh.rag.quota.mapper.QuotaUsageMapper;

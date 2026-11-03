@@ -1,4 +1,4 @@
-package com.wgh.rag.common.config;
+package com.wgh.rag.data.mybatis;
 
 import com.baomidou.mybatisplus.annotation.DbType;
 import com.baomidou.mybatisplus.extension.plugins.MybatisPlusInterceptor;

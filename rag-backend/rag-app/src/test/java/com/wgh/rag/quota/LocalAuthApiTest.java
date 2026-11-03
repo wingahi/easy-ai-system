@@ -19,7 +19,7 @@ import com.wgh.rag.common.metrics.RagMetrics;
 import com.wgh.rag.common.result.Result;
 import com.wgh.rag.common.security.RequiresPermission;
 import com.wgh.rag.log.service.AuditLogService;
-import com.wgh.rag.common.config.MetaObjectHandlerImpl;
+import com.wgh.rag.data.mybatis.MetaObjectHandlerImpl;
 import com.wgh.rag.common.exception.GlobalExceptionHandler;
 import com.wgh.rag.controller.AdminRoleController;
 import com.wgh.rag.controller.AdminUserController;
