@@ -58,8 +58,11 @@ class LocalLoginServiceTest {
         LocalAuthProperties properties = new LocalAuthProperties();
         properties.setJwtSecret("unit-test-local-secret-0123456789abcdef0123456789");
         localTokenService = new LocalTokenService(properties);
+        AccountAuditService accountAuditService = new AccountAuditService(
+                new com.wgh.rag.common.service.AuditLogService(
+                        mock(com.wgh.rag.common.mapper.AuditLogMapper.class)));
         localLoginService = new LocalLoginService(userMapper, userRoleMapper,
-                rolePermissionMapper, passwordEncoder, localTokenService, properties);
+                rolePermissionMapper, passwordEncoder, localTokenService, properties, accountAuditService);
     }
 
     private WghUser user(String username, String password, String source, Integer trial,
@@ -167,7 +170,9 @@ class LocalLoginServiceTest {
         LocalAuthProperties properties = new LocalAuthProperties();
         properties.setEnabled(false);
         LocalLoginService disabledService = new LocalLoginService(userMapper, userRoleMapper,
-                rolePermissionMapper, passwordEncoder, localTokenService, properties);
+                rolePermissionMapper, passwordEncoder, localTokenService, properties,
+                new AccountAuditService(new com.wgh.rag.common.service.AuditLogService(
+                        mock(com.wgh.rag.common.mapper.AuditLogMapper.class))));
 
         assertThatThrownBy(() -> disabledService.login("admin", "admin"))
                 .isInstanceOf(BusinessException.class)

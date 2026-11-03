@@ -5,14 +5,17 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
 import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.Date;
 import java.util.LinkedHashSet;
@@ -43,7 +46,42 @@ public class LocalTokenService {
     private final LocalAuthProperties properties;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    /** 当前激活 profile，用于生产环境 fail-closed 校验 */
+    @Value("${spring.profiles.active:}")
+    private String activeProfiles;
+
     private volatile SecretKey signingKey;
+
+    /**
+     * 启动校验：生产 profile 未配置固定密钥时直接启动失败（fail-closed）；
+     * 开发环境允许随机密钥兜底并打印 WARN。
+     */
+    @PostConstruct
+    void validateSecretConfiguration() {
+        if (!properties.isEnabled()) {
+            return;
+        }
+        if (StringUtils.hasText(properties.getJwtSecret())) {
+            if (properties.getJwtSecret().getBytes(StandardCharsets.UTF_8).length < 32) {
+                throw new IllegalStateException("wgh.auth.local.jwt-secret 长度至少 32 字节");
+            }
+            return;
+        }
+        if (isProductionProfile()) {
+            throw new IllegalStateException("生产环境必须配置 wgh.auth.local.jwt-secret（至少 32 字节），"
+                    + "否则本地会话凭证无法跨实例/重启保持有效；请通过环境变量或配置注入后重启");
+        }
+        log.warn("wgh.auth.local.jwt-secret 未配置，开发环境将使用每次启动随机生成的密钥；重启后本地会话全部失效");
+    }
+
+    private boolean isProductionProfile() {
+        if (!StringUtils.hasText(activeProfiles)) {
+            return false;
+        }
+        return Arrays.stream(activeProfiles.split(","))
+                .map(String::trim)
+                .anyMatch(profile -> profile.equalsIgnoreCase("prod") || profile.equalsIgnoreCase("production"));
+    }
 
     /**
      * 签发本地会话凭证

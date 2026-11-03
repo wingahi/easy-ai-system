@@ -11,6 +11,7 @@ import com.wgh.rag.common.mapper.RolePermissionMapper;
 import com.wgh.rag.common.mapper.UserMapper;
 import com.wgh.rag.common.mapper.UserRoleMapper;
 import com.wgh.rag.common.result.ResultCode;
+import com.wgh.rag.common.security.SecurityUtils;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -41,6 +42,7 @@ public class LocalLoginService {
     private final PasswordEncoder passwordEncoder;
     private final LocalTokenService localTokenService;
     private final LocalAuthProperties localAuthProperties;
+    private final AccountAuditService accountAuditService;
 
     public LocalLoginResult login(String username, String password) {
         if (!localAuthProperties.isEnabled()) {
@@ -56,22 +58,27 @@ public class LocalLoginService {
                 .last("LIMIT 1"));
         if (user == null) {
             log.warn("本地登录失败：用户不存在 username={}", name);
+            failLogin(name, "用户不存在");
             throw new BusinessException(ResultCode.LOGIN_FAILED, "用户名或密码错误");
         }
         if (!isLocalSource(user)) {
             log.warn("本地登录被拒：非本地账号 username={}, source={}", name, user.getSource());
+            failLogin(name, "非本地来源账号");
             throw new BusinessException(ResultCode.LOGIN_FAILED, "该账号仅支持外部 OIDC 登录");
         }
         if (!passwordEncoder.matches(password, user.getPasswordHash())) {
             log.warn("本地登录失败：密码错误 username={}", name);
+            failLogin(name, "密码错误");
             throw new BusinessException(ResultCode.LOGIN_FAILED, "用户名或密码错误");
         }
         if (user.getStatus() == null || user.getStatus() != 1) {
             log.warn("本地登录被拒：账号已禁用 username={}", name);
+            failLogin(name, "账号已禁用");
             throw new BusinessException(ResultCode.LOGIN_FAILED, "账号已禁用，请联系管理员");
         }
         if (user.getExpireAt() != null && LocalDateTime.now().isAfter(user.getExpireAt())) {
             log.warn("本地登录被拒：账号已过期 username={}, expireAt={}", name, user.getExpireAt());
+            failLogin(name, "账号已过期");
             throw new BusinessException(ResultCode.LOGIN_FAILED,
                     "账号已过期（有效期至 " + user.getExpireAt() + "）");
         }
@@ -81,6 +88,7 @@ public class LocalLoginService {
         boolean trial = user.getTrial() != null && user.getTrial() == 1;
         if (!admin && !trial) {
             log.warn("本地登录被拒：非管理员且非体验账号 username={}", name);
+            failLogin(name, "非管理员且非体验账号");
             throw new BusinessException(ResultCode.LOGIN_FAILED, "仅本地管理员或体验账号支持密码登录");
         }
 
@@ -88,6 +96,7 @@ public class LocalLoginService {
                 localTokenService.issue(user.getUsername(), user.getId(), roles, user.getPasswordVersion());
         Set<String> permissions = loadPermissions(user.getId());
         boolean passwordMustChange = user.getPasswordMustChange() != null && user.getPasswordMustChange() == 1;
+        accountAuditService.record(AccountAuditService.ACTION_LOGIN_SUCCESS, name, name, "SUCCESS", null);
         log.info("本地登录成功 username={}, roles={}, trial={}, passwordMustChange={}",
                 name, roles, trial, passwordMustChange);
         return new LocalLoginResult(
@@ -96,6 +105,14 @@ public class LocalLoginService {
                 issued.expiresInSeconds(),
                 passwordMustChange,
                 new UserResult(user.getId(), user.getUsername(), roles, permissions, passwordMustChange));
+    }
+
+    /**
+     * 登录失败审计：调用时尚无认证上下文，操作者记为 anonymous，只记录目标账号与原因
+     */
+    private void failLogin(String username, String reason) {
+        accountAuditService.record(AccountAuditService.ACTION_LOGIN_FAIL, username,
+                SecurityUtils.ANONYMOUS, "FAIL", reason);
     }
 
     private boolean isLocalSource(WghUser user) {

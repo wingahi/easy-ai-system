@@ -406,6 +406,54 @@ class LocalAuthApiTest {
                 .andExpect(status().isUnauthorized());
     }
 
+    // ==================== 生命周期审计 / 事务 ====================
+
+    @Test
+    @DisplayName("重复创建同名体验账号返回 409（唯一键冲突不落 500）")
+    void duplicateCreateReturns409() throws Exception {
+        String adminToken = login("admin", "admin").path("data").path("token").asText();
+        String body = "{\"username\":\"trial09\",\"password\":\"trial-pass\",\"role\":\"viewer\"}";
+        postJson("/api/admin/users", adminToken, body);
+
+        mockMvc.perform(post("/api/admin/users")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isConflict());
+    }
+
+    @Test
+    @DisplayName("账号生命周期（创建/改角色/禁用/登录失败）写入审计")
+    void accountLifecycleAudited() throws Exception {
+        String adminToken = login("admin", "admin").path("data").path("token").asText();
+        postJson("/api/admin/users", adminToken,
+                "{\"username\":\"trial10\",\"password\":\"trial-pass\",\"role\":\"viewer\"}");
+        putJson("/api/admin/users/trial10", adminToken, "{\"role\":\"editor\"}");
+        putJson("/api/admin/users/trial10", adminToken, "{\"enabled\":false}");
+        login("trial10", "trial-pass");
+
+        String actions = jdbcTemplate.queryForObject(
+                "SELECT COALESCE(STRING_AGG(action, ','), '') FROM wgh_audit_log", String.class);
+        assertThat(actions).contains("ACCOUNT_CREATE")
+                .contains("ACCOUNT_ROLE_CHANGE")
+                .contains("ACCOUNT_DISABLE")
+                .contains("ACCOUNT_LOGIN_FAIL");
+
+        String details = jdbcTemplate.queryForObject(
+                "SELECT COALESCE(STRING_AGG(detail, ' | '), '') FROM wgh_audit_log", String.class);
+        assertThat(details).contains("target=trial10");
+        assertThat(details).doesNotContain("trial-pass");
+    }
+
+    @Test
+    @DisplayName("登录成功也写入审计（目标与操作者为 admin 本人）")
+    void loginSuccessAudited() throws Exception {
+        login("admin", "admin");
+        String actions = jdbcTemplate.queryForObject(
+                "SELECT COALESCE(STRING_AGG(action, ','), '') FROM wgh_audit_log", String.class);
+        assertThat(actions).contains("ACCOUNT_LOGIN_SUCCESS");
+    }
+
     // ==================== helpers ====================
 
     private JsonNode login(String username, String password) throws Exception {

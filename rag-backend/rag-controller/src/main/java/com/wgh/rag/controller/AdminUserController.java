@@ -1,6 +1,7 @@
 package com.wgh.rag.controller;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.wgh.rag.auth.service.AccountAuditService;
 import com.wgh.rag.auth.service.LocalLoginService;
 import com.wgh.rag.auth.service.LocalPasswordService;
 import com.wgh.rag.common.entity.WghRole;
@@ -22,6 +23,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -67,6 +69,7 @@ public class AdminUserController {
     private final QuotaAdminGuard quotaAdminGuard;
     private final PasswordEncoder passwordEncoder;
     private final LocalPasswordService localPasswordService;
+    private final AccountAuditService accountAuditService;
 
     @Operation(summary = "分页列出用户（支持用户名/来源/角色/启用状态筛选）")
     @GetMapping
@@ -113,6 +116,7 @@ public class AdminUserController {
 
     @Operation(summary = "创建体验账号（角色不可为 admin）")
     @PostMapping
+    @Transactional(rollbackFor = Exception.class)
     public Result<Map<String, Object>> create(@RequestBody AdminUserRequest request) {
         quotaAdminGuard.requireAdmin();
 
@@ -124,10 +128,7 @@ public class AdminUserController {
         if (!StringUtils.hasText(request.getPassword())) {
             throw new BusinessException(ResultCode.PARAM_ERROR, "密码不能为空");
         }
-        if (userMapper.selectCount(new LambdaQueryWrapper<WghUser>()
-                .eq(WghUser::getUsername, username)) > 0) {
-            throw new BusinessException(ResultCode.RESOURCE_ALREADY_EXISTS, "用户名已存在");
-        }
+        // 不做前置查重，依赖库的唯一约束；冲突由 GlobalExceptionHandler 映射为 409
 
         String role = resolveRole(request.getRole());
         WghUser user = new WghUser();
@@ -146,17 +147,20 @@ public class AdminUserController {
         userRoleMapper.insert(user.getId(), roleId);
 
         applyQuota(username, request);
+        accountAuditService.success(AccountAuditService.ACTION_CREATE, username);
         log.info("创建体验账号 username={}, role={}, expireAt={}", username, role, request.getExpireAt());
         return Result.success(buildRow(user, rolesOf(user.getId())));
     }
 
     @Operation(summary = "修改体验账号（角色/启用/备注/有效期/配额）")
     @PutMapping("/{username}")
+    @Transactional(rollbackFor = Exception.class)
     public Result<Map<String, Object>> update(@PathVariable String username,
                                               @RequestBody AdminUserRequest request) {
         quotaAdminGuard.requireAdmin();
 
         WghUser user = requireTrialAccount(username);
+        boolean roleChanged = false;
         if (StringUtils.hasText(request.getRole())) {
             String role = resolveRole(request.getRole());
             userRoleMapper.deleteByUserId(user.getId());
@@ -164,6 +168,7 @@ public class AdminUserController {
                     .select(WghRole::getId)
                     .eq(WghRole::getRoleCode, role)).getId();
             userRoleMapper.insert(user.getId(), roleId);
+            roleChanged = true;
         }
         if (request.getEnabled() != null) {
             user.setStatus(request.getEnabled() ? 1 : 0);
@@ -180,6 +185,13 @@ public class AdminUserController {
         userMapper.updateById(user);
 
         applyQuota(username, request);
+        if (roleChanged) {
+            accountAuditService.success(AccountAuditService.ACTION_ROLE_CHANGE, username);
+        }
+        if (request.getEnabled() != null) {
+            accountAuditService.success(request.getEnabled()
+                    ? AccountAuditService.ACTION_ENABLE : AccountAuditService.ACTION_DISABLE, username);
+        }
         log.info("修改体验账号 username={}", username);
         return Result.success(buildRow(userMapper.selectById(user.getId()), rolesOf(user.getId())));
     }
@@ -204,6 +216,7 @@ public class AdminUserController {
         user.setStatus(0);
         user.bumpPasswordVersion();
         userMapper.updateById(user);
+        accountAuditService.success(AccountAuditService.ACTION_DISABLE, username);
         log.info("禁用体验账号 username={}", username);
         return Result.success(buildRow(userMapper.selectById(user.getId()), rolesOf(user.getId())));
     }

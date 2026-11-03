@@ -65,6 +65,18 @@ public class GlobalExceptionHandler {
                 .body(Result.fail(ResultCode.PERMISSION_DENIED));
     }
 
+    /**
+     * 唯一键冲突统一映射为 409，避免并发/重复创建时返回 500
+     */
+    @ExceptionHandler(org.springframework.dao.DuplicateKeyException.class)
+    public ResponseEntity<Result<Void>> handleDuplicateKeyException(
+            org.springframework.dao.DuplicateKeyException e) {
+        log.warn("唯一键冲突: {}", e.getMessage());
+        return ResponseEntity
+                .status(HttpStatus.CONFLICT)
+                .body(Result.fail(ResultCode.RESOURCE_ALREADY_EXISTS.getCode(), "资源已存在（唯一键冲突）"));
+    }
+
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<Result<Void>> handleIllegalArgumentException(IllegalArgumentException e) {
         log.warn("参数非法: {}", e.getMessage());
