@@ -20,6 +20,10 @@
         </dependency>
         <dependency>
             <groupId>com.wgh</groupId>
+            <artifactId>rag-log</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.wgh</groupId>
             <artifactId>rag-controller</artifactId>
         </dependency>
         <dependency>

@@ -2,14 +2,14 @@ package com.wgh.rag.controller;
 
 import com.wgh.rag.chat.mapper.ChatMessageMapper;
 import com.wgh.rag.chat.service.FeedbackService;
-import com.wgh.rag.common.entity.AuditLog;
+import com.wgh.rag.log.entity.AuditLog;
 import com.wgh.rag.quota.entity.QuotaUsage;
 import com.wgh.rag.quota.service.QuotaService;
 import com.wgh.rag.common.result.PageResult;
 import com.wgh.rag.common.result.Result;
 import com.wgh.rag.common.security.RequiresPermission;
 import com.wgh.rag.common.security.SecurityUtils;
-import com.wgh.rag.common.service.AuditLogService;
+import com.wgh.rag.log.service.AuditLogService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;

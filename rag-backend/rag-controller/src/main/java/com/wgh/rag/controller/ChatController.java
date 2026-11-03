@@ -13,7 +13,7 @@ import com.wgh.rag.tool.entity.ToolConfig;
 import com.wgh.rag.tool.executor.ToolExecutionEngine;
 import com.wgh.rag.tool.service.SkillFileService;
 import com.wgh.rag.tool.service.ToolConfigService;
-import com.wgh.rag.common.annotation.Audit;
+import com.wgh.rag.log.annotation.Audit;
 import com.wgh.rag.common.result.PageResult;
 import com.wgh.rag.common.result.Result;
 import com.wgh.rag.common.result.ResultCode;

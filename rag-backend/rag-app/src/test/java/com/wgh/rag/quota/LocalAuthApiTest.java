@@ -18,7 +18,7 @@ import com.wgh.rag.auth.service.LocalPasswordService;
 import com.wgh.rag.common.metrics.RagMetrics;
 import com.wgh.rag.common.result.Result;
 import com.wgh.rag.common.security.RequiresPermission;
-import com.wgh.rag.common.service.AuditLogService;
+import com.wgh.rag.log.service.AuditLogService;
 import com.wgh.rag.common.config.MetaObjectHandlerImpl;
 import com.wgh.rag.common.exception.GlobalExceptionHandler;
 import com.wgh.rag.controller.AdminRoleController;
@@ -80,7 +80,7 @@ class LocalAuthApiTest {
 
     @SpringBootConfiguration
     @EnableAutoConfiguration
-    @MapperScan({"com.wgh.rag.quota.mapper", "com.wgh.rag.common.mapper"})
+    @MapperScan({"com.wgh.rag.quota.mapper", "com.wgh.rag.common.mapper", "com.wgh.rag.log.mapper"})
     @EnableConfigurationProperties(QuotaProperties.class)
     @Import({
             SecurityConfig.class,

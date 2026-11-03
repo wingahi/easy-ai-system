@@ -1,7 +1,7 @@
-package com.wgh.rag.common.mapper;
+package com.wgh.rag.log.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
-import com.wgh.rag.common.entity.AuditLog;
+import com.wgh.rag.log.entity.AuditLog;
 import org.apache.ibatis.annotations.Mapper;
 
 /**

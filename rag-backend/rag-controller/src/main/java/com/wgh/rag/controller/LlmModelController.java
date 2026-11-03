@@ -1,6 +1,6 @@
 package com.wgh.rag.controller;
 
-import com.wgh.rag.common.annotation.Audit;
+import com.wgh.rag.log.annotation.Audit;
 import com.wgh.rag.common.result.PageResult;
 import com.wgh.rag.common.result.Result;
 import com.wgh.rag.llm.entity.EmbeddingModelConfig;

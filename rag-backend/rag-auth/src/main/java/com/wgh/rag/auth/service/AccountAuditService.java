@@ -1,8 +1,8 @@
 package com.wgh.rag.auth.service;
 
-import com.wgh.rag.common.entity.AuditLog;
+import com.wgh.rag.log.entity.AuditLog;
 import com.wgh.rag.common.security.SecurityUtils;
-import com.wgh.rag.common.service.AuditLogService;
+import com.wgh.rag.log.service.AuditLogService;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;

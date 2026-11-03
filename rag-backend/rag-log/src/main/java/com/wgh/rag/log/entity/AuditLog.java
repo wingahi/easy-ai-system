@@ -1,6 +1,7 @@
-package com.wgh.rag.common.entity;
+package com.wgh.rag.log.entity;
 
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.wgh.rag.common.entity.BaseEntity;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 

@@ -18,6 +18,10 @@
             <groupId>com.wgh</groupId>
             <artifactId>rag-common</artifactId>
         </dependency>
+        <dependency>
+            <groupId>com.wgh</groupId>
+            <artifactId>rag-log</artifactId>
+        </dependency>
         <!-- Spring Security（SecurityFilterChain / PasswordEncoder） -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

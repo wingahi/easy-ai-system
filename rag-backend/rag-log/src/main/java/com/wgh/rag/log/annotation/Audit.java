@@ -1,4 +1,4 @@
-package com.wgh.rag.common.annotation;
+package com.wgh.rag.log.annotation;
 
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;

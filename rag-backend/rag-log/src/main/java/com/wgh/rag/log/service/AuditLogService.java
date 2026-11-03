@@ -1,8 +1,8 @@
-package com.wgh.rag.common.service;
+package com.wgh.rag.log.service;
 
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
-import com.wgh.rag.common.entity.AuditLog;
-import com.wgh.rag.common.mapper.AuditLogMapper;
+import com.wgh.rag.log.entity.AuditLog;
+import com.wgh.rag.log.mapper.AuditLogMapper;
 import com.wgh.rag.common.result.PageResult;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
