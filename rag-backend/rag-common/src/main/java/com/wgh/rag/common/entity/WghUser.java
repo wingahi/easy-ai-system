@@ -73,4 +73,9 @@ public class WghUser extends BaseEntity {
      * 备注
      */
     private String remark;
+
+    /**
+     * 是否必须先改密：1-是（初始化创建/管理员重置的账号），0-否
+     */
+    private Integer passwordMustChange;
 }

@@ -3,6 +3,7 @@ import request from '../utils/request'
 
 // 认证：本地管理员/体验账号密码登录（返回内部会话凭证）；getMe 查询当前凭证用户信息
 export const login = (data) => request.post('/auth/login', data)
+export const changePassword = (data) => request.post('/auth/password', data)
 export const getMe = () => request.get('/auth/me')
 
 // 知识库

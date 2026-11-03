@@ -14,6 +14,9 @@ public class LoginUser {
     private Set<String> roles;
     private Set<String> permissions;
 
+    /** 是否必须先改密（仅本地账号；外部 OIDC 用户恒为 false） */
+    private Boolean passwordMustChange;
+
     /** 角色缺失时的默认普通用户角色 */
     public static final String DEFAULT_ROLE = "viewer";
 

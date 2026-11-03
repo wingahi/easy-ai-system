@@ -2,8 +2,10 @@ package com.wgh.rag.controller;
 
 import com.wgh.rag.auth.dto.LocalLoginRequest;
 import com.wgh.rag.auth.dto.LocalLoginResult;
+import com.wgh.rag.auth.dto.PasswordChangeRequest;
 import com.wgh.rag.auth.dto.UserResult;
 import com.wgh.rag.auth.service.LocalLoginService;
+import com.wgh.rag.auth.service.LocalPasswordService;
 import com.wgh.rag.common.exception.BusinessException;
 import com.wgh.rag.common.result.Result;
 import com.wgh.rag.common.result.ResultCode;
@@ -30,11 +32,19 @@ import org.springframework.web.bind.annotation.RestController;
 public class AuthController {
 
     private final LocalLoginService localLoginService;
+    private final LocalPasswordService localPasswordService;
 
     @Operation(summary = "本地账号密码登录（仅本地管理员/体验账号）")
     @PostMapping("/login")
     public Result<LocalLoginResult> login(@RequestBody LocalLoginRequest request) {
         return Result.success(localLoginService.login(request.getUsername(), request.getPassword()));
+    }
+
+    @Operation(summary = "本人修改密码（需旧密码 + 新密码；成功后清除首登改密标记）")
+    @PostMapping("/password")
+    public Result<Void> changePassword(@RequestBody PasswordChangeRequest request) {
+        localPasswordService.changeOwnPassword(request.getOldPassword(), request.getNewPassword());
+        return Result.success(null);
     }
 
     @Operation(summary = "获取当前用户信息（含 roles + permissions）")
@@ -48,7 +58,8 @@ public class AuthController {
                 loginUser.getUserId(),
                 loginUser.getUsername(),
                 loginUser.getRoles(),
-                loginUser.getPermissions()));
+                loginUser.getPermissions(),
+                Boolean.TRUE.equals(loginUser.getPasswordMustChange())));
     }
 
     @Operation(summary = "登出（无服务端会话，客户端清除凭证即可）")

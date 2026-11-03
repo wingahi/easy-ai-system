@@ -19,6 +19,8 @@ public enum ResultCode {
     TOKEN_INVALID(1003, "Token无效"),
     PERMISSION_DENIED(1004, "权限不足"),
     LOGIN_FAILED(1005, "登录失败"),
+    PASSWORD_CHANGE_REQUIRED(1006, "请先修改密码"),
+    SESSION_INVALID(1007, "凭证已失效，请重新登录"),
     
     // 参数校验 2xxx
     PARAM_ERROR(2001, "参数错误"),

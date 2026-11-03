@@ -7,6 +7,7 @@ import com.wgh.rag.common.mapper.RoleMapper;
 import com.wgh.rag.common.mapper.RolePermissionMapper;
 import com.wgh.rag.common.mapper.UserMapper;
 import com.wgh.rag.common.mapper.UserRoleMapper;
+import com.wgh.rag.common.result.ResultCode;
 import com.wgh.rag.common.security.LoginUser;
 import io.jsonwebtoken.Claims;
 import jakarta.servlet.FilterChain;
@@ -197,6 +198,7 @@ public class OidcAuthenticationFilter extends OncePerRequestFilter {
         loginUser.setUsername(user.getUsername());
         loginUser.setRoles(roles);
         loginUser.setPermissions(permissions);
+        loginUser.setPasswordMustChange(user.getPasswordMustChange() != null && user.getPasswordMustChange() == 1);
         LoginUser.set(loginUser);
 
         request.setAttribute("userId", userId);
@@ -211,7 +213,30 @@ public class OidcAuthenticationFilter extends OncePerRequestFilter {
                 new UsernamePasswordAuthenticationToken(loginUser, null, authorities);
         SecurityContextHolder.getContext().setAuthentication(authentication);
 
+        // 首登强制改密：除改密、登出与读取类请求外，其余（写）接口一律拒绝
+        if (Boolean.TRUE.equals(loginUser.getPasswordMustChange()) && isPasswordChangeRequired(request)) {
+            log.warn("账号未完成首次改密，拒绝写请求 username={}, {} {}", user.getUsername(),
+                    request.getMethod(), request.getRequestURI());
+            writeError(response, HttpServletResponse.SC_FORBIDDEN,
+                    ResultCode.PASSWORD_CHANGE_REQUIRED.getCode(),
+                    ResultCode.PASSWORD_CHANGE_REQUIRED.getMessage());
+            return;
+        }
+
         filterChain.doFilter(request, response);
+    }
+
+    /**
+     * 是否属于"必须先改密"拦截范围：非只读请求且不是改密/登出接口
+     */
+    private boolean isPasswordChangeRequired(HttpServletRequest request) {
+        String method = request.getMethod();
+        if ("GET".equalsIgnoreCase(method) || "HEAD".equalsIgnoreCase(method)
+                || "OPTIONS".equalsIgnoreCase(method)) {
+            return false;
+        }
+        String uri = request.getRequestURI();
+        return !uri.startsWith("/api/auth/password") && !uri.startsWith("/api/auth/logout");
     }
 
     /**
@@ -303,7 +328,12 @@ public class OidcAuthenticationFilter extends OncePerRequestFilter {
     }
 
     private void writeUnauthorized(HttpServletResponse response, int code, String message) throws IOException {
-        response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+        writeError(response, HttpServletResponse.SC_UNAUTHORIZED, code, message);
+    }
+
+    private void writeError(HttpServletResponse response, int httpStatus, int code, String message)
+            throws IOException {
+        response.setStatus(httpStatus);
         response.setContentType("application/json;charset=UTF-8");
         response.getWriter().write("{\"code\":" + code + ",\"message\":\"" + message + "\",\"data\":null}");
     }

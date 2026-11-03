@@ -13,6 +13,8 @@ export const useUserStore = defineStore('user', {
     username: localStorage.getItem('wgh_username') || '',
     userId: localStorage.getItem('wgh_userId') || '',
     roles: JSON.parse(localStorage.getItem('wgh_roles') || '[]'),
+    // 本地账号被要求先改密（刷新后沿用上次登录返回的标记）
+    passwordMustChange: localStorage.getItem('wgh_pwd_must_change') === '1',
     // 是否已用当前 token 拉取过 /auth/me（页面刷新后需要重新 hydrate）
     hydrated: false
   }),
@@ -40,10 +42,12 @@ export const useUserStore = defineStore('user', {
       this.username = data.username || ''
       this.userId = data.userId ?? ''
       this.roles = Array.isArray(data.roles) ? data.roles : []
+      this.passwordMustChange = data.passwordMustChange === true
       this.hydrated = true
       localStorage.setItem('wgh_username', this.username)
       localStorage.setItem('wgh_userId', String(this.userId))
       localStorage.setItem('wgh_roles', JSON.stringify(this.roles))
+      localStorage.setItem('wgh_pwd_must_change', this.passwordMustChange ? '1' : '0')
     },
 
     logout() {
@@ -51,11 +55,13 @@ export const useUserStore = defineStore('user', {
       this.username = ''
       this.userId = ''
       this.roles = []
+      this.passwordMustChange = false
       this.hydrated = false
       localStorage.removeItem('wgh_token')
       localStorage.removeItem('wgh_username')
       localStorage.removeItem('wgh_userId')
       localStorage.removeItem('wgh_roles')
+      localStorage.removeItem('wgh_pwd_must_change')
     }
   }
 })

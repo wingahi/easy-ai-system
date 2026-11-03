@@ -21,6 +21,9 @@ public class LocalLoginResult {
     /** 有效期（秒） */
     private long expiresIn;
 
+    /** 是否必须先修改密码（true 时前端应跳转改密页，除改密/查询自身信息外的写接口会被拒绝） */
+    private boolean passwordMustChange;
+
     /** 当前用户信息（角色/权限实时取自数据库） */
     private UserResult user;
 }

@@ -1077,6 +1077,7 @@ CREATE TABLE IF NOT EXISTS wgh_user (
     trial               SMALLINT NOT NULL DEFAULT 0,
     expire_at           TIMESTAMP,
     remark              VARCHAR(500),
+    password_must_change SMALLINT NOT NULL DEFAULT 0,
     create_time         TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     update_time         TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     create_by           VARCHAR(64),
@@ -1084,6 +1085,20 @@ CREATE TABLE IF NOT EXISTS wgh_user (
     deleted             SMALLINT NOT NULL DEFAULT 0,
     UNIQUE (username)
 );
+COMMENT ON COLUMN wgh_user.source IS '账号来源：local=本地账号（本地管理员/体验账号，可密码登录），oidc=外部 OIDC（仅 token 进入）';
+COMMENT ON COLUMN wgh_user.trial IS '是否体验账号：1=是，0=否';
+COMMENT ON COLUMN wgh_user.expire_at IS '账号有效期，NULL 表示长期有效；到期后不可登录';
+COMMENT ON COLUMN wgh_user.remark IS '备注';
+COMMENT ON COLUMN wgh_user.password_must_change IS '是否必须先改密：1=是（初始化创建/管理员重置口令），0=否';
+
+-- 存量库升级（幂等）
+ALTER TABLE wgh_user ADD COLUMN IF NOT EXISTS oidc_subject VARCHAR(256);
+ALTER TABLE wgh_user ADD COLUMN IF NOT EXISTS oidc_issuer VARCHAR(256);
+ALTER TABLE wgh_user ADD COLUMN IF NOT EXISTS source VARCHAR(16) NOT NULL DEFAULT 'local';
+ALTER TABLE wgh_user ADD COLUMN IF NOT EXISTS trial SMALLINT NOT NULL DEFAULT 0;
+ALTER TABLE wgh_user ADD COLUMN IF NOT EXISTS expire_at TIMESTAMP;
+ALTER TABLE wgh_user ADD COLUMN IF NOT EXISTS remark VARCHAR(500);
+ALTER TABLE wgh_user ADD COLUMN IF NOT EXISTS password_must_change SMALLINT NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS wgh_role (
     id                  BIGSERIAL PRIMARY KEY,

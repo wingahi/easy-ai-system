@@ -74,6 +74,11 @@ const doAccountLogin = async () => {
     const res = await login({ username: form.username.trim(), password: form.password })
     userStore.setToken(res.data.token)
     userStore.hydrate(res.data.user)
+    if (res.data.passwordMustChange) {
+      ElMessage.warning('首次登录请先修改密码')
+      router.push({ path: '/change-password', query: { redirect: redirectTarget() } })
+      return
+    }
     ElMessage.success(res.data.user?.username ? `欢迎，${res.data.user.username}` : '登录成功')
     router.push(redirectTarget())
   } catch (e) {

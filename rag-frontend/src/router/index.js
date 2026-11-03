@@ -3,6 +3,7 @@ import { useUserStore } from '../stores/user'
 
 const routes = [
   { path: '/login', name: 'Login', component: () => import('../views/login/Login.vue') },
+  { path: '/change-password', name: 'ChangePassword', component: () => import('../views/login/ChangePassword.vue'), meta: { title: '修改密码', requiresAuth: true } },
 
   // 工作流分享运行页（需登录；分享态运行启用 safeMode 只读工具白名单）
   { path: '/share/workflow/:token', name: 'ShareWorkflow', component: () => import('../views/workflow/ShareWorkflow.vue'), meta: { title: '分享工作流', requiresAuth: true } },
@@ -74,6 +75,11 @@ router.beforeEach(async (to) => {
       userStore.logout()
       return { path: '/login', query: { redirect: to.fullPath } }
     }
+  }
+
+  // 首登强制改密：本地账号未改密时，除改密页外一律重定向
+  if (userStore.passwordMustChange && to.path !== '/change-password') {
+    return { path: '/change-password', query: { redirect: to.fullPath } }
   }
 
   // 管理页面：按后端返回的角色判断（后端接口另有 admin 校验）

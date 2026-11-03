@@ -8,8 +8,11 @@ import com.wgh.rag.auth.security.LocalTokenService;
 import com.wgh.rag.auth.security.OidcAuthenticationFilter;
 import com.wgh.rag.auth.security.OidcProperties;
 import com.wgh.rag.auth.security.OidcTokenVerifier;
+import com.wgh.rag.auth.security.PasswordPolicy;
+import com.wgh.rag.auth.security.PasswordProperties;
 import com.wgh.rag.auth.security.TokenVerificationException;
 import com.wgh.rag.auth.service.LocalLoginService;
+import com.wgh.rag.auth.service.LocalPasswordService;
 import com.wgh.rag.common.config.MetaObjectHandlerImpl;
 import com.wgh.rag.common.exception.GlobalExceptionHandler;
 import com.wgh.rag.controller.AdminUserController;
@@ -75,7 +78,10 @@ class LocalAuthApiTest {
             OidcProperties.class,
             LocalAuthProperties.class,
             LocalTokenService.class,
+            PasswordProperties.class,
+            PasswordPolicy.class,
             LocalLoginService.class,
+            LocalPasswordService.class,
             MetaObjectHandlerImpl.class,
             GlobalExceptionHandler.class,
             QuotaService.class,
@@ -232,6 +238,45 @@ class LocalAuthApiTest {
 
         JsonNode updated = putJson("/api/admin/users/trial04", adminToken, "{\"role\":\"admin\"}");
         assertThat(updated.path("code").asInt()).isEqualTo(3003);
+    }
+
+    // ==================== 首登强制改密 ====================
+
+    @Test
+    @DisplayName("首登强制改密：登录返回标记，写接口被拒 403/1006，读取接口仍可用")
+    void firstLoginMustChangePassword() throws Exception {
+        jdbcTemplate.update("UPDATE wgh_user SET password_must_change=1 WHERE username='admin'");
+
+        JsonNode login = login("admin", "admin");
+        assertThat(login.path("data").path("passwordMustChange").asBoolean()).isTrue();
+
+        String token = login.path("data").path("token").asText();
+        MvcResult blocked = mockMvc.perform(post("/api/admin/users")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isForbidden())
+                .andReturn();
+        JsonNode blockedBody = om.readTree(blocked.getResponse().getContentAsString());
+        assertThat(blockedBody.path("code").asInt()).isEqualTo(1006);
+
+        // 只读接口不受影响
+        assertThat(getJson("/api/auth/me", token).path("code").asInt()).isEqualTo(200);
+    }
+
+    @Test
+    @DisplayName("改密成功后清除强制改密标记并可使用写接口")
+    void changePasswordClearsMustChangeFlag() throws Exception {
+        jdbcTemplate.update("UPDATE wgh_user SET password_must_change=1 WHERE username='admin'");
+        String token = login("admin", "admin").path("data").path("token").asText();
+
+        JsonNode changed = postJson("/api/auth/password", token,
+                "{\"oldPassword\":\"admin\",\"newPassword\":\"newAdmin123\"}");
+        assertThat(changed.path("code").asInt()).isEqualTo(200);
+
+        JsonNode me = getJson("/api/auth/me", token);
+        assertThat(me.path("data").path("passwordMustChange").asBoolean()).isFalse();
+        assertThat(getJson("/api/admin/users", token).path("code").asInt()).isEqualTo(200);
     }
 
     // ==================== 双认证隔离 ====================

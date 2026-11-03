@@ -25,4 +25,7 @@ public class UserResult {
 
     /** 权限编码集合（如 kb:write / model:read） */
     private Set<String> permissions;
+
+    /** 是否必须先改密（本地账号初始化/重置口令后为 true；外部 OIDC 用户恒为 false） */
+    private Boolean passwordMustChange;
 }

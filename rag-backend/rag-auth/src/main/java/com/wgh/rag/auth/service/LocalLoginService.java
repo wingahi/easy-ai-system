@@ -87,12 +87,15 @@ public class LocalLoginService {
         LocalTokenService.IssuedToken issued =
                 localTokenService.issue(user.getUsername(), user.getId(), roles);
         Set<String> permissions = loadPermissions(user.getId());
-        log.info("本地登录成功 username={}, roles={}, trial={}", name, roles, trial);
+        boolean passwordMustChange = user.getPasswordMustChange() != null && user.getPasswordMustChange() == 1;
+        log.info("本地登录成功 username={}, roles={}, trial={}, passwordMustChange={}",
+                name, roles, trial, passwordMustChange);
         return new LocalLoginResult(
                 issued.token(),
                 "local",
                 issued.expiresInSeconds(),
-                new UserResult(user.getId(), user.getUsername(), roles, permissions));
+                passwordMustChange,
+                new UserResult(user.getId(), user.getUsername(), roles, permissions, passwordMustChange));
     }
 
     private boolean isLocalSource(WghUser user) {
