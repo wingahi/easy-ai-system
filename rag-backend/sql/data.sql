@@ -9,8 +9,8 @@ INSERT INTO wgh_embedding_model (name, provider, model_name, base_url, api_key, 
 ('通义 text-embedding-v2', 'DASHSCOPE', 'text-embedding-v2', 'https://dashscope.aliyuncs.com/compatible-mode/v1', 'YOUR_DASHSCOPE_API_KEY', 1536, 1, 1, '阿里云通义嵌入模型示例');
 
 INSERT INTO wgh_llm_model (name, model_type, provider, model_name, base_url, api_key, max_context_tokens, temperature, compression_model, status, remark) VALUES
-('通义 qwen-plus', 'CHAT', 'DASHSCOPE', 'qwen-plus', 'https://dashscope.aliyuncs.com/compatible-mode/v1', 'YOUR_DASHSCOPE_API_KEY', 4096, 0.7, FALSE, 1, '阿里云通义模型示例'),
-('DeepSeek V3', 'CHAT', 'DEEPSEEK', 'deepseek-chat', 'https://api.deepseek.com/v1', 'YOUR_DEEPSEEK_API_KEY', 65536, 0.7, FALSE, 1, 'DeepSeek 模型示例');
+('通义 qwen-plus', 'CHAT', 'DASHSCOPE', 'qwen-plus', 'https://dashscope.aliyuncs.com/compatible-mode/v1', 'YOUR_DASHSCOPE_API_KEY', 4096, 0.7, 0, 1, '阿里云通义模型示例'),
+('DeepSeek V3', 'CHAT', 'DEEPSEEK', 'deepseek-chat', 'https://api.deepseek.com/v1', 'YOUR_DEEPSEEK_API_KEY', 65536, 0.7, 0, 1, 'DeepSeek 模型示例');
 
 INSERT INTO wgh_tool (name, tool_type, description, definition, executor_config, status, is_example) VALUES
 ('天气查询 Skill', 'SKILL', '查询指定城市当前天气状况',

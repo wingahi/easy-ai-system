@@ -73,7 +73,7 @@
 - **Prompt 模板中心**：模板 CRUD、变量提取、渲染预览；窗口系统提示可用 `template:{id}` 引用。输入框支持**前缀联想**：在聊天调试页输入框或工作流 LLM 节点的 User Prompt 中输入前缀（默认 `/`）即弹出模板候选，继续输入按名称/简述/分类模糊过滤，↑↓ 选择、Enter 填入、Esc 关闭。选中含 `{{变量}}` 的模板会进入变量填写态（占位符高亮、Tab/Enter 逐个填写，全部替换后才可发送；也可「跳过变量直接发送」，未填变量按后端 render 规则替换为空串）。前缀字符、最大候选数、是否启用可在「Prompt 模板中心」页顶部配置，保存在浏览器 localStorage（`wgh_prompt_trigger_config`，默认启用、前缀 `/`、最多 10 个）。
 - **模型路由与故障转移**：窗口可指定 `model_route_group`，同组模型按 `route_priority` 升序形成故障转移链；未配置时回退 `llm_model_id`。
 - **可观测性**：Micrometer + Prometheus 自定义业务指标（对话/检索/LLM/配额/限流/工作流）；`X-Request-Id` 贯穿 MDC、SSE 与异步线程，日志统一携带 `rid`；管理端口独立（默认 `9090`），业务端口不再暴露 `/actuator`；提供 Prometheus/Grafana 编排与仪表盘，详见 [docs/design-observability.md](docs/design-observability.md)。
-- **容器化**：后端多阶段 Dockerfile（非 root、JVM 容器内存感知、9090 探活），前端 Node 构建 + Nginx（SPA 回退、`/api` 反代、SSE 关闭缓冲），`docker compose` 一键拉起 backend/frontend/redis/prometheus/grafana。
+- **容器化**：后端多阶段 Dockerfile（非 root、JVM 容器内存感知、9090 探活），前端 Node 构建 + Nginx（SPA 回退、`/api` 反代、SSE 关闭缓冲），`docker compose` 一键拉起 postgres（pgvector）/ backend / frontend / redis / prometheus / grafana。
 
 ---
 
@@ -257,7 +257,7 @@ python3 eval/eval_recall.py --kb 2 --k 5  # 离线召回率评测
 
 ### 4.7 生产部署要点
 
-- 仓库提供完整的 `docker-compose.yml` 与前后端 Dockerfile，可一键拉起 **backend / frontend / redis / prometheus / grafana**（PostgreSQL 需单独部署并启用 pgvector，见 §4.9）。
+- 仓库提供完整的 `docker-compose.yml` 与前后端 Dockerfile，可一键拉起 **postgres（pgvector）/ backend / frontend / redis / prometheus / grafana**（见 §4.9）。
 - Redis 推荐独立部署或托管服务，开启持久化与访问密码，通过 `WGH_REDIS_HOST/PORT/DATABASE/PASSWORD/TIMEOUT` 注入；生产需监控连接与内存。
 - 生产必须通过环境变量注入 `WGH_OIDC_ISSUER`、`WGH_OIDC_AUDIENCE`、`WGH_OIDC_JWKS_URI`、数据库口令与模型 Key；`WGH_PROFILE=prod`。
 - 分享 / 开放 API 的限流、密码锁定、嵌入 grant 已集中到 Redis，多实例共享；Redis 故障时自动降级为单机内存，此时各实例计数不共享。
@@ -297,25 +297,42 @@ token 无角色或映射后数据库不存在时按 `default-role`（viewer）�
 curl -H "Authorization: Bearer $IDP_TOKEN" http://localhost:8080/api/auth/me
 ```
 
-### 4.9 容器化部署（Docker Compose）
+### 4.9 容器化部署（Docker Compose，一键全栈）
 
-前置条件：Docker 24+（含 Compose v2）；PostgreSQL 已启用 `pgvector`；如需外部 OIDC，准备好 issuer / audience / JWKS。
+前置条件：Docker 24+（含 Compose v2）；如需外部 OIDC，准备好 issuer / audience / JWKS。PostgreSQL + pgvector 由 Compose 内置，无需预置数据库。
 
 ```bash
 cp .env.example .env
-# 至少填写 WGH_AUTH_LOCAL_JWT_SECRET、WGH_INIT_ADMIN_PASSWORD 与数据库口令
+# 至少填写 POSTGRES_PASSWORD、WGH_AUTH_LOCAL_JWT_SECRET、WGH_INIT_ADMIN_PASSWORD
 docker compose up -d --build
-docker compose ps          # 观察 backend / frontend 是否 healthy
+docker compose ps          # 观察 postgres / backend / frontend 是否 healthy
 ```
 
 | 服务 | 默认端口 | 说明 |
 | --- | --- | --- |
+| postgres | **默认不映射宿主机** | `pgvector/pgvector:pg15`，库名/用户/口令见 `POSTGRES_*`；仅容器网络内 `postgres:5432` 可达 |
 | frontend | `8088` → 容器 80 | Nginx 托管 SPA，`/api` 反代到 backend，SSE 已关闭代理缓冲 |
 | backend | `8080` → 容器 8080 | 业务端口，**不暴露 actuator** |
 | backend 管理端口 | 容器内 `9090`，默认不映射宿主机 | 供 Prometheus 抓取；生产禁止对外发布 |
 | prometheus | `9091` → 容器 9090 | 抓取 `backend:9090/actuator/prometheus` |
 | grafana | `3000` | 预置数据源与「WGH RAG 业务总览」仪表盘 |
 | redis | `6379` | 公开访问分布式限流 / 密码锁定 / 嵌入授权 |
+
+**数据库初始化与数据卷**
+
+- 首次启动（数据卷为空）时，PostgreSQL 官方入口会自动按文件名顺序执行：
+  1. `rag-backend/sql/schema.sql`（先 `CREATE EXTENSION IF NOT EXISTS vector/pg_trgm`，再 `CREATE TABLE IF NOT EXISTS`）；
+  2. `rag-backend/sql/data.sql`（示例模型/工具/角色/权限/模板种子）。
+- 数据目录为命名卷 `pgdata`（`<项目名>_pgdata`，默认 `wgh-rag-system_pgdata`），`docker compose up/down/重建` 不会丢库。
+- 仅在**空卷**首次初始化时执行脚本；已有数据卷不会重复执行，也不会覆盖现有数据。
+- **清库警示**：`docker compose down -v` 会删除 `pgdata`（数据库全部数据）以及 Redis/Prometheus/Grafana 卷；只停服务请用 `docker compose down`。仅重置数据库可执行 `docker compose rm -sf postgres && docker volume rm wgh-rag-system_pgdata`。
+- 手工连库排查：`docker compose exec postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c '\dt'`。
+
+**切回外部数据库**
+
+- Compose 内 backend 使用 `SPRING_DATASOURCE_URL/USERNAME/PASSWORD`（由 `POSTGRES_*` 派生）。
+- 改为外部库：在 `.env` 中把 `POSTGRES_HOST/PORT/DB/USER/PASSWORD` 指向外部实例，并只启动 `docker compose up -d backend frontend`（不启动内置 `postgres`）。
+- 非 Compose（裸机 `java -jar`）运行 `prod` profile 时也可用 `PROD_DB_*`；优先级为 `SPRING_DATASOURCE_*` > `PROD_DB_*` > `application-prod.yml` 默认值。
 
 单独构建镜像：
 
@@ -341,7 +358,8 @@ docker build -t wgh-rag-frontend:local -f rag-frontend/Dockerfile rag-frontend
 | `SERVER_PORT` | `8080` | 业务端口 |
 | `WGH_MANAGEMENT_PORT` | `9090` | 管理端口 |
 | `WGH_MANAGEMENT_ADDRESS` | `0.0.0.0` | 管理端口监听地址，生产建议内网网卡 |
-| `PROD_DB_HOST/PORT/NAME/USERNAME/PASSWORD` | `localhost/5432/wgh_rag/postgres/空` | 容器（prod profile）PostgreSQL 连接，**密码必填** |
+| `POSTGRES_HOST/PORT/DB/USER/PASSWORD` | `postgres/5432/wgh_rag/postgres/空` | Compose 内置数据库与 backend 数据源的**唯一真相**，密码必填 |
+| `PROD_DB_HOST/PORT/NAME/USERNAME/PASSWORD` | `localhost/5432/wgh_rag/postgres/空` | 可选：非 Compose（裸机 `prod`）或外部库；优先级低于 `SPRING_DATASOURCE_*` |
 | `WGH_DB_HOST/PORT/NAME/USERNAME/PASSWORD` | `localhost/5432/wgh_rag/postgres/123456` | 本地 dev profile 连接（非容器部署） |
 | `WGH_REDIS_ENABLED/HOST/PORT/PASSWORD` | `true/localhost/6379/空` | Redis 连接，不可用时自动降级单机内存 |
 | `WGH_AUTH_LOCAL_JWT_SECRET` | 空（随机密钥，重启失效） | 本地会话签名密钥，**生产必须注入，至少 32 字节** |

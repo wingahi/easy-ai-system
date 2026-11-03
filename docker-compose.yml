@@ -1,8 +1,33 @@
-# 说明：本地开发 + 容器化部署编排。
+# 说明：本地开发 + 容器化部署编排（含内置 PostgreSQL/pgvector）。
 # 启动全部：cp .env.example .env && docker compose up -d --build
-# 仅启动 Redis（原本地开发方式）：docker compose up -d redis
-# 停止：docker compose down
+# 仅启动数据库/Redis：docker compose up -d postgres redis
+# 停止：docker compose down（加 -v 会删除数据卷，含数据库数据）
 services:
+  # PostgreSQL + pgvector：镜像与项目既有环境一致（pg15），schema 要求 PostgreSQL 15+
+  postgres:
+    image: pgvector/pgvector:pg15
+    container_name: wgh-rag-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-wgh_rag}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?必须设置 POSTGRES_PASSWORD}
+      # 数据文件放在子目录，便于卷与镜像升级
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # 首次初始化（数据卷为空）时按文件名顺序执行：扩展/建表 → 种子数据
+      - ./rag-backend/sql/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./rag-backend/sql/data.sql:/docker-entrypoint-initdb.d/02-data.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
+    # 默认不映射宿主端口，避免生产误暴露；本地调试可临时用
+    # docker compose run --rm --publish 5432:5432 postgres 覆盖
+
   redis:
     image: redis:8.10.1-alpine
     container_name: wgh-rag-redis
@@ -27,19 +52,15 @@ services:
     # 管理端口 9090 只在容器网络内暴露给 Prometheus，不映射到宿主机
     ports:
       - "${WGH_BACKEND_PORT:-8080}:8080"
-    extra_hosts:
-      # 便于容器直接访问宿主机上的 PostgreSQL（Linux 需要 host-gateway）
-      - "host.docker.internal:host-gateway"
     environment:
       WGH_PROFILE: ${WGH_PROFILE:-prod}
       SERVER_PORT: 8080
       WGH_MANAGEMENT_PORT: 9090
-      # prod profile 读取 PROD_DB_*；dev profile 才读取 WGH_DB_*
-      PROD_DB_HOST: ${PROD_DB_HOST:-host.docker.internal}
-      PROD_DB_PORT: ${PROD_DB_PORT:-5432}
-      PROD_DB_NAME: ${PROD_DB_NAME:-wgh_rag}
-      PROD_DB_USERNAME: ${PROD_DB_USERNAME:-postgres}
-      PROD_DB_PASSWORD: ${PROD_DB_PASSWORD:?必须设置 PROD_DB_PASSWORD}
+      # 数据源唯一真相是 POSTGRES_*；应用侧统一用 SPRING_DATASOURCE_*（优先级最高）
+      # 切外部库：把 POSTGRES_HOST/PORT/DB/USER/PASSWORD 指向外部实例即可
+      SPRING_DATASOURCE_URL: jdbc:postgresql://${POSTGRES_HOST:-postgres}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-wgh_rag}?currentSchema=public&stringtype=unspecified
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-postgres}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:?必须设置 POSTGRES_PASSWORD}
       PROD_DB_POOL_MAX: ${PROD_DB_POOL_MAX:-50}
       WGH_REDIS_ENABLED: "true"
       WGH_REDIS_HOST: redis
@@ -55,6 +76,8 @@ services:
       WGH_OIDC_JWKS_URI: ${WGH_OIDC_JWKS_URI:-}
       JAVA_OPTS: ${JAVA_OPTS:--XX:MaxRAMPercentage=75.0 -XX:+UseG1GC -XX:MaxMetaspaceSize=256m}
     depends_on:
+      postgres:
+        condition: service_healthy
       redis:
         condition: service_healthy
     restart: unless-stopped
@@ -105,6 +128,7 @@ services:
     restart: unless-stopped
 
 volumes:
+  pgdata:
   wgh-redis-data:
   wgh-prometheus-data:
   wgh-grafana-data:
