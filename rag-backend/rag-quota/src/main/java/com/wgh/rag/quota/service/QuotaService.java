@@ -1,5 +1,7 @@
 package com.wgh.rag.quota.service;
 
+import com.wgh.rag.quota.constant.QuotaConstants;
+
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wgh.rag.common.exception.BusinessException;
 import com.wgh.rag.common.metrics.RagMetrics;
@@ -98,13 +100,13 @@ public class QuotaService {
         if (usage != null) {
             if (quota.getChatLimit() != null && quota.getChatLimit() > 0
                     && usage.getChatCount() != null && usage.getChatCount() >= quota.getChatLimit()) {
-                metrics.recordQuotaExceeded("chat");
+                metrics.recordQuotaExceeded(QuotaConstants.DIMENSION_CHAT);
                 throw new BusinessException(ResultCode.QUOTA_EXCEEDED,
                         periodLabel + "对话次数已达上限（" + quota.getChatLimit() + " 条），请下期再试");
             }
             if (quota.getTokenLimit() != null && quota.getTokenLimit() > 0
                     && usage.getTokenUsed() != null && usage.getTokenUsed() >= quota.getTokenLimit()) {
-                metrics.recordQuotaExceeded("token");
+                metrics.recordQuotaExceeded(QuotaConstants.DIMENSION_TOKEN);
                 throw new BusinessException(ResultCode.QUOTA_EXCEEDED,
                         periodLabel + " token 用量已达上限（" + quota.getTokenLimit() + "），请下期再试");
             }

@@ -3,6 +3,7 @@ package com.wgh.rag.quota.service;
 import com.wgh.rag.common.exception.BusinessException;
 import com.wgh.rag.common.result.ResultCode;
 import com.wgh.rag.common.security.LoginUser;
+import com.wgh.rag.common.constant.RoleCodes;
 import com.wgh.rag.common.security.SecurityUtils;
 import org.springframework.stereotype.Component;
 
@@ -17,7 +18,7 @@ import java.util.Set;
 @Component
 public class QuotaAdminGuard {
 
-    private static final String ADMIN_ROLE = "admin";
+    private static final String ADMIN_ROLE = RoleCodes.ADMIN;
 
     public void requireAdmin() {
         LoginUser loginUser = LoginUser.get();
