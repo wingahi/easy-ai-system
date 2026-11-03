@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.wgh.rag.common.constant.HttpConstants;
+import com.wgh.rag.llm.constant.LlmConstants;
 import com.wgh.rag.llm.entity.LlmModel;
 import com.wgh.rag.llm.mapper.LlmModelMapper;
 import dev.langchain4j.data.segment.TextSegment;
@@ -49,7 +51,7 @@ public class RerankService {
     public List<Double> scoreAll(List<TextSegment> segments, String query, Long rerankModelId) {
         if (segments == null || segments.isEmpty()) return List.of();
         LlmModel config = llmModelMapper.selectById(rerankModelId);
-        if (config == null || !"RERANK".equals(config.getModelType())
+        if (config == null || !LlmConstants.MODEL_TYPE_RERANK.equals(config.getModelType())
                 || !Integer.valueOf(1).equals(config.getStatus())) {
             throw new IllegalStateException("RERANK 模型不可用: " + rerankModelId);
         }
@@ -119,8 +121,8 @@ public class RerankService {
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(url))
                 .timeout(TIMEOUT)
-                .header("Content-Type", "application/json")
-                .header("Authorization", "Bearer " + (apiKey != null ? apiKey : ""))
+                .header(HttpConstants.HEADER_CONTENT_TYPE, HttpConstants.CONTENT_TYPE_JSON)
+                .header(HttpConstants.HEADER_AUTHORIZATION, HttpConstants.BEARER_PREFIX + (apiKey != null ? apiKey : ""))
                 .POST(HttpRequest.BodyPublishers.ofString(body))
                 .build();
         HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
