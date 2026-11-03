@@ -2,6 +2,7 @@ package com.wgh.rag.llm.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wgh.rag.common.exception.BusinessException;
+import com.wgh.rag.llm.constant.LlmConstants;
 import com.wgh.rag.llm.entity.LlmModel;
 import com.wgh.rag.llm.mapper.LlmModelMapper;
 import lombok.RequiredArgsConstructor;
@@ -30,7 +31,7 @@ public class ModelRouter {
         if (routeGroup != null && !routeGroup.isBlank()) {
             List<LlmModel> candidates = llmModelMapper.selectList(
                     new LambdaQueryWrapper<LlmModel>()
-                            .eq(LlmModel::getModelType, "CHAT")
+                            .eq(LlmModel::getModelType, LlmConstants.MODEL_TYPE_CHAT)
                             .eq(LlmModel::getStatus, 1)
                             .eq(LlmModel::getRouteGroup, routeGroup)
                             .orderByAsc(LlmModel::getRoutePriority)

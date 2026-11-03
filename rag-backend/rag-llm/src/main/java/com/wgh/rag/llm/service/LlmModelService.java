@@ -1,5 +1,7 @@
 package com.wgh.rag.llm.service;
 
+import com.wgh.rag.llm.constant.LlmConstants;
+
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.wgh.rag.common.exception.BusinessException;
@@ -34,14 +36,14 @@ public class LlmModelService {
     public PageResult<LlmModel> pageChatModels(Long page, Long size) {
         Page<LlmModel> result = llmModelMapper.selectPage(
                 Page.of(page, size),
-                new LambdaQueryWrapper<LlmModel>().eq(LlmModel::getModelType, "CHAT")
+                new LambdaQueryWrapper<LlmModel>().eq(LlmModel::getModelType, LlmConstants.MODEL_TYPE_CHAT)
                         .orderByDesc(LlmModel::getCreateTime));
         return new PageResult<>(result.getTotal(), result.getCurrent(), result.getSize(), result.getRecords());
     }
 
     public LlmModel getChatModel(Long id) {
         LlmModel model = llmModelMapper.selectById(id);
-        if (model == null || !"CHAT".equals(model.getModelType())) {
+        if (model == null || !LlmConstants.MODEL_TYPE_CHAT.equals(model.getModelType())) {
             throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "模型不存在");
         }
         return model;
@@ -49,7 +51,7 @@ public class LlmModelService {
 
     @Transactional
     public LlmModel createChatModel(LlmModel model) {
-        model.setModelType("CHAT");
+        model.setModelType(LlmConstants.MODEL_TYPE_CHAT);
         model.setCompressionModel(model.getCompressionModel() != null ? model.getCompressionModel() : false);
         model.setStatus(model.getStatus() != null ? model.getStatus() : 1);
         
@@ -96,7 +98,7 @@ public class LlmModelService {
     public List<LlmModel> listEnabledChatModels() {
         return llmModelMapper.selectList(
                 new LambdaQueryWrapper<LlmModel>()
-                        .eq(LlmModel::getModelType, "CHAT")
+                        .eq(LlmModel::getModelType, LlmConstants.MODEL_TYPE_CHAT)
                         .eq(LlmModel::getStatus, 1));
     }
 
@@ -107,7 +109,7 @@ public class LlmModelService {
     public LlmModel findCompressionModel() {
         return llmModelMapper.selectOne(
                 new LambdaQueryWrapper<LlmModel>()
-                        .eq(LlmModel::getModelType, "CHAT")
+                        .eq(LlmModel::getModelType, LlmConstants.MODEL_TYPE_CHAT)
                         .eq(LlmModel::getStatus, 1)
                         .eq(LlmModel::getCompressionModel, 1)
                         .orderByAsc(LlmModel::getId)
@@ -119,14 +121,14 @@ public class LlmModelService {
     public PageResult<LlmModel> pageRerankModels(Long page, Long size) {
         Page<LlmModel> result = llmModelMapper.selectPage(
                 Page.of(page, size),
-                new LambdaQueryWrapper<LlmModel>().eq(LlmModel::getModelType, "RERANK")
+                new LambdaQueryWrapper<LlmModel>().eq(LlmModel::getModelType, LlmConstants.MODEL_TYPE_RERANK)
                         .orderByDesc(LlmModel::getCreateTime));
         return new PageResult<>(result.getTotal(), result.getCurrent(), result.getSize(), result.getRecords());
     }
 
     public LlmModel getRerankModel(Long id) {
         LlmModel model = llmModelMapper.selectById(id);
-        if (model == null || !"RERANK".equals(model.getModelType())) {
+        if (model == null || !LlmConstants.MODEL_TYPE_RERANK.equals(model.getModelType())) {
             throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "Rerank 模型不存在");
         }
         return model;
@@ -134,7 +136,7 @@ public class LlmModelService {
 
     @Transactional
     public LlmModel createRerankModel(LlmModel model) {
-        model.setModelType("RERANK");
+        model.setModelType(LlmConstants.MODEL_TYPE_RERANK);
         model.setCompressionModel(false);
         model.setStatus(model.getStatus() != null ? model.getStatus() : 1);
         llmModelMapper.insert(model);
@@ -144,10 +146,10 @@ public class LlmModelService {
     @Transactional
     public LlmModel updateRerankModel(LlmModel model) {
         LlmModel existing = llmModelMapper.selectById(model.getId());
-        if (existing == null || !"RERANK".equals(existing.getModelType())) {
+        if (existing == null || !LlmConstants.MODEL_TYPE_RERANK.equals(existing.getModelType())) {
             throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "Rerank 模型不存在");
         }
-        model.setModelType("RERANK");
+        model.setModelType(LlmConstants.MODEL_TYPE_RERANK);
         model.setCompressionModel(false);
         llmModelMapper.updateById(model);
         return model;
@@ -161,7 +163,7 @@ public class LlmModelService {
     public List<LlmModel> listEnabledRerankModels() {
         return llmModelMapper.selectList(
                 new LambdaQueryWrapper<LlmModel>()
-                        .eq(LlmModel::getModelType, "RERANK")
+                        .eq(LlmModel::getModelType, LlmConstants.MODEL_TYPE_RERANK)
                         .eq(LlmModel::getStatus, 1));
     }
 
