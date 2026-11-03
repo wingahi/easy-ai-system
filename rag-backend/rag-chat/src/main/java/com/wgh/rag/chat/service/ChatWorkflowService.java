@@ -1,5 +1,7 @@
 package com.wgh.rag.chat.service;
 
+import com.wgh.rag.chat.constant.ChatConstants;
+import com.wgh.rag.chat.constant.ChatEvents;
 import com.wgh.rag.chat.entity.ChatMessage;
 import com.wgh.rag.chat.entity.ChatSession;
 import com.wgh.rag.chat.entity.ChatWindow;
@@ -28,7 +30,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 @RequiredArgsConstructor
 public class ChatWorkflowService {
 
-    private static final long SSE_TIMEOUT_MS = 30 * 60 * 1000L;
+    private static final long SSE_TIMEOUT_MS = ChatConstants.SSE_TIMEOUT_MS;
 
     private final WorkflowService workflowService;
     private final ChatMessageMapper messageMapper;
@@ -56,7 +58,7 @@ public class ChatWorkflowService {
 
         SseEmitter emitter = new SseEmitter(SSE_TIMEOUT_MS);
         StreamContext ctx = new StreamContext(emitter, session, new AtomicBoolean(false));
-        safeSend(emitter, "start", Map.of("sessionId", sessionId == null ? "" : sessionId));
+        safeSend(emitter, ChatEvents.START, Map.of("sessionId", sessionId == null ? "" : sessionId));
         workflowService.resumeForChat(runId, userInput, (event, payload) -> handleEvent(ctx, event, payload));
         return emitter;
     }
@@ -84,15 +86,15 @@ public class ChatWorkflowService {
                 safeSend(ctx.emitter, event, data);
                 if (ctx.terminal.compareAndSet(false, true)) {
                     String error = data.get("error") == null ? "工作流执行失败" : String.valueOf(data.get("error"));
-                    safeSend(ctx.emitter, "error", Map.of("text", error));
-                    safeSend(ctx.emitter, "done", Map.of("fullResponse", ""));
+                    safeSend(ctx.emitter, ChatEvents.ERROR, Map.of("text", error));
+                    safeSend(ctx.emitter, ChatEvents.DONE, Map.of("fullResponse", ""));
                     safeComplete(ctx.emitter);
                 }
             }
             case WorkflowEvents.WORKFLOW_CANCELLED -> {
                 safeSend(ctx.emitter, event, data);
                 if (ctx.terminal.compareAndSet(false, true)) {
-                    safeSend(ctx.emitter, "done", Map.of("fullResponse", ""));
+                    safeSend(ctx.emitter, ChatEvents.DONE, Map.of("fullResponse", ""));
                     safeComplete(ctx.emitter);
                 }
             }
@@ -112,12 +114,12 @@ public class ChatWorkflowService {
         }
 
         // 与普通聊天一致：最终文本通过 content 事件下发（JSON 包装避免换行丢失）
-        safeSend(ctx.emitter, "content", Map.of("text", output));
-        safeSend(ctx.emitter, "sources", List.of());
+        safeSend(ctx.emitter, ChatEvents.CONTENT, Map.of("text", output));
+        safeSend(ctx.emitter, ChatEvents.SOURCES, List.of());
         Map<String, Object> done = new HashMap<>();
         done.put("fullResponse", output);
         if (payload.get("runId") != null) done.put("runId", payload.get("runId"));
-        safeSend(ctx.emitter, "done", done);
+        safeSend(ctx.emitter, ChatEvents.DONE, done);
         safeComplete(ctx.emitter);
     }
 
@@ -125,9 +127,9 @@ public class ChatWorkflowService {
         try {
             ChatMessage msg = new ChatMessage();
             msg.setSessionId(session.getId());
-            msg.setRole("ASSISTANT");
+            msg.setRole(ChatConstants.ROLE_ASSISTANT);
             msg.setContent(content);
-            msg.setMessageType("TEXT");
+            msg.setMessageType(ChatConstants.MESSAGE_TYPE_TEXT);
             messageMapper.insert(msg);
 
             ChatSession update = new ChatSession();

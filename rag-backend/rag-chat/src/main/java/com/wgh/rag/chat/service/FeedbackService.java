@@ -1,5 +1,6 @@
 package com.wgh.rag.chat.service;
 
+import com.wgh.rag.chat.constant.ChatConstants;
 import com.wgh.rag.chat.entity.ChatMessage;
 import com.wgh.rag.chat.mapper.ChatMessageMapper;
 import com.wgh.rag.common.exception.BusinessException;
@@ -35,7 +36,7 @@ public class FeedbackService {
         if (msg == null) {
             throw new BusinessException("消息不存在");
         }
-        if (!"ASSISTANT".equals(msg.getRole())) {
+        if (!ChatConstants.ROLE_ASSISTANT.equals(msg.getRole())) {
             throw new BusinessException("仅助手消息可反馈");
         }
         ChatMessage update = new ChatMessage();

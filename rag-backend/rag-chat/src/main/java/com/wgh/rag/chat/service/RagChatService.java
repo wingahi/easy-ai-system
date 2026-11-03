@@ -3,6 +3,8 @@ package com.wgh.rag.chat.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.wgh.rag.chat.constant.ChatConstants;
+import com.wgh.rag.chat.constant.ChatEvents;
 import com.wgh.rag.chat.entity.ChatSession;
 import com.wgh.rag.chat.entity.ChatWindow;
 import com.wgh.rag.chat.evaluation.EvaluationScheme;
@@ -31,6 +33,7 @@ import com.wgh.rag.llm.service.ModelPriceService;
 import com.wgh.rag.llm.service.ModelRouter;
 import com.wgh.rag.llm.util.TokenEstimator;
 import com.wgh.rag.tool.entity.ToolConfig;
+import com.wgh.rag.tool.constant.ToolConstants;
 import com.wgh.rag.tool.executor.ToolExecutionEngine;
 import com.wgh.rag.tool.service.ToolConfigService;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
@@ -154,9 +157,9 @@ public class RagChatService {
         // 保存用户消息（多模态：图片序列化进 attachments）
         com.wgh.rag.chat.entity.ChatMessage userMsg = new com.wgh.rag.chat.entity.ChatMessage();
         userMsg.setSessionId(session.getId());
-        userMsg.setRole("USER");
+        userMsg.setRole(ChatConstants.ROLE_USER);
         userMsg.setContent(userMessage);
-        userMsg.setMessageType(images.isEmpty() ? "TEXT" : "IMAGE");
+        userMsg.setMessageType(images.isEmpty() ? ChatConstants.MESSAGE_TYPE_TEXT : ChatConstants.MESSAGE_TYPE_IMAGE);
         if (!images.isEmpty()) {
             try {
                 userMsg.setAttachments(objectMapper.writeValueAsString(images));
@@ -179,7 +182,7 @@ public class RagChatService {
                 metrics.recordChatError("stream");
                 log.error("流式聊天异常", e);
                 try {
-                    emitter.send(SseEmitter.event().name("error").data(Map.of("text", e.getMessage() != null ? e.getMessage() : "未知错误")));
+                    emitter.send(SseEmitter.event().name(ChatEvents.ERROR).data(Map.of("text", e.getMessage() != null ? e.getMessage() : "未知错误")));
                     emitter.completeWithError(e);
                 } catch (IOException ex) {
                     log.error("发送错误消息失败", ex);
@@ -268,7 +271,7 @@ public class RagChatService {
                                   List<String> imageUrls, ChatMetricContext metricCtx) throws Exception {
 
         // 1. 发送开始事件
-        emitter.send(SseEmitter.event().name("start").data(Map.of("sessionId", session.getId())));
+        emitter.send(SseEmitter.event().name(ChatEvents.START).data(Map.of("sessionId", session.getId())));
 
         // ===== 工作流分支：窗口绑定了工作流时，每条用户消息触发一次完整工作流运行 =====
         if (window.getWorkflowId() != null) {
@@ -335,7 +338,7 @@ public class RagChatService {
             retrieveInfo.put("keywordHitCount", retrieveResult.keywordHitIds().size());
             retrieveInfo.put("transformedQueries", retrieveResult.transformedQueries());
             retrieveInfo.put("transformLatencyMs", retrieveResult.transformLatencyMs());
-            emitter.send(SseEmitter.event().name("retrieve").data(retrieveInfo));
+            emitter.send(SseEmitter.event().name(ChatEvents.RETRIEVE).data(retrieveInfo));
 
             // 保存用户消息的检索指标
             userMsg.setCoverageRate(coverageRate);
@@ -443,17 +446,17 @@ public class RagChatService {
             String noResultMsg = hasKb
                     ? "抱歉，我在知识库中没有找到相关内容。您可以尝试换个关键词提问。"
                     : "当前窗口未关联知识库，且未配置任何工具，无法回答您的问题。请先配置知识库或工具。";
-            emitter.send(SseEmitter.event().name("content").data(Map.of("text", noResultMsg)));
-            emitter.send(SseEmitter.event().name("sources").data(List.of()));
+            emitter.send(SseEmitter.event().name(ChatEvents.CONTENT).data(Map.of("text", noResultMsg)));
+            emitter.send(SseEmitter.event().name(ChatEvents.SOURCES).data(List.of()));
 
             // 保存空结果的 assistant 消息
             saveAssistantMessage(session, noResultMsg, List.of(), hitRate, null, null, null);
 
             // 未配置知识库时不下发 accuracyRate 字段，前端按 null 不展示
             if (hasKb) {
-                emitter.send(SseEmitter.event().name("done").data(Map.of("accuracyRate", 0.0)));
+                emitter.send(SseEmitter.event().name(ChatEvents.DONE).data(Map.of("accuracyRate", 0.0)));
             } else {
-                emitter.send(SseEmitter.event().name("done").data(Map.of()));
+                emitter.send(SseEmitter.event().name(ChatEvents.DONE).data(Map.of()));
             }
             emitter.complete();
             return;
@@ -474,7 +477,7 @@ public class RagChatService {
             log.info("[Failover] 使用模型 {} (id={})，原因: {}", m.getModelName(), m.getId(), reason);
             actualModel.set(m);
             try {
-                emitter.send(SseEmitter.event().name("model_switch")
+                emitter.send(SseEmitter.event().name(ChatEvents.MODEL_SWITCH)
                         .data(Map.of("modelName", m.getModelName(), "modelId", m.getId(), "reason", reason)));
             } catch (IOException ignored) {}
         };
@@ -498,7 +501,7 @@ public class RagChatService {
         messages.set(messages.size() - 1, currentUserMessage);
 
         // 最大工具调用轮次（防死循环）
-        final int MAX_TOOL_ROUNDS = 5;
+        final int MAX_TOOL_ROUNDS = ToolConstants.MAX_TOOL_ROUNDS;
         final int[] toolRoundCount = {0};
         // token 用量累加器（跨工具调用轮次累计，[0]=input [1]=output），用于成本回填与配额
         final long[] tokenUsageAcc = {0L, 0L};
@@ -528,7 +531,7 @@ public class RagChatService {
             metrics.recordChatError("llm");
             log.error("LLM调用异常", e);
             try {
-                emitter.send(SseEmitter.event().name("content").data(Map.of("text", "抱歉，大模型调用出现异常: " + e.getMessage())));
+                emitter.send(SseEmitter.event().name(ChatEvents.CONTENT).data(Map.of("text", "抱歉，大模型调用出现异常: " + e.getMessage())));
                 emitter.completeWithError(e);
             } catch (IOException ex) {
                 log.error("发送错误失败", ex);
@@ -611,7 +614,7 @@ public class RagChatService {
                 }
                 fullResponse.append(partialResponse);
                 try {
-                    emitter.send(SseEmitter.event().name("content").data(Map.of("text", partialResponse)));
+                    emitter.send(SseEmitter.event().name(ChatEvents.CONTENT).data(Map.of("text", partialResponse)));
                 } catch (IOException e) {
                     log.warn("发送SSE数据失败", e);
                 }
@@ -650,7 +653,7 @@ public class RagChatService {
                     // SSE 通知前端：开始工具调用
                     for (ToolExecutionRequest req : toolCalls) {
                         try {
-                            emitter.send(SseEmitter.event().name("tool_call_start").data(Map.of(
+                            emitter.send(SseEmitter.event().name(ChatEvents.TOOL_CALL_START).data(Map.of(
                                     "tool", req.name(),
                                     "args", req.arguments()
                             )));
@@ -669,7 +672,7 @@ public class RagChatService {
 
                         // SSE 通知前端：工具调用完成
                         try {
-                            emitter.send(SseEmitter.event().name("tool_call_result").data(Map.of(
+                            emitter.send(SseEmitter.event().name(ChatEvents.TOOL_CALL_RESULT).data(Map.of(
                                     "tool", req.name(),
                                     "success", !result.text().startsWith("Error:"),
                                     "result", result.text(),
@@ -713,7 +716,7 @@ public class RagChatService {
                 metrics.recordChatError("llm");
                 log.error("LLM流式响应错误", error);
                 try {
-                    emitter.send(SseEmitter.event().name("error").data(Map.of("text", error.getMessage() != null ? error.getMessage() : "未知错误")));
+                    emitter.send(SseEmitter.event().name(ChatEvents.ERROR).data(Map.of("text", error.getMessage() != null ? error.getMessage() : "未知错误")));
                     emitter.completeWithError(error);
                 } catch (IOException e) {
                     log.error("发送错误失败", e);
@@ -734,19 +737,19 @@ public class RagChatService {
                                   AtomicReference<LlmModel> actualModelRef) throws IOException {
 
         List<Map<String, Object>> sourceList = buildSourcesList(retrievedMatches);
-        emitter.send(SseEmitter.event().name("sources").data(sourceList));
+        emitter.send(SseEmitter.event().name(ChatEvents.SOURCES).data(sourceList));
 
         // 正确率同样依赖知识库 —— 未关联知识库时不下发/不持久化
         boolean hasKb = !parseKbIds(window.getKnowledgeBaseIds()).isEmpty();
         Double accuracyRate = hasKb ? calculateAccuracyRate(fullAnswer, retrievedMatches) : null;
         if (accuracyRate != null) {
-            emitter.send(SseEmitter.event().name("accuracy").data(Map.of("accuracyRate", accuracyRate)));
+            emitter.send(SseEmitter.event().name(ChatEvents.ACCURACY).data(Map.of("accuracyRate", accuracyRate)));
         }
 
         RetrievalMetricsCalculator.RetrievalMetrics metrics = null;
         if (evaluationScheme.hasMetrics() && hasKb) {
             metrics = RetrievalMetricsCalculator.compute(fullAnswer, retrievedMatches);
-            emitter.send(SseEmitter.event().name("metrics").data(Map.of(
+            emitter.send(SseEmitter.event().name(ChatEvents.METRICS).data(Map.of(
                     "mrr", metrics.mrr(),
                     "ndcg", metrics.ndcg(),
                     "citedCount", metrics.citedCount(),
@@ -774,7 +777,7 @@ public class RagChatService {
         doneData.put("fullResponse", fullAnswer);
         if (accuracyRate != null) doneData.put("accuracyRate", accuracyRate);
         if (saved != null && saved.getId() != null) doneData.put("assistantMessageId", saved.getId());
-        emitter.send(SseEmitter.event().name("done").data(doneData));
+        emitter.send(SseEmitter.event().name(ChatEvents.DONE).data(doneData));
 
         if (evaluationScheme.hasLlmJudge()) {
             runLlmJudgeAsync(window, originalUserMessage, retrievedMatches, fullAnswer, emitter, saved);
@@ -969,9 +972,9 @@ public class RagChatService {
 
         // 把全部历史加入，分层压缩（如果启用）会在后面接管裁剪
         for (com.wgh.rag.chat.entity.ChatMessage msg : history) {
-            if ("USER".equals(msg.getRole())) {
+            if (ChatConstants.ROLE_USER.equals(msg.getRole())) {
                 messages.add(UserMessage.from(msg.getContent()));
-            } else if ("ASSISTANT".equals(msg.getRole())) {
+            } else if (ChatConstants.ROLE_ASSISTANT.equals(msg.getRole())) {
                 messages.add(AiMessage.from(msg.getContent()));
             }
         }
@@ -1119,9 +1122,9 @@ public class RagChatService {
         com.wgh.rag.chat.entity.ChatMessage msg = new com.wgh.rag.chat.entity.ChatMessage();
         try {
             msg.setSessionId(session.getId());
-            msg.setRole("ASSISTANT");
+            msg.setRole(ChatConstants.ROLE_ASSISTANT);
             msg.setContent(content);
-            msg.setMessageType("TEXT");
+            msg.setMessageType(ChatConstants.MESSAGE_TYPE_TEXT);
             msg.setHitRate(hitRate);
             msg.setAccuracyRate(accuracyRate);
             msg.setMrr(mrr);
@@ -1181,7 +1184,7 @@ public class RagChatService {
                             payload.put("answerRelevancy", result.answerRelevancy());
                             payload.put("judgeAgreement", result.judgeAgreement());
                             payload.put("judgeCount", result.details().size());
-                            emitter.send(SseEmitter.event().name("judge").data(payload));
+                            emitter.send(SseEmitter.event().name(ChatEvents.JUDGE).data(payload));
 
                             // 更新 assistant 消息
                             if (assistantMsg != null && assistantMsg.getId() != null) {

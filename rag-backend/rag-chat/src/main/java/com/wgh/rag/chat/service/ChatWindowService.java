@@ -3,6 +3,7 @@ package com.wgh.rag.chat.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.wgh.rag.chat.constant.ChatConstants;
 import com.wgh.rag.chat.entity.ChatMessage;
 import com.wgh.rag.chat.entity.ChatSession;
 import com.wgh.rag.chat.entity.ChatWindow;
@@ -59,12 +60,12 @@ public class ChatWindowService {
         // 生成 share token
         window.setShareToken(UUID.randomUUID().toString().replace("-", ""));
         window.setShareEnabled(false);
-        window.setStatus(window.getStatus() != null ? window.getStatus() : 1);
+        window.setStatus(window.getStatus() != null ? window.getStatus() : ChatConstants.DEFAULT_STATUS_ENABLED);
 
-        if (window.getMaxHistoryMessages() == null) window.setMaxHistoryMessages(20);
-        if (window.getTemperature() == null) window.setTemperature(0.7);
+        if (window.getMaxHistoryMessages() == null) window.setMaxHistoryMessages(ChatConstants.DEFAULT_MAX_HISTORY_MESSAGES);
+        if (window.getTemperature() == null) window.setTemperature(ChatConstants.DEFAULT_TEMPERATURE);
         if (window.getEvaluationScheme() == null || window.getEvaluationScheme().isBlank()) {
-            window.setEvaluationScheme("NONE");
+            window.setEvaluationScheme(ChatConstants.EVALUATION_SCHEME_NONE);
         }
 
         windowMapper.insert(window);
