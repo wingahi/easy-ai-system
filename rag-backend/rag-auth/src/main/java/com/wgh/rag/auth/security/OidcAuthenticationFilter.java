@@ -7,6 +7,8 @@ import com.wgh.rag.auth.mapper.RoleMapper;
 import com.wgh.rag.auth.mapper.RolePermissionMapper;
 import com.wgh.rag.auth.mapper.UserMapper;
 import com.wgh.rag.auth.mapper.UserRoleMapper;
+import com.wgh.rag.auth.constant.AuthConstants;
+import com.wgh.rag.common.constant.HttpConstants;
 import com.wgh.rag.common.result.ResultCode;
 import com.wgh.rag.common.security.LoginUser;
 import io.jsonwebtoken.Claims;
@@ -86,13 +88,13 @@ public class OidcAuthenticationFilter extends OncePerRequestFilter {
             return;
         }
 
-        String authHeader = request.getHeader("Authorization");
-        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
-            writeUnauthorized(response, 1001, "未授权访问");
+        String authHeader = request.getHeader(HttpConstants.HEADER_AUTHORIZATION);
+        if (authHeader == null || !authHeader.startsWith(HttpConstants.BEARER_PREFIX)) {
+            writeUnauthorized(response, ResultCode.UNAUTHORIZED.getCode(), "未授权访问");
             return;
         }
 
-        String token = authHeader.substring(7);
+        String token = authHeader.substring(HttpConstants.BEARER_PREFIX.length());
         if (localTokenService.isLocalToken(token)) {
             authenticateLocal(token, request, response, filterChain);
             return;
@@ -103,11 +105,11 @@ public class OidcAuthenticationFilter extends OncePerRequestFilter {
             claims = tokenVerifier.verify(token);
         } catch (TokenVerificationException e) {
             log.warn("外部 token 校验失败: {}", e.getMessage());
-            writeUnauthorized(response, 1002, "Token已过期或无效");
+            writeUnauthorized(response, ResultCode.TOKEN_EXPIRED.getCode(), "Token已过期或无效");
             return;
         } catch (Exception e) {
             log.error("外部 token 校验异常", e);
-            writeUnauthorized(response, 1002, "Token已过期或无效");
+            writeUnauthorized(response, ResultCode.TOKEN_EXPIRED.getCode(), "Token已过期或无效");
             return;
         }
 
@@ -116,7 +118,7 @@ public class OidcAuthenticationFilter extends OncePerRequestFilter {
             username = claims.getSubject();
         }
 
-        Long userId = claimAsLong(claims, "userId");
+        Long userId = claimAsLong(claims, AuthConstants.CLAIM_USER_ID);
 
         Set<String> roles = resolveRoles(claims);
         Set<String> permissions = resolvePermissions(roles);
@@ -132,9 +134,9 @@ public class OidcAuthenticationFilter extends OncePerRequestFilter {
         request.setAttribute("username", username);
 
         Set<SimpleGrantedAuthority> authorities = new LinkedHashSet<>();
-        authorities.add(new SimpleGrantedAuthority("ROLE_USER"));
+        authorities.add(new SimpleGrantedAuthority(AuthConstants.ROLE_USER));
         for (String role : roles) {
-            authorities.add(new SimpleGrantedAuthority("ROLE_" + role));
+            authorities.add(new SimpleGrantedAuthority(AuthConstants.ROLE_PREFIX + role));
         }
         UsernamePasswordAuthenticationToken authentication =
                 new UsernamePasswordAuthenticationToken(loginUser, null, authorities);
@@ -155,29 +157,29 @@ public class OidcAuthenticationFilter extends OncePerRequestFilter {
             claims = localTokenService.verify(token);
         } catch (TokenVerificationException e) {
             log.warn("本地会话凭证校验失败: {}", e.getMessage());
-            writeUnauthorized(response, 1002, "会话凭证已失效，请重新登录");
+            writeUnauthorized(response, ResultCode.TOKEN_EXPIRED.getCode(), "会话凭证已失效，请重新登录");
             return;
         }
 
-        Long userId = claimAsLong(claims, "userId");
+        Long userId = claimAsLong(claims, AuthConstants.CLAIM_USER_ID);
         if (userId == null) {
-            writeUnauthorized(response, 1002, "会话凭证无效");
+            writeUnauthorized(response, ResultCode.TOKEN_EXPIRED.getCode(), "会话凭证无效");
             return;
         }
         WghUser user = userMapper.selectById(userId);
         if (user == null) {
             log.warn("本地会话凭证无效：用户不存在 userId={}", userId);
-            writeUnauthorized(response, 1002, "账号不存在，请重新登录");
+            writeUnauthorized(response, ResultCode.TOKEN_EXPIRED.getCode(), "账号不存在，请重新登录");
             return;
         }
         if (user.getStatus() == null || user.getStatus() != 1) {
             log.warn("本地会话凭证被拒：账号已禁用 username={}", user.getUsername());
-            writeUnauthorized(response, 1002, "账号已禁用");
+            writeUnauthorized(response, ResultCode.TOKEN_EXPIRED.getCode(), "账号已禁用");
             return;
         }
         if (user.getExpireAt() != null && LocalDateTime.now().isAfter(user.getExpireAt())) {
             log.warn("本地会话凭证被拒：账号已过期 username={}", user.getUsername());
-            writeUnauthorized(response, 1002, "账号已过期");
+            writeUnauthorized(response, ResultCode.TOKEN_EXPIRED.getCode(), "账号已过期");
             return;
         }
 
@@ -216,9 +218,9 @@ public class OidcAuthenticationFilter extends OncePerRequestFilter {
         request.setAttribute("username", user.getUsername());
 
         Set<SimpleGrantedAuthority> authorities = new LinkedHashSet<>();
-        authorities.add(new SimpleGrantedAuthority("ROLE_USER"));
+        authorities.add(new SimpleGrantedAuthority(AuthConstants.ROLE_USER));
         for (String role : roles) {
-            authorities.add(new SimpleGrantedAuthority("ROLE_" + role));
+            authorities.add(new SimpleGrantedAuthority(AuthConstants.ROLE_PREFIX + role));
         }
         UsernamePasswordAuthenticationToken authentication =
                 new UsernamePasswordAuthenticationToken(loginUser, null, authorities);
@@ -345,7 +347,7 @@ public class OidcAuthenticationFilter extends OncePerRequestFilter {
     private void writeError(HttpServletResponse response, int httpStatus, int code, String message)
             throws IOException {
         response.setStatus(httpStatus);
-        response.setContentType("application/json;charset=UTF-8");
+        response.setContentType(HttpConstants.CONTENT_TYPE_JSON_UTF8);
         response.getWriter().write("{\"code\":" + code + ",\"message\":\"" + message + "\",\"data\":null}");
     }
 }

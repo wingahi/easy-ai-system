@@ -11,6 +11,7 @@ import com.wgh.rag.auth.mapper.RolePermissionMapper;
 import com.wgh.rag.auth.mapper.UserMapper;
 import com.wgh.rag.auth.mapper.UserRoleMapper;
 import com.wgh.rag.common.result.ResultCode;
+import com.wgh.rag.common.constant.RoleCodes;
 import com.wgh.rag.common.security.SecurityUtils;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -34,7 +35,7 @@ import java.util.Set;
 public class LocalLoginService {
 
     public static final String SOURCE_LOCAL = "local";
-    public static final String ADMIN_ROLE = "admin";
+    public static final String ADMIN_ROLE = RoleCodes.ADMIN;
 
     private final UserMapper userMapper;
     private final UserRoleMapper userRoleMapper;

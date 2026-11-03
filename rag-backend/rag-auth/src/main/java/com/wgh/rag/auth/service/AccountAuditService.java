@@ -1,5 +1,7 @@
 package com.wgh.rag.auth.service;
 
+import com.wgh.rag.common.constant.HttpConstants;
+import com.wgh.rag.log.constant.AuditConstants;
 import com.wgh.rag.log.entity.AuditLog;
 import com.wgh.rag.common.security.SecurityUtils;
 import com.wgh.rag.log.service.AuditLogService;
@@ -20,7 +22,7 @@ import org.springframework.web.context.request.ServletRequestAttributes;
 @RequiredArgsConstructor
 public class AccountAuditService {
 
-    public static final String RESOURCE_TYPE = "ACCOUNT";
+    public static final String RESOURCE_TYPE = AuditConstants.RESOURCE_TYPE_ACCOUNT;
 
     public static final String ACTION_LOGIN_SUCCESS = "ACCOUNT_LOGIN_SUCCESS";
     public static final String ACTION_LOGIN_FAIL = "ACCOUNT_LOGIN_FAIL";
@@ -66,11 +68,11 @@ public class AccountAuditService {
     }
 
     public void success(String action, String targetUsername) {
-        record(action, targetUsername, SecurityUtils.currentUsername(), "SUCCESS", null);
+        record(action, targetUsername, SecurityUtils.currentUsername(), AuditConstants.STATUS_SUCCESS, null);
     }
 
     public void failure(String action, String targetUsername, String reason) {
-        record(action, targetUsername, SecurityUtils.currentUsername(), "FAIL", reason);
+        record(action, targetUsername, SecurityUtils.currentUsername(), AuditConstants.STATUS_FAIL, reason);
     }
 
     private String currentIp() {
@@ -80,7 +82,7 @@ public class AccountAuditService {
                 return null;
             }
             HttpServletRequest request = attrs.getRequest();
-            String forwarded = request.getHeader("X-Forwarded-For");
+            String forwarded = request.getHeader(HttpConstants.HEADER_X_FORWARDED_FOR);
             if (forwarded != null && !forwarded.isBlank()) {
                 return forwarded.split(",")[0].trim();
             }
