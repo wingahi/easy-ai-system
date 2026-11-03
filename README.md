@@ -157,6 +157,30 @@ rag-app
 - Agent 先落库后推 SSE；HITL 暂停前不发 `step_start`，前端按 `plan_paused` 补建步骤。
 - surefire 排除 `**/*IntegrationTest.java`，集成测试用 `*ApiTest` / `*EngineTest` / `*Test` 命名。
 
+### 3.4 常量与约定
+
+- **按模块归属**：新增常量放在所属模块的 `src/main/java/com/wgh/rag/<module>/constant/` 包，不建跨业务域的“巨型常量类”。
+- **`rag-common` 只放通用项**：仅当常量被 ≥3 个模块使用且与具体业务无关时才放 `rag-common`（如 HTTP 头 `HttpConstants`、文件类型 `FileTypeConstant`、角色码 `RoleCodes`）。
+- **禁止裸字面量**：权限码、角色码、状态值、SSE 事件名、审计动作、存储 key 前缀、配置键前缀、默认超时/分片大小等必须引用常量类，不再直接写字符串或数字。
+- **不改值**：状态机、分享 scope 等“枚举语义”常量仍以字符串保存，值必须与既有 DB/序列化格式一致，抽取不得改变持久化内容。
+- **优先复用**：业务码统一用 `ResultCode`，文件类型用 `FileTypeConstant`，不要重复定义。
+
+| 模块 | 常量类 | 主要内容 |
+|------|--------|----------|
+| `rag-common` | `constant/HttpConstants`、`constant/FileTypeConstant`、`constant/RoleCodes` | HTTP 头 / Content-Type、文件类型、`admin`/`editor`/`viewer` 角色码 |
+| `rag-auth` | `constant/AuthConstants` | 权限码（`kb:read` 等）、`ROLE_` 前缀、token claim 名 |
+| `rag-chat` | `constant/ChatConstants`、`constant/ChatEvents` | 会话角色/消息类型/会话状态/默认温度与历史条数、SSE 事件名 |
+| `rag-workflow` | `constant/WorkflowConstants`、`constant/WorkflowEvents` | 节点类型、运行状态、错误策略、事件名 |
+| `rag-agent` / `rag-agent-multi` | `constant/AgentConstants`、`constant/MultiAgentConstants`、`*Events` | 计划/步骤状态、事件名 |
+| `rag-tool` | `constant/ToolConstants` | 工具类型、默认超时与重试轮次、结果截断长度 |
+| `rag-llm` | `constant/LlmConstants` | 模型类型（`CHAT`/`RERANK`） |
+| `rag-quota` | `constant/QuotaConstants` | 配额维度（`chat`/`token`） |
+| `rag-log` | `constant/AuditConstants` | 审计状态（`SUCCESS`/`FAIL`）与资源类型 |
+| `rag-storage` | `constant/StorageConstants` | 配置前缀、`local`/`oss`、存储 key 前缀、默认容量与重试、过期时间 |
+| 前端 | `src/utils/constants.js` | `STORAGE_KEYS`（`wgh_token` 等）、`BUSINESS_CODE`、`HTTP_STATUS`、鉴权头 |
+
+新增权限码时需同步 `rag-backend/sql/data.sql` 的 `wgh_permission` 种子与 `AuthConstants`，三处保持一致。
+
 ---
 
 ## 4. 快速开始 / 部署
