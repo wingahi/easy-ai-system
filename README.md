@@ -66,12 +66,12 @@
 
 ### 2.4 平台治理
 
-- **账号与权限**：本系统**只验证外部 OIDC IdP 签发的 token，不签发任何 token**（JWKS 公钥验签 + iss/aud/exp/nbf 校验）；角色取自 token 的 `roles`/`groups` claim，经映射表匹配数据库 `wgh_role.role_code` 后加载权限，`@RequiresPermission` 做资源级校验。token 无角色时按默认 `viewer` 处理。尚未提供角色管理界面/接口，也不支持租户隔离与知识库/文档级权限的全量覆盖。
+- **账号与权限**：本系统以 OIDC 资源服务器形态**只验证外部 IdP 签发的 token，不对外签发 token**（JWKS 公钥验签 + iss/aud/exp/nbf 校验）；另提供仅限 `source=local` 的 admin/体验账号登录并签发内部会话凭证（见 §4.2）。角色取自 token 的 `roles`/`groups` claim，经映射表匹配数据库 `wgh_role.role_code` 后加载权限，`@RequiresPermission` 做资源级校验。token 无角色时按默认 `viewer` 处理。管理端已提供角色/权限管理页面与接口（`/api/admin/roles`、`/api/admin/permissions`）；仍不支持租户隔离与知识库/文档级权限的全量覆盖。
 - **审计与成本**：`@Audit` 切面异步记录写操作（含成功/失败、操作人、资源、IP，失败不阻断主流程）；模型价格表 + 消息成本/模型名回填，管理端聚合统计。
 - **配额与限流**：配额由独立 `rag-quota` 模块提供（全局默认 + 按用户日/月配置，超限 429，用量原子累加）；分享与开放 API 另有每分钟滑动窗口限流。
 - **语义缓存**：窗口级开关，相似度阈值命中后直接返回缓存答案，跳过检索与 LLM；每窗口条数上限，超出淘汰最旧。
 - **Prompt 模板中心**：模板 CRUD、变量提取、渲染预览；窗口系统提示可用 `template:{id}` 引用。输入框支持**前缀联想**：在聊天调试页输入框或工作流 LLM 节点的 User Prompt 中输入前缀（默认 `/`）即弹出模板候选，继续输入按名称/简述/分类模糊过滤，↑↓ 选择、Enter 填入、Esc 关闭。选中含 `{{变量}}` 的模板会进入变量填写态（占位符高亮、Tab/Enter 逐个填写，全部替换后才可发送；也可「跳过变量直接发送」，未填变量按后端 render 规则替换为空串）。前缀字符、最大候选数、是否启用可在「Prompt 模板中心」页顶部配置，保存在浏览器 localStorage（`wgh_prompt_trigger_config`，默认启用、前缀 `/`、最多 10 个）。
-- **模型路由与故障转移**：窗口可指定 `model_route_group`，同组模型按 `route_priority` 升序形成故障转移链；未配置时回退 `llm_model_id`。
+- **模型路由与故障转移（部分完成）**：窗口可指定 `model_route_group`，同组模型按 `route_priority` 升序形成故障转移链；未配置时回退 `llm_model_id`。故障转移只覆盖普通 RAG 在发起调用前的同步异常（如取模型失败）：流式回调 `onError`（包括首个 token 前的异步连接失败）只发送错误事件并结束，不会回到切链循环；Agent / 工作流仍只用主模型。详见 §7 计划任务状态与 §8 已知限制。
 - **可观测性**：Micrometer + Prometheus 自定义业务指标（对话/检索/LLM/配额/限流/工作流）；`X-Request-Id` 贯穿 MDC、SSE 与异步线程，日志统一携带 `rid`；管理端口独立（默认 `9090`），业务端口不再暴露 `/actuator`；提供 Prometheus/Grafana 编排与仪表盘，详见 [docs/design-observability.md](docs/design-observability.md)。
 - **容器化**：后端多阶段 Dockerfile（非 root、JVM 容器内存感知、9090 探活），前端 Node 构建 + Nginx（SPA 回退、`/api` 反代、SSE 关闭缓冲），`docker compose` 一键拉起 postgres（pgvector）/ backend / frontend / redis / prometheus / grafana。
 
@@ -301,7 +301,7 @@ python3 eval/eval_recall.py --kb 2 --k 5  # 离线召回率评测
 
 ### 4.8 对接外部 IdP（OIDC 资源服务器）
 
-本系统**不签发 token**，只验证外部 OIDC IdP 签发的 Bearer token：
+本系统以 OIDC 资源服务器形态**不签发 token**，只验证外部 OIDC IdP 签发的 Bearer token（本地 admin/体验账号另走 §4.2 的内部会话凭证）：
 
 ```yaml
 wgh:
@@ -599,13 +599,48 @@ docker start postgres-with-vector          # 旧容器原绑 0.0.0.0:5432，恢�
 
 ---
 
-## 7. 已知限制
+## 7. 计划任务状态
+
+> 状态以当前代码与提交为准：已完成 / 部分完成 / 未完成 / 已取消。已知限制的细节见 §8。
+
+| 计划项 | 状态 | 依据 / 说明 |
+| --- | --- | --- |
+| Prompt 模板中心与输入框前缀联想 | 已完成 | `PromptTemplateService` / `PromptTemplateController`（含 `/api/prompt-templates/suggest`）；前端 `PromptTemplates.vue` 与输入框前缀触发、变量逐个填写；commit `6c00482` |
+| 知识库标签 | 已完成 | `TagService` / `TagController`；知识库与文件的多标签绑定及管理界面 |
+| 文档版本 | 已完成 | `FileVersionService` + 版本列表/回滚；回滚生成新版本，不覆盖旧版本 |
+| 多用户与权限体系 | 已完成 | OIDC 资源服务器 + RBAC（`@RequiresPermission` / `PermissionAspect`）+ 本地 admin/体验账号；租户隔离与知识库/文档级全量权限不在范围内 |
+| 角色与权限管理页面 | 已完成 | `AdminRoleController`（`/api/admin/roles`、`/api/admin/permissions`）+ `RoleManagement.vue`、`UserManagement.vue`；commit `8ba06ef` |
+| 配额模块与前后端页面 | 已完成 | 独立 `rag-quota` 模块；`QuotaAdminController` / `QuotaUserController`；`QuotaManagement.vue` / `MyQuota.vue` |
+| 免登录分享 / Widget 嵌入 / 开放 API | 已完成 | 独立 `rag-public-access` 模块；`ShareLinkService`、`PublicShareController`、`OpenApiController`、`widget.js` |
+| Redis 8.10.1 接入 | 已完成 | Compose `redis:8.10.1-alpine`；分布式限流、分享密码失败锁定（成功清零）、嵌入授权、API Key IP 白名单；不可用时降级为单机内存 |
+| 更多文档格式（PPTX/HTML/JSON/EML） | 已完成 | `PptxParser` / `HtmlParser` / `JsonParser` / `EmlParser` + `DocumentParserDispatcher`；图片 OCR 仍未支持 |
+| 工作流 AGENT 节点 | 已完成 | `AgentNodeExecutor` + 工作流编辑器中 AGENT 节点配置（`goal` / `maxSteps` / `timeoutMs` / `kbIds`） |
+| 可观测性（Prometheus + 独立 9090） | 已完成 | `RagMetrics` 业务指标 + `/actuator/prometheus`；管理端口默认 `9090`，业务端口不暴露 `/actuator` |
+| `rag-agent-multi` Controller 迁入 `rag-controller` | 已完成 | `rag-agent-multi` 已无 Controller，`MultiAgentController` 位于 `rag-controller` |
+| 常量统一抽取 | 已完成 | 各模块 `constant` 包；权限码、角色码、状态值、SSE 事件名、存储 key 前缀等改引用常量 |
+| `rag-public-access` 独立模块 + Enforcer 禁反向依赖 | 已完成 | 模块拆分与依赖约束（`0c1d447`、`c951a20`） |
+| `rag-storage` 独立模块（local / OSS 可插拔） | 已完成 | `FileStorageService` + `LocalFileStorageService` / `AliyunOssFileStorageService`（`8e20dbd`、`4ee3a4b`） |
+| OIDC 资源服务器形态验签 | 已完成 | `OidcTokenVerifier` / `JwksProvider`；仅接受非对称签名，拒绝 HS256 与 `none` |
+| 本地 admin / 体验账号登录 + `password_version` | 已完成 | `LocalLoginService` / `LocalTokenService`；`wgh_user.password_version` 校验会话失效 |
+| 安全整改 | 已完成 | 首登强制改密（`password_must_change`）、审计日志敏感信息脱敏、409 映射、`WGH_INIT_ADMIN_PASSWORD` 注入 |
+| JDK 21 统一 | 已完成 | `maven.compiler.release=21` + Enforcer 强制 JDK 21，CI 与本地一致 |
+| Compose 内置 PostgreSQL(pgvector) | 已完成 | `docker-compose.yml` 内置 `pgvector/pgvector:pg15`，空卷首启执行 `schema.sql` / `data.sql` |
+| 测试用例与设计文档补全 | 已完成 | `docs/test-cases.md`、`docs/design-overview.md`、`docs/design-detailed.md` 等；commit `614b03e`—`5a21428` |
+| 模型路由与故障转移 | 部分完成（存在已知缺陷） | `ModelRouter#resolveChain` + `RagChatService#runWithFailover` 支持普通 RAG 按 `route_group` 切链；但流式回调 `onError`（含首个 token 前的异步连接失败）只发送 `error` 事件并结束，不会回到切链循环；Agent / 工作流仍只用主模型 |
+| 大文件分片上传 | 未完成 | OSS 仅单次流式 `putObject`，无 multipart / 断点续传；业务侧默认上限 50MB |
+| `local` ↔ `oss` 历史对象自动迁移 | 未完成（已知限制） | 切换本身已支持，但旧对象仍留在原存储后端，需手工迁移或重新上传并重建向量 |
+| OSS 删除失败后的孤儿对象清理 | 未完成（已知限制） | 删除失败仅记录 WARN，数据库仍完成逻辑删除，对象可能残留 |
+| 多实例 JWKS 缓存不共享 | 未完成（已知限制） | `JwksProvider` 为进程内缓存，密钥轮换后各实例刷新时间不一致 |
+
+---
+
+## 8. 已知限制
 
 | 类别 | 限制 | 影响 / 建议 |
 |------|------|------------|
-| 权限体系 | 无角色管理界面/接口，无租户隔离，资源级权限仅覆盖部分 Controller | 多团队共用需在网关或后续迭代补足 |
-| 可观测性 | 无 Prometheus 指标、链路追踪 | 生产排障依赖日志与审计表 |
-| 部署编排 | 仅提供 Redis 的 docker-compose；应用无 Dockerfile | 需手工部署 PostgreSQL + Redis + 后端进程 + Nginx |
+| 权限体系 | 已提供角色/权限管理页面与接口；无租户隔离，资源级权限仅覆盖部分 Controller | 多团队共用需在网关或后续迭代补足 |
+| 可观测性 | 已提供 Prometheus 指标与管理端口（9090）、`X-Request-Id` 日志关联；未接入分布式链路追踪 | 跨服务调用链仍需日志/审计辅助 |
+| 部署编排 | 已提供前后端 Dockerfile 与全栈 docker-compose（postgres/pgvector、backend、frontend、redis、prometheus、grafana）；无 Kubernetes 级编排 | 大规模水平扩展需自行补编排 |
 | 限流 | Redis Lua 分布式滑动窗口，故障时降级单机内存 | Redis 故障期间多实例计数不共享、重启清零；建议 Redis 高可用 |
 | Widget | 仅 iframe 注入，无 `postMessage` 双向通信；`frame-ancestors` 需网关/静态服务配置 | 宿主页无法读取对话事件；手工 iframe 仍可能绕过 `widget.js`，需 CSP 兜底 |
 | 分享密码 | 失败 5 次锁定 15 分钟（可配置），无验证码 | 换 IP 可继续尝试；强防护可叠加网关限流/验证码 |
@@ -614,11 +649,16 @@ docker start postgres-with-vector          # 旧容器原绑 0.0.0.0:5432，恢�
 | 反馈与评测 | 无数据集版本管理、无 A/B 对比 | 离线评测只能脚本化执行 |
 | 多模态 | 仅视觉模型图片输入，无 OCR | 扫描件/图片型 PDF 无法直接提取文字 |
 | 检索 | 单库 PostgreSQL + pgvector，无独立向量库/搜索引擎 | 超大规模语料需评估性能上限 |
+| 模型故障转移 | 仅普通 RAG 在发起调用前的同步异常会切链；流式 `onError`（含首个 token 前的异步连接失败）不回切链；Agent/工作流只用主模型 | 已知缺陷，详见 §7 |
+| 存储切换 | `local` ↔ `oss` 切换不自动迁移历史对象 | 需手工迁移或重新上传并重建向量 |
+| OSS 删除 | 删除失败仅 WARN，数据库仍逻辑删除，可能残留孤儿对象 | 需离线清理脚本 |
+| 大文件上传 | 未实现分片上传 / 断点续传，OSS 仅单次 `putObject`；默认上限 50MB | 超大文件与弱网场景需另行接入 |
+| 多实例 JWKS | `JwksProvider` 缓存为进程内，多实例不共享 | 单实例部署假设；多实例需接受轮换后的刷新时间差 |
 | 移动端 / 国际化 | 仅桌面端布局，无 i18n | — |
 | 扩展性 | 无 URL 抓取与第三方数据源连接器，无增量同步 | 文档需手工上传 |
 
 ---
 
-## 8. 系统截图
+## 9. 系统截图
 
 `rag-frontend/image/` 目录下：首页 / 模型管理 / 嵌入模型 / 聊天窗口管理 / 创建聊天窗口 / 调试聊天窗口 / 分享聊天窗口 / 工具管理。
