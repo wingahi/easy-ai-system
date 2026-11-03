@@ -187,6 +187,17 @@ class OidcResourceServerTest {
     }
 
     @Test
+    @DisplayName("issuer/audience 未配置 → fail-closed 拒绝")
+    void missingIssuerOrAudienceFailsClosed() {
+        properties.setIssuer(null);
+
+        assertThatThrownBy(() -> verifier.verify(
+                token(KID_1, KEY_PAIR_1, ISSUER, AUDIENCE, "alice", List.of("admin"), null, null)))
+                .isInstanceOf(TokenVerificationException.class)
+                .hasMessageContaining("未配置");
+    }
+
+    @Test
     @DisplayName("无 token → 401 / code 1001")
     void noToken() throws Exception {
         MockHttpServletResponse response = doFilter(null);

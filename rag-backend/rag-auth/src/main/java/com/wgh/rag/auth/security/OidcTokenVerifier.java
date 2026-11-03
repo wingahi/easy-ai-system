@@ -44,6 +44,11 @@ public class OidcTokenVerifier {
             throw new TokenVerificationException("token 为空");
         }
 
+        if (!StringUtils.hasText(properties.getIssuer()) || !StringUtils.hasText(properties.getAudience())) {
+            // 未配置 issuer/audience 时 fail-closed，避免跳过关键校验
+            throw new TokenVerificationException("wgh.auth.oidc.issuer/audience 未配置");
+        }
+
         TokenHeader header = parseHeader(token);
         if (!ALLOWED_ALGORITHMS.contains(header.alg())) {
             throw new TokenVerificationException("不支持的 token 签名算法: " + header.alg());
