@@ -1,6 +1,8 @@
 package com.wgh.rag.log.aspect;
 
+import com.wgh.rag.common.constant.HttpConstants;
 import com.wgh.rag.log.annotation.Audit;
+import com.wgh.rag.log.constant.AuditConstants;
 import com.wgh.rag.log.entity.AuditLog;
 import com.wgh.rag.common.security.SecurityUtils;
 import com.wgh.rag.log.service.AuditLogService;
@@ -31,12 +33,12 @@ public class AuditAspect {
 
     @Around("@annotation(audit)")
     public Object around(ProceedingJoinPoint pjp, Audit audit) throws Throwable {
-        String status = "SUCCESS";
+        String status = AuditConstants.STATUS_SUCCESS;
         String error = null;
         try {
             return pjp.proceed();
         } catch (Throwable t) {
-            status = "FAIL";
+            status = AuditConstants.STATUS_FAIL;
             error = t.getMessage();
             throw t;
         } finally {
@@ -87,7 +89,7 @@ public class AuditAspect {
             ServletRequestAttributes attrs = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
             if (attrs == null) return null;
             HttpServletRequest request = attrs.getRequest();
-            String forwarded = request.getHeader("X-Forwarded-For");
+            String forwarded = request.getHeader(HttpConstants.HEADER_X_FORWARDED_FOR);
             if (forwarded != null && !forwarded.isBlank()) {
                 return forwarded.split(",")[0].trim();
             }
