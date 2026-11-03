@@ -32,6 +32,13 @@
 22. [模型路由与故障转移](#22-模型路由与故障转移)
 23. [工作流 AGENT 节点](#23-工作流-agent-节点)
 24. [多用户与权限（RBAC / OIDC）](#24-多用户与权限rbac--oidc)
+25. [浏览器全量测试执行记录（2026-11-02）](#25-浏览器全量测试执行记录2026-11-02)
+26. [认证与会话（本地 / OIDC 双认证）](#26-认证与会话本地--oidc-双认证)
+27. [角色与权限管理（管理端）](#27-角色与权限管理管理端)
+28. [对象存储（local / OSS）](#28-对象存储local--oss)
+29. [可观测性（Metrics / Request-Id / Actuator）](#29-可观测性metrics--request-id--actuator)
+30. [补充用例（文档元数据 / 工作流 / 路由 / 标签版本）](#30-补充用例文档元数据--工作流--路由--标签版本)
+31. [限制与未覆盖](#31-限制与未覆盖)
 
 - [附录 A：测试环境速查](#附录-a测试环境速查)
 - [附录 B：测试代码规范与自动化门禁](#附录-b测试代码规范与自动化门禁)
@@ -1075,3 +1082,299 @@
 | F5 | `POST /api/auth/login` 响应不含 `roles`，前端 `isAdmin=false`，`requiresAdmin` 路由（`/admin/quota`）被重定向到 `/kb` | 未修复（遗留） | 受“不改 auth/角色”约束；接口层 `/api/admin/quota` 已验证可用，建议登录后补拉 `/auth/me` 或登录响应补 roles |
 | F6 | EML 原始 UTF-8 非编码 Subject 显示乱码 | 非缺陷 | 测试数据应使用 RFC2047 编码（`=?UTF-8?B?...?=`）；已用 v2 样例验证解析正确 |
 | F7 | 限流/配额业务错误的 HTTP 状态为 200，实际语义码（429）放在响应体 `code` | 待优化 | 前端按 `code` 处理可用；对外开放 API 建议统一为 HTTP 429，便于第三方网关识别 |
+
+---
+
+## 26. 认证与会话（本地 / OIDC 双认证）
+
+> 本章为增量补充，保留 §1 Auth-01~13、§24 RBA-01~09、§25 F4/F5 的既有编号与原文，不修改旧行。
+> 代码核对后的差异说明：
+> - Auth-01 的 `expiresIn=86400` 已过时；当前默认 `wgh.auth.local.token-ttl-seconds=7200`，签发时取 `max(60, ttl)`。
+> - RBA-08 的“禁用后旧 JWT 返回 403”已过时；本地凭证链路在过滤器层返回 HTTP 401 + 业务码 1002，消息为“账号已禁用”。
+> - RBA-09 的“无角色管理接口”已过时；`/api/admin/roles`、`/api/admin/permissions`、`/api/admin/users` 均已实现，见 §27。
+> - F5 已修复：`POST /api/auth/login` 的 `data.user` 已包含 `roles` 与 `permissions`（Auth-75 回归）。
+> 统一约定：过滤器层鉴权失败返回真实 HTTP 401/403；Service 层 `BusinessException` 由全局异常处理返回 HTTP 200 + 响应体 `code`（包含 429、1004、3003、500）。
+
+### 26.1 本地账号密码登录
+
+| 编号 | 分类 | 名称 | 前置条件 | 操作步骤 | 预期结果（HTTP / 业务码） | 覆盖类型 | 自动化落点 |
+|------|------|------|---------|---------|--------------------------|---------|-----------|
+| Auth-14 | 正常 | 本地管理员登录成功 | 已由初始化器创建 admin 账号 | `POST /api/auth/login`，body `{"username":"admin","password":"admin"}` | HTTP 200 / code 200；`data.token` 非空且为 HS256；`tokenType=local`；`expiresIn=7200`；`passwordMustChange=false`；`user.roles` 含 `admin`；`user.permissions` 含全部 10 个权限码 | 单元 + 接口 | `LocalLoginServiceTest`、`LocalAuthApiTest` |
+| Auth-15 | 正常 | 体验账号登录成功 | 用户 `source=local`、`trial=1`、角色 `viewer`、状态启用未过期 | 同上，使用该账号用户名与密码 | HTTP 200 / code 200；`user.roles=[viewer]`；`user.permissions` 为该角色实时权限；token 内 `pv` 等于数据库 `password_version` | 单元 + 接口 | `LocalLoginServiceTest`、`LocalAuthApiTest` |
+| Auth-16 | 异常 | 本地登录总开关关闭 | `wgh.auth.local.enabled=false` | 调用登录接口 | HTTP 200 / code 1005，message“本地账号登录已禁用”；不签发 token | 单元 | `LocalLoginServiceTest` |
+| Auth-17 | 边界 | 用户名或密码为空 | 分别提交 `username=""`、`password=""` | 调用登录接口 | HTTP 200 / code 2001，message“用户名和密码不能为空”；不签发 token | 单元 + 接口 | `LocalLoginServiceTest` |
+| Auth-18 | 异常 | 用户名不存在 | 使用不存在的用户名 | 调用登录接口 | HTTP 200 / code 1005，message“用户名或密码错误”；不泄露用户是否存在 | 单元 | `LocalLoginServiceTest` |
+| Auth-19 | 异常 | 密码错误 | 正确用户名 + 错误密码 | 调用登录接口 | HTTP 200 / code 1005，message“用户名或密码错误” | 单元 | `LocalLoginServiceTest` |
+| Auth-20 | 异常 | OIDC 账号走本地登录 | 用户 `source=oidc` | 使用该账号用户名与任意密码调用登录 | HTTP 200 / code 1005，message“该账号仅支持外部 OIDC 登录” | 单元 | `LocalLoginServiceTest` |
+| Auth-21 | 边界 | source 为 null 不视为本地账号 | 用户 `source` 字段为空 | 调用登录接口 | HTTP 200 / code 1005，message“该账号仅支持外部 OIDC 登录”；仅显式 `local` 才允许本地登录 | 单元 | `LocalLoginServiceTest` |
+| Auth-22 | 异常 | 账号已禁用 | `status=0` | 正确用户名密码登录 | HTTP 200 / code 1005，message“账号已禁用，请联系管理员” | 单元 | `LocalLoginServiceTest` |
+| Auth-23 | 异常 | 账号已过期 | `expire_at` 为过去时间 | 正确用户名密码登录 | HTTP 200 / code 1005，message 以“账号已过期（有效期至”开头并含到期时间 | 单元 | `LocalLoginServiceTest` |
+| Auth-24 | 异常 | 非法本地登录主体 | 用户 `source=local`、`trial=0`、角色不含 admin | 正确用户名密码登录 | HTTP 200 / code 1005，message“仅本地管理员或体验账号支持密码登录” | 单元 | `LocalLoginServiceTest` |
+| Auth-25 | 安全 | 登录失败留痕 | 任一无上述拒绝场景 | 触发登录失败后查看账号审计 | 失败记录包含用户名、失败原因与时间；登录成功记录成功动作；不写入明文密码 | 单元 | `LocalLoginServiceTest`、`AccountAuditService` |
+
+### 26.2 本地会话凭证（HS256 / pv 失效）
+
+| 编号 | 分类 | 名称 | 前置条件 | 操作步骤 | 预期结果（HTTP / 业务码） | 覆盖类型 | 自动化落点 |
+|------|------|------|---------|---------|--------------------------|---------|-----------|
+| Auth-26 | 正常 | token 结构与 claims | 已成功登录 | 解码 token header 与 payload | header `alg=HS256`；payload 含 `sub`、`userId`、`roles`、`pv`、`tokenType=local`、`iss=wgh-local`、`aud=wgh-local`、`iat`、`exp`；`exp-iat` 等于生效 TTL | 单元 | `LocalTokenServiceTest` |
+| Auth-27 | 边界 | TTL 下限与默认值 | 分别配置 `token-ttl-seconds=30` 与不配置 | 登录后检查 `expiresIn` 与 `exp` | 配置 30 时 `expiresIn=60`；不配置时 `expiresIn=7200` | 单元 | `LocalTokenServiceTest` |
+| Auth-28 | 异常 | 未携带 Authorization | 无认证头 | `GET /api/auth/me` | HTTP 401 / code 1001，message“未授权访问” | 接口 | `LocalAuthApiTest`、`OidcAuthenticationFilter` |
+| Auth-29 | 边界 | Bearer 后为空串 | header 为 `Authorization: Bearer ` | 访问受保护接口 | HTTP 401 / code 1002，message“Token已过期或无效” | 接口 | `OidcAuthenticationFilter` |
+| Auth-30 | 安全 | 篡改 payload 或签名 | 修改 token payload 或签名后访问 | `GET /api/auth/me` | HTTP 401 / code 1002，message“会话凭证已失效，请重新登录” | 单元 + 接口 | `LocalTokenServiceTest` |
+| Auth-31 | 异常 | 本地 token 过期 | token `exp` 已过去 | 访问受保护接口 | HTTP 401 / code 1002，message“会话凭证已失效，请重新登录” | 单元 | `LocalTokenServiceTest` |
+| Auth-32 | 异常 | token 格式非法 | 非三段式字符串或 header 无法 Base64 解码 | 访问受保护接口 | HTTP 401 / code 1002，消息“Token已过期或无效”或“会话凭证已失效，请重新登录” | 单元 + 接口 | `LocalTokenService`、`OidcTokenVerifier` |
+| Auth-33 | 安全 | issuer / audience 不匹配 | 用其它 issuer 或 audience 签发的 HS256 token | 访问受保护接口 | HTTP 401 / code 1002，本地验签拒绝 | 单元 | `LocalTokenServiceTest` |
+| Auth-34 | 安全 | tokenType 非 local | claim `tokenType` 缺失或为其它值 | 访问受保护接口 | HTTP 401 / code 1002，本地验签拒绝 | 单元 | `LocalTokenServiceTest` |
+| Auth-35 | 异常 | 口令版本 pv 失效 | 登录后改密、管理员重置或禁用，使 `password_version` 递增 | 用旧 token 访问任意受保护接口 | HTTP 401 / code 1007，message“凭证已失效，请重新登录” | 单元 + 接口 | `LocalTokenService`、`OidcAuthenticationFilter`、`LocalAuthApiTest` |
+| Auth-36 | 异常 | 用户被删除 | token 中 `userId` 对应的用户不存在 | 用旧 token 访问 | HTTP 401 / code 1002，message“账号不存在，请重新登录” | 单元 | `OidcAuthenticationFilter` |
+| Auth-37 | 异常 | 用户被禁用 | token 有效但用户 `status=0` | 用旧 token 访问 | HTTP 401 / code 1002，message“账号已禁用” | 单元 | `OidcAuthenticationFilter` |
+| Auth-38 | 异常 | 用户已过期 | token 有效但 `expire_at` 已过去 | 用旧 token 访问 | HTTP 401 / code 1002，message“账号已过期” | 单元 | `OidcAuthenticationFilter` |
+| Auth-39 | 正常 | 角色实时查库 | 已登录用户在线期间被管理员调整角色 | 不重新登录，直接发起下一次请求 | 请求放行；服务端按数据库最新角色判定，`LoginUser.roles` 更新 | 单元 | `OidcAuthenticationFilter` |
+| Auth-40 | 边界 | 无角色默认 viewer | 用户未绑定任何角色 | 登录后访问只读接口 | 认证通过；`roles` 缺省为 `viewer`，权限按 viewer 解析 | 单元 | `OidcAuthenticationFilter` |
+| Auth-41 | 正常 | 权限实时查库 | 管理员修改角色权限集合 | 该角色用户不重新登录，发起下一次请求 | 权限判定立即按 `wgh_role_permission` 最新结果，无需重新登录 | 单元 + 接口 | `OidcAuthenticationFilter`、§27 RBA-29/30 |
+| Auth-42 | 安全 | 生产环境未配置固定密钥 | `spring.profiles.active=prod` 且 `wgh.auth.local.jwt-secret` 为空 | 启动应用 | 启动失败，抛出 IllegalStateException，提示必须配置至少 32 字节密钥（fail-closed） | 单元 | `LocalTokenServiceTest` |
+| Auth-43 | 安全 | 密钥长度不足 | 配置 secret 少于 32 字节 | 启动应用 | 启动失败，抛出 IllegalStateException“长度至少 32 字节” | 单元 | `LocalTokenServiceTest` |
+| Auth-44 | 边界 | 开发环境随机密钥 | 非 prod 且未配置 secret | 启动后登录，再重启后使用旧 token | 启动仅 WARN；重启后旧 token HTTP 401 / code 1002，需重新登录 | 单元 + 接口 | `LocalTokenServiceTest` |
+| Auth-45 | 边界 | 登出为客户端无状态 | 已登录 | `POST /api/auth/logout`，之后重放旧 token | 登出 HTTP 200 / code 200；服务端不维护吊销列表；旧 token 在过期前仍可用（见 §31 L-05） | 接口 | `AuthController` |
+| Auth-46 | 正常 | 当前用户信息 | 已登录 | `GET /api/auth/me` | HTTP 200 / code 200；返回 id、username、roles、permissions、passwordMustChange；无 token 时为 HTTP 401 / code 1001 | 接口 | `LocalAuthApiTest` |
+
+### 26.3 首登强制改密与口令变更
+
+| 编号 | 分类 | 名称 | 前置条件 | 操作步骤 | 预期结果（HTTP / 业务码） | 覆盖类型 | 自动化落点 |
+|------|------|------|---------|---------|--------------------------|---------|-----------|
+| Auth-47 | 异常 | 首登未改密拦截写请求 | 用户 `password_must_change=1`，已登录 | 发起任意非 GET/HEAD/OPTIONS 请求（如新建知识库） | HTTP 403 / code 1006，message“请先修改密码”；不进入业务 | 单元 + 接口 | `OidcAuthenticationFilter`、`LocalAuthApiTest` |
+| Auth-48 | 边界 | 首登期间允许只读 | 同上 | `GET /api/kb` 等只读接口 | HTTP 200 / code 200，正常返回 | 单元 | `OidcAuthenticationFilter` |
+| Auth-49 | 边界 | 首登期间允许改密与登出 | 同上 | `POST /api/auth/password`、`POST /api/auth/logout` | 不被 1006 拦截；改密按规则返回，登出返回 HTTP 200 / code 200 | 单元 | `OidcAuthenticationFilter` |
+| Auth-50 | 正常 | 改密成功并使旧 token 失效 | 已登录，旧密码正确，新密码满足强度且不同于旧密码 | `POST /api/auth/password` → 用旧 token 访问 → 重新登录 | 改密 HTTP 200 / code 200；`password_version+1`、`password_must_change=0`；旧 token 下一次请求 HTTP 401 / code 1007；新登录 token 可用 | 单元 + 接口 | `LocalPasswordService`、`LocalAuthApiTest` |
+| Auth-51 | 异常 | 旧密码不正确 | 已登录，提交错误旧密码 | 调用改密接口 | HTTP 200 / code 2001，message“旧密码不正确” | 单元 | `LocalPasswordServiceTest` |
+| Auth-52 | 异常 | 新旧密码相同 | 新密码与当前密码一致 | 调用改密接口 | HTTP 200 / code 2001，message“新密码不能与当前密码相同” | 单元 | `LocalPasswordServiceTest` |
+| Auth-53 | 异常 | 未登录调用改密 | 无 token | `POST /api/auth/password` | HTTP 401 / code 1001，不进业务 | 接口 | `OidcAuthenticationFilter` |
+| Auth-54 | 边界 | 密码强度校验 | 分别提交空、7 位、129 位、纯字母、纯数字 | 调用改密接口 | HTTP 200 / code 2001；消息分别含“密码不能为空”“密码长度至少 8 位”“密码长度不能超过 128 位”“密码必须包含字母”“密码必须包含数字” | 单元 | `PasswordPolicy`、`LocalPasswordServiceTest` |
+| Auth-55 | 异常 | OIDC 账号不支持本地改密 | 用户 `source=oidc` 或 `password_hash` 为空 | 已登录后调用改密接口 | HTTP 200 / code 3003，message“外部 OIDC 账号不支持本地改密” | 单元 | `LocalPasswordServiceTest` |
+| Auth-56 | 正常 | 管理员重置体验账号口令 | admin 登录，目标为 trial 账号 | `PUT /api/admin/users/{username}/password` 提交新密码 | HTTP 200 / code 200；`password_version+1`、`password_must_change=1`；目标旧 token HTTP 401 / code 1007；目标下次登录 `passwordMustChange=true` | 接口 | `AdminUserController`、`LocalPasswordService` |
+| Auth-57 | 正常 | 管理员禁用体验账号 | admin 登录，目标为启用中的 trial 账号 | `DELETE /api/admin/users/{username}` | HTTP 200 / code 200；`status=0`、`password_version+1`；目标旧 token HTTP 401 / code 1002，message“账号已禁用” | 接口 | `AdminUserController` |
+| Auth-58 | 异常 | 重置不存在用户口令 | admin 登录 | 对不存在用户名调用重置口令 | HTTP 200 / code 3001，message“用户不存在” | 接口 | `LocalPasswordService` |
+| Auth-59 | 异常 | 重置非体验账号口令 | 目标 `source=local` 但 `trial=0` | 调用重置口令 | HTTP 200 / code 3003，message“仅体验账号允许重置口令” | 接口 | `LocalPasswordService` |
+| Auth-60 | 异常 | 重置 OIDC 用户口令 | 目标 `source=oidc` | 调用重置口令 | HTTP 200 / code 3003，message“外部 OIDC 用户不允许重置本地口令” | 接口 | `LocalPasswordService` |
+| Auth-61 | 边界 | 重置口令强度校验 | 提交不满足策略的新密码 | 调用重置口令 | HTTP 200 / code 2001，消息与改密强度校验一致 | 接口 | `PasswordPolicy` |
+
+### 26.4 外部 OIDC token（JWKS 公钥验签）
+
+| 编号 | 分类 | 名称 | 前置条件 | 操作步骤 | 预期结果（HTTP / 业务码） | 覆盖类型 | 自动化落点 |
+|------|------|------|---------|---------|--------------------------|---------|-----------|
+| Auth-62 | 正常 | 合法 RS256 token 访问 | IdP 已配置，JWKS 可访问，token 的 kid 命中公钥，iss/aud/exp 正确 | 携带 `Authorization: Bearer <RS256 token>` 访问受保护接口 | HTTP 200 / code 200；按 claim 构建 LoginUser；`username` 取 `username-claim`（默认 sub），角色按映射解析 | 单元 + 接口 | `OidcResourceServerTest`、`OidcTokenVerifier` |
+| Auth-63 | 安全 | 外部 HS256 token 被拒 | 用任意密钥构造 header `alg=HS256` 的外部 token | 访问受保护接口 | HTTP 401 / code 1002；算法白名单拒绝 HS*，不落入本地验签分支 | 单元 | `OidcTokenVerifier` |
+| Auth-64 | 安全 | alg=none 被拒 | 构造 `alg=none` token | 访问受保护接口 | HTTP 401 / code 1002；白名单拒绝 none | 单元 | `OidcTokenVerifier` |
+| Auth-65 | 异常 | 未知 kid | token header 的 kid 不在 JWKS | 访问受保护接口 | HTTP 401 / code 1002，message“Token已过期或无效”；触发限频 JWKS 刷新（最小间隔 30 秒） | 单元 | `JwksProvider`、`OidcTokenVerifier` |
+| Auth-66 | 异常 | JWKS 不可达且无缓存 | 启动后首次请求前断开 JWKS，缓存为空 | 使用合法结构 token 访问 | HTTP 401 / code 1002；不建立会话（fail-closed） | 单元 | `JwksProvider` |
+| Auth-67 | 边界 | JWKS 不可达但已有缓存 | 先前已成功拉取 JWKS，随后断开网络 | 使用 kid 仍在缓存中的 token 访问 | HTTP 200 / code 200；保留旧缓存继续验签，仅记录 WARN | 单元 | `JwksProvider` |
+| Auth-68 | 安全 | issuer 不匹配 | token `iss` 与 `wgh.auth.oidc.issuer` 不同 | 访问受保护接口 | HTTP 401 / code 1002 | 单元 | `OidcTokenVerifier` |
+| Auth-69 | 安全 | audience 不匹配 | token `aud` 不包含 `wgh.auth.oidc.audience` | 访问受保护接口 | HTTP 401 / code 1002 | 单元 | `OidcTokenVerifier` |
+| Auth-70 | 安全 | issuer 或 audience 未配置 | `wgh.auth.oidc.issuer` 或 `audience` 为空 | 访问受保护接口 | fail-closed：HTTP 401 / code 1002，不跳过关键校验 | 单元 | `OidcTokenVerifier` |
+| Auth-71 | 异常 | token 过期或 nbf 未生效 | `exp` 已过去或 `nbf` 在未来且超出 30 秒时钟偏差 | 访问受保护接口 | HTTP 401 / code 1002 | 单元 | `OidcTokenVerifier` |
+| Auth-72 | 正常 | 角色 claim 映射到数据库角色 | `role-mapping` 配置 `wgh-editor → editor`，token roles 含 `wgh-editor` | 访问受保护接口 | 认证通过；`roles=[editor]`，权限按 editor 实时解析 | 单元 | `OidcAuthenticationFilter` |
+| Auth-73 | 边界 | 角色无法映射 | token 角色 claim 为空或均不存在于 `wgh_role` | 访问只读接口 | 认证通过；使用 `default-role`（默认 viewer），权限按 viewer 解析 | 单元 | `OidcAuthenticationFilter` |
+| Auth-74 | 边界 | OIDC 链路不校版本地用户状态 | 本地库存在同名用户且 `status=0`，但外部 token 合法 | 携带外部 token 访问 | 仍认证通过（OIDC 分支不查本地状态）；该行为列为限制 §31 L-11 | 单元 | `OidcAuthenticationFilter` |
+| Auth-75 | 回归 | 登录响应包含角色与权限（F5） | admin 登录 | 检查 `POST /api/auth/login` 响应 | HTTP 200 / code 200；`data.user.roles`、`data.user.permissions` 有值，前端 `isAdmin` 无需再补拉 `/auth/me` 即可判定 | 接口 | `LocalAuthApiTest` |
+
+---
+
+## 27. 角色与权限管理（管理端）
+
+> 实现：`AdminRoleController`（`/api/admin/roles`、`/api/admin/permissions`）、`AdminUserController`（`/api/admin/users`）、`QuotaAdminController`（`/api/admin/quota`）。
+> 权限校验：全部接口先经 `QuotaAdminGuard.requireAdmin()`；非 admin 返回 HTTP 200 / code 1004（Service 层业务异常），不是 HTTP 403。
+> 生效方式：角色与权限写库后立即生效，认证过滤器每次请求实时查询 `wgh_user_role` 与 `wgh_role_permission`；已登录用户无需重新登录。
+
+### 27.1 角色与权限接口
+
+| 编号 | 分类 | 名称 | 前置条件 | 操作步骤 | 预期结果（HTTP / 业务码） | 覆盖类型 | 自动化落点 |
+|------|------|------|---------|---------|--------------------------|---------|-----------|
+| RBA-10 | 正常 | 角色列表 | admin 登录，存在内置 admin 与自定义角色 | `GET /api/admin/roles` | HTTP 200 / code 200；每行含 roleCode、roleName、description、builtIn、userCount、permissionCount、permCodes；admin 行 `builtIn=true` | 接口 | `AdminRoleController` |
+| RBA-11 | 安全 | 非管理员访问角色管理 | 普通 viewer 登录 | 调用任意 `/api/admin/roles` 或 `/api/admin/permissions` | HTTP 200 / code 1004，message“仅管理员可操作配额配置”；不返回角色数据 | 接口 | `QuotaAdminGuard` |
+| RBA-12 | 正常 | 创建角色 | admin 登录 | `POST /api/admin/roles`，合法 roleCode、roleName、description | HTTP 200 / code 200；返回新角色行；列表中可见；`permissionCount=0` | 接口 | `AdminRoleController` |
+| RBA-13 | 边界 | role_code 非法 | admin 登录 | 提交空、1 位、含大写、含连字符、33 位的 roleCode | HTTP 200 / code 2001，message“role_code 需为 2-32 位，小写字母开头，仅含小写字母、数字、下划线” | 接口 | `AdminRoleController` |
+| RBA-14 | 异常 | 角色编码重复 | 已存在同 roleCode | 再次创建 | HTTP 409 / code 3002，message“资源已存在（唯一键冲突）” | 接口 | `GlobalExceptionHandler` |
+| RBA-15 | 边界 | 角色名称非法 | admin 登录 | 提交空名称或超过 64 字符 | HTTP 200 / code 2001，消息“角色名称不能为空”或“角色名称不能超过 64 个字符” | 接口 | `AdminRoleController` |
+| RBA-16 | 边界 | 角色描述超长 | admin 登录 | 提交超过 500 字符描述 | HTTP 200 / code 2001，message“角色描述不能超过 500 个字符” | 接口 | `AdminRoleController` |
+| RBA-17 | 正常 | 修改自定义角色 | 存在非内置角色 | `PUT /api/admin/roles/{roleCode}` 修改名称与描述 | HTTP 200 / code 200；返回更新后的角色行 | 接口 | `AdminRoleController` |
+| RBA-18 | 安全 | 内置 admin 角色不可修改 | admin 登录 | `PUT /api/admin/roles/admin` | HTTP 200 / code 3003，message“内置 admin 角色不可修改” | 接口 | `AdminRoleController` |
+| RBA-19 | 异常 | 修改不存在角色 | admin 登录 | `PUT /api/admin/roles/not_exist` | HTTP 200 / code 3001，message“角色不存在: not_exist” | 接口 | `AdminRoleController` |
+| RBA-20 | 正常 | 删除无绑定自定义角色 | 角色无用户绑定、无权限绑定 | `DELETE /api/admin/roles/{roleCode}` | HTTP 200 / code 200；角色逻辑删除，角色权限关系清理 | 接口 | `AdminRoleController` |
+| RBA-21 | 安全 | 内置 admin 角色不可删除 | admin 登录 | `DELETE /api/admin/roles/admin` | HTTP 200 / code 3003，message“内置 admin 角色不可删除” | 接口 | `AdminRoleController` |
+| RBA-22 | 异常 | 删除仍有用户绑定的角色 | 角色被至少 1 个用户绑定 | `DELETE /api/admin/roles/{roleCode}` | HTTP 409 / code 3003，message 含“角色仍被 N 个用户绑定，请先调整这些用户的角色”（控制器显式映射 409，状态码以实测为准，待确认） | 接口 | `AdminRoleController` |
+| RBA-23 | 异常 | 删除不存在角色 | admin 登录 | `DELETE /api/admin/roles/not_exist` | HTTP 200 / code 3001，message“角色不存在: not_exist” | 接口 | `AdminRoleController` |
+| RBA-24 | 正常 | 权限项列表 | admin 登录 | `GET /api/admin/permissions` | HTTP 200 / code 200；按模块分组（KNOWLEDGE_BASE、AGENT、WORKFLOW、TOOL、PROMPT、MODEL、AUDIT），共 10 个权限码：kb:read、kb:write、kb:delete、agent:use、workflow:use、workflow:edit、tool:use、prompt:edit、model:manage、audit:view | 接口 | `AdminRoleController` |
+| RBA-25 | 正常 | 整体覆盖角色权限 | admin 登录，存在自定义角色 | `PUT /api/admin/roles/{roleCode}/permissions`，提交权限子集 | HTTP 200 / code 200；旧绑定被清空后重建；`permissionCount` 等于提交集合大小；`permCodes` 正确 | 接口 | `AdminRoleController` |
+| RBA-26 | 异常 | 分配未知权限码 | admin 登录 | 提交包含 `not:exist` 的权限码 | HTTP 200 / code 2001，message“未知权限码: not:exist”；不产生部分写入 | 接口 | `AdminRoleController` |
+| RBA-27 | 边界 | admin 角色全量权限幂等 | admin 角色当前拥有全部 10 个权限 | 再次提交全部 10 个权限码 | HTTP 200 / code 200；幂等返回，不重复写入，`permissionCount=10` | 接口 | `AdminRoleController` |
+| RBA-28 | 安全 | admin 角色不可削减权限 | admin 角色当前全量权限 | 提交缺少任一权限码 | HTTP 200 / code 3003，message“内置 admin 角色必须保留全部权限，不允许削减” | 接口 | `AdminRoleController` |
+| RBA-29 | 正常 | 权限即时生效 | 用户 A 已登录，角色 roleA 仅有 `kb:read` | admin 为 roleA 增加 `model:manage`，用户 A 不重新登录直接调用模型管理写接口 | 下一次请求即放行（HTTP 200 / code 200）；无需重新登录 | 接口 | `OidcAuthenticationFilter` |
+| RBA-30 | 正常 | 权限回收即时生效 | 用户 A 已登录且 roleA 有 `model:manage` | admin 移除该权限，用户 A 不重新登录直接调用模型管理写接口 | 下一次请求被拒：HTTP 200 / code 1004（`@RequiresPermission` 业务异常），不是 HTTP 403 | 接口 | `PermissionAspect` |
+
+### 27.2 体验账号管理
+
+| 编号 | 分类 | 名称 | 前置条件 | 操作步骤 | 预期结果（HTTP / 业务码） | 覆盖类型 | 自动化落点 |
+|------|------|------|---------|---------|--------------------------|---------|-----------|
+| RBA-31 | 正常 | 用户列表与筛选 | admin 登录，存在多个体验账号 | `GET /api/admin/users?page=&size=&username=&source=&role=&enabled=` | HTTP 200 / code 200；返回 PageResult（total/page/size/records）；按用户名包含、来源、角色、启用状态过滤；按 username 排序 | 接口 | `AdminUserController` |
+| RBA-32 | 正常 | 创建体验账号 | admin 登录 | `POST /api/admin/users`，合法用户名、密码、role、enabled、expireAt、备注 | HTTP 200 / code 200；新用户 `source=local`、`trial=true`、角色为指定非 admin 角色（缺省 viewer）；返回行含 roles/enabled/quota 字段 | 接口 | `AdminUserController` |
+| RBA-33 | 安全 | 禁止创建 admin 角色账号 | admin 登录 | `POST /api/admin/users`，role=`admin` | HTTP 200 / code 3003，message“不允许创建或提升为管理员角色” | 接口 | `AdminUserController` |
+| RBA-34 | 边界 | 用户名格式非法 | admin 登录 | 提交 2 位、33 位、含中文或空格的用户名 | HTTP 200 / code 2001，message“用户名需为 3-32 位字母、数字、下划线、点或短横线” | 接口 | `AdminUserController` |
+| RBA-35 | 异常 | 用户名重复 | 已存在同名用户 | 再次创建 | HTTP 409 / code 3002 | 接口 | `GlobalExceptionHandler` |
+| RBA-36 | 正常 | 修改体验账号角色与启用状态 | admin 登录，目标 trial 账号 | `PUT /api/admin/users/{username}` 调整 role、enabled、备注、expireAt | HTTP 200 / code 200；角色关系替换；禁用时 `password_version+1`，旧 token 立即失效；启用恢复 status=1 | 接口 | `AdminUserController` |
+| RBA-37 | 安全 | 体验账号接口不可修改管理员 | admin 登录 | 对 admin 账号调用修改接口 | HTTP 200 / code 3003，message“管理员账号不允许通过体验账号接口修改” | 接口 | `AdminUserController` |
+| RBA-38 | 异常 | 体验账号接口不可管理 OIDC 用户 | 目标 `source=oidc` | 调用修改、重置口令或禁用接口 | HTTP 200 / code 3003，message“外部 OIDC 用户不允许通过该接口管理” | 接口 | `AdminUserController` |
+| RBA-39 | 异常 | 仅 trial 账号可管理 | 目标 `source=local`、`trial=0` | 调用修改接口 | HTTP 200 / code 3003，message“仅体验账号允许通过该接口修改” | 接口 | `AdminUserController` |
+| RBA-40 | 正常 | 重置体验账号口令 | admin 登录，目标 trial 账号 | `PUT /api/admin/users/{username}/password` | HTTP 200 / code 200；`password_version+1`、`password_must_change=1`；详见 Auth-56 | 接口 | `AdminUserController` |
+| RBA-41 | 正常 | 禁用体验账号 | admin 登录，目标启用中 trial 账号 | `DELETE /api/admin/users/{username}` | HTTP 200 / code 200；返回行 `enabled=false`；`status=0`、`password_version+1`；目标旧 token 失效（Auth-57） | 接口 | `AdminUserController` |
+| RBA-42 | 异常 | 操作不存在用户 | admin 登录 | 对不存在用户名调用修改/重置/禁用 | HTTP 200 / code 3001，message“用户不存在” | 接口 | `AdminUserController` |
+| RBA-43 | 正常 | 用户行携带配额信息 | 目标用户已有自定义配额 | `GET /api/admin/users` | HTTP 200 / code 200；行内 `period`、`chatLimit`、`tokenLimit`、`quotaEnabled`、`customQuota=true`；无自定义时为 `customQuota=false` 且回退全局默认 | 接口 | `AdminUserController` |
+| RBA-44 | 正常 | 创建用户同时写入配额 | admin 登录 | `POST /api/admin/users`，附带 chatLimit/tokenLimit/period/quotaEnabled | HTTP 200 / code 200；`wgh_user_quota_config` 写入该用户配置，后续生效配额为 CUSTOM | 接口 | `AdminUserController`、`QuotaService` |
+
+### 27.3 配额管理接口（补充 §14 的 HTTP 层用例）
+
+| 编号 | 分类 | 名称 | 前置条件 | 操作步骤 | 预期结果（HTTP / 业务码） | 覆盖类型 | 自动化落点 |
+|------|------|------|---------|---------|--------------------------|---------|-----------|
+| QTA-23 | 正常 | 管理端配额列表 | admin 登录 | `GET /api/admin/quota/users` | HTTP 200 / code 200；返回用户与生效配额（来源、周期、上限、已用） | 接口 | `QuotaAdminController` |
+| QTA-24 | 正常 | 查询单个用户配额 | admin 登录，目标用户存在 | `GET /api/admin/quota/users/{username}` | HTTP 200 / code 200；返回自定义配置或 DEFAULT 来源的生效值 | 接口 | `QuotaAdminController` |
+| QTA-25 | 正常 | 保存用户配额 | admin 登录 | `PUT /api/admin/quota/users/{username}`，提交 chatLimit、tokenLimit、period、enabled | HTTP 200 / code 200；upsert 不新增重复行；下一次对话按新上限校验 | 接口 | `QuotaAdminController` |
+| QTA-26 | 正常 | 恢复默认配额 | 用户已有自定义配置 | `DELETE /api/admin/quota/users/{username}` | HTTP 200 / code 200；配置逻辑删除，生效来源回退 DEFAULT（200 条/日、200 万 token/日） | 接口 | `QuotaAdminController` |
+| QTA-27 | 正常 | 重置当期用量 | 用户当期已有对话与 token 计数 | `POST /api/admin/quota/users/{username}/reset-usage` | HTTP 200 / code 200；当前周期键计数清零；配置不变；下一次对话重新计数 | 接口 | `QuotaAdminController` |
+| QTA-28 | 安全 | 非管理员操作配额 | 普通用户登录 | 调用任意 `/api/admin/quota/**` | HTTP 200 / code 1004，message“仅管理员可操作配额配置” | 接口 | `QuotaAdminGuard` |
+| QTA-29 | 正常 | 我的配额 | 已登录用户 | `GET /api/quota/my` | HTTP 200 / code 200；返回来源、周期、上限、已用、剩余；超限对话返回 HTTP 200 / code 429（`QUOTA_EXCEEDED`） | 接口 | `QuotaUserController` |
+
+---
+
+## 28. 对象存储（local / OSS）
+
+> 实现：`rag-storage`，配置前缀 `wgh.rag.storage`，`type=local`（默认）或 `oss`；`LocalFileStorageService` 与 `AliyunOssFileStorageService` 通过 `@ConditionalOnProperty` 互斥装配。
+> 错误语义：存储层使用 `BusinessException(String)`，业务码为 `500`；经 REST 接口暴露时为 HTTP 200 + code 500（不是 4xx）。启动期配置问题只 WARN，不阻断启动。
+
+| 编号 | 分类 | 名称 | 前置条件 | 操作步骤 | 预期结果（HTTP / 业务码） | 覆盖类型 | 自动化落点 |
+|------|------|------|---------|---------|--------------------------|---------|-----------|
+| STO-01 | 正常 | 默认装配本地存储 | 未配置 `wgh.rag.storage.type` | 启动应用，查看 Bean 与日志 | `LocalFileStorageService` 生效；日志输出绝对化后的 `./uploads` 根目录；OSS Bean 不存在 | 单元 | `LocalFileStorageServiceTest` |
+| STO-02 | 正常 | 新对象 key 规则 | 新建知识库 kbId=1，上传原始文件名 `a.pdf`，文件 UUID 已生成 | 调用存储写入 | key 为 `kb/1/{uuid}/a.pdf`；同 KB 不同上传使用不同 UUID 目录，避免同名覆盖 | 单元 | `StorageKeysTest` |
+| STO-03 | 边界 | 文件名去除目录 | 原始文件名 `../../etc/passwd` 或 `C:\\tmp\\a.txt` | 计算 key | key 仅保留 basename，目录部分被丢弃；不含 `..` 或路径分隔符 | 单元 | `StorageKeysTest` |
+| STO-04 | 边界 | 文件名清洗 | 文件名含空白、`\\`、`/`、`:`、`*`、`?`、双引号、`<`、`>`、竖线，或为 `.`/`..`/空 | 计算 key | 非法字符替换为 `_`；空或 `.`/`..` 归一为 `file` | 单元 | `StorageKeysTest` |
+| STO-05 | 正常 | 本地写入成功 | 根目录可写，文件大小在限内 | `store(key, inputStream, size, contentType)` | 返回 `StoredObject`，key 原样、size 为实际字节数、contentType 保留；目标文件存在 | 单元 | `LocalFileStorageServiceTest` |
+| STO-06 | 正常 | 本地 URL 解析 | `url-prefix=/uploads` | `resolveUrl("kb/1/u/a.pdf")` | 返回 `/uploads/kb/1/u/a.pdf`；前缀尾部 `/` 被去除；key 中 `\\` 归一为 `/`、首 `/` 去除 | 单元 | `LocalFileStorageServiceTest` |
+| STO-07 | 边界 | 原子写入 | 写入过程中观察目标路径 | 调用 `store` | 先写 `.upload-` 临时文件，再 ATOMIC_MOVE 到目标；读取方不会看到半成品；不支持原子移动时降级普通 move | 单元 | `LocalFileStorageServiceTest` |
+| STO-08 | 异常 | 声明大小超过上限 | `max-file-size-mb=50`，size 参数 > 50MB | 调用 `store` | 抛出业务异常，消息“文件过大（x MB），超过存储上限 50 MB”，code=500；不创建目标文件 | 单元 | `LocalFileStorageServiceTest` |
+| STO-09 | 异常 | 实际内容为空 | 传入 0 字节流 | 调用 `store` | 抛出业务异常“文件内容为空，无法存储”，code=500；临时文件被清理 | 单元 | `LocalFileStorageServiceTest` |
+| STO-10 | 安全 | 路径穿越被拒 | key 为 `../outside.txt` 或绝对路径不在根目录下 | 调用任意存储操作 | 抛出业务异常“非法的存储 key（路径穿越）: ...”，code=500；不读写根目录外文件 | 单元 | `LocalFileStorageServiceTest` |
+| STO-11 | 兼容 | 历史相对路径可读 | 旧数据 `file_path=./uploads/1/a.pdf`，文件仍位于当前根目录下 | `openStream("./uploads/1/a.pdf")` | 读取成功；历史相对工作目录路径按绝对化后校验根目录 | 单元 | `LocalFileStorageServiceTest` |
+| STO-12 | 兼容 | 历史绝对路径可读 | 旧数据为根目录下绝对路径 | `openStream(absolutePath)` | 读取成功；路径必须仍在根目录下，否则按 STO-10 拒绝 | 单元 | `LocalFileStorageServiceTest` |
+| STO-13 | 异常 | 读取不存在对象 | key 无对应文件 | `openStream(key)` | 抛出业务异常“存储对象不存在: key”，code=500；不返回 null | 单元 | `LocalFileStorageServiceTest` |
+| STO-14 | 边界 | 删除幂等 | 对象存在或不存在 | `delete(key)` 连续调用 | 存在时删除成功；不存在时 `deleteIfExists` 不报错；无返回值 | 单元 | `LocalFileStorageServiceTest` |
+| STO-15 | 边界 | 根目录创建失败不阻断启动 | base-dir 指向不可创建路径 | 启动应用 | 启动继续，日志 WARN“本地存储根目录创建失败”；首次写入时抛出明确业务异常 | 单元 | `LocalFileStorageServiceTest` |
+| STO-16 | 正常 | 切换 OSS 装配 | `wgh.rag.storage.type=oss` | 启动应用 | `AliyunOssFileStorageService` 生效；本地实现不装配；配置完整时日志输出 bucket/endpoint/keyPrefix | 单元 | `AliyunOssFileStorageServiceTest` |
+| STO-17 | 边界 | OSS 配置缺失仍可启动 | `type=oss`，endpoint/bucket/accessKeyId/accessKeySecret 缺失 | 启动应用 | 启动成功；WARN 列出缺失字段并提示补齐 `wgh.rag.storage.oss.*` | 单元 | `AliyunOssFileStorageServiceTest` |
+| STO-18 | 异常 | OSS 配置缺失时调用 | 同上 | 调用 store/openStream/delete/resolveUrl | 抛出业务异常“OSS 存储未配置完整，缺少: ...（wgh.rag.storage.oss.*）”，code=500 | 单元 | `AliyunOssFileStorageServiceTest` |
+| STO-19 | 正常 | OSS key 前缀归一化 | `key-prefix=wgh/rag/` 或 `\\wgh\\rag` | 调用 store 或 resolveUrl | 对象 key 前缀统一为 `wgh/rag/`；反斜杠转 `/`；首部 `/` 去除；已有尾 `/` 不重复添加 | 单元 | `AliyunOssFileStorageServiceTest` |
+| STO-20 | 正常 | 内外 endpoint 分工 | 同时配置 `endpoint` 公网与 `internal-endpoint` 内网 | 上传/读取与生成 URL | 服务端 put/get/delete/exists 使用内网 endpoint；签名/公网 URL 使用公网 endpoint | 单元 | `AliyunOssFileStorageServiceTest` |
+| STO-21 | 正常 | public-read 直链 | `public-read=true`，endpoint 含 scheme | `resolveUrl(key)` | 返回 `scheme://{bucket}.{host}/{objectKey}`；不生成签名 | 单元 | `AliyunOssFileStorageServiceTest` |
+| STO-22 | 正常 | 私有桶签名 URL | `public-read=false`，`signed-url-expire-minutes=0` | `resolveUrl(key)` | 返回签名 URL；有效期取 `max(1, 配置值)` 分钟，即至少 1 分钟 | 单元 | `AliyunOssFileStorageServiceTest` |
+| STO-23 | 异常 | OSS 重试耗尽 | `max-retries=3`，客户端每次抛异常 | 调用 store | 共尝试 3 次；每次 WARN；全部失败后抛“OSS 上传失败: ...”，code=500 | 单元 | `AliyunOssFileStorageServiceTest` |
+| STO-24 | 边界 | 上传失败清理 | OSS 上传失败 | 调用 store | 临时 spool 文件被删除；尝试静默删除已写入对象；若清理也失败仅 WARN，可能留下孤儿对象（见 §31 L-03） | 单元 | `AliyunOssFileStorageServiceTest` |
+| STO-25 | 异常 | OSS 删除失败 | OSS 不可达或权限不足 | 调用 delete | 重试耗尽后抛出“OSS 删除失败: ...”，code=500；调用方若已删库记录则对象可能成为孤儿（见 §31 L-03） | 单元 | `AliyunOssFileStorageServiceTest` |
+| STO-26 | 边界 | local 与 OSS 切换不迁移 | 先以 local 上传对象，再切换 `type=oss` 启动 | 读取旧对象 | 旧对象仍在本地磁盘，不会自动上传到 OSS；通过 OSS 存储读取返回“OSS 读取失败”或对象不存在；需人工迁移（见 §31 L-02） | 仅手工 | —（未实现迁移） |
+
+---
+
+## 29. 可观测性（Metrics / Request-Id / Actuator）
+
+> 实现：`RagMetrics`（Micrometer，指标前缀 `wgh.`）、`RequestIdFilter`（header `X-Request-Id`，MDC key `requestId`）、Spring Boot Actuator。
+> 端口：业务 `server.port=8080`；管理 `management.server.port=${WGH_MANAGEMENT_PORT:9090}`、`address=${WGH_MANAGEMENT_ADDRESS:0.0.0.0}`；业务端口不暴露 `/actuator`。
+
+| 编号 | 分类 | 名称 | 前置条件 | 操作步骤 | 预期结果（HTTP / 业务码） | 覆盖类型 | 自动化落点 |
+|------|------|------|---------|---------|--------------------------|---------|-----------|
+| OBS-01 | 正常 | 管理端口健康检查 | 应用启动，数据库可用 | `GET http://localhost:9090/actuator/health` | HTTP 200；JSON `status=UP`；`show-details=always` 时 components 含 db，db.status=UP | 接口 | `RequestIdFilterTest`、Actuator 配置 |
+| OBS-02 | 正常 | Prometheus 抓取 | 应用启动 | `GET http://localhost:9090/actuator/prometheus` | HTTP 200，`Content-Type` 为 Prometheus 文本；包含 `wgh_chat_requests_total`、`wgh_chat_duration_seconds` 等指标；所有指标带公共 `application` 标签（值为 `spring.application.name`） | 接口 | `RagMetrics`、`micrometer-registry-prometheus` |
+| OBS-03 | 安全 | 业务端口不暴露 Actuator | 应用启动 | `GET http://localhost:8080/actuator/health` | HTTP 404；管理端点未映射到业务端口；仅 9090 可访问 | 接口 | `application.yml` management.server.port |
+| OBS-04 | 正常 | 对话指标 | 完成一次 RAG 对话 | 抓取 `/actuator/prometheus` | `wgh_chat_requests_total{route="rag",share="false"}` 递增；`wgh_chat_duration_seconds` 直方图有样本；`wgh_chat_first_token_seconds` 有样本；错误时 `wgh_chat_errors_total{stage="..."}` 递增 | 单元 + 接口 | `RagMetricsTest` |
+| OBS-05 | 正常 | 检索指标 | 完成一次检索 | 抓取指标 | `wgh_retrieval_duration_seconds` 按 hybrid/rerank 维度有样本；`wgh_retrieval_hits_total` 按 hit=true 或 false 递增；检索异常时 `wgh_retrieval_errors_total` 递增 | 单元 | `RagMetricsTest` |
+| OBS-06 | 正常 | LLM 指标 | 完成一次 LLM 调用，返回 token 用量 | 抓取指标 | `wgh_llm_calls_total` 按 provider 递增；`wgh_llm_tokens_total` 按 type=input 或 output 仅正数累加；`wgh_llm_cost_total` 仅在 cost>0 时累加 | 单元 | `RagMetricsTest` |
+| OBS-07 | 正常 | 配额与限流指标 | 触发一次配额超限与一次限流拒绝 | 抓取指标 | `wgh_quota_exceeded_total` 按 type=chat 或 token 递增；`wgh_rate_limit_rejected_total` 按 dimension（share-token、api-key 等）递增 | 单元 | `RagMetricsTest` |
+| OBS-08 | 正常 | 工作流指标 | 运行工作流成功、失败、暂停 | 抓取指标 | `wgh_workflow_runs_total` 按 status=completed、failed、paused 递增；节点失败 `wgh_workflow_node_failures_total` 按 nodeType（LLM、TOOL、RETRIEVAL、AGENT 等）递增 | 单元 | `RagMetricsTest` |
+| OBS-09 | 边界 | 指标标签低基数 | 产生多次不同用户/窗口/会话的请求 | 检查 Prometheus 标签 | 标签仅限 route/share/stage/provider/type/dimension/status/nodeType 等有限枚举；不得出现 userId、windowId、sessionId 等高基数标签 | 代码审查 | `RagMetrics` 约定 |
+| OBS-10 | 正常 | 透传合法 Request-Id | 客户端携带 `X-Request-Id: abcdef12-3456` | 发起任意 API 请求 | 响应头原样返回该值；日志行包含 `[rid=abcdef12-3456]`；MDC key `requestId` 在请求期间可见 | 单元 | `RequestIdFilterTest` |
+| OBS-11 | 正常 | 缺失 Request-Id 自动生成 | 客户端不携带该头 | 发起请求 | 响应头 `X-Request-Id` 有值且为 UUID；日志使用同一值；不返回空 | 单元 | `RequestIdFilterTest` |
+| OBS-12 | 安全 | 非法 Request-Id 被替换 | 携带长度 7、长度 65、含空格、含 CRLF 或非 `[A-Za-z0-9._-]` 字符的值 | 发起请求 | 不直接采用非法值；生成新的 UUID；响应头与日志使用新值，避免日志注入 | 单元 | `RequestIdFilterTest` |
+| OBS-13 | 边界 | 异步与错误分发沿用同一 ID | 请求触发异步处理或错误分发 | 检查日志 | ASYNC/ERROR dispatch 仍使用请求 attribute 中的同一 requestId，不重复生成 | 单元 | `RequestIdFilterTest` |
+| OBS-14 | 边界 | MDC 清理 | 请求结束 | 同一线程处理下一个请求 | 上一个请求的 `requestId` 不残留；filter finally 恢复/清理 MDC | 单元 | `RequestIdFilterTest` |
+| OBS-15 | 正常 | 异常日志可关联 | 触发一次业务异常 | 查看应用日志与响应头 | 响应头含 `X-Request-Id`；异常日志行含 `[rid=同一值]`，可按 ID 串联请求 | 接口 | `logback-spring.xml`、`RequestIdFilter` |
+| OBS-16 | 运维 | 端口与地址可覆盖 | 设置 `WGH_MANAGEMENT_PORT=19090`、`WGH_MANAGEMENT_ADDRESS=127.0.0.1` | 重启应用并访问 | 管理端点仅监听 `127.0.0.1:19090`；业务 8080 不变；9090 不再监听 | 仅手工 | `application.yml` |
+
+---
+
+## 30. 补充用例（文档元数据 / 工作流 / 路由 / 标签版本）
+
+> 本章仅补充既有章节未覆盖的细节；§12 多 Agent（102 项）、§20 Prompt 模板（PT-01~16）已覆盖的能力不重复展开。
+> 多 Agent 权限边界与 Prompt 联想触发沿用 §12、§20 的既有编号；本节只补充文档元数据、工作流图校验、路由已知缺陷、标签/版本自动化落点。
+
+### 30.1 文档解析元数据
+
+> `ParsedDocument.metadata()` 固定键为 `title/pageCount/sheetCount/encoding/charCount`；值为 null 的字段不输出（`charCount` 始终输出）。
+
+| 编号 | 分类 | 名称 | 前置条件 | 操作步骤 | 预期结果（HTTP / 业务码） | 覆盖类型 | 自动化落点 |
+|------|------|------|---------|---------|--------------------------|---------|-----------|
+| FMT-18 | 正常 | PDF 元数据 | 2 页 PDF | 上传并 `GET /api/kb/files/{id}/preview` | HTTP 200 / code 200；`documentMetadata.pageCount=2`、`encoding=binary`、`charCount>0`；`title` 为推断标题；无 `sheetCount` | 单元 + 接口 | `DocumentFormatParserTest` |
+| FMT-19 | 正常 | DOCX 元数据 | 含标题与正文的 docx | 上传并预览 | HTTP 200 / code 200；`documentMetadata` 含 `title`（推断）、`encoding=binary`、`charCount>0`；无 `pageCount`、无 `sheetCount` | 单元 | `DocumentParserTest`、`ParsedDocument.infer` |
+| FMT-20 | 正常 | XLSX 元数据 | 含 3 个工作表的 xlsx | 上传并预览 | HTTP 200 / code 200；`documentMetadata.sheetCount=3`、`encoding=binary`、`charCount>0`；无 `pageCount` | 单元 | `DocumentFormatParserTest` |
+| FMT-21 | 正常 | JSON / HTML / EML 元数据 | 分别准备含 title 的 JSON、含 `<title>` 的 HTML、含 Subject 的 EML | 逐个上传并预览 | JSON：`title` 取 title 字段，`encoding=UTF-8`；HTML：`title` 取 `<title>`，`encoding` 取文档 charset；EML：`title` 取 Subject，`encoding=UTF-8`；三者均含 `charCount` | 单元 | `DocumentFormatParserTest` |
+| FMT-22 | 边界 | 空元数据不输出 | 无标题、无页数、无工作表、无编码的纯文本 | 预览 | HTTP 200 / code 200；`documentMetadata` 仅保留有值字段；`charCount` 始终存在；不输出 null 字段 | 单元 | `ParsedDocumentTest` |
+| FMT-23 | 正常 | 预览返回统一元数据 | 已上传且解析成功的文件 | `GET /api/kb/files/{id}/preview` | HTTP 200 / code 200；响应含正文/切片与 `documentMetadata`；解析失败文件返回失败状态与可读错误，不返回伪造元数据 | 接口 | `KnowledgeBaseController` |
+
+### 30.2 工作流 AGENT 节点与图校验
+
+| 编号 | 分类 | 名称 | 前置条件 | 操作步骤 | 预期结果（HTTP / 业务码） | 覆盖类型 | 自动化落点 |
+|------|------|------|---------|---------|--------------------------|---------|-----------|
+| WAG-08 | 正常 | 图校验接受 AGENT 节点 | 图为 START → AGENT → END | `POST /api/workflows/{id}/validate` 或保存 | HTTP 200 / code 200；校验通过；不再报“节点类型非法”（F3 已修复） | 单元 + 接口 | `GraphValidator`、`WorkflowController` |
+| WAG-09 | 边界 | AGENT 保存时不要求 modelId | 图含 AGENT 节点但未配置 modelId | 保存工作流 | HTTP 200 / code 200；保存成功；运行到该节点时由 `AgentNodeExecutor` 校验模型并返回运行时错误 | 单元 | `GraphValidator`、`AgentNodeExecutorTest` |
+| WAG-10 | 异常 | 未知节点类型 | 图含 `FOO` 节点 | 保存或校验 | HTTP 200 / code 2001（参数校验失败，具体映射待确认）；消息“节点类型非法”或等价提示；不落库 | 单元 | `GraphValidator` |
+| WAG-11 | 异常 | 节点必填项缺失 | LLM 缺 modelId、RETRIEVAL 缺 kbIds、TOOL 缺 toolId、CONDITION 缺 expression、WORKFLOW 缺 workflowId | 保存或校验 | HTTP 200 / code 2001（参数校验失败，具体映射待确认）；按类型返回明确缺失项错误；不落库 | 单元 | `GraphValidator` |
+| WAG-12 | 正常 | 保存并运行 AGENT 节点 | AGENT 配置 goal、modelId、maxSteps、timeoutMs、kbIds | 保存 → 运行 | 保存成功；SSE 产生 AGENT 步骤事件；最终 SUCCESS，输出文本与 stepCount 符合 §23 WAG-01~07 | 接口 | `WorkflowEditor.vue`、`AgentNodeExecutor` |
+
+### 30.3 模型路由与故障转移（含已知缺陷）
+
+| 编号 | 分类 | 名称 | 前置条件 | 操作步骤 | 预期结果（HTTP / 业务码） | 覆盖类型 | 自动化落点 |
+|------|------|------|---------|---------|--------------------------|---------|-----------|
+| ROUTE-06 | 已知缺陷 | 首 token 前异步失败不切链 | 路由组含优先级 1/2 两个模型；优先级 1 在建立流式连接阶段失败 | 发起对话 | 期望自动切到优先级 2 并答复成功；当前实际返回 SSE `event:error`，日志仅记录“使用模型 ... 原因: 首模型...”，未进入 `runWithFailover`。该用例标记 FAIL，缺陷编号 F4（§25）；优先链、回退、全失败等其余路由用例见 §22 ROUTE-01~05 | 仅手工 | `RagChatService#streamChatWithTools`、`ModelRouter` |
+
+### 30.4 标签与文件版本（自动化落点补正）
+
+> §21 原文标注“无自动化单测”已过时：`rag-kb` 已存在 `TagServiceTest`（7 项）与 `FileVersionServiceTest`。既有 TAG-01~04、VER-01~02 保留，本节补充其自动化落点与异常码。
+
+| 编号 | 分类 | 名称 | 前置条件 | 操作步骤 | 预期结果（HTTP / 业务码） | 覆盖类型 | 自动化落点 |
+|------|------|------|---------|---------|--------------------------|---------|-----------|
+| TAG-05 | 单元 | 标签 CRUD | 已登录 | 创建、更新、删除标签 | 创建成功；更新生效；删除后列表不可见；重名返回明确错误（HTTP 200 / code 2001 或 3002，按实际实现，待确认） | 单元 | `TagServiceTest` |
+| TAG-06 | 异常 | 绑定标签时知识库不存在 | kbId 不存在 | `PUT /api/kb/{kbId}/tags` | HTTP 200 / code 3001，message 含“知识库不存在” | 单元 | `TagServiceTest` |
+| TAG-07 | 异常 | 绑定标签时文件不存在 | fileId 不存在 | `PUT /api/kb/files/{fileId}/tags` | HTTP 200 / code 3001，message 含“文件不存在” | 单元 | `TagServiceTest` |
+| VER-03 | 正常 | 版本列表 | 文件已更新至少一次 | `GET /api/kb/files/{fileId}/versions` | HTTP 200 / code 200；返回版本号、时间、大小；按版本倒序；文件不存在时 3001 | 单元 + 接口 | `FileVersionServiceTest` |
+| VER-04 | 异常 | 文件不存在查版本 | fileId 不存在 | `GET /api/kb/files/{fileId}/versions` | HTTP 200 / code 3001，message 含“文件不存在” | 单元 | `FileVersionServiceTest` |
+
+---
+
+## 31. 限制与未覆盖
+
+> 以下能力经代码核对确认**未实现**或属于**已知缺陷/设计边界**，不编写为“应通过”的功能用例；相关测试应标记为 SKIP/FAIL 或按“仅手工 + 限制说明”记录。
+
+| 编号 | 限制 / 未覆盖项 | 现状说明 | 关联用例 | 建议 |
+|------|----------------|---------|---------|------|
+| L-01 | 大文件分片上传未实现 | 上传为单次 multipart，`max-file-size=50MB`、`max-request-size=50MB`；无分片、断点续传、秒传 | KB-16、STO-08 | 大文件场景只验证拒绝与友好提示，不编写分片成功用例 |
+| L-02 | local 与 OSS 切换不迁移旧对象 | 切换 `wgh.rag.storage.type` 仅改变新写入实现；历史本地对象不会自动上传 OSS，历史 OSS 对象也不会回落本地 | STO-26 | 切换前人工迁移；迁移完成前保留旧存储类型或双读 |
+| L-03 | OSS 删除失败可能留下孤儿对象 | 上传失败会尝试静默清理、删除调用失败会重试，但清理本身失败仅 WARN；若数据库记录已删除，对象可能残留 | STO-24、STO-25 | 增加对账任务/生命周期规则；删除失败记录补偿队列 |
+| L-04 | 多实例 JWKS 缓存不共享 | `JwksProvider` 缓存为进程内，TTL 300 秒；未知 kid 刷新最小间隔 30 秒；各实例独立拉取 | Auth-65~67 | 多实例部署时接受轮换延迟，或引入共享缓存/统一网关验签 |
+| L-05 | 无服务端 token 吊销列表 | 登出仅客户端丢弃 token；服务端无黑名单；token 在 `exp` 前仍有效（改密/禁用通过 `pv` 间接失效本地 token） | Auth-45 | 需要即时吊销时缩短 TTL 或引入 jti 黑名单 |
+| L-06 | 开发环境随机本地密钥 | 非 prod 且未配置 secret 时每次启动随机生成，重启后所有本地会话失效；多实例之间本地 token 互不认可 | Auth-44 | 开发联调也配置固定 secret；生产必须配置 |
+| L-07 | 故障转移不覆盖首 token 前异步失败 | 首模型在流式连接建立阶段失败经异步 `onError` 上报，未进入 `runWithFailover` 切链，直接返回 `event:error`（§25 F4） | ROUTE-06 | 以 CompletableFuture/CountDownLatch 将首 token 前失败纳入切链 |
+| L-08 | 业务错误统一 HTTP 200 + body code | 多数 Service 层 `BusinessException`（含 429、1004、3003、500）由全局异常处理返回 HTTP 200；真实 4xx 仅出现在过滤器层（401/403）、唯一键冲突（409/3002）与个别控制器显式映射（如删除绑定角色 409/3003） | QTA-04/05、RBA-11、RBA-22、STO-18 | 对外开放 API 建议单独映射真实 HTTP 状态（§25 F7） |
+| L-09 | Actuator 默认监听全部网卡 | `WGH_MANAGEMENT_ADDRESS` 默认 `0.0.0.0`，9090 默认对内网/容器开放 | OBS-01、OBS-16 | 生产绑定内网网卡并用防火墙限制来源 |
+| L-10 | 分享密码锁定按 token + IP | 失败计数 key 为 token + 客户端 IP；攻击者更换 IP 可绕过；同一 NAT 出口多个用户共享计数 | SHARE-16、PWD-01/02 | 需要更强防护时叠加账号/全局维度；合理配置可信代理 |
+| L-11 | OIDC 链路不校版本地用户状态 | 外部 token 验签通过后不查询本地用户 `status`/`expire_at`；本地禁用同名用户不影响外部 token | Auth-74 | 如需统一封禁，需在 OIDC 分支增加本地映射与状态校验 |
+| L-12 | 配额校验 DB 异常静默放行 | 用量查询/累加 DB 异常只 WARN，不阻断对话，可能导致超限期间仍可用 | QTA-17 | 可用性优先的既定设计；监控 `wgh_quota_exceeded_total` 与 DB 告警 |
+| L-13 | 权限项只读，无权限 CRUD | `/api/admin/permissions` 仅返回种子权限，无新增/删除权限接口；角色只能分配已有权限码 | RBA-24~28 | 新增权限需通过种子数据/迁移发布 |
+| L-14 | 体验账号接口只支持单角色 | `AdminUserController` 创建/修改每次替换为用户单个角色；底层 `wgh_user_role` 支持多角色但管理端未暴露 | RBA-32、RBA-36 | 多角色需求走数据库/后续接口扩展 |
+| L-15 | 本地存储不跨实例共享 | `local` 类型写入各实例本地磁盘；多实例部署时上传与读取可能落到不同实例 | STO-01~15 | 多实例生产使用 OSS 或共享存储 |
+| L-16 | 模型路由/故障转移无自动化单测 | 现有测试未覆盖 `ModelRouter#resolveChain` 与首 token 失败切链；仅手工验证 | ROUTE-01~10 | 补充 `ModelRouterTest` 与流式失败切链集成测试 |
+| L-17 | 登出/改密/重置后旧 token 语义依赖 pv | 本地 token 通过 `pv` 比对失效；外部 OIDC token 无 pv 概念，改密/重置不影响其有效性 | Auth-35、Auth-50、Auth-56 | 外部 token 生命周期由 IdP 管理；必要时缩短 IdP token TTL |
+| L-18 | 缺少大文件病毒扫描/内容安全检测 | 上传仅做格式、大小、空文件校验；无恶意内容扫描 | KB-08~17、STO-01~26 | 按合规要求接入扫描服务（当前未实现） |
