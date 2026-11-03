@@ -95,6 +95,31 @@ class LocalTokenServiceTest {
     }
 
     @Test
+    @DisplayName("生产 profile 未配置 jwt-secret 时启动校验失败（fail-closed）")
+    void productionProfileWithoutSecretFailsFast() {
+        LocalAuthProperties prod = new LocalAuthProperties();
+        prod.setJwtSecret("");
+        LocalTokenService service = new LocalTokenService(prod);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "activeProfiles", "prod");
+
+        assertThatThrownBy(service::validateSecretConfiguration)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("wgh.auth.local.jwt-secret");
+    }
+
+    @Test
+    @DisplayName("开发 profile 未配置 jwt-secret 时仅告警不阻断启动")
+    void devProfileWithoutSecretOnlyWarns() {
+        LocalAuthProperties dev = new LocalAuthProperties();
+        dev.setJwtSecret("");
+        LocalTokenService service = new LocalTokenService(dev);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "activeProfiles", "dev");
+
+        service.validateSecretConfiguration();
+        assertThat(service.isLocalToken("dummy")).isFalse();
+    }
+
+    @Test
     @DisplayName("使用相同密钥但 issuer 不匹配的凭证被拒绝")
     void wrongIssuerRejected() {
         LocalAuthProperties other = new LocalAuthProperties();

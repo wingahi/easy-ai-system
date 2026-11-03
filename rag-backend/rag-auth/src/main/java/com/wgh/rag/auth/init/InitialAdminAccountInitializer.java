@@ -44,15 +44,14 @@ public class InitialAdminAccountInitializer implements ApplicationRunner {
 
     @Override
     public void run(ApplicationArguments args) {
-        if (!StringUtils.hasText(initAdminPassword)) {
-            log.error("未注入初始管理员口令（WGH_INIT_ADMIN_PASSWORD），本次启动不创建默认管理员；"
-                    + "如需初始化请设置该环境变量后重启");
-            return;
-        }
-
         WghUser existing = findAdmin();
         if (existing != null) {
             log.info("初始管理员已存在（username={}），不覆盖其口令", ADMIN_USERNAME);
+            return;
+        }
+        if (!StringUtils.hasText(initAdminPassword)) {
+            log.error("未注入初始管理员口令（WGH_INIT_ADMIN_PASSWORD）且库中不存在 admin，本次启动不创建默认管理员；"
+                    + "如需初始化请设置该环境变量后重启");
             return;
         }
 
