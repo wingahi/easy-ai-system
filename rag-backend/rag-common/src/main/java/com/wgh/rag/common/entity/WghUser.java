@@ -33,9 +33,9 @@ public class WghUser extends BaseEntity {
     private String email;
 
     /**
-     * 租户 ID
+     * 租户 ID（schema 定义为 VARCHAR(64)，如 "default"）
      */
-    private Long tenantId;
+    private String tenantId;
 
     /**
      * 状态：1-激活，0-禁用

@@ -1,4 +1,4 @@
-package com.wgh.rag.common.security;
+package com.wgh.rag.auth.security;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;

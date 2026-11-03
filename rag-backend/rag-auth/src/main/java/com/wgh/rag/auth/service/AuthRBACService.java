@@ -1,16 +1,19 @@
-package com.wgh.rag.controller;
+package com.wgh.rag.auth.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wgh.rag.common.entity.WghUser;
 import com.wgh.rag.common.exception.BusinessException;
+import com.wgh.rag.common.result.ResultCode;
 import com.wgh.rag.common.entity.WghRole;
 import com.wgh.rag.common.mapper.RoleMapper;
 import com.wgh.rag.common.mapper.UserMapper;
 import com.wgh.rag.common.mapper.UserRoleMapper;
 import com.wgh.rag.common.mapper.RolePermissionMapper;
-import com.wgh.rag.controller.dto.UserResult;
+import com.wgh.rag.common.security.LoginUser;
+import com.wgh.rag.auth.dto.UserResult;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -31,6 +34,7 @@ public class AuthRBACService {
     private final RoleMapper roleMapper;
     private final UserRoleMapper userRoleMapper;
     private final RolePermissionMapper rolePermissionMapper;
+    private final PasswordEncoder passwordEncoder;
 
     /**
      * OIDC issuer → 默认 role_code 映射。
@@ -48,8 +52,8 @@ public class AuthRBACService {
     /**
      * 用户名密码登录。
      * <p>
-     * 先查 wgh_user 表，没查到 fallback 到硬编码 admin/admin；
-     * 密码比对暂时用 {@code rawPassword == passwordHash} 过渡，后续升级 BCrypt。
+     * 仅校验数据库用户，密码使用 BCrypt 比对；无数据库记录或密码不匹配一律返回统一错误，
+     * 不再提供任何硬编码账号兜底。
      */
     @Transactional(readOnly = true)
     public UserResult login(String username, String rawPassword) {
@@ -60,20 +64,12 @@ public class AuthRBACService {
         WghUser user = userMapper.selectOne(
                 new LambdaQueryWrapper<WghUser>().eq(WghUser::getUsername, username));
 
-        if (user == null) {
-            // fallback：硬编码 admin/admin（过渡方案，数据库建号后可移除）
-            if ("admin".equals(username) && "admin".equals(rawPassword)) {
-                return buildHardcodedAdmin();
-            }
-            throw new BusinessException("用户名或密码错误");
-        }
-
-        // 密码校验（过渡方案：直接字符串相等，后续升级 BCrypt）
-        if (!Objects.equals(rawPassword, user.getPasswordHash())) {
-            throw new BusinessException("用户名或密码错误");
+        if (user == null || !StringUtils.hasText(user.getPasswordHash())
+                || !passwordEncoder.matches(rawPassword, user.getPasswordHash())) {
+            throw new BusinessException(ResultCode.LOGIN_FAILED, "用户名或密码错误");
         }
         if (user.getStatus() != null && user.getStatus() != 1) {
-            throw new BusinessException("账号已被禁用");
+            throw new BusinessException(ResultCode.LOGIN_FAILED, "账号已被禁用");
         }
 
         return assembleUserResult(user);
@@ -120,32 +116,33 @@ public class AuthRBACService {
 
     // ---------- 内部工具 ----------
 
-    /** 查询用户的角色编码（去重） */
+    /** 查询用户绑定的角色编码（去重） */
     private Set<String> collectRoles(Long userId) {
         List<String> codes = userRoleMapper.selectRoleCodesByUserId(userId);
         return codes == null ? new HashSet<>() : new HashSet<>(codes);
     }
 
-    /** 查询用户的权限编码（去重，经由 user_role → role_permission → permission） */
-    private Set<String> collectPermissions(Long userId) {
-        List<String> codes = rolePermissionMapper.selectPermCodesByUserId(userId);
+    /** 按角色编码查询权限（去重，经由 role → role_permission → permission） */
+    private Set<String> collectPermissions(Set<String> roleCodes) {
+        if (roleCodes == null || roleCodes.isEmpty()) {
+            return new HashSet<>();
+        }
+        List<String> codes = rolePermissionMapper.selectPermCodesByRoleCodes(roleCodes);
         return codes == null ? new HashSet<>() : new HashSet<>(codes);
     }
 
-    /** 从数据库用户组装完整的登录结果 */
+    /**
+     * 从数据库用户组装完整的登录结果。
+     * <p>
+     * 角色为空时按默认普通用户角色（viewer）处理，其权限仍由数据库 role → permission 匹配得出。
+     */
     private UserResult assembleUserResult(WghUser user) {
         Set<String> roles = collectRoles(user.getId());
-        Set<String> permissions = collectPermissions(user.getId());
+        if (roles.isEmpty()) {
+            roles.add(LoginUser.DEFAULT_ROLE);
+        }
+        Set<String> permissions = collectPermissions(roles);
         return new UserResult(user.getId(), user.getUsername(), roles, permissions);
-    }
-
-    /** 硬编码 admin 兜底（过渡方案，无数据库记录时使用） */
-    private UserResult buildHardcodedAdmin() {
-        return new UserResult(
-                1L,
-                "admin",
-                new HashSet<>(Arrays.asList("admin")),
-                new HashSet<>(Arrays.asList("*:*")));
     }
 
     /** 根据 OIDC 信息自动建号并分配默认角色 */

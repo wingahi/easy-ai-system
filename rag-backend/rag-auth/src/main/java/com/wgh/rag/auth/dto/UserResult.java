@@ -1,4 +1,4 @@
-package com.wgh.rag.controller.dto;
+package com.wgh.rag.auth.dto;
 
 import lombok.AllArgsConstructor;
 import lombok.Data;

@@ -1,4 +1,4 @@
-package com.wgh.rag.common.security;
+package com.wgh.rag.auth.security;
 
 import io.jsonwebtoken.*;
 import io.jsonwebtoken.security.Keys;
@@ -8,9 +8,13 @@ import org.springframework.stereotype.Component;
 
 import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * JWT 工具类
@@ -30,13 +34,21 @@ public class JwtUtils {
     }
 
     /**
-     * 生成 Token
+     * 生成 Token（不带 roles，兼容旧调用）
      */
     public String generateToken(Long userId, String username) {
+        return generateToken(userId, username, null);
+    }
+
+    /**
+     * 生成 Token（携带 roles claim）
+     */
+    public String generateToken(Long userId, String username, Collection<String> roles) {
         Map<String, Object> claims = new HashMap<>();
         claims.put("userId", userId);
         claims.put("username", username);
-        
+        claims.put("roles", roles == null ? new ArrayList<>() : new ArrayList<>(roles));
+
         return Jwts.builder()
                 .subject(username)
                 .claims(claims)
@@ -87,5 +99,26 @@ public class JwtUtils {
     public String getUsernameFromToken(String token) {
         Claims claims = parseToken(token);
         return claims.getSubject();
+    }
+
+    /**
+     * 从 Token 中获取 roles claim；缺失或类型异常时返回空集合（由调用方回退默认角色）
+     */
+    public Set<String> getRolesFromToken(String token) {
+        Set<String> roles = new HashSet<>();
+        try {
+            Claims claims = parseToken(token);
+            Object raw = claims.get("roles");
+            if (raw instanceof Collection<?> values) {
+                for (Object value : values) {
+                    if (value != null) {
+                        roles.add(String.valueOf(value));
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("解析Token roles失败: {}", e.getMessage());
+        }
+        return roles;
     }
 }

@@ -60,3 +60,67 @@ BEGIN
         ALTER TABLE wgh_m_agent_step ALTER COLUMN run_id TYPE VARCHAR(64) USING run_id::text;
     END IF;
 END $$;
+
+-- ========================================================
+-- RBAC 种子数据（密码以 BCrypt 密文入库）
+-- 管理员/编辑者/查看者三个账号明文口令均为 admin，
+-- password_hash 为 BCrypt($2a$10$...) 密文，可直接用于登录验证。
+-- 全部语句幂等，可重复执行。
+-- ========================================================
+INSERT INTO wgh_user (username, password_hash, name, tenant_id, status) VALUES
+('admin',  '$2a$10$bv5PlEFVMMCb.FscWlz5Z.D4dM5fBNkSXZYVpUTp1cB9LllcJICQa', '管理员', 'default', 1),
+('editor', '$2a$10$bv5PlEFVMMCb.FscWlz5Z.D4dM5fBNkSXZYVpUTp1cB9LllcJICQa', '编辑者', 'default', 1),
+('viewer', '$2a$10$bv5PlEFVMMCb.FscWlz5Z.D4dM5fBNkSXZYVpUTp1cB9LllcJICQa', '查看者', 'default', 1)
+ON CONFLICT (username) DO NOTHING;
+
+INSERT INTO wgh_role (role_code, role_name, description) VALUES
+('admin',  '管理员', '拥有全部模块权限'),
+('editor', '编辑者', '知识库编辑、工作流编辑与工具/Prompt 管理'),
+('viewer', '查看者', '默认普通用户，仅只读使用')
+ON CONFLICT (role_code) DO NOTHING;
+
+INSERT INTO wgh_permission (perm_code, perm_name, resource_type) VALUES
+('kb:read',       '检索知识库',      'KNOWLEDGE_BASE'),
+('kb:write',      '管理知识库',      'KNOWLEDGE_BASE'),
+('kb:delete',     '删除知识库',      'KNOWLEDGE_BASE'),
+('agent:use',     '使用 Agent',      'AGENT'),
+('workflow:use',  '使用工作流',      'WORKFLOW'),
+('workflow:edit', '编辑工作流',      'WORKFLOW'),
+('tool:use',      '使用工具',        'TOOL'),
+('prompt:edit',   '管理Prompt模板',  'PROMPT'),
+('model:manage',  '管理模型',        'MODEL'),
+('audit:view',    '查看审计日志',    'AUDIT')
+ON CONFLICT (perm_code) DO NOTHING;
+
+-- 账号 → 角色（账号名与角色编码一一对应作为种子约定）
+INSERT INTO wgh_user_role (user_id, role_id)
+SELECT u.id, r.id
+FROM wgh_user u
+JOIN wgh_role r ON r.role_code = u.username
+WHERE u.username IN ('admin', 'editor', 'viewer')
+ON CONFLICT DO NOTHING;
+
+-- admin 角色拥有全部模块权限
+INSERT INTO wgh_role_permission (role_id, permission_id)
+SELECT r.id, p.id
+FROM wgh_role r
+CROSS JOIN wgh_permission p
+WHERE r.role_code = 'admin'
+ON CONFLICT DO NOTHING;
+
+-- editor 角色权限
+INSERT INTO wgh_role_permission (role_id, permission_id)
+SELECT r.id, p.id
+FROM wgh_role r
+JOIN wgh_permission p ON p.perm_code IN
+    ('kb:read', 'kb:write', 'agent:use', 'workflow:use', 'workflow:edit', 'tool:use', 'prompt:edit')
+WHERE r.role_code = 'editor'
+ON CONFLICT DO NOTHING;
+
+-- viewer（默认普通用户）角色权限
+INSERT INTO wgh_role_permission (role_id, permission_id)
+SELECT r.id, p.id
+FROM wgh_role r
+JOIN wgh_permission p ON p.perm_code IN ('kb:read', 'agent:use', 'workflow:use')
+WHERE r.role_code = 'viewer'
+ON CONFLICT DO NOTHING;

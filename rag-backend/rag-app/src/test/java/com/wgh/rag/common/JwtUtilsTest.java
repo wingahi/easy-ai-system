@@ -1,6 +1,6 @@
 package com.wgh.rag.common;
 
-import com.wgh.rag.common.security.JwtUtils;
+import com.wgh.rag.auth.security.JwtUtils;
 import io.jsonwebtoken.Claims;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -90,6 +90,17 @@ class JwtUtilsTest {
         String token = jwtUtils.generateToken(99L, "extract-user");
         assertThat(jwtUtils.getUserIdFromToken(token)).isEqualTo(99L);
         assertThat(jwtUtils.getUsernameFromToken(token)).isEqualTo("extract-user");
+    }
+
+    /** 验证生成的 Token claims 中携带 roles 角色列表，且可被 getRolesFromToken 解析。 */
+    @Test
+    @DisplayName("Token roles claim - 携带角色列表")
+    void generateToken_withRoles_containsRolesClaim() {
+        String token = jwtUtils.generateToken(7L, "viewer", java.util.List.of("viewer"));
+
+        Claims claims = jwtUtils.parseToken(token);
+        assertThat(claims.get("roles", java.util.List.class)).containsExactly("viewer");
+        assertThat(jwtUtils.getRolesFromToken(token)).containsExactly("viewer");
     }
 
     /** 验证不同用户生成的 Token 互不相同。 */

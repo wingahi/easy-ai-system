@@ -2,11 +2,11 @@ package com.wgh.rag.quota;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.wgh.rag.auth.config.SecurityConfig;
+import com.wgh.rag.auth.security.JwtAuthenticationFilter;
+import com.wgh.rag.auth.security.JwtUtils;
 import com.wgh.rag.common.config.MetaObjectHandlerImpl;
-import com.wgh.rag.common.config.SecurityConfig;
 import com.wgh.rag.common.exception.GlobalExceptionHandler;
-import com.wgh.rag.common.security.JwtAuthenticationFilter;
-import com.wgh.rag.common.security.JwtUtils;
 import com.wgh.rag.controller.QuotaAdminController;
 import com.wgh.rag.controller.QuotaUserController;
 import com.wgh.rag.quota.properties.QuotaProperties;

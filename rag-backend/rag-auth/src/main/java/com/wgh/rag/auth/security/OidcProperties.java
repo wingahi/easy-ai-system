@@ -1,4 +1,4 @@
-package com.wgh.rag.common.security;
+package com.wgh.rag.auth.security;
 
 import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;

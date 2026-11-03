@@ -1,4 +1,4 @@
-package com.wgh.rag.common.config;
+package com.wgh.rag.auth.config;
 
 import org.springframework.context.annotation.Configuration;
 

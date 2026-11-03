@@ -1,9 +1,9 @@
 package com.wgh.rag.controller;
 
+import com.wgh.rag.auth.dto.UserResult;
+import com.wgh.rag.auth.security.JwtUtils;
+import com.wgh.rag.auth.service.AuthRBACService;
 import com.wgh.rag.common.result.Result;
-import com.wgh.rag.common.security.JwtUtils;
-import com.wgh.rag.common.security.RequiresPermission;
-import com.wgh.rag.controller.dto.UserResult;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
@@ -32,7 +32,7 @@ public class AuthController {
         String password = params.get("password");
 
         UserResult user = authRBACService.login(username, password);
-        String token = jwtUtils.generateToken(user.getUserId(), user.getUsername());
+        String token = jwtUtils.generateToken(user.getUserId(), user.getUsername(), user.getRoles());
 
         Map<String, Object> data = new HashMap<>();
         data.put("token", token);

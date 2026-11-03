@@ -7,6 +7,7 @@ import com.wgh.rag.quota.entity.QuotaUsage;
 import com.wgh.rag.quota.service.QuotaService;
 import com.wgh.rag.common.result.PageResult;
 import com.wgh.rag.common.result.Result;
+import com.wgh.rag.common.security.RequiresPermission;
 import com.wgh.rag.common.security.SecurityUtils;
 import com.wgh.rag.common.service.AuditLogService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -30,6 +31,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/admin")
 @RequiredArgsConstructor
+@RequiresPermission("audit:view")
 public class AdminStatsController {
 
     private final AuditLogService auditLogService;

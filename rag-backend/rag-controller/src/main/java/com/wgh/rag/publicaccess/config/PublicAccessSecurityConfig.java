@@ -2,7 +2,7 @@ package com.wgh.rag.publicaccess.config;
 
 import com.wgh.rag.common.result.Result;
 import com.wgh.rag.common.result.ResultCode;
-import com.wgh.rag.common.security.JwtAuthenticationFilter;
+import com.wgh.rag.auth.security.JwtAuthenticationFilter;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
@@ -39,6 +39,7 @@ public class PublicAccessSecurityConfig {
     private final CorsConfigurationSource corsConfigurationSource;
 
     @Bean
+    @Order(1)
     public SecurityFilterChain publicAccessSecurityFilterChain(HttpSecurity http) throws Exception {
         http
                 .securityMatcher("/api/public/**", "/api/open/**")

@@ -1,6 +1,9 @@
-package com.wgh.rag.common.security;
+package com.wgh.rag.auth.security;
 
 import com.wgh.rag.common.exception.BusinessException;
+import com.wgh.rag.common.result.ResultCode;
+import com.wgh.rag.common.security.LoginUser;
+import com.wgh.rag.common.security.RequiresPermission;
 import lombok.extern.slf4j.Slf4j;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;
@@ -42,7 +45,7 @@ public class PermissionAspect {
 
         LoginUser loginUser = LoginUser.get();
         if (loginUser == null) {
-            throw new BusinessException("无权限访问（未登录）");
+            throw new BusinessException(ResultCode.PERMISSION_DENIED, "无权限访问（未登录）");
         }
 
         Set<String> userPermissions = loginUser.getPermissions() == null
@@ -63,7 +66,7 @@ public class PermissionAspect {
         if (!pass) {
             log.warn("权限校验失败：user={}, required={}, mode={}, has={}",
                     loginUser.getUsername(), required, anno.mode(), userPermissions);
-            throw new BusinessException("无权限访问：" + Arrays.toString(required));
+            throw new BusinessException(ResultCode.PERMISSION_DENIED, "无权限访问：" + Arrays.toString(required));
         }
 
         return pjp.proceed();

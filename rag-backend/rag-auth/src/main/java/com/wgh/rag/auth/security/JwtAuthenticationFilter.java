@@ -1,10 +1,11 @@
-package com.wgh.rag.common.security;
+package com.wgh.rag.auth.security;
 
 import com.wgh.rag.common.entity.WghUser;
 import com.wgh.rag.common.exception.BusinessException;
 import com.wgh.rag.common.mapper.RolePermissionMapper;
 import com.wgh.rag.common.mapper.UserMapper;
 import com.wgh.rag.common.mapper.UserRoleMapper;
+import com.wgh.rag.common.security.LoginUser;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -95,13 +96,20 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             }
 
             Set<String> roles = new HashSet<>();
-            Set<String> permissions = new HashSet<>();
             if (user != null) {
                 List<String> roleCodes = userRoleMapper.selectRoleCodesByUserId(userId);
-                List<String> permCodes = rolePermissionMapper.selectPermCodesByUserId(userId);
                 if (roleCodes != null) roles.addAll(roleCodes);
-                if (permCodes != null) permissions.addAll(permCodes);
             }
+            // 数据库查不到角色时回退 token 中的 roles claim，仍为空则按默认普通用户角色处理
+            if (roles.isEmpty()) {
+                roles.addAll(jwtUtils.getRolesFromToken(token));
+            }
+            if (roles.isEmpty()) {
+                roles.add(LoginUser.DEFAULT_ROLE);
+            }
+            // 权限始终按数据库 role → permission 匹配结果加载，不做硬编码特权绕过
+            List<String> permCodes = rolePermissionMapper.selectPermCodesByRoleCodes(roles);
+            Set<String> permissions = permCodes == null ? new HashSet<>() : new HashSet<>(permCodes);
 
             LoginUser loginUser = new LoginUser();
             loginUser.setUserId(userId);

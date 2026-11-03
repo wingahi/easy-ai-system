@@ -14,6 +14,9 @@ public class LoginUser {
     private Set<String> roles;
     private Set<String> permissions;
 
+    /** 角色缺失时的默认普通用户角色 */
+    public static final String DEFAULT_ROLE = "viewer";
+
     public static final ThreadLocal<LoginUser> CONTEXT = new ThreadLocal<>();
 
     public static void set(LoginUser user) {

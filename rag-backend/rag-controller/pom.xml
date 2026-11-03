@@ -16,6 +16,10 @@
     <dependencies>
         <dependency>
             <groupId>com.wgh</groupId>
+            <artifactId>rag-auth</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.wgh</groupId>
             <artifactId>rag-chat</artifactId>
         </dependency>
         <dependency>

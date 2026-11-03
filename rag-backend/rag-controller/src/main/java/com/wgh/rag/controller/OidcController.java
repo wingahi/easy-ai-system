@@ -1,10 +1,11 @@
 package com.wgh.rag.controller;
 
+import com.wgh.rag.auth.dto.UserResult;
+import com.wgh.rag.auth.security.JwtUtils;
+import com.wgh.rag.auth.security.OidcProperties;
+import com.wgh.rag.auth.security.OidcService;
+import com.wgh.rag.auth.service.AuthRBACService;
 import com.wgh.rag.common.exception.BusinessException;
-import com.wgh.rag.common.security.JwtUtils;
-import com.wgh.rag.common.security.OidcProperties;
-import com.wgh.rag.common.security.OidcService;
-import com.wgh.rag.controller.dto.UserResult;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
@@ -93,7 +94,7 @@ public class OidcController {
                     claims.issuer, claims.subject, claims.email, claims.name);
 
             // 签发本地 JWT
-            String token = jwtUtils.generateToken(user.getUserId(), user.getUsername());
+            String token = jwtUtils.generateToken(user.getUserId(), user.getUsername(), user.getRoles());
 
             data.put("token", token);
             data.put("userId", user.getUserId());

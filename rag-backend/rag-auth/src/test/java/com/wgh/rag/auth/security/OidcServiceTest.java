@@ -1,4 +1,4 @@
-package com.wgh.rag.common.security;
+package com.wgh.rag.auth.security;
 
 import com.wgh.rag.common.exception.BusinessException;
 import io.jsonwebtoken.Jwts;
