@@ -33,6 +33,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { changePassword, getMe } from '../../api'
 import { useUserStore } from '../../stores/user'
+import { STORAGE_KEYS } from '../../utils/constants'
 
 const router = useRouter()
 const route = useRoute()
@@ -76,7 +77,7 @@ const submit = async () => {
     await changePassword({ oldPassword: form.oldPassword, newPassword: form.newPassword })
     ElMessage.success('密码修改成功')
     userStore.passwordMustChange = false
-    localStorage.setItem('wgh_pwd_must_change', '0')
+    localStorage.setItem(STORAGE_KEYS.PWD_MUST_CHANGE, '0')
     // 重新拉取用户信息，确保权限/标记与后端一致
     const res = await getMe()
     userStore.hydrate(res.data)

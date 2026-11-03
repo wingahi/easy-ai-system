@@ -2,6 +2,7 @@ import axios from 'axios'
 import { ElMessage } from 'element-plus'
 import router from '../router'
 import { useUserStore } from '../stores/user'
+import { STORAGE_KEYS, BUSINESS_CODE, HTTP_STATUS, AUTH_HEADER, BEARER_PREFIX } from './constants'
 
 const request = axios.create({
   baseURL: '/api',
@@ -10,9 +11,9 @@ const request = axios.create({
 
 // 请求拦截器 - 携带 Bearer 凭证（本地登录的会话凭证或外部 IdP token，统一存 wgh_token）
 request.interceptors.request.use(config => {
-  const token = localStorage.getItem('wgh_token')
+  const token = localStorage.getItem(STORAGE_KEYS.TOKEN)
   if (token && !config.url.startsWith('/share')) {
-    config.headers['Authorization'] = `Bearer ${token}`
+    config.headers[AUTH_HEADER] = `${BEARER_PREFIX}${token}`
   }
   return config
 })
@@ -24,16 +25,16 @@ request.interceptors.request.use(config => {
  */
 const handleAuthCode = (code, message) => {
   const userStore = useUserStore()
-  if (code === 1006) {
+  if (code === BUSINESS_CODE.PASSWORD_CHANGE_REQUIRED) {
     ElMessage.warning(message || '请先修改密码')
     if (router.currentRoute.value.path !== '/change-password') {
       router.push({ path: '/change-password', query: { redirect: router.currentRoute.value.fullPath } })
     }
     return true
   }
-  if (code === 1001 || code === 1002 || code === 1007) {
+  if (code === BUSINESS_CODE.UNAUTHORIZED || code === BUSINESS_CODE.TOKEN_EXPIRED || code === BUSINESS_CODE.SESSION_INVALID) {
     userStore.logout()
-    ElMessage.warning(code === 1002 ? (message || '登录已过期，请重新登录') : (message || '请先登录'))
+    ElMessage.warning(code === BUSINESS_CODE.TOKEN_EXPIRED ? (message || '登录已过期，请重新登录') : (message || '请先登录'))
     if (router.currentRoute.value.path !== '/login') {
       router.push('/login')
     }
@@ -46,7 +47,7 @@ const handleAuthCode = (code, message) => {
 request.interceptors.response.use(
   response => {
     const res = response.data
-    if (res.code !== 200) {
+    if (res.code !== BUSINESS_CODE.SUCCESS) {
       if (!handleAuthCode(res.code, res.message)) {
         ElMessage.error(res.message || '请求失败')
       }
@@ -58,7 +59,7 @@ request.interceptors.response.use(
     const code = error.response?.data?.code
     const message = error.response?.data?.message
     if (!handleAuthCode(code, message)) {
-      if (error.response?.status === 401 || error.response?.status === 403) {
+      if (error.response?.status === HTTP_STATUS.UNAUTHORIZED || error.response?.status === HTTP_STATUS.FORBIDDEN) {
         ElMessage.error(message || '无权访问')
       } else {
         ElMessage.error(message || error.message || '网络错误')

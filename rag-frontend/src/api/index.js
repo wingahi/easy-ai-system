@@ -1,5 +1,6 @@
 // API 统一入口 - 按需引入
 import request from '../utils/request'
+import { STORAGE_KEYS } from '../utils/constants'
 
 // 认证：本地管理员/体验账号密码登录（返回内部会话凭证）；getMe 查询当前凭证用户信息
 export const login = (data) => request.post('/auth/login', data)
@@ -97,7 +98,7 @@ export const promptTemplateSuggest = (params) => request.get('/prompt-templates/
 
 // SSE 流式聊天（需要原生 fetch）
 export function streamChatApi(windowId, message, sessionId, imageUrls) {
-  const token = localStorage.getItem('wgh_token')
+  const token = localStorage.getItem(STORAGE_KEYS.TOKEN)
   const controller = new AbortController()
 
   const doStream = async (onEvent, onDone, onError) => {
@@ -177,7 +178,7 @@ export function streamChatApi(windowId, message, sessionId, imageUrls) {
 
 // 分享页面 SSE（需登录，userIdentifier 取当前登录用户名）
 export function streamShareApi(shareToken, message, sessionId) {
-  const token = localStorage.getItem('wgh_token')
+  const token = localStorage.getItem(STORAGE_KEYS.TOKEN)
   const controller = new AbortController()
 
   const doStream = async (onEvent, onDone, onError) => {
@@ -308,7 +309,7 @@ export const workflowInstantiate = (templateId, name) =>
 
 /** 通用 SSE 读取（POST JSON） */
 function streamPost(url, body, onEvent, onDone, onError) {
-  const token = localStorage.getItem('wgh_token')
+  const token = localStorage.getItem(STORAGE_KEYS.TOKEN)
   const controller = new AbortController()
 
   const doStream = async () => {
@@ -458,7 +459,7 @@ export const multiAgentCancelRun = (runId) => request.post(`/agent-multi/runs/${
 
 /** 通用 SSE 读取（GET，带 JWT） */
 function streamGetRaw(url, onEvent, onDone, onError) {
-  const token = localStorage.getItem('wgh_token')
+  const token = localStorage.getItem(STORAGE_KEYS.TOKEN)
   const controller = new AbortController()
 
   const doStream = async () => {
@@ -573,10 +574,10 @@ export const kbFileRollback = (fileId, version) => request.post(`/kb/files/${fil
 
 /** 访客标识：localStorage 持久化，用于隔离匿名会话 */
 export function getVisitorId() {
-  let id = localStorage.getItem('wgh_visitor_id')
+  let id = localStorage.getItem(STORAGE_KEYS.VISITOR_ID)
   if (!id) {
     id = 'v' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36)
-    localStorage.setItem('wgh_visitor_id', id)
+    localStorage.setItem(STORAGE_KEYS.VISITOR_ID, id)
   }
   return id
 }

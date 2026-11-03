@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia'
+import { STORAGE_KEYS } from '../utils/constants'
 
 /**
  * 当前用户状态。
@@ -9,12 +10,12 @@ import { defineStore } from 'pinia'
  */
 export const useUserStore = defineStore('user', {
   state: () => ({
-    token: localStorage.getItem('wgh_token') || '',
-    username: localStorage.getItem('wgh_username') || '',
-    userId: localStorage.getItem('wgh_userId') || '',
-    roles: JSON.parse(localStorage.getItem('wgh_roles') || '[]'),
+    token: localStorage.getItem(STORAGE_KEYS.TOKEN) || '',
+    username: localStorage.getItem(STORAGE_KEYS.USERNAME) || '',
+    userId: localStorage.getItem(STORAGE_KEYS.USER_ID) || '',
+    roles: JSON.parse(localStorage.getItem(STORAGE_KEYS.ROLES) || '[]'),
     // 本地账号被要求先改密（刷新后沿用上次登录返回的标记）
-    passwordMustChange: localStorage.getItem('wgh_pwd_must_change') === '1',
+    passwordMustChange: localStorage.getItem(STORAGE_KEYS.PWD_MUST_CHANGE) === '1',
     // 是否已用当前 token 拉取过 /auth/me（页面刷新后需要重新 hydrate）
     hydrated: false
   }),
@@ -31,9 +32,9 @@ export const useUserStore = defineStore('user', {
       const normalized = (token || '').trim().replace(/^Bearer\s+/i, '')
       this.token = normalized
       if (normalized) {
-        localStorage.setItem('wgh_token', normalized)
+        localStorage.setItem(STORAGE_KEYS.TOKEN, normalized)
       } else {
-        localStorage.removeItem('wgh_token')
+        localStorage.removeItem(STORAGE_KEYS.TOKEN)
       }
     },
 
@@ -44,10 +45,10 @@ export const useUserStore = defineStore('user', {
       this.roles = Array.isArray(data.roles) ? data.roles : []
       this.passwordMustChange = data.passwordMustChange === true
       this.hydrated = true
-      localStorage.setItem('wgh_username', this.username)
-      localStorage.setItem('wgh_userId', String(this.userId))
-      localStorage.setItem('wgh_roles', JSON.stringify(this.roles))
-      localStorage.setItem('wgh_pwd_must_change', this.passwordMustChange ? '1' : '0')
+      localStorage.setItem(STORAGE_KEYS.USERNAME, this.username)
+      localStorage.setItem(STORAGE_KEYS.USER_ID, String(this.userId))
+      localStorage.setItem(STORAGE_KEYS.ROLES, JSON.stringify(this.roles))
+      localStorage.setItem(STORAGE_KEYS.PWD_MUST_CHANGE, this.passwordMustChange ? '1' : '0')
     },
 
     logout() {
@@ -57,11 +58,11 @@ export const useUserStore = defineStore('user', {
       this.roles = []
       this.passwordMustChange = false
       this.hydrated = false
-      localStorage.removeItem('wgh_token')
-      localStorage.removeItem('wgh_username')
-      localStorage.removeItem('wgh_userId')
-      localStorage.removeItem('wgh_roles')
-      localStorage.removeItem('wgh_pwd_must_change')
+      localStorage.removeItem(STORAGE_KEYS.TOKEN)
+      localStorage.removeItem(STORAGE_KEYS.USERNAME)
+      localStorage.removeItem(STORAGE_KEYS.USER_ID)
+      localStorage.removeItem(STORAGE_KEYS.ROLES)
+      localStorage.removeItem(STORAGE_KEYS.PWD_MUST_CHANGE)
     }
   }
 })
