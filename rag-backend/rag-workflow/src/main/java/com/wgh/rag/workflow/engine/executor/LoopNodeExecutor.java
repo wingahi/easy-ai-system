@@ -1,5 +1,7 @@
 package com.wgh.rag.workflow.engine.executor;
 
+import com.wgh.rag.workflow.constant.WorkflowConstants;
+
 import com.wgh.rag.workflow.dto.NodeResult;
 import com.wgh.rag.workflow.dto.RunContext;
 import org.springframework.stereotype.Component;
@@ -15,7 +17,7 @@ public class LoopNodeExecutor implements NodeExecutor {
 
     @Override
     public String supportedType() {
-        return "LOOP";
+        return WorkflowConstants.NODE_LOOP;
     }
 
     @Override

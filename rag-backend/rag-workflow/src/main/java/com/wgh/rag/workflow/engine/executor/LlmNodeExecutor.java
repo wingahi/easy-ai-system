@@ -1,5 +1,7 @@
 package com.wgh.rag.workflow.engine.executor;
 
+import com.wgh.rag.workflow.constant.WorkflowConstants;
+
 import com.wgh.rag.llm.factory.ModelCacheManager;
 import com.wgh.rag.workflow.dto.NodeResult;
 import com.wgh.rag.workflow.dto.RunContext;
@@ -30,7 +32,7 @@ public class LlmNodeExecutor implements NodeExecutor {
 
     @Override
     public String supportedType() {
-        return "LLM";
+        return WorkflowConstants.NODE_LLM;
     }
 
     @Override

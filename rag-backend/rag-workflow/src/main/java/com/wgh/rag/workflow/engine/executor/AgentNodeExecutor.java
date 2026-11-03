@@ -1,5 +1,7 @@
 package com.wgh.rag.workflow.engine.executor;
 
+import com.wgh.rag.workflow.constant.WorkflowConstants;
+
 import com.wgh.rag.agent.StepExecutor;
 import com.wgh.rag.agent.dto.AgentStepResult;
 import com.wgh.rag.agent.dto.PlanDTO;
@@ -44,7 +46,7 @@ public class AgentNodeExecutor implements NodeExecutor {
 
     @Override
     public String supportedType() {
-        return "AGENT";
+        return WorkflowConstants.NODE_AGENT;
     }
 
     @Override
@@ -138,7 +140,7 @@ public class AgentNodeExecutor implements NodeExecutor {
                     contextBuilder.append("【").append(step.getTitle()).append("】\n")
                             .append(lastResult.getResultSummary()).append("\n\n");
                 }
-                if ("FAILED".equals(lastResult.getStatus())) {
+                if (WorkflowConstants.STATUS_FAILED.equals(lastResult.getStatus())) {
                     log.warn("AGENT 步骤失败 title={} err={}", step.getTitle(), lastResult.getErrorMessage());
                     break;
                 }

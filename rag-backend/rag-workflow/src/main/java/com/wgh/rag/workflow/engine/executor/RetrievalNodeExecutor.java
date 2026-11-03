@@ -1,5 +1,7 @@
 package com.wgh.rag.workflow.engine.executor;
 
+import com.wgh.rag.workflow.constant.WorkflowConstants;
+
 import com.wgh.rag.kb.service.RagRetrieveService;
 import com.wgh.rag.workflow.dto.NodeResult;
 import com.wgh.rag.workflow.dto.RunContext;
@@ -26,7 +28,7 @@ public class RetrievalNodeExecutor implements NodeExecutor {
 
     @Override
     public String supportedType() {
-        return "RETRIEVAL";
+        return WorkflowConstants.NODE_RETRIEVAL;
     }
 
     @Override

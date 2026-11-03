@@ -1,5 +1,6 @@
 package com.wgh.rag.workflow.engine;
 
+import com.wgh.rag.workflow.constant.WorkflowConstants;
 import com.wgh.rag.workflow.dto.GraphEdge;
 import com.wgh.rag.workflow.dto.GraphNode;
 import com.wgh.rag.workflow.dto.WorkflowGraph;
@@ -18,7 +19,10 @@ import java.util.*;
 public class GraphValidator {
 
     private static final Set<String> NODE_TYPES = Set.of(
-            "START", "END", "LLM", "RETRIEVAL", "TOOL", "CONDITION", "LOOP", "HITL", "VARIABLE", "WORKFLOW", "AGENT");
+            WorkflowConstants.NODE_START, WorkflowConstants.NODE_END, WorkflowConstants.NODE_LLM,
+            WorkflowConstants.NODE_RETRIEVAL, WorkflowConstants.NODE_TOOL, WorkflowConstants.NODE_CONDITION,
+            WorkflowConstants.NODE_LOOP, WorkflowConstants.NODE_HITL, WorkflowConstants.NODE_VARIABLE,
+            WorkflowConstants.NODE_WORKFLOW, WorkflowConstants.NODE_AGENT);
 
     public GraphValidationResult validate(WorkflowGraph graph) {
         List<String> errors = new ArrayList<>();
@@ -41,9 +45,9 @@ public class GraphValidator {
             }
         }
 
-        long startCount = graph.getNodes().stream().filter(n -> "START".equals(n.getType())).count();
+        long startCount = graph.getNodes().stream().filter(n -> WorkflowConstants.NODE_START.equals(n.getType())).count();
         if (startCount != 1) errors.add("必须且只能有一个 START 节点，当前 " + startCount + " 个");
-        boolean hasEnd = graph.getNodes().stream().anyMatch(n -> "END".equals(n.getType()));
+        boolean hasEnd = graph.getNodes().stream().anyMatch(n -> WorkflowConstants.NODE_END.equals(n.getType()));
         if (!hasEnd) errors.add("至少需要一个 END 节点");
 
         Map<String, Integer> inDegree = new HashMap<>();
@@ -62,26 +66,26 @@ public class GraphValidator {
         }
 
         for (GraphNode node : graph.getNodes()) {
-            if ("START".equals(node.getType()) && inDegree.getOrDefault(node.getId(), 0) > 0) {
+            if (WorkflowConstants.NODE_START.equals(node.getType()) && inDegree.getOrDefault(node.getId(), 0) > 0) {
                 errors.add("START 节点不允许有入边：" + node.getId());
             }
-            if ("END".equals(node.getType()) && hasOut.contains(node.getId())) {
+            if (WorkflowConstants.NODE_END.equals(node.getType()) && hasOut.contains(node.getId())) {
                 errors.add("END 节点不允许有出边：" + node.getId());
             }
-            if ("LLM".equals(node.getType()) && configLong(node, "modelId") == null) {
+            if (WorkflowConstants.NODE_LLM.equals(node.getType()) && configLong(node, "modelId") == null) {
                 errors.add("LLM 节点未选择模型：" + node.getId());
             }
-            if ("RETRIEVAL".equals(node.getType()) && (node.getConfig() == null
+            if (WorkflowConstants.NODE_RETRIEVAL.equals(node.getType()) && (node.getConfig() == null
                     || node.getConfig().get("kbIds") == null)) {
                 errors.add("知识库节点未选择知识库：" + node.getId());
             }
-            if ("TOOL".equals(node.getType()) && configLong(node, "toolId") == null) {
+            if (WorkflowConstants.NODE_TOOL.equals(node.getType()) && configLong(node, "toolId") == null) {
                 errors.add("工具节点未选择工具：" + node.getId());
             }
-            if ("CONDITION".equals(node.getType()) && isBlank(node, "expression")) {
+            if (WorkflowConstants.NODE_CONDITION.equals(node.getType()) && isBlank(node, "expression")) {
                 errors.add("条件节点缺少表达式：" + node.getId());
             }
-            if ("WORKFLOW".equals(node.getType()) && configLong(node, "workflowId") == null) {
+            if (WorkflowConstants.NODE_WORKFLOW.equals(node.getType()) && configLong(node, "workflowId") == null) {
                 errors.add("子流程节点未选择工作流：" + node.getId());
             }
         }
@@ -101,7 +105,7 @@ public class GraphValidator {
         Set<String> backEdgeTargets = new HashSet<>();
         for (GraphEdge edge : graph.getEdgesSafe()) {
             GraphNode target = nodeMap.get(edge.getTarget());
-            if (target != null && "LOOP".equals(target.getType())) {
+            if (target != null && WorkflowConstants.NODE_LOOP.equals(target.getType())) {
                 backEdgeTargets.add(edge.getSource());
             }
         }
@@ -142,7 +146,7 @@ public class GraphValidator {
     private List<String> detectWorkflowRecursion(WorkflowGraph graph, Map<String, GraphNode> nodeMap) {
         Set<Long> myIds = new HashSet<>();
         for (GraphNode n : nodeMap.values()) {
-            if ("WORKFLOW".equals(n.getType())) {
+            if (WorkflowConstants.NODE_WORKFLOW.equals(n.getType())) {
                 Long id = configLong(n, "workflowId");
                 if (id != null) myIds.add(id);
             }

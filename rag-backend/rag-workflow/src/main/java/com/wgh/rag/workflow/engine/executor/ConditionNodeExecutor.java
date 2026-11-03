@@ -1,5 +1,7 @@
 package com.wgh.rag.workflow.engine.executor;
 
+import com.wgh.rag.workflow.constant.WorkflowConstants;
+
 import com.wgh.rag.workflow.dto.NodeResult;
 import com.wgh.rag.workflow.dto.RunContext;
 import com.wgh.rag.workflow.engine.ConditionEvaluator;
@@ -22,7 +24,7 @@ public class ConditionNodeExecutor implements NodeExecutor {
 
     @Override
     public String supportedType() {
-        return "CONDITION";
+        return WorkflowConstants.NODE_CONDITION;
     }
 
     @Override

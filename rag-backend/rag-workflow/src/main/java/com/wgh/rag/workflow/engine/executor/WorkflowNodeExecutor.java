@@ -1,5 +1,7 @@
 package com.wgh.rag.workflow.engine.executor;
 
+import com.wgh.rag.workflow.constant.WorkflowConstants;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wgh.rag.workflow.dto.NodeResult;
 import com.wgh.rag.workflow.dto.RunContext;
@@ -42,7 +44,7 @@ public class WorkflowNodeExecutor implements NodeExecutor {
 
     @Override
     public String supportedType() {
-        return "WORKFLOW";
+        return WorkflowConstants.NODE_WORKFLOW;
     }
 
     @Override
@@ -83,7 +85,7 @@ public class WorkflowNodeExecutor implements NodeExecutor {
             output = variableResolver.render(outTemplate, ctx);
         }
 
-        if ("FAILED".equals(subRun.getStatus())) {
+        if (WorkflowConstants.STATUS_FAILED.equals(subRun.getStatus())) {
             throw new IllegalStateException("子流程执行失败：" + subRun.getErrorMessage());
         }
 

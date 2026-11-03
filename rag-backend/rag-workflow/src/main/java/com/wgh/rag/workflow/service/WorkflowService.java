@@ -8,6 +8,7 @@ import com.wgh.rag.common.event.DomainEventPublisher;
 import com.wgh.rag.common.exception.BusinessException;
 import com.wgh.rag.common.result.PageResult;
 import com.wgh.rag.common.result.ResultCode;
+import com.wgh.rag.workflow.constant.WorkflowConstants;
 import com.wgh.rag.workflow.constant.WorkflowEvents;
 import com.wgh.rag.workflow.dto.RunContext;
 import com.wgh.rag.workflow.dto.WorkflowGraph;
@@ -347,7 +348,7 @@ public class WorkflowService {
         run.setSessionId(sessionId);
         run.setWorkflowVersion(wf.getVersion());
         run.setInputText(input == null ? "" : input);
-        run.setStatus("RUNNING");
+        run.setStatus(WorkflowConstants.STATUS_RUNNING);
         run.setGraphSnapshot(wf.getGraphJson());
         run.setExecutedNodes(0);
         run.setTotalNodes(graph.getNodes().size());
@@ -370,7 +371,7 @@ public class WorkflowService {
         run.setWorkflowId(wf.getId());
         run.setWorkflowVersion(wf.getVersion());
         run.setInputText(input == null ? "" : input);
-        run.setStatus("RUNNING");
+        run.setStatus(WorkflowConstants.STATUS_RUNNING);
         run.setGraphSnapshot(wf.getGraphJson());
         run.setExecutedNodes(0);
         run.setTotalNodes(graph.getNodes().size());
@@ -417,11 +418,11 @@ public class WorkflowService {
     private HitlResumeState prepareHitlResume(Long runId, String userInput) {
         WorkflowRun run = runMapper.selectById(runId);
         if (run == null) throw new BusinessException("运行记录不存在");
-        if (!"PAUSED".equals(run.getStatus())) throw new BusinessException("运行未处于暂停状态，无法确认");
+        if (!WorkflowConstants.STATUS_PAUSED.equals(run.getStatus())) throw new BusinessException("运行未处于暂停状态，无法确认");
 
         WorkflowNodeRun pending = nodeRunMapper.selectOne(new LambdaQueryWrapper<WorkflowNodeRun>()
                 .eq(WorkflowNodeRun::getRunId, runId)
-                .eq(WorkflowNodeRun::getStatus, "HITL_PENDING")
+                .eq(WorkflowNodeRun::getStatus, WorkflowConstants.STATUS_HITL_PENDING)
                 .orderByDesc(WorkflowNodeRun::getId)
                 .last("LIMIT 1"));
         if (pending == null) throw new BusinessException("没有待确认的 HITL 节点");
@@ -430,7 +431,7 @@ public class WorkflowService {
         Map<String, Object> output = new LinkedHashMap<>();
         output.put("text", confirmInput);
 
-        pending.setStatus("SUCCESS");
+        pending.setStatus(WorkflowConstants.STATUS_SUCCESS);
         pending.setOutputJson(toJson(output));
         pending.setEndTime(LocalDateTime.now());
         nodeRunMapper.updateById(pending);
@@ -439,7 +440,7 @@ public class WorkflowService {
         ctx.getNodeOutputs().put(pending.getNodeId(), output);
         ctx.getVars().put("lastOutput", confirmInput);
 
-        run.setStatus("RUNNING");
+        run.setStatus(WorkflowConstants.STATUS_RUNNING);
         run.setContextJson(toJson(ctx));
         run.setUpdateTime(LocalDateTime.now());
         runMapper.updateById(run);
@@ -483,10 +484,11 @@ public class WorkflowService {
     public void cancel(Long runId) {
         WorkflowRun run = runMapper.selectById(runId);
         if (run == null) throw new BusinessException("运行记录不存在");
-        if ("COMPLETED".equals(run.getStatus()) || "FAILED".equals(run.getStatus())) {
+        if (WorkflowConstants.STATUS_COMPLETED.equals(run.getStatus())
+                || WorkflowConstants.STATUS_FAILED.equals(run.getStatus())) {
             throw new BusinessException("运行已结束，无法取消");
         }
-        run.setStatus("CANCELLED");
+        run.setStatus(WorkflowConstants.STATUS_CANCELLED);
         run.setFinishTime(LocalDateTime.now());
         run.setDurationMs(run.getStartTime() == null ? 0L
                 : java.time.Duration.between(run.getStartTime(), LocalDateTime.now()).toMillis());
@@ -494,7 +496,8 @@ public class WorkflowService {
 
         nodeRunMapper.update(null, new LambdaUpdateWrapper<WorkflowNodeRun>()
                 .eq(WorkflowNodeRun::getRunId, runId)
-                .in(WorkflowNodeRun::getStatus, "RUNNING", "PENDING", "HITL_PENDING")
+                .in(WorkflowNodeRun::getStatus, WorkflowConstants.STATUS_RUNNING,
+                        WorkflowConstants.STATUS_PENDING, WorkflowConstants.STATUS_HITL_PENDING)
                 .set(WorkflowNodeRun::getStatus, "SKIPPED"));
     }
 
@@ -621,7 +624,7 @@ public class WorkflowService {
     private void markRunFailed(Long runId, String error) {
         WorkflowRun run = runMapper.selectById(runId);
         if (run == null) return;
-        run.setStatus("FAILED");
+        run.setStatus(WorkflowConstants.STATUS_FAILED);
         run.setErrorMessage(error);
         run.setFinishTime(LocalDateTime.now());
         run.setDurationMs(run.getStartTime() == null ? 0L

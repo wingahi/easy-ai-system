@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wgh.rag.common.log.MdcContext;
 import com.wgh.rag.common.metrics.RagMetrics;
+import com.wgh.rag.workflow.constant.WorkflowConstants;
 import com.wgh.rag.workflow.constant.WorkflowEvents;
 import com.wgh.rag.workflow.dto.*;
 import com.wgh.rag.workflow.engine.executor.NodeExecutionContext;
@@ -82,7 +83,7 @@ public class WorkflowEngine {
                        RunContext ctx,
                        BiConsumer<String, Map<String, Object>> sink) {
         if (ctx.getPendingNodeIds() == null || ctx.getPendingNodeIds().isEmpty()) {
-            finishRun(run, "FAILED", "HITL 恢复失败：没有可执行的后续节点", sink);
+            finishRun(run, WorkflowConstants.STATUS_FAILED, "HITL 恢复失败：没有可执行的后续节点", sink);
             sink.accept(WorkflowEvents.WORKFLOW_FAILED, Map.of(
                     "runId", run.getId(), "error", "HITL 恢复失败：没有可执行的后续节点"));
             return;
@@ -101,7 +102,7 @@ public class WorkflowEngine {
         subRun.setWorkflowId(sub.getId());
         subRun.setWorkflowVersion(sub.getVersion());
         subRun.setInputText(input == null ? "" : input);
-        subRun.setStatus("RUNNING");
+        subRun.setStatus(WorkflowConstants.STATUS_RUNNING);
         subRun.setGraphSnapshot(sub.getGraphJson());
         subRun.setExecutedNodes(0);
         subRun.setTotalNodes(graph.getNodes().size());
@@ -176,7 +177,7 @@ public class WorkflowEngine {
                         if (!submitted.add(nodeId)) continue; // 已提交过
 
                         if (guard.incrementAndGet() > MAX_TOTAL_NODE_EXECUTIONS) {
-                            finishRun(run, "FAILED", "超过最大节点执行次数 " + MAX_TOTAL_NODE_EXECUTIONS, sink);
+                            finishRun(run, WorkflowConstants.STATUS_FAILED, "超过最大节点执行次数 " + MAX_TOTAL_NODE_EXECUTIONS, sink);
                             sink.accept(WorkflowEvents.WORKFLOW_FAILED, Map.of(
                                     "runId", run.getId(), "error", "超过最大节点执行次数"));
                             return;
@@ -215,7 +216,7 @@ public class WorkflowEngine {
         try {
             // 周期检查取消状态
             WorkflowRun latest = runMapper.selectById(run.getId());
-            if (latest == null || "CANCELLED".equals(latest.getStatus())) {
+            if (latest == null || WorkflowConstants.STATUS_CANCELLED.equals(latest.getStatus())) {
                 sink.accept(WorkflowEvents.WORKFLOW_CANCELLED, Map.of("runId", run.getId()));
                 return;
             }
@@ -227,7 +228,7 @@ public class WorkflowEngine {
             }
 
             // ---------- 循环回边：仅自增轮次，不重复执行节点体 ----------
-            if ("LOOP".equals(node.getType()) && ctx.getLoopIterations().containsKey(nodeId)) {
+            if (WorkflowConstants.NODE_LOOP.equals(node.getType()) && ctx.getLoopIterations().containsKey(nodeId)) {
                 int prev = ctx.getLoopIterations().get(nodeId);
                 int max = NodeConfigSupport.intConfig(node, "maxIterations", 3);
                 boolean shouldBreak = prev >= max || evalBreakCondition(node, ctx);
@@ -242,7 +243,7 @@ public class WorkflowEngine {
                 ctx.getNodeOutputs().put(nodeId, output);
 
                 appendNodeRun(run, node, iteration, output, 0L, "SUCCESS", null);
-                persistContext(run, ctx, "RUNNING");
+                persistContext(run, ctx, WorkflowConstants.STATUS_RUNNING);
                 executed.incrementAndGet();
                 sink.accept(WorkflowEvents.NODE_OUTPUT, event(run, node, output, 0L, iteration));
 
@@ -252,7 +253,7 @@ public class WorkflowEngine {
             }
 
             // ---------- HITL：暂停并持久化断点 ----------
-            if ("HITL".equals(node.getType())) {
+            if (WorkflowConstants.NODE_HITL.equals(node.getType())) {
                 returnFromHitl(run, node, ctx, outEdges.get(nodeId), sink);
                 throw new PauseSignal("HITL 暂停：" + nodeId);
             }
@@ -276,7 +277,7 @@ public class WorkflowEngine {
             } catch (Exception e) {
                 metrics.recordWorkflowNodeFailure(node.getType());
                 long duration = System.currentTimeMillis() - t0;
-                nr.setStatus("FAILED");
+                nr.setStatus(WorkflowConstants.STATUS_FAILED);
                 nr.setEndTime(LocalDateTime.now());
                 nr.setDurationMs(duration);
                 nr.setErrorMessage(e.getMessage());
@@ -294,7 +295,7 @@ public class WorkflowEngine {
                     Map<String, Object> failed = new LinkedHashMap<>();
                     failed.put("error", e.getMessage());
                     ctx.getNodeOutputs().put(node.getId(), failed);
-                    persistContext(run, ctx, "RUNNING");
+                    persistContext(run, ctx, WorkflowConstants.STATUS_RUNNING);
                     activateAllSuccessors(node, outEdges, pendingIn, frontier, submitted);
                     return;
                 }
@@ -307,7 +308,7 @@ public class WorkflowEngine {
             Object text = result.getOutput().get("text");
             if (text != null) ctx.getVars().put("lastOutput", text);
 
-            nr.setStatus("SUCCESS");
+            nr.setStatus(WorkflowConstants.STATUS_SUCCESS);
             nr.setOutputJson(toJson(result.getOutput()));
             nr.setEndTime(LocalDateTime.now());
             nr.setDurationMs(duration);
@@ -319,9 +320,9 @@ public class WorkflowEngine {
             sink.accept(WorkflowEvents.NODE_OUTPUT, event(run, node, result.getOutput(), duration,
                     ctx.getCurrentLoopIteration()));
 
-            if ("END".equals(node.getType())) {
+            if (WorkflowConstants.NODE_END.equals(node.getType())) {
                 String outText = text != null ? String.valueOf(text) : "";
-                finishRun(run, "COMPLETED", null, sink, outText, executed.get());
+                finishRun(run, WorkflowConstants.STATUS_COMPLETED, null, sink, outText, executed.get());
                 Map<String, Object> payload = new LinkedHashMap<>();
                 payload.put("runId", run.getId());
                 payload.put("output", outText);
@@ -331,10 +332,10 @@ public class WorkflowEngine {
                 return;
             }
 
-            if ("CONDITION".equals(node.getType())) {
+            if (WorkflowConstants.NODE_CONDITION.equals(node.getType())) {
                 boolean bool = Boolean.TRUE.equals(result.getOutput().get("result"));
                 activateSuccessors(node, outEdges, String.valueOf(bool), pendingIn, frontier, submitted);
-            } else if ("LOOP".equals(node.getType())) {
+            } else if (WorkflowConstants.NODE_LOOP.equals(node.getType())) {
                 int max = NodeConfigSupport.intConfig(node, "maxIterations", 3);
                 activateSuccessors(node, outEdges, max <= 0 ? "done" : "loop", pendingIn, frontier, submitted);
             } else {
@@ -378,7 +379,7 @@ public class WorkflowEngine {
 
             // 判断这条边是否被选中（CONDITION 二选一 / LOOP 二选一 / 其他全选）
             boolean selected;
-            if ("CONDITION".equals(node.getType()) || "LOOP".equals(node.getType())) {
+            if (WorkflowConstants.NODE_CONDITION.equals(node.getType()) || WorkflowConstants.NODE_LOOP.equals(node.getType())) {
                 String h = edge.getSourceHandle();
                 selected = (h == null || h.isBlank() || "default".equals(h))
                         ? "default".equals(targetHandle)
@@ -411,14 +412,14 @@ public class WorkflowEngine {
         nr.setNodeId(node.getId());
         nr.setNodeType(node.getType());
         nr.setNodeName(nameOf(node));
-        nr.setStatus("HITL_PENDING");
+        nr.setStatus(WorkflowConstants.STATUS_HITL_PENDING);
         nr.setIteration(ctx.getCurrentLoopIteration());
         nr.setInputJson(toJson(Map.of("prompt", prompt)));
         nr.setStartTime(LocalDateTime.now());
         nodeRunMapper.insert(nr);
 
         ctx.setPendingNodeIds(allTargets(edges));
-        persistContext(run, ctx, "PAUSED");
+        persistContext(run, ctx, WorkflowConstants.STATUS_PAUSED);
         metrics.recordWorkflowRun("paused");
 
         Map<String, Object> payload = new LinkedHashMap<>();
@@ -444,7 +445,7 @@ public class WorkflowEngine {
         nr.setNodeId(node.getId());
         nr.setNodeType(node.getType());
         nr.setNodeName(nameOf(node));
-        nr.setStatus("RUNNING");
+        nr.setStatus(WorkflowConstants.STATUS_RUNNING);
         nr.setIteration(iteration);
         nr.setInputJson(toJson(node.getConfig()));
         nr.setStartTime(LocalDateTime.now());
@@ -480,7 +481,7 @@ public class WorkflowEngine {
 
     private void failRun(WorkflowRun run, String nodeId, String error,
                          BiConsumer<String, Map<String, Object>> sink) {
-        finishRun(run, "FAILED", error, sink);
+        finishRun(run, WorkflowConstants.STATUS_FAILED, error, sink);
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("runId", run.getId());
         payload.put("nodeId", nodeId);
@@ -528,7 +529,7 @@ public class WorkflowEngine {
 
     private GraphNode startNode(WorkflowGraph graph) {
         return graph.getNodes().stream()
-                .filter(n -> "START".equals(n.getType()))
+                .filter(n -> WorkflowConstants.NODE_START.equals(n.getType()))
                 .findFirst()
                 .orElseThrow(() -> new IllegalStateException("工作流缺少 START 节点"));
     }

@@ -1,5 +1,7 @@
 package com.wgh.rag.workflow.engine.executor;
 
+import com.wgh.rag.workflow.constant.WorkflowConstants;
+
 import com.wgh.rag.workflow.dto.NodeResult;
 import com.wgh.rag.workflow.dto.RunContext;
 import com.wgh.rag.workflow.engine.VariableResolver;
@@ -20,7 +22,7 @@ public class EndNodeExecutor implements NodeExecutor {
 
     @Override
     public String supportedType() {
-        return "END";
+        return WorkflowConstants.NODE_END;
     }
 
     @Override
