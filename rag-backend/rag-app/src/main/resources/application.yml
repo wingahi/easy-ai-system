@@ -188,8 +188,14 @@ langchain4j:
       model-name: text-embedding-3-small
       timeout: 30s
 
-# ===== Actuator (健康检查) =====
+# ===== Actuator (健康检查 / 指标) =====
+# 管理端口独立于业务端口：业务端口不再暴露 /actuator，便于网络层隔离与抓取
 management:
+  server:
+    port: ${WGH_MANAGEMENT_PORT:9090}
+    # 默认监听全部网卡以支持容器内 Prometheus 抓取；生产建议通过
+    # WGH_MANAGEMENT_ADDRESS 绑定内网网卡或配合防火墙限制来源
+    address: ${WGH_MANAGEMENT_ADDRESS:0.0.0.0}
   endpoints:
     web:
       exposure:
