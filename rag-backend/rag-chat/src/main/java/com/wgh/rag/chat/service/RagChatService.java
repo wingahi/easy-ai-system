@@ -262,7 +262,7 @@ public class RagChatService {
     // ============ 核心 RAG 链路 ============
 
     /** 单次对话的指标上下文（线程内传递，避免被并发请求串用） */
-    private record ChatMetricContext(AtomicReference<String> route, AtomicBoolean firstToken, long startNanos) {
+    record ChatMetricContext(AtomicReference<String> route, AtomicBoolean firstToken, long startNanos) {
     }
 
     private void doRagStreamChat(ChatWindow window, ChatSession session, String userMessage,
@@ -463,16 +463,11 @@ public class RagChatService {
         }
 
         // 路线二：有搜索结果 -> 组装上下文 -> 调 LLM（带工具调用循环）
-        StringBuilder fullResponse = new StringBuilder();
-
         // 模型路由：优先窗口 route_group（按优先级形成故障转移链路），否则 llmModelId 单模型
         List<LlmModel> modelChain = modelRouter.resolveChain(window.getModelRouteGroup(), window.getLlmModelId());
-        // 先尝试首模型；首 token 前异常时 FailoverChatModel 负责切链重试
-        final LlmModel primaryLlm = modelChain.get(0);
-        StreamingChatModel streamingModel = modelCacheManager.getStreamingChatModel(primaryLlm.getId());
-        // 记录实际模型（FailoverChatModel 成功后可回填）
-        final AtomicReference<LlmModel> actualModel = new AtomicReference<>(primaryLlm);
-        // 故障转移失败事件缓冲：切换原因推给前端做可观测
+        // 记录实际模型（切链成功后回填，用于成本回填）
+        final AtomicReference<LlmModel> actualModel = new AtomicReference<>(modelChain.get(0));
+        // 故障转移可观测事件：尝试顺序/切换原因同步到日志与前端
         java.util.function.BiConsumer<LlmModel, String> onModelSwitch = (m, reason) -> {
             log.info("[Failover] 使用模型 {} (id={})，原因: {}", m.getModelName(), m.getId(), reason);
             actualModel.set(m);
@@ -481,7 +476,11 @@ public class RagChatService {
                         .data(Map.of("modelName", m.getModelName(), "modelId", m.getId(), "reason", reason)));
             } catch (IOException ignored) {}
         };
-        
+        // 链路模式下先声明首模型（保持原有 model_switch 事件语义）
+        if (modelChain.size() > 1) {
+            onModelSwitch.accept(modelChain.get(0), "首模型");
+        }
+
         List<ChatMessage> messages = buildMessageHistory(session, systemPrompt, userMessage);
 
         // 有检索结果时把知识库内容拼进用户消息；只配了工具但没有知识库结果时用原始消息
@@ -513,19 +512,14 @@ public class RagChatService {
                     .toolSpecifications(toolSpecs)
                     .build();
 
-            // 首 token 前故障转移：route_group 有链路时用 FailoverChatModel 包一层
-            if (modelChain.size() > 1) {
-                onModelSwitch.accept(primaryLlm, "首模型");
-                runWithFailover(request, toolSpecs, messages, fullResponse, emitter,
-                        retrievedMatches, hitRate, evaluationScheme, session, window, userMessage,
-                        toolRoundCount, MAX_TOOL_ROUNDS, toolRegistry, windowModelId, tokenUsageAcc,
-                        quotaUsername, modelChain, actualModel, onModelSwitch, metricCtx);
-            } else {
-                streamChatWithTools(streamingModel, request, toolSpecs, messages, fullResponse,
-                        emitter, retrievedMatches, hitRate, evaluationScheme, session, window,
-                        userMessage, toolRoundCount, MAX_TOOL_ROUNDS, toolRegistry, windowModelId,
-                        tokenUsageAcc, quotaUsername, actualModel, metricCtx);
-            }
+            // 首 token 前失败（异步 onError 或同步异常）统一回到故障转移链路；
+            // 链路只有 1 个模型时等价于单模型调用
+            FailoverContext failoverCtx = new FailoverContext(
+                    modelChain, request, toolSpecs, messages, emitter, retrievedMatches, hitRate,
+                    evaluationScheme, session, window, userMessage, toolRoundCount, MAX_TOOL_ROUNDS,
+                    toolRegistry, windowModelId, tokenUsageAcc, quotaUsername, actualModel,
+                    onModelSwitch, metricCtx);
+            startAttempt(failoverCtx, 0);
 
         } catch (Exception e) {
             metrics.recordChatError("llm");
@@ -540,81 +534,220 @@ public class RagChatService {
     }
 
     /**
-     * 故障转移循环：遍历 modelChain，在首 token 前异常时切到下一个模型重试一次。
-     * 已收到 token 后再异常视为不可恢复，抛出让外层降级处理。
+     * 故障转移上下文：一次对话请求一个实例，流式回调线程与请求线程共享。
      */
-    private void runWithFailover(ChatRequest request,
-                                  List<ToolSpecification> toolSpecs,
-                                  List<ChatMessage> messages,
-                                  StringBuilder fullResponse,
-                                  SseEmitter emitter,
-                                  List<EmbeddingMatch<TextSegment>> retrievedMatches,
-                                  Double hitRate, EvaluationScheme evaluationScheme,
-                                  ChatSession session, ChatWindow window,
-                                  String originalUserMessage,
-                                  int[] toolRoundCount, int maxToolRounds,
-                                  Map<String, ToolConfig> toolRegistry, Long windowModelId,
-                                  long[] tokenUsageAcc, String quotaUsername,
-                                  List<LlmModel> chain,
-                                  AtomicReference<LlmModel> actualModel,
-                                  java.util.function.BiConsumer<LlmModel, String> onModelSwitch,
-                                  ChatMetricContext metricCtx) {
-        Throwable lastError = null;
-        for (int i = 0; i < chain.size(); i++) {
-            LlmModel candidate = chain.get(i);
-            try {
-                StreamingChatModel model = modelCacheManager.getStreamingChatModel(candidate.getId());
-                fullResponse.setLength(0);
-                toolRoundCount[0] = 0;
-                if (i > 0) {
-                    onModelSwitch.accept(candidate, "切换备用模型（上一个模型首token前失败）");
-                } else {
-                    actualModel.set(candidate);
-                }
-                streamChatWithTools(model, request, toolSpecs, messages, fullResponse,
-                        emitter, retrievedMatches, hitRate, evaluationScheme, session, window,
-                        originalUserMessage, toolRoundCount, maxToolRounds, toolRegistry, windowModelId,
-                        tokenUsageAcc, quotaUsername, actualModel, metricCtx);
-                return; // 成功
-            } catch (Throwable t) {
-                lastError = t;
-                fullResponse.setLength(0);
-                log.warn("[Failover] 模型 {} (id={}) 调用失败: {}", candidate.getModelName(), candidate.getId(), t.getMessage());
-            }
+    static final class FailoverContext {
+        final List<LlmModel> chain;
+        final ChatRequest request;
+        final List<ToolSpecification> toolSpecs;
+        final List<ChatMessage> messages;
+        final SseEmitter emitter;
+        final List<EmbeddingMatch<TextSegment>> retrievedMatches;
+        final Double hitRate;
+        final EvaluationScheme evaluationScheme;
+        final ChatSession session;
+        final ChatWindow window;
+        final String originalUserMessage;
+        final int[] toolRoundCount;
+        final int maxToolRounds;
+        final Map<String, ToolConfig> toolRegistry;
+        final Long windowModelId;
+        final long[] tokenUsageAcc;
+        final String quotaUsername;
+        final AtomicReference<LlmModel> actualModel;
+        final java.util.function.BiConsumer<LlmModel, String> onModelSwitch;
+        final ChatMetricContext metricCtx;
+
+        FailoverContext(List<LlmModel> chain, ChatRequest request,
+                        List<ToolSpecification> toolSpecs, List<ChatMessage> messages,
+                        SseEmitter emitter, List<EmbeddingMatch<TextSegment>> retrievedMatches,
+                        Double hitRate, EvaluationScheme evaluationScheme,
+                        ChatSession session, ChatWindow window, String originalUserMessage,
+                        int[] toolRoundCount, int maxToolRounds,
+                        Map<String, ToolConfig> toolRegistry, Long windowModelId,
+                        long[] tokenUsageAcc, String quotaUsername,
+                        AtomicReference<LlmModel> actualModel,
+                        java.util.function.BiConsumer<LlmModel, String> onModelSwitch,
+                        ChatMetricContext metricCtx) {
+            this.chain = chain;
+            this.request = request;
+            this.toolSpecs = toolSpecs;
+            this.messages = messages;
+            this.emitter = emitter;
+            this.retrievedMatches = retrievedMatches;
+            this.hitRate = hitRate;
+            this.evaluationScheme = evaluationScheme;
+            this.session = session;
+            this.window = window;
+            this.originalUserMessage = originalUserMessage;
+            this.toolRoundCount = toolRoundCount;
+            this.maxToolRounds = maxToolRounds;
+            this.toolRegistry = toolRegistry;
+            this.windowModelId = windowModelId;
+            this.tokenUsageAcc = tokenUsageAcc;
+            this.quotaUsername = quotaUsername;
+            this.actualModel = actualModel;
+            this.onModelSwitch = onModelSwitch;
+            this.metricCtx = metricCtx;
         }
-        throw new BusinessException("所有候选模型均调用失败（最后错误: "
-                + (lastError != null ? lastError.getMessage() : "未知") + "）");
+    }
+
+    /**
+     * 单次模型尝试的流状态。
+     * started=true 表示已经产出可见内容（或已完成一轮响应）：此后失败不再切链，
+     * 避免已输出内容被回滚重发、或工具调用被重复执行。
+     */
+    private static final class StreamAttempt {
+        final int index;
+        final int total;
+        final LlmModel model;
+        /** 本次尝试的独立输出缓冲：切链时不会污染下一个模型的输出 */
+        final StringBuilder content = new StringBuilder();
+        private final AtomicBoolean started = new AtomicBoolean(false);
+        private final AtomicBoolean active = new AtomicBoolean(true);
+
+        StreamAttempt(int index, int total, LlmModel model) {
+            this.index = index;
+            this.total = total;
+            this.model = model;
+        }
+
+        /** 收到首个片段/完成一轮：返回 false 表示该尝试已失效，回调应被忽略 */
+        boolean markStarted() {
+            if (!active.get()) return false;
+            started.set(true);
+            return true;
+        }
+
+        boolean isStarted() {
+            return started.get();
+        }
+
+        boolean isActive() {
+            return active.get();
+        }
+
+        void deactivate() {
+            active.set(false);
+        }
+
+        /** 抢占首 token 前失败的切链权，避免 onError 重复回调触发多次切链 */
+        boolean claimPreTokenFailure() {
+            return active.compareAndSet(true, false);
+        }
+    }
+
+    /**
+     * 故障转移入口：按链顺序启动第 index 个模型。
+     * streamingModel.chat() 为异步调用，首 token 前的失败经 onError 回调回到本链路，
+     * 因此不能用 try/catch 判定异步失败（同步异常仍在此兜底）。
+     */
+    void startAttempt(FailoverContext ctx, int index) {
+        LlmModel candidate = ctx.chain.get(index);
+        StreamAttempt attempt = new StreamAttempt(index, ctx.chain.size(), candidate);
+        ctx.toolRoundCount[0] = 0;
+        try {
+            StreamingChatModel model = modelCacheManager.getStreamingChatModel(candidate.getId());
+            if (index > 0) {
+                ctx.onModelSwitch.accept(candidate, "上一个模型首token前失败，切换备用模型");
+            } else {
+                ctx.actualModel.set(candidate);
+            }
+            log.info("[Failover] 开始尝试 {}/{}：模型 {} (id={})",
+                    index + 1, ctx.chain.size(), candidate.getModelName(), candidate.getId());
+            streamChatWithTools(model, ctx.request, ctx, attempt);
+        } catch (Throwable t) {
+            // 同步异常（模型构建失败、请求构建失败等）：等价于首 token 前失败
+            handleAttemptFailure(ctx, attempt, t);
+        }
+    }
+
+    /**
+     * 统一失败入口：区分「首 token 前」与「已产出内容」两种语义。
+     */
+    private void handleAttemptFailure(FailoverContext ctx, StreamAttempt attempt, Throwable error) {
+        if (!attempt.isActive()) {
+            log.debug("忽略已失效模型尝试的失败回调: attempt={}/{}", attempt.index + 1, attempt.total);
+            return;
+        }
+        if (attempt.isStarted()) {
+            // 已产出部分内容：不切换、不回滚、不重发，如实报错并结束
+            attempt.deactivate();
+            metrics.recordChatError("llm");
+            log.error("LLM流式响应错误（已产出内容，不切换模型）: 模型={}(id={}), 尝试={}/{}, 错误={}",
+                    attempt.model.getModelName(), attempt.model.getId(),
+                    attempt.index + 1, attempt.total, describeError(error));
+            safeSend(ctx.emitter, ChatEvents.ERROR, Map.of("text", userFacingError(error)));
+            try {
+                ctx.emitter.completeWithError(error);
+            } catch (Exception e) {
+                log.warn("SSE 关闭失败: {}", e.getMessage());
+            }
+            return;
+        }
+        // 首 token 前失败：抢占切链权，防止重复回调造成重复切换
+        if (!attempt.claimPreTokenFailure()) {
+            log.debug("忽略重复的首token前失败回调: attempt={}/{}", attempt.index + 1, attempt.total);
+            return;
+        }
+        metrics.recordChatError("llm");
+        log.warn("[Failover] 模型 {} (id={}) 首token前失败（尝试 {}/{}）：{}",
+                attempt.model.getModelName(), attempt.model.getId(),
+                attempt.index + 1, attempt.total, describeError(error));
+        ctx.toolRoundCount[0] = 0;
+
+        int nextIndex = attempt.index + 1;
+        if (nextIndex < ctx.chain.size()) {
+            startAttempt(ctx, nextIndex);
+            return;
+        }
+        // 全部候选模型失败：给出明确业务错误，避免空响应或挂起
+        String message = "所有候选模型均调用失败（共 " + ctx.chain.size() + " 个，最后错误: "
+                + userFacingError(error) + "）";
+        log.error("[Failover] {}", message);
+        safeSend(ctx.emitter, ChatEvents.ERROR, Map.of("text", message));
+        safeComplete(ctx.emitter);
+    }
+
+    /** 日志用错误描述：只保留异常类型与脱敏后的消息，避免把 API Key 写进日志 */
+    private String describeError(Throwable error) {
+        if (error == null) return "未知错误";
+        String msg = error.getMessage();
+        return error.getClass().getSimpleName() + (msg != null && !msg.isBlank() ? ": " + redact(msg) : "");
+    }
+
+    /** 前端可见的错误消息：同样做脱敏 */
+    private String userFacingError(Throwable error) {
+        if (error == null) return "未知错误";
+        String msg = error.getMessage();
+        return msg != null && !msg.isBlank() ? redact(msg) : error.getClass().getSimpleName();
+    }
+
+    private String redact(String text) {
+        return text.replaceAll("(?i)(sk-[A-Za-z0-9_-]{6,}|api[_-]?key[=: ]+[^ ,;]+|bearer +[A-Za-z0-9._-]+)", "***");
     }
 
     /**
      * 带工具调用循环的流式聊天 —— 递归处理 tool calls，直到 LLM 返回最终文本回答
      */
     private void streamChatWithTools(StreamingChatModel streamingModel, ChatRequest request,
-                                      List<ToolSpecification> toolSpecs,
-                                      List<ChatMessage> messages,
-                                      StringBuilder fullResponse,
-                                      SseEmitter emitter,
-                                      List<EmbeddingMatch<TextSegment>> retrievedMatches,
-                                      Double hitRate, EvaluationScheme evaluationScheme,
-                                      ChatSession session, ChatWindow window,
-                                      String originalUserMessage,
-                                      int[] toolRoundCount, int maxToolRounds,
-                                      Map<String, ToolConfig> toolRegistry, Long windowModelId,
-                                      long[] tokenUsageAcc, String quotaUsername,
-                                      AtomicReference<LlmModel> actualModelRef,
-                                      ChatMetricContext metricCtx) {
+                                      FailoverContext ctx, StreamAttempt attempt) {
 
         streamingModel.chat(request, new StreamingChatResponseHandler() {
             @Override
             public void onPartialResponse(String partialResponse) {
-                // 首个流式片段：记录首 token 延迟（仅一次，重试时按首次成功片段计）
-                if (metricCtx.firstToken().compareAndSet(false, true)) {
-                    metrics.recordFirstToken(metricCtx.route().get(),
-                            System.nanoTime() - metricCtx.startNanos());
+                if (!attempt.markStarted()) {
+                    log.debug("忽略已失效模型尝试的流式片段: attempt={}/{}", attempt.index + 1, attempt.total);
+                    return;
                 }
-                fullResponse.append(partialResponse);
+                // 首个流式片段：记录首 token 延迟（仅一次，重试时按首次成功片段计）
+                if (ctx.metricCtx.firstToken().compareAndSet(false, true)) {
+                    metrics.recordFirstToken(ctx.metricCtx.route().get(),
+                            System.nanoTime() - ctx.metricCtx.startNanos());
+                }
+                attempt.content.append(partialResponse);
                 try {
-                    emitter.send(SseEmitter.event().name(ChatEvents.CONTENT).data(Map.of("text", partialResponse)));
+                    ctx.emitter.send(SseEmitter.event().name(ChatEvents.CONTENT).data(Map.of("text", partialResponse)));
                 } catch (IOException e) {
                     log.warn("发送SSE数据失败", e);
                 }
@@ -622,38 +755,44 @@ public class RagChatService {
 
             @Override
             public void onCompleteResponse(ChatResponse completeResponse) {
+                if (!attempt.isActive()) {
+                    log.debug("忽略已失效模型尝试的完成回调: attempt={}/{}", attempt.index + 1, attempt.total);
+                    return;
+                }
+                attempt.markStarted();
                 AiMessage aiMessage = completeResponse.aiMessage();
 
                 // 累计真实 token 用量（流式响应提供商未下发 usage 时为 null，后续按字符估算兜底）
                 TokenUsage usage = completeResponse.tokenUsage();
                 if (usage != null) {
-                    if (usage.inputTokenCount() != null) tokenUsageAcc[0] += usage.inputTokenCount();
-                    if (usage.outputTokenCount() != null) tokenUsageAcc[1] += usage.outputTokenCount();
+                    if (usage.inputTokenCount() != null) ctx.tokenUsageAcc[0] += usage.inputTokenCount();
+                    if (usage.outputTokenCount() != null) ctx.tokenUsageAcc[1] += usage.outputTokenCount();
                 }
 
                 // 1. 检查是否有 tool calls
                 List<ToolExecutionRequest> toolCalls = aiMessage.toolExecutionRequests();
                 if (toolCalls != null && !toolCalls.isEmpty()) {
-                    toolRoundCount[0]++;
+                    ctx.toolRoundCount[0]++;
 
-                    if (toolRoundCount[0] > maxToolRounds) {
-                        log.warn("工具调用超过最大轮次 {}，停止循环", maxToolRounds);
+                    if (ctx.toolRoundCount[0] > ctx.maxToolRounds) {
+                        log.warn("工具调用超过最大轮次 {}，停止循环", ctx.maxToolRounds);
                         try {
-                            sendFinalEvents(emitter, fullResponse.toString(), retrievedMatches, hitRate,
-                                    evaluationScheme, session, window, originalUserMessage,
-                                    tokenUsageAcc, quotaUsername, actualModelRef);
+                            sendFinalEvents(ctx.emitter, attempt.content.toString(), ctx.retrievedMatches, ctx.hitRate,
+                                    ctx.evaluationScheme, ctx.session, ctx.window, ctx.originalUserMessage,
+                                    ctx.tokenUsageAcc, ctx.quotaUsername, ctx.actualModel);
                         } catch (IOException ioe) {
                             log.error("发送最终事件失败", ioe);
                         }
+                        attempt.deactivate();
                         return;
                     }
 
-                    log.info("LLM 请求调用 {} 个工具（第 {} 轮）", toolCalls.size(), toolRoundCount[0]);
+                    log.info("LLM 请求调用 {} 个工具（第 {} 轮）", toolCalls.size(), ctx.toolRoundCount[0]);
 
                     // SSE 通知前端：开始工具调用
                     for (ToolExecutionRequest req : toolCalls) {
                         try {
-                            emitter.send(SseEmitter.event().name(ChatEvents.TOOL_CALL_START).data(Map.of(
+                            ctx.emitter.send(SseEmitter.event().name(ChatEvents.TOOL_CALL_START).data(Map.of(
                                     "tool", req.name(),
                                     "args", req.arguments()
                             )));
@@ -666,13 +805,13 @@ public class RagChatService {
                     List<ToolExecutionResultMessage> toolResults = new ArrayList<>();
                     for (ToolExecutionRequest req : toolCalls) {
                         long start = System.currentTimeMillis();
-                        ToolExecutionResultMessage result = toolExecutionEngine.execute(req, toolRegistry, windowModelId);
+                        ToolExecutionResultMessage result = toolExecutionEngine.execute(req, ctx.toolRegistry, ctx.windowModelId);
                         long latency = System.currentTimeMillis() - start;
                         toolResults.add(result);
 
                         // SSE 通知前端：工具调用完成
                         try {
-                            emitter.send(SseEmitter.event().name(ChatEvents.TOOL_CALL_RESULT).data(Map.of(
+                            ctx.emitter.send(SseEmitter.event().name(ChatEvents.TOOL_CALL_RESULT).data(Map.of(
                                     "tool", req.name(),
                                     "success", !result.text().startsWith("Error:"),
                                     "result", result.text(),
@@ -684,43 +823,38 @@ public class RagChatService {
                     }
 
                     // 把 LLM 的 AiMessage（带 tool calls）加入 messages
-                    messages.add(aiMessage);
+                    ctx.messages.add(aiMessage);
                     // 把工具执行结果加入 messages
-                    messages.addAll(toolResults);
+                    ctx.messages.addAll(toolResults);
 
                     // 发起下一次 chat 调用（带更新后的 messages + toolSpecs）
                     ChatRequest nextRequest = ChatRequest.builder()
-                            .messages(new ArrayList<>(messages))
-                            .toolSpecifications(toolSpecs)
+                            .messages(new ArrayList<>(ctx.messages))
+                            .toolSpecifications(ctx.toolSpecs)
                             .build();
 
-                    streamChatWithTools(streamingModel, nextRequest, toolSpecs, messages, fullResponse,
-                            emitter, retrievedMatches, hitRate, evaluationScheme, session, window,
-                            originalUserMessage, toolRoundCount, maxToolRounds,
-                            toolRegistry, windowModelId, tokenUsageAcc, quotaUsername, actualModelRef, metricCtx);
+                    streamChatWithTools(streamingModel, nextRequest, ctx, attempt);
                     return;
                 }
 
                 // 2. 没有 tool calls —— 最终回答，发送完成事件
                 try {
-                    sendFinalEvents(emitter, fullResponse.toString(), retrievedMatches, hitRate,
-                            evaluationScheme, session, window, originalUserMessage,
-                            tokenUsageAcc, quotaUsername, actualModelRef);
+                    sendFinalEvents(ctx.emitter, attempt.content.toString(), ctx.retrievedMatches, ctx.hitRate,
+                            ctx.evaluationScheme, ctx.session, ctx.window, ctx.originalUserMessage,
+                            ctx.tokenUsageAcc, ctx.quotaUsername, ctx.actualModel);
                 } catch (IOException e) {
                     log.error("完成SSE响应失败", e);
                 }
+                attempt.deactivate();
             }
 
             @Override
             public void onError(Throwable error) {
-                metrics.recordChatError("llm");
-                log.error("LLM流式响应错误", error);
-                try {
-                    emitter.send(SseEmitter.event().name(ChatEvents.ERROR).data(Map.of("text", error.getMessage() != null ? error.getMessage() : "未知错误")));
-                    emitter.completeWithError(error);
-                } catch (IOException e) {
-                    log.error("发送错误失败", e);
+                if (!attempt.isActive()) {
+                    log.debug("忽略已失效模型尝试的错误回调: attempt={}/{}", attempt.index + 1, attempt.total);
+                    return;
                 }
+                handleAttemptFailure(ctx, attempt, error);
             }
         });
     }
