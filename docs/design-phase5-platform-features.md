@@ -17,7 +17,7 @@ wgh_model_price (id, provider, model_name, input_price_per_1k DOUBLE, output_pri
 wgh_quota_usage (id, username, date_key VARCHAR(10), chat_count INT, token_used BIGINT,
                  UNIQUE(username, date_key))
 ```
-- 审计：自定义注解 `@Audit(action, resourceType)` + AOP 切面（rag-common），织入 controller 写操作（POST/PUT/DELETE）。异步线程写入，失败不阻断主流程。
+- 审计：自定义注解 `@Audit(action, resourceType)` + AOP 切面（rag-log），织入 controller 写操作（POST/PUT/DELETE）。异步线程写入，失败不阻断主流程。
 - 配额：`wgh.quota.chat-daily-limit`（默认 200 条/人/天）、`wgh.quota.token-daily-limit`（默认 200 万）。聊天发送前检查 wgh_quota_usage，超限返回业务异常 42900？用 PARAM_ERROR 语义的 FAIL + 提示文案。发送后累加。
 - 成本：ChatMessage 已有 token_count；新增 `cost DOUBLE` 列（回复后按模型价格表计算回填）。统计接口按天/模型/用户聚合。
 
@@ -28,7 +28,7 @@ wgh_quota_usage (id, username, date_key VARCHAR(10), chat_count INT, token_used 
 - `GET/POST/PUT/DELETE /api/admin/model-prices` 价格表 CRUD
 
 ### 关键类
-- rag-common: `annotation/Audit.java`、`aspect/AuditAspect.java`
+- rag-log: `annotation/Audit.java`、`aspect/AuditAspect.java`、`entity/AuditLog.java`、`service/AuditLogService.java`
 - rag-chat: `ChatMessage.cost` 字段；rag-llm: `ModelPrice` 实体 + `PriceService.estimateCost(model, tokens)`
 - rag-controller: `AdminStatsController`、`ModelPriceController`
 - rag-common: `quota/QuotaService`（ RagProperties 加 quota 段）
@@ -137,7 +137,7 @@ A → B → C → D → E → F → G，每阶段：schema + 实体/Mapper + Ser
 
 ### A. 审计日志 / 配额限流 / 成本统计 — ✅ 已完成
 - **表**：`wgh_audit_log`、`wgh_model_price`、`wgh_quota_usage`、`wgh_chat_message.cost`/`model_name`
-- **后端**：`@Audit` 注解（rag-common）+ `AuditAspect` AOP 异步写入；`QuotaService` 在 `RagChatService` 发送前拦截；`ModelPriceService.estimateCost` 按 provider+modelName 匹配价格表
+- **后端**：`@Audit` 注解（rag-log）+ `AuditAspect` AOP 异步写入；`QuotaService` 在 `RagChatService` 发送前拦截；`ModelPriceService.estimateCost` 按 provider+modelName 匹配价格表
 - **前端**：`AdminStats.vue` 审计查询 / 成本聚合 / 配额用量；`ChatPlayground.vue` 单条消息成本显示
 - **API**：`GET /api/admin/audit-logs`、`GET /api/admin/stats/cost`、`GET /api/admin/stats/quota`、`/api/admin/model-prices` CRUD、`GET /api/admin/feedback/dislikes`
 - **测试**：`QuotaServiceTest` ✅、`ModelPriceServiceTest` ✅
