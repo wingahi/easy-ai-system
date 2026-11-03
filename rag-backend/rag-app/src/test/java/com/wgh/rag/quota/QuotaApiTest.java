@@ -10,6 +10,7 @@ import com.wgh.rag.auth.security.OidcProperties;
 import com.wgh.rag.auth.security.OidcTokenVerifier;
 import com.wgh.rag.data.mybatis.MetaObjectHandlerImpl;
 import com.wgh.rag.common.exception.GlobalExceptionHandler;
+import com.wgh.rag.common.metrics.RagMetrics;
 import com.wgh.rag.controller.QuotaAdminController;
 import com.wgh.rag.controller.QuotaUserController;
 import com.wgh.rag.quota.properties.QuotaProperties;
@@ -75,6 +76,7 @@ class QuotaApiTest {
             LocalTokenService.class,
             MetaObjectHandlerImpl.class,
             GlobalExceptionHandler.class,
+            RagMetrics.class,
             QuotaService.class,
             DefaultQuotaUserResolver.class,
             QuotaAdminGuard.class,

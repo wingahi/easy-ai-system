@@ -48,6 +48,7 @@ class QuotaConcurrencyTest {
     @EnableConfigurationProperties(QuotaProperties.class)
     @Import({
             MetaObjectHandlerImpl.class,
+            com.wgh.rag.common.metrics.RagMetrics.class,
             QuotaService.class,
             DefaultQuotaUserResolver.class,
             QuotaAdminGuard.class

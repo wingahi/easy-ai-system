@@ -219,6 +219,8 @@ CREATE TABLE IF NOT EXISTS wgh_llm_model (
     model_type VARCHAR(30),
     compression_model BOOLEAN DEFAULT FALSE,
     enabled BOOLEAN DEFAULT TRUE,
+    route_group VARCHAR(100),
+    route_priority INT DEFAULT 0,
     create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     create_by VARCHAR(100),
