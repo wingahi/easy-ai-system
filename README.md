@@ -380,6 +380,68 @@ docker build -t wgh-rag-frontend:local -f rag-frontend/Dockerfile rag-frontend
 - 请求关联：客户端可传 `X-Request-Id`（`[A-Za-z0-9._-]{8,64}`），响应头回写，日志中体现为 `[rid=...]`；
 - 敏感凭证（分享 token、嵌入 grant、API Key）日志已脱敏，仅保留首尾 4 位。
 
+### 4.11 从手工容器迁移到 Compose 内置 PostgreSQL（一次性）
+
+适用于历史上用 `docker run` 起的 `postgres-with-vector`，迁移到 Compose 的 `postgres` 服务。
+
+```bash
+# 0) 备份（先停写；旧容器保持运行，仅备份只读）
+docker exec postgres-with-vector pg_dump -U postgres -d wgh_rag -Fc > backups/wgh_rag-$(date +%Y%m%d-%H%M%S).dump
+ls -lh backups/*.dump
+docker run --rm -i -v "$PWD/backups:/b:ro" pgvector/pgvector:pg15 \
+  pg_restore --list /b/wgh_rag-<时间戳>.dump | head   # 确认 TOC 可读
+
+# 1) 记录基线（表数 / 扩展 / 关键行数），迁移后逐项比对
+docker exec postgres-with-vector psql -U postgres -d wgh_rag -c "\dt" | wc -l
+docker exec postgres-with-vector psql -U postgres -d wgh_rag -c "select count(*) from wgh_user;"
+# 其它关键表：wgh_role / wgh_permission / wgh_knowledge_base / wgh_knowledge_file / wgh_chat_message
+
+# 2) 起 Compose 内置库（空卷首启会执行 schema.sql + data.sql）
+docker compose up -d postgres
+
+# 3) 恢复：清空 initdb 建出的对象后整体恢复，避免种子行与 dump 主键冲突
+docker exec wgh-rag-postgres psql -U postgres -d wgh_rag -v ON_ERROR_STOP=1 -c "
+  DROP EXTENSION IF EXISTS vector CASCADE;
+  DROP EXTENSION IF EXISTS pg_trgm CASCADE;
+  DROP SCHEMA public CASCADE;
+  CREATE SCHEMA public AUTHORIZATION postgres;"
+docker exec -i wgh-rag-postgres pg_restore -U postgres -d wgh_rag \
+  --no-owner --no-privileges --single-transaction < backups/wgh_rag-<时间戳>.dump
+
+# 4) 停旧容器（只 stop，不 remove，保留回滚）
+docker stop postgres-with-vector
+
+# 5) dev 回环绑定由 docker-compose.override.yml 提供（127.0.0.1:5432），生产不要启用
+docker compose up -d postgres
+docker compose ps        # 期望 healthy，端口 127.0.0.1:5432->5432
+```
+
+**恢复策略说明**：采用“清空 + 全量恢复”，而非 `--data-only` 合并。原因是源库含 42 张表（initdb 只有 37 张，运行时还会创建向量表等），且 initdb 种子会与 dump 撞主键；全量恢复保证 schema 与数据完全一致。
+
+**行数核对**（迁移前后应一致；应用启动后 `wgh_audit_log` 等会因新请求增长）：
+
+```bash
+docker exec wgh-rag-postgres psql -U postgres -d wgh_rag -c "
+select 'wgh_user',count(*) from wgh_user union all
+select 'wgh_role',count(*) from wgh_role union all
+select 'wgh_permission',count(*) from wgh_permission union all
+select 'wgh_knowledge_base',count(*) from wgh_knowledge_base union all
+select 'wgh_knowledge_file',count(*) from wgh_knowledge_file union all
+select 'wgh_chat_message',count(*) from wgh_chat_message;"
+docker exec wgh-rag-postgres psql -U postgres -d wgh_rag -c "\dx"   # vector / pg_trgm
+```
+
+**回滚**（新库数据核对失败时）：
+
+```bash
+docker compose stop postgres
+docker start postgres-with-vector          # 旧容器原绑 0.0.0.0:5432，恢复宿主连接
+# 若旧容器端口绑定被改动过，用原启动命令重新 docker run -p 5432:5432 ...
+# 应用无需改配置（dev profile 默认连 localhost:5432，口令 123456）
+```
+
+**生产警示**：`5432` 仅回调环是**本地 dev 专用**（`docker-compose.override.yml`）。生产启动请用 `docker compose -f docker-compose.yml up -d` 或直接删除 override 文件，禁止把 5432 发布到 `0.0.0.0`；备份 dump 含口令哈希与业务数据，已在 `.gitignore` 忽略，**不要提交**。
+
 ---
 
 ## 5. 配置

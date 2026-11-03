@@ -1,0 +1,6 @@
+# 仅本地开发使用：把内置 PostgreSQL 绑定到回环地址，供宿主机上的 rag-app 连接。
+# 生产环境不要使用本文件（用 docker compose -f docker-compose.yml 启动，或删除本文件）。
+services:
+  postgres:
+    ports:
+      - "127.0.0.1:5432:5432"

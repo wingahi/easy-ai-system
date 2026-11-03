@@ -46,6 +46,8 @@ Desktop.ini
 *.key
 *.p12
 *.keystore
+# 数据库备份（含明文口令哈希/业务数据，禁止入库）
+backups/
 
 # ===== Java =====
 *.jar
