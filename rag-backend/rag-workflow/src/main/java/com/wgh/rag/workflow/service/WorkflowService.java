@@ -133,8 +133,14 @@ public class WorkflowService {
     }
 
     public List<String> validateGraph(Long id) {
+        return validateGraph(id, null);
+    }
+
+    /** 校验工作流图：graphJson 非空时校验前端草稿（不落库），为空时校验已保存定义。 */
+    public List<String> validateGraph(Long id, String graphJson) {
         Workflow wf = getById(id);
-        return graphValidator.validate(parseGraph(wf.getGraphJson())).errors;
+        WorkflowGraph graph = parseGraph(graphJson == null || graphJson.isBlank() ? wf.getGraphJson() : graphJson);
+        return graphValidator.validate(graph).errors;
     }
 
     @Transactional

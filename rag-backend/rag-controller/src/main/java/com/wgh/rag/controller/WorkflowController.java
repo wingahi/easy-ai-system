@@ -73,10 +73,12 @@ public class WorkflowController {
         return Result.success(workflowService.update(id, workflow));
     }
 
-    @Operation(summary = "校验工作流图")
+    @Operation(summary = "校验工作流图（可传前端草稿，不落库）")
     @PostMapping("/{id}/validate")
-    public Result<List<String>> validate(@PathVariable Long id) {
-        return Result.success(workflowService.validateGraph(id));
+    public Result<List<String>> validate(@PathVariable Long id,
+                                         @RequestBody(required = false) Workflow workflow) {
+        String graphJson = workflow != null ? workflow.getGraphJson() : null;
+        return Result.success(workflowService.validateGraph(id, graphJson));
     }
 
     @Operation(summary = "删除工作流（逻辑删除）")

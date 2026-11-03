@@ -7,7 +7,7 @@
       <el-tag v-if="running" size="small" type="warning">运行中</el-tag>
       <div class="spacer" />
       <el-button :icon="CircleCheck" @click="validateGraph">校验</el-button>
-      <el-button :icon="Document" :loading="saving" @click="save">保存</el-button>
+      <el-button :icon="Document" :loading="saving" @click="save()">保存</el-button>
       <el-button type="primary" :icon="VideoPlay" :loading="running" @click="startRun">运行</el-button>
     </div>
 
@@ -304,6 +304,18 @@ const confirming = ref(false)
 let streamHandle = null
 let pollTimer = null
 let nodeSeq = 1
+/** 最近一次成功落库的图定义指纹（内容相同则不再重复保存，避免版本号空转） */
+let savedGraphKey = ''
+
+// 键名排序后再序列化，避免后端回读的字段顺序差异被误判为内容变更
+const canonicalize = (value) => {
+  if (Array.isArray(value)) return value.map(canonicalize)
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.keys(value).sort().map(k => [k, canonicalize(value[k])]))
+  }
+  return value
+}
+const graphKey = (graph) => JSON.stringify(canonicalize(graph))
 
 // ============ 配置表单辅助 ============
 const INPUT_REF = '{{input}}'
@@ -349,6 +361,7 @@ const loadWorkflow = async () => {
   nodes.value = graph.nodes.map(toFlowNode)
   edges.value = graph.edges.map(toFlowEdge)
   nodeSeq = nodes.value.length + 1
+  savedGraphKey = graphKey(buildGraph())
   setTimeout(() => { try { fitAll() } catch { /* 画布尚未初始化 */ } }, 100)
 }
 
@@ -498,13 +511,23 @@ const buildGraph = () => {
 }
 
 const save = async (silent = false) => {
+  // 同一时间只允许一个保存请求在途，避免连点产生并发提交
+  if (saving.value) return
+  const graph = buildGraph()
+  const key = graphKey(graph)
+  if (key === savedGraphKey) {
+    // 内容未变更：不再发送请求，避免版本号空转（校验/运行触发的保存同样在此去重）
+    if (!silent) ElMessage.info('内容未变更，无需保存')
+    return
+  }
   saving.value = true
   try {
     const res = await workflowUpdate(workflowId, {
       name: workflow.name,
       description: workflow.description,
-      graphJson: JSON.stringify(buildGraph())
+      graphJson: JSON.stringify(graph)
     })
+    savedGraphKey = key
     workflow.version = res.data.version
     if (!silent) ElMessage.success('已保存 v' + res.data.version)
   } finally {
@@ -514,8 +537,8 @@ const save = async (silent = false) => {
 
 const validateGraph = async () => {
   try {
-    await save(true)
-    const res = await workflowValidate(workflowId)
+    // 直接校验画布草稿，不再隐式落库（避免「校验」按钮悄悄产生新版本）
+    const res = await workflowValidate(workflowId, JSON.stringify(buildGraph()))
     const errors = res.data || []
     if (!errors.length) {
       ElMessage.success('校验通过')
