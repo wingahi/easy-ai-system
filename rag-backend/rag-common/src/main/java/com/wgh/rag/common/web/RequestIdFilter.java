@@ -1,5 +1,6 @@
 package com.wgh.rag.common.web;
 
+import com.wgh.rag.common.constant.HttpConstants;
 import jakarta.servlet.DispatcherType;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -28,7 +29,7 @@ import java.util.regex.Pattern;
 @Order(Ordered.HIGHEST_PRECEDENCE)
 public class RequestIdFilter extends OncePerRequestFilter {
 
-    public static final String HEADER_NAME = "X-Request-Id";
+    public static final String HEADER_NAME = HttpConstants.HEADER_X_REQUEST_ID;
     public static final String MDC_KEY = "requestId";
     private static final String ATTR_NAME = RequestIdFilter.class.getName() + ".requestId";
     private static final Pattern SAFE_ID = Pattern.compile("[A-Za-z0-9._-]{8,64}");

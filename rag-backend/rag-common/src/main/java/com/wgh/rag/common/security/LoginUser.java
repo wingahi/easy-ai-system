@@ -1,5 +1,6 @@
 package com.wgh.rag.common.security;
 
+import com.wgh.rag.common.constant.RoleCodes;
 import lombok.Data;
 import java.util.Set;
 
@@ -18,7 +19,7 @@ public class LoginUser {
     private Boolean passwordMustChange;
 
     /** 角色缺失时的默认普通用户角色 */
-    public static final String DEFAULT_ROLE = "viewer";
+    public static final String DEFAULT_ROLE = RoleCodes.VIEWER;
 
     public static final ThreadLocal<LoginUser> CONTEXT = new ThreadLocal<>();
 
