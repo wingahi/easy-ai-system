@@ -30,7 +30,8 @@ import java.util.function.Supplier;
  */
 @Slf4j
 @Component
-@ConditionalOnProperty(prefix = "wgh.rag.storage", name = "type", havingValue = "oss")
+@ConditionalOnProperty(prefix = StorageConstants.CONFIG_PREFIX, name = "type",
+        havingValue = StorageConstants.TYPE_OSS)
 public class AliyunOssFileStorageService implements FileStorageService {
 
     private final StorageProperties properties;
@@ -155,7 +156,7 @@ public class AliyunOssFileStorageService implements FileStorageService {
             return publicUrl(objectKey);
         }
         int expireMinutes = Math.max(1, oss.getSignedUrlExpireMinutes());
-        Date expiration = new Date(System.currentTimeMillis() + expireMinutes * 60_000L);
+        Date expiration = new Date(System.currentTimeMillis() + expireMinutes * StorageConstants.MILLIS_PER_MINUTE);
         return execute("生成签名 URL",
                 () -> urlClient().generatePresignedUrl(oss.getBucket(), objectKey, expiration).toString());
     }
@@ -179,7 +180,7 @@ public class AliyunOssFileStorageService implements FileStorageService {
     }
 
     private long maxBytes() {
-        return (long) Math.max(1, properties.getOss().getMaxFileSizeMb()) * 1024 * 1024;
+        return (long) Math.max(1, properties.getOss().getMaxFileSizeMb()) * StorageConstants.BYTES_PER_MB;
     }
 
     private String objectKey(String key) {
@@ -204,7 +205,7 @@ public class AliyunOssFileStorageService implements FileStorageService {
     private Path spoolToTemp(InputStream in, long limit) {
         Path temp = null;
         try {
-            temp = Files.createTempFile("wgh-oss-upload-", ".part");
+            temp = Files.createTempFile(StorageConstants.OSS_TEMP_PREFIX, StorageConstants.TEMP_SUFFIX);
             Files.copy(in, temp, StandardCopyOption.REPLACE_EXISTING);
             long actual = Files.size(temp);
             if (actual <= 0) {
@@ -268,7 +269,7 @@ public class AliyunOssFileStorageService implements FileStorageService {
     private String publicUrl(String objectKey) {
         StorageProperties.Oss oss = properties.getOss();
         String endpoint = oss.getEndpoint().trim();
-        String scheme = "https";
+        String scheme = StorageConstants.DEFAULT_PUBLIC_URL_SCHEME;
         String host = endpoint;
         if (endpoint.contains("://")) {
             URI uri = URI.create(endpoint);

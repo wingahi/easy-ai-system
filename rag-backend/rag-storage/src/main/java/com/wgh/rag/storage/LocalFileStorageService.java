@@ -22,7 +22,8 @@ import java.nio.file.StandardCopyOption;
  */
 @Slf4j
 @Component
-@ConditionalOnProperty(prefix = "wgh.rag.storage", name = "type", havingValue = "local", matchIfMissing = true)
+@ConditionalOnProperty(prefix = StorageConstants.CONFIG_PREFIX, name = "type",
+        havingValue = StorageConstants.TYPE_LOCAL, matchIfMissing = true)
 public class LocalFileStorageService implements FileStorageService {
 
     private final StorageProperties properties;
@@ -60,7 +61,7 @@ public class LocalFileStorageService implements FileStorageService {
         Path temp = null;
         try {
             Files.createDirectories(parent);
-            temp = Files.createTempFile(parent, ".upload-", ".part");
+            temp = Files.createTempFile(parent, StorageConstants.LOCAL_TEMP_PREFIX, StorageConstants.TEMP_SUFFIX);
             Files.copy(in, temp, StandardCopyOption.REPLACE_EXISTING);
 
             long actualSize = Files.size(temp);
@@ -129,7 +130,7 @@ public class LocalFileStorageService implements FileStorageService {
     }
 
     private long maxBytes() {
-        return (long) Math.max(1, properties.getLocal().getMaxFileSizeMb()) * 1024 * 1024;
+        return (long) Math.max(1, properties.getLocal().getMaxFileSizeMb()) * StorageConstants.BYTES_PER_MB;
     }
 
     /**
@@ -145,7 +146,7 @@ public class LocalFileStorageService implements FileStorageService {
         }
 
         // 历史数据兼容：旧实现可能把 ./uploads/1/a.pdf 这类相对工作目录路径直接写库
-        if (!key.startsWith("kb/")) {
+        if (!key.startsWith(StorageConstants.KEY_PREFIX_KB)) {
             Path legacy = Paths.get(key).toAbsolutePath().normalize();
             if (legacy.startsWith(root)) {
                 return legacy;

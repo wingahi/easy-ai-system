@@ -8,7 +8,7 @@ package com.wgh.rag.storage;
  */
 public final class StorageKeys {
 
-    private static final String KB_PREFIX = "kb/";
+    private static final String KB_PREFIX = StorageConstants.KEY_PREFIX_KB;
 
     private StorageKeys() {
     }

@@ -12,11 +12,11 @@ import java.util.List;
  */
 @Data
 @Component
-@ConfigurationProperties(prefix = "wgh.rag.storage")
+@ConfigurationProperties(prefix = StorageConstants.CONFIG_PREFIX)
 public class StorageProperties {
 
     /** 存储类型：local（默认）/ oss */
-    private String type = "local";
+    private String type = StorageConstants.TYPE_LOCAL;
 
     private Local local = new Local();
 
@@ -25,11 +25,11 @@ public class StorageProperties {
     @Data
     public static class Local {
         /** 本地根目录，默认沿用历史配置 ./uploads */
-        private String baseDir = "./uploads";
+        private String baseDir = StorageConstants.DEFAULT_BASE_DIR;
         /** 静态访问前缀，仅用于 resolveUrl 返回逻辑地址 */
-        private String urlPrefix = "/uploads";
+        private String urlPrefix = StorageConstants.DEFAULT_URL_PREFIX;
         /** 单文件大小上限（MB） */
-        private int maxFileSizeMb = 50;
+        private int maxFileSizeMb = StorageConstants.DEFAULT_MAX_FILE_SIZE_MB;
     }
 
     @Data
@@ -46,11 +46,11 @@ public class StorageProperties {
         /** true 时 resolveUrl 返回公网直链；false 时返回签名 URL */
         private boolean publicRead = false;
         /** 签名 URL 有效期（分钟） */
-        private int signedUrlExpireMinutes = 60;
+        private int signedUrlExpireMinutes = StorageConstants.DEFAULT_SIGNED_URL_EXPIRE_MINUTES;
         /** 上传失败重试次数（含首次） */
-        private int maxRetries = 3;
+        private int maxRetries = StorageConstants.DEFAULT_MAX_RETRIES;
         /** 单文件大小上限（MB） */
-        private int maxFileSizeMb = 50;
+        private int maxFileSizeMb = StorageConstants.DEFAULT_MAX_FILE_SIZE_MB;
 
         /** 返回缺失的必填配置项，便于启动 WARN 与调用时错误提示。 */
         public List<String> missingConfigFields() {
