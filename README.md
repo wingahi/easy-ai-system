@@ -1,193 +1,199 @@
 # WGH RAG System
 
-> 企业知识库问答与 RAG 中台：把文档治理、检索增强、流式问答、Agent 编排与开放接入收敛到一套可私有化部署的系统。
+> 面向私有化部署的企业知识库问答与 RAG 中台：把文档治理、检索增强、流式问答、Agent / 工作流编排、分享与开放接入收敛到一套可审计、可配额管理的系统。
 
 ---
 
 ## 1. 定位与价值
 
-本系统面向需要在**内网/私有环境**里快速搭建"可治理、可评估、可审计"的智能问答与知识检索平台的团队。它不是一个只做 Demo 的 RAG 脚本，也不是只面向系统集成的自动化工作流工具，而是把两类常见诉求合并：
+**一句话**：把分散在企业内部的文档变成可检索、可引用、可评估、可治理的问答能力，并以聊天窗口、分享链接、Widget 和 API 对外提供。
 
-- **企业知识库问答**：文档入库 → 解析切片 → 向量/关键词混合检索 → 大模型回答，并给出引用来源与检索质量指标；
-- **RAG 中台**：同一套模型、知识库、工具、配额与审计能力，向上支撑多个聊天窗口、工作流与第三方系统调用。
+它解决的是"知识在哪里、答案从哪来、质量怎么衡量、谁能用、用了多少"这一整条链路，而不只是把问题拼进一段 prompt：
 
-### 1.1 典型适用场景
+- **文档到答案**：上传 → 解析 → 切分 → 向量化 → 混合检索 → 带引用的回答，支持增量维护与重新切分。
+- **质量可度量**：SSE 实时输出召回覆盖率与命中率；有标注后可计算 Recall@K / Precision@K / MRR / NDCG，并提供离线评测脚本。
+- **多入口复用同一套能力**：管理端调试、免登录分享、第三方站点 Widget、API Key 开放 API 都复用同一套模型、知识库、工具、配额与审计。
+- **可治理**：OIDC / 本地账号双认证、RBAC、配额与限流、审计日志、成本统计、可观测性。
 
-| 场景 | 用法 |
-|------|------|
-| 内部文档问答 | 制度、产品手册、SOP 入库，员工通过聊天窗口提问，回答附带原文出处 |
-| 客服知识辅助 | 坐席侧知识检索 + 建议回答；对外可通过免登录分享或 Widget 嵌入官网/帮助中心 |
-| 研发知识检索 | 接口文档、设计文档、排障记录检索；通过开放 API 接入 IDE 插件或内部工具链 |
-| 合规审计追溯 | 全量审计日志（谁、何时、对什么资源做了什么）+ 模型调用成本与配额用量留痕 |
-| 固定 SOP 自动化 | 工作流编排（含 LLM/检索/工具/AGENT/人工确认节点），按版本发布与回滚 |
+### 1.1 与"直接调用大模型"的区别
+
+| 维度 | 直接调用大模型 | 本系统 |
+|------|----------------|--------|
+| 知识来源 | 依赖模型参数或临时拼 prompt | 文档入库、切分、向量与关键词索引，内容可更新、可删除 |
+| 回答可追溯 | 较难说明依据 | 回答附带引用来源，前端按文档去重展示 |
+| 质量评估 | 主要靠人工感觉 | 检索侧 Recall@K / Precision@K / MRR / NDCG，生成侧 LLM-as-Judge |
+| 权限与审计 | 需自行实现 | OIDC 资源服务器 + RBAC、审计日志、配额与限流 |
+| 对外渠道 | 需自行开发 | 免登录分享、iframe Widget、API Key 开放 API |
+| 复杂任务 | 单轮问答为主 | 单 Agent、多 Agent、工作流编排与 HITL 人工确认 |
 
 ### 1.2 能力边界
 
-- **做**：文档解析与检索增强、流式问答、多轮会话与上下文压缩、Agent 规划执行、多 Agent 协作、工作流编排、分享/嵌入/开放 API、配额限流、审计与成本统计。
-- **不做**：多租户隔离、独立向量数据库/搜索引擎（单库 PostgreSQL + pgvector）、图片 OCR、移动端与国际化、Kubernetes 级别的水平扩展编排。
-
-### 1.3 与同类产品的差异
-
-| 维度 | 主流产品（Dify / Coze / RAGFlow / FastGPT） | 本系统取舍 |
-|------|-------------------------------------------|-----------|
-| 部署形态 | SaaS 为主或依赖多中间件 | **单库 + 可选 Redis**：PostgreSQL + pgvector 承载业务与向量，Redis 承载分布式限流 / 密码锁定 / 嵌入授权；两者不可用均不阻断启动（Redis 自动降级为单机内存） |
-| 检索质量 | 多数只给相似度分数 | 对话实时输出召回覆盖率/命中率；ground truth 标注后可算真实 Recall@K，并支持离线评测脚本 |
-| 长对话成本 | 依赖外部缓存或简单截断 | 三层上下文压缩（近期原文/中期摘要/远期事实），压缩结果持久化与 Prompt 版本失效重算 |
-| 编排一致性 | 对话、Agent、工作流常是两套体系 | 聊天窗口、Agent、工作流、多 Agent 共用 SSE 风格、HITL、落库与刷新恢复约定 |
-| 对外接入 | 渠道发布能力完善 | 提供免登录分享、iframe Widget 与 API Key 开放 API，并统一纳入配额、限流与审计 |
+- **做**：文档解析与检索增强、流式问答、多轮会话与上下文压缩、Agent 规划执行、多 Agent 协作、工作流编排、分享 / 嵌入 / 开放 API、配额限流、审计与成本统计。
+- **不做**：多租户隔离、独立向量数据库 / 搜索引擎（单库 PostgreSQL + pgvector）、图片 OCR、移动端与国际化、Kubernetes 级别的水平扩展编排。
 
 ---
 
-## 2. 核心能力
+## 2. 典型应用场景
 
-### 2.1 知识库与检索增强
+| 场景 | 典型用法 | 系统提供的支撑 | 边界 |
+|------|----------|----------------|------|
+| **企业内部知识库问答与员工自助** | 制度、手册、SOP 入库，员工在聊天窗口提问，回答附带原文出处 | 12 种文档格式解析、9 种切分策略、混合检索、SSE 流式回答、引用来源与检索指标 | 不替代 OA / 工单流程；文档需先上传或经 API 写入 |
+| **客服 / 工单坐席辅助** | 坐席把客户问题或工单描述作为查询，检索知识库并生成建议答复；对外可用免登录分享或 Widget 自助问答 | RAG 问答、引用来源、分享链接、Widget 嵌入、开放 API、配额与限流 | 工单流转、客户画像、坐席工作台集成不在本系统范围 |
+| **研发文档与规范检索助手** | 接口文档、设计文档、排障记录、编码规范入库，研发在聊天窗口或经开放 API 在内部工具中检索 | 混合检索（向量 + 关键词）、查询变换、Rerank、API Key 开放 API | 不直接同步 Git / Jira 等数据源；文档需上传或经 API 写入 |
+| **培训 / 考试题库知识问答** | 培训资料、FAQ、题库解析后入库，学员按自然语言提问 | FAQ / 章节 / 结构化 / 语义等多种切分，问答对与知识点检索，引用来源 | 不提供组卷、考试、判分等培训业务功能 |
+| **第三方系统集成** | 既有站点嵌入问答窗口，或由外部系统通过 API 调用问答与知识库检索 | 免登录分享链接、iframe Widget、API Key（`chat:write` / `kb:read` / `usage:read`）、Redis 限流与调用日志 | Widget 为 iframe 注入，不含 `postMessage` 双向通信；跨域需宿主配置 CSP |
+| **多用户按角色与配额分权使用** | 管理员维护用户/角色/权限，按用户配置日/月配额，审计关键操作 | OIDC 资源服务器 + 本地 admin/体验账号、RBAC、角色与权限管理页面、配额模块、审计日志 | **不做租户隔离**；知识库/文档级权限未全量覆盖 |
 
-- **12 种文档格式**：PDF / DOC / DOCX / XLS / XLSX / CSV / TXT / MD / PPTX / HTML / JSON / EML。统一由 `DocumentParserDispatcher` 分发，抽取标题、页数/工作表数、编码、字符数等元数据；解析前做存在性、空文件与大小上限检查，损坏文件与缺少依赖返回友好错误（图片 OCR 未支持）。
-- **9 种切分策略**：AUTO / RECURSIVE / CHAPTER / PARAGRAPH / FAQ / LENGTH / CUSTOM / STRUCTURED（标题感知）/ SEMANTIC（语义断句）。文件级幂等，重新切分/删除会同步清理旧向量。
-- **检索链路**：查询变换（REWRITE / MULTI_QUERY / HYDE）→ 多路召回（向量余弦 + pg_trgm 关键词）→ RRF(k=60) 融合 → 可选 Rerank → topK。每一步失败独立降级，不阻断问答。
-- **可度量**：SSE 随消息下发召回覆盖率（返回条数/topK）与命中率（分数达标占比）；ground truth（`wgh_kb_ground_truth`，`fileId:chunkIndex` 为键）标注后可计算 Recall@K / Precision@K，离线脚本 `eval/eval_recall.py` 可复用同一标注。
-- **标签与文档版本**：知识库/文件多标签；文件历史版本快照与回滚（回滚生成新版本，不覆盖旧版本）。
-
-### 2.2 对话、分享与多模态
-
-- 多会话管理、首条消息自动生成标题、历史滑动加载；SSE 流式输出 Markdown、引用来源、检索指标与工具/Agent 事件。
-- **分层上下文压缩**：超过 `max-history-messages`（默认 20）触发三层压缩：近期 4 轮原文、中期 6 轮摘要、远期 ≤8 条关键事实；模型缺失或超时自动降级为截断。
-- **多模态图片问答**：视觉模型（`supports_vision`）支持图片 + 文本提问，附件地址落 `wgh_chat_message.attachments`。
-- **反馈闭环**：消息点赞/点踩 + 备注，窗口满意度统计与差评运营列表（A/B 对比与数据集版本管理未实现）。
-- **免登录分享**：带 token 链接，支持有效期（默认 7 天、上限 30 天）、可选访问密码（失败 5 次锁定 15 分钟，可配置）、只读范围（`WINDOW` 匿名问答 / `SESSION` 只读会话 / `KB` 只读检索）、使用次数与即时吊销。匿名问答复用完整 RAG 链路并计入配额。
-- **嵌入 Widget**：`widget.js` 一行脚本在第三方页面注入 iframe；服务端先按域名（支持 `*.example.com` 通配）与 IP/CIDR 白名单校验来源并签发短期 grant（`?embed=1&grant=...`），未授权来源返回可读拒绝原因；样式靠 iframe 文档隔离；提供本地可打开的 `widget-demo.html`。
-- **开放 API**：API Key（仅存 SHA-256，明文创建时返回一次）、`chat:write` / `kb:read` / `usage:read` 权限范围、可选 IP/CIDR 白名单（不命中返回 403）、独立鉴权过滤链、按 Key + IP + 路径的 Redis 分布式限流、调用日志（谁/接口/状态码/耗时/IP），并复用配额校验。
-
-### 2.3 Agent 与工作流编排
-
-- **单 Agent**：窗口级 `agent_enabled`。Planner 拆解 → StepExecutor 执行（可调工具与检索）→ Reflection 评分重试 → 汇总答复；计划/步骤全量落库；有副作用操作可经 HITL 人工确认。
-- **多 Agent 协作**：6 种模式——串行/层级/并行 Crew、状态图 Graph、轮询/动态路由 GroupChat；每个 Agent 独立模型/知识库/工具/记忆/HITL 配置。
-- **工作流**：11 类节点（START / END / LLM / RETRIEVAL / TOOL / CONDITION / LOOP / HITL / VARIABLE / WORKFLOW / **AGENT**），支持并行 fan-out/fan-in、变量引用、子流程（最大嵌套 3 层）、版本快照与回滚、运行历史、CRON/Webhook 触发器与模板市场。AGENT 节点内置轻量 Plan-and-Execute（`AgentNodeExecutor`，支持 `goal`/`maxSteps`/`timeoutMs`/`kbIds`）。
-
-### 2.4 平台治理
-
-- **账号与权限**：本系统以 OIDC 资源服务器形态**只验证外部 IdP 签发的 token，不对外签发 token**（JWKS 公钥验签 + iss/aud/exp/nbf 校验）；另提供仅限 `source=local` 的 admin/体验账号登录并签发内部会话凭证（见 §4.2）。角色取自 token 的 `roles`/`groups` claim，经映射表匹配数据库 `wgh_role.role_code` 后加载权限，`@RequiresPermission` 做资源级校验。token 无角色时按默认 `viewer` 处理。管理端已提供角色/权限管理页面与接口（`/api/admin/roles`、`/api/admin/permissions`）；仍不支持租户隔离与知识库/文档级权限的全量覆盖。
-- **审计与成本**：`@Audit` 切面异步记录写操作（含成功/失败、操作人、资源、IP，失败不阻断主流程）；模型价格表 + 消息成本/模型名回填，管理端聚合统计。
-- **配额与限流**：配额由独立 `rag-quota` 模块提供（全局默认 + 按用户日/月配置，超限 429，用量原子累加）；分享与开放 API 另有每分钟滑动窗口限流。
-- **语义缓存**：窗口级开关，相似度阈值命中后直接返回缓存答案，跳过检索与 LLM；每窗口条数上限，超出淘汰最旧。
-- **Prompt 模板中心**：模板 CRUD、变量提取、渲染预览；窗口系统提示可用 `template:{id}` 引用。输入框支持**前缀联想**：在聊天调试页输入框或工作流 LLM 节点的 User Prompt 中输入前缀（默认 `/`）即弹出模板候选，继续输入按名称/简述/分类模糊过滤，↑↓ 选择、Enter 填入、Esc 关闭。选中含 `{{变量}}` 的模板会进入变量填写态（占位符高亮、Tab/Enter 逐个填写，全部替换后才可发送；也可「跳过变量直接发送」，未填变量按后端 render 规则替换为空串）。前缀字符、最大候选数、是否启用可在「Prompt 模板中心」页顶部配置，保存在浏览器 localStorage（`wgh_prompt_trigger_config`，默认启用、前缀 `/`、最多 10 个）。
-- **模型路由与故障转移（部分完成）**：窗口可指定 `model_route_group`，同组模型按 `route_priority` 升序形成故障转移链；未配置时回退 `llm_model_id`。故障转移只覆盖普通 RAG 在发起调用前的同步异常（如取模型失败）：流式回调 `onError`（包括首个 token 前的异步连接失败）只发送错误事件并结束，不会回到切链循环；Agent / 工作流仍只用主模型。详见 §7 计划任务状态与 §8 已知限制。
-- **可观测性**：Micrometer + Prometheus 自定义业务指标（对话/检索/LLM/配额/限流/工作流）；`X-Request-Id` 贯穿 MDC、SSE 与异步线程，日志统一携带 `rid`；管理端口独立（默认 `9090`），业务端口不再暴露 `/actuator`；提供 Prometheus/Grafana 编排与仪表盘，详见 [docs/design-observability.md](docs/design-observability.md)。
-- **容器化**：后端多阶段 Dockerfile（非 root、JVM 容器内存感知、9090 探活），前端 Node 构建 + Nginx（SPA 回退、`/api` 反代、SSE 关闭缓冲），`docker compose` 一键拉起 postgres（pgvector）/ backend / frontend / redis / prometheus / grafana。
+> 说明：以上场景均基于当前代码已实现的能力描述；未实现的能力不会作为卖点写入场景。
 
 ---
 
-## 3. 架构与技术栈
+## 3. 能力矩阵
 
-### 3.1 模块结构
+状态口径：**已完成** / **部分完成** / **未实现**。状态判断以代码与提交为准，详细限制见 §8。
 
-```
+### 3.1 知识库与检索
+
+| 能力 | 状态 | 说明 |
+|------|------|------|
+| 文档解析（12 种格式） | 已完成 | PDF / DOC / DOCX / XLS / XLSX / CSV / TXT / MD / PPTX / HTML / JSON / EML；统一由 `DocumentParserDispatcher` 分发并抽取元数据 |
+| 新增文档格式（PPTX / HTML / JSON / EML） | 已完成 | `PptxParser` / `HtmlParser` / `JsonParser` / `EmlParser` + 统一元数据与大小上限 |
+| 文本切分（9 种策略） | 已完成 | AUTO / RECURSIVE / CHAPTER / PARAGRAPH / FAQ / LENGTH / CUSTOM / STRUCTURED（标题感知）/ SEMANTIC（语义断句） |
+| 查询变换 / 混合检索 / RRF / Rerank | 已完成 | REWRITE / MULTI_QUERY / HYDE；向量余弦 + pg_trgm 关键词召回；RRF(k=60) 融合；可选 Rerank |
+| 检索指标与离线评测 | 已完成 | 覆盖率 / 命中率；ground truth 标注后计算 Recall@K / Precision@K / MRR / NDCG；`eval/eval_recall.py` 复用同一标注 |
+| 知识库标签 | 已完成 | `TagService` / `TagController`；知识库与文件多标签绑定及管理界面 |
+| 文档版本 | 已完成 | `FileVersionService` + 版本列表 / 回滚；回滚生成新版本，不覆盖旧版本 |
+| 可插拔文件存储（local / OSS） | 已完成 | 独立 `rag-storage` 模块，`FileStorageService` + 本地 / 阿里云 OSS 实现 |
+| 大文件分片上传 | **未实现** | OSS 仅单次流式 `putObject`，无 multipart / 断点续传；业务侧默认上限 50MB |
+| `local` ↔ `oss` 历史对象自动迁移 | **未实现** | 切换本身已支持，但旧对象仍留在原存储后端，需手工迁移或重新上传并重建向量 |
+| OSS 删除失败后的孤儿对象清理 | **未实现** | 删除失败仅记录 WARN，数据库仍完成逻辑删除，对象可能残留 |
+| 图片 OCR | **未实现** | 仅支持文本型 PDF / 文档；扫描件与图片型 PDF 无法直接提取文字 |
+
+### 3.2 对话与开放接入
+
+| 能力 | 状态 | 说明 |
+|------|------|------|
+| 多会话与流式问答 | 已完成 | 多会话管理、首条消息自动生成标题、历史滑动加载；SSE 输出 Markdown、引用来源与检索指标 |
+| 三层上下文压缩 | 已完成 | 超过 `max-history-messages`（默认 20）触发：近期原文 / 中期摘要 / 远期关键事实；模型缺失或超时降级为截断 |
+| 多模态图片问答 | 已完成 | 视觉模型（`supports_vision`）支持图片 + 文本提问，附件地址落 `wgh_chat_message.attachments` |
+| 反馈闭环 | 已完成 | 消息点赞 / 点踩 + 备注，窗口满意度统计与差评运营列表 |
+| 反馈 A/B 与数据集版本管理 | **未实现** | 无实验对比与数据集版本管理能力 |
+| 免登录分享 / Widget 嵌入 / 开放 API | 已完成 | 分享链接（有效期、访问密码、只读范围、吊销）；`widget.js` iframe 注入；API Key 开放 API 与调用日志 |
+| Prompt 模板中心与输入框前缀联想 | 已完成 | 模板 CRUD、变量提取、渲染预览；输入框前缀触发候选、模糊过滤、变量逐个填写；`GET /api/prompt-templates/suggest` |
+| 语义缓存 | 已完成 | 窗口级开关，相似度阈值命中后直接返回缓存答案，跳过检索与 LLM |
+
+### 3.3 Agent 与工作流
+
+| 能力 | 状态 | 说明 |
+|------|------|------|
+| 单 Agent | 已完成 | Planner 拆解 → StepExecutor 执行 → Reflection 评分重试 → 汇总答复；计划 / 步骤落库；支持 HITL |
+| 多 Agent 协作 | 已完成 | 6 种模式：CREW_SEQUENTIAL / CREW_HIERARCHICAL / CREW_PARALLEL / GRAPH_ROUTED / GROUP_CHAT_ROUND_ROBIN / GROUP_CHAT_DYNAMIC_ROUTER |
+| 工作流编排 | 已完成 | 11 类节点：START / END / LLM / RETRIEVAL / TOOL / CONDITION / LOOP / HITL / VARIABLE / WORKFLOW / AGENT；并行 fan-out/fan-in、版本、触发器、模板市场 |
+| 工作流 AGENT 节点 | 已完成 | `AgentNodeExecutor` 内置轻量 Plan-and-Execute；编辑器支持 `goal` / `maxSteps` / `timeoutMs` / `kbIds` |
+
+### 3.4 平台治理
+
+| 能力 | 状态 | 说明 |
+|------|------|------|
+| OIDC 资源服务器形态验签 | 已完成 | `OidcTokenVerifier` / `JwksProvider`；仅接受非对称签名，拒绝 HS256 与 `none`，校验 iss / aud / exp / nbf |
+| 本地 admin / 体验账号登录 + `password_version` | 已完成 | `LocalLoginService` / `LocalTokenService`；仅 `source=local` 的 admin / 体验账号可登录；`password_version` 校验会话失效 |
+| 多用户与权限体系 | 已完成 | OIDC + 本地账号双认证，RBAC（`@RequiresPermission` / `PermissionAspect`）；租户隔离与知识库/文档级全量权限不在范围内 |
+| 角色与权限管理页面 | 已完成 | `AdminRoleController`（`/api/admin/roles`、`/api/admin/permissions`）+ `RoleManagement.vue`、`UserManagement.vue` |
+| 配额模块与前后端页面 | 已完成 | 独立 `rag-quota` 模块；全局默认 + 按用户日/月配置，超限 429；`QuotaManagement.vue` / `MyQuota.vue` |
+| Redis 8.10.1 接入 | 已完成 | 分布式限流、分享密码失败锁定（成功清零）、嵌入授权、API Key IP 白名单；不可用时降级为单机内存 |
+| 审计与成本统计 | 已完成 | `@Audit` 异步记录写操作；模型价格表 + 消息成本 / 模型名回填；管理端聚合统计 |
+| 安全整改 | 已完成 | 首登强制改密（`password_must_change`）、审计日志敏感信息脱敏、409 映射、`WGH_INIT_ADMIN_PASSWORD` 注入 |
+| 可观测性（Prometheus + 独立 9090） | 已完成 | `RagMetrics` 业务指标 + `/actuator/prometheus`；管理端口默认 `9090`，业务端口不暴露 `/actuator` |
+| Compose 内置 PostgreSQL(pgvector) | 已完成 | `docker-compose.yml` 内置 `pgvector/pgvector:pg15`，空卷首启执行 `schema.sql` / `data.sql` |
+
+### 3.5 模型与工程
+
+| 能力 | 状态 | 说明 |
+|------|------|------|
+| 模型管理 | 已完成 | DB 动态模型 + OpenAI / DASHSCOPE / DeepSeek / 自建 OpenAI 兼容端点；缓存热更新 |
+| 模型路由与故障转移 | **部分完成（存在已知缺陷）** | `ModelRouter#resolveChain` + `RagChatService#runWithFailover` 支持普通 RAG 按 `route_group` 切链；但流式回调 `onError`（含首个 token 前的异步连接失败）只发送 `error` 事件并结束，不会回到切链循环；Agent / 工作流仍只用主模型 |
+| 多实例 JWKS 缓存共享 | **未实现** | `JwksProvider` 为进程内缓存，密钥轮换后各实例刷新时间不一致 |
+| `rag-public-access` 独立模块 + Enforcer 禁反向依赖 | 已完成 | 分享 / Widget / API Key 实现层独立；Controller 留在 `rag-controller`，依赖方向受 Enforcer 约束 |
+| `rag-storage` 独立模块（local / OSS 可插拔） | 已完成 | `FileStorageService` + `LocalFileStorageService` / `AliyunOssFileStorageService` |
+| `rag-agent-multi` Controller 迁入 `rag-controller` | 已完成 | `rag-agent-multi` 已无 Controller，`MultiAgentController` 位于 `rag-controller` |
+| 常量统一抽取 | 已完成 | 各模块 `constant` 包；权限码、角色码、状态值、SSE 事件名、存储 key 前缀等改引用常量 |
+| JDK 21 统一 | 已完成 | `maven.compiler.release=21` + Enforcer 强制 JDK 21，CI 与本地一致 |
+| 测试用例与设计文档补全 | 已完成 | JUnit 5 + Mockito；`scripts/` 提供 e2e / 冒烟 / 压测；`docs/test-cases.md`、`docs/design-*.md` 已补齐 |
+
+---
+
+## 4. 架构与技术栈
+
+### 4.1 模块结构
+
+```text
 wgh-rag-system/
 ├── rag-backend/                  # Spring Boot 多模块（Java 21）
-│   ├── rag-common/               # 纯契约层：Result / 异常 / 日志工具 / 指标 / 安全契约（无实体与 Mapper）
-│   ├── rag-data/                 # 持久层基础：BaseEntity / MyBatis-Plus 配置 / 类型处理器
-│   ├── rag-log/                  # 日志模块：@Audit 切面 + wgh_audit_log 写入与查询
-│   ├── rag-auth/                 # 认证与 RBAC：OIDC 资源服务器 + 用户/角色/权限实体与 Mapper
-│   ├── rag-quota/                # 配额模块（全局默认 + 用户日/月配置）
-│   ├── rag-config/               # RagProperties（RAG / PgVector / Agent / Context 配置映射）
-│   ├── rag-storage/              # 可插拔文件存储：FileStorageService + 本地 / 阿里云 OSS 实现
-│   ├── rag-llm/                  # DB 动态模型 + 多厂商工厂 + 缓存热更新 + 模型路由
+│   ├── rag-common/               # 纯契约层：Result / 异常 / 指标 / 安全契约
+│   ├── rag-data/                 # BaseEntity / MyBatis-Plus 配置 / 类型处理器
+│   ├── rag-log/                  # @Audit 切面与审计日志
+│   ├── rag-auth/                 # OIDC 资源服务器 + 本地登录 + 用户/角色/权限
+│   ├── rag-quota/                # 配额模块（全局默认 + 按用户日/月）
+│   ├── rag-config/               # 配置属性映射
+│   ├── rag-storage/              # 可插拔文件存储：local / 阿里云 OSS
+│   ├── rag-llm/                  # 动态模型、厂商工厂、缓存热更新、模型路由
 │   ├── rag-kb/                   # 上传 → 解析 → 切分 → 向量化 → 检索增强 → 评测
-│   ├── rag-chat/                 # 窗口/会话、上下文压缩、流式 RAG、分享、图片、反馈
-│   ├── rag-tool/                 # ToolExecutor SPI + HTTP / MCP / Skill / 函数调用
+│   ├── rag-chat/                 # 窗口/会话、上下文压缩、流式 RAG、分享、反馈
+│   ├── rag-tool/                 # HTTP / MCP / Skill / 函数调用工具
 │   ├── rag-agent/                # 单 Agent：Planner / Executor / Reflection / HITL
 │   ├── rag-agent-multi/          # 多 Agent：Crew / Graph / GroupChat / runtime
-│   ├── rag-workflow/             # 工作流引擎：调度、节点执行器（含 AGENT）、触发器、模板
-│   ├── rag-public-access/        # 公开访问实现层：分享链接 / Widget 嵌入 / 开放 API Key（无 Controller）
-│   ├── rag-controller/           # REST 层（含 /api/public、/api/open/v1、分享链接与 API Key 管理接口）
+│   ├── rag-workflow/             # 工作流引擎：节点执行器、触发器、模板
+│   ├── rag-public-access/        # 分享 / Widget / 开放 API 实现层（无 Controller）
+│   ├── rag-controller/           # REST 层（含 /api/public、/api/open/v1）
 │   ├── rag-app/                  # 启动模块 + application*.yml + 集成测试
-│   ├── sql/                      # schema.sql（37 张表 + 索引 + COMMENT）/ data.sql（种子）
-│   ├── eval/                     # eval_recall.py（零依赖 Recall@K）、eval_rag.py（含 LLM Judge）
-│   └── scripts/                  # e2e / 冒烟 / 压测 / 测试代码规范检查
-├── rag-frontend/                 # Vue 3 前端（含 public/widget.js、widget-demo.html）
-└── docs/                         # 设计文档、API 参考、测试用例与报告
+│   ├── sql/                      # schema.sql（37 张表）/ data.sql / init.sql
+│   ├── eval/                     # eval_recall.py（Recall@K）、eval_rag.py（含 LLM Judge）
+│   └── scripts/                  # e2e / 冒烟 / 压测脚本
+├── rag-frontend/                 # Vue 3 前端（含 public/widget.js）
+└── docs/                         # 设计与测试文档
 ```
 
-**模块依赖（缩进表示“被上层依赖”）**
+关键依赖约束：
 
-```
-rag-app
-└── rag-controller
-    ├── rag-public-access ─┬── rag-chat ── rag-kb ─┬── rag-storage ── rag-common
-    │                      │                        └── rag-llm ── rag-config ── rag-common
-    │                      ├── rag-auth ─┬── rag-log ─── rag-common
-    │                      │             └── rag-data ─── rag-common
-    │                      └── rag-data ─── rag-common
-    ├── rag-auth ───┬── rag-log ─── rag-common
-    │               └── rag-data ─── rag-common
-    ├── rag-quota ───── rag-common / rag-data
-    ├── rag-workflow / rag-agent / rag-agent-multi / rag-tool
-    └── rag-chat ── rag-kb ──┬── rag-storage ── rag-common
-                             └── rag-llm ── rag-config ── rag-common
-```
+- `rag-common` 不依赖任何内部模块，也不含实体 / Mapper / MyBatis 配置；
+- `rag-public-access` 依赖方向固定为 `rag-controller → rag-public-access`，并由 Enforcer 禁止反向依赖；
+- `rag-storage` 仅依赖 `rag-common`，上层业务通过 `FileStorageService` 抽象使用；
+- `rag-auth` 持有用户 / 角色 / 权限实体与 Mapper，供 Controller 的 RBAC 管理接口使用。
 
-- `rag-common` 不依赖任何内部模块，也不含实体/Mapper/MyBatis 配置；
-- `rag-storage` 仅依赖 `rag-common`，提供 `FileStorageService` 与本地 / OSS 实现；`rag-config` 不依赖它；
-- `rag-data` 仅被需要 `BaseEntity`、类型处理器或 MyBatis-Plus 配置的模块依赖；
-- `rag-log` 承载审计能力，`rag-auth`、`rag-public-access` 与 `rag-controller` 通过它写入审计日志；
-- `rag-auth` 持有 `WghUser/WghRole/WghPermission` 及对应 Mapper，供 controller 的 RBAC 管理接口使用；
-- `rag-public-access` 承载分享链接 / Widget 嵌入 / 开放 API Key 的实现层（Service、Store、安全链、过滤器、实体与 Mapper），Controller 仍留在 `rag-controller`，依赖方向固定为 `rag-controller → rag-public-access`；
-- `rag-public-access` 对 `rag-chat`/`rag-kb` 的依赖仅限创建分享链接时的目标存在性校验，不得增加其它业务调用；任何新增调用必须先回答“为什么不能把编排留在 Controller”。
+更完整的模块依赖与边界说明见 [docs/design-overview.md](docs/design-overview.md) 与 [docs/design-detailed.md](docs/design-detailed.md)。
 
-### 3.2 技术栈
+### 4.2 关键设计
+
+- **单库承载业务与向量**：PostgreSQL + pgvector 省去独立向量数据库；pgvector 不可用时不阻断应用启动，但向量检索相关能力不可用。
+- **Redis 可选**：限流、分享密码锁定、嵌入授权可集中到 Redis；不可用时自动降级为单机内存，不阻断启动。
+- **SSE 统一协议**：聊天、Agent、工作流、多 Agent 共用事件风格；`content` 事件使用 JSON 包装文本，避免换行丢失，前端状态复位以事件驱动。
+- **先落库后推送**：Agent / 工作流执行结果先持久化再发送 SSE，刷新页面后仍可恢复。
+- **多环境配置**：dev / test / prod 分离；生产敏感配置通过环境变量注入。
+- **逻辑删除**：所有删除走 `deleted` 字段，便于审计与恢复。
+
+### 4.3 技术栈
 
 | 层次 | 技术 |
 |------|------|
 | 前端 | Vue 3 · Vite · Pinia · Vue Router · Element Plus · SCSS · marked |
-| 后端 | Spring Boot 3.4 · Java 21 · Maven 多模块 · Spring Security（外部 OIDC 资源服务器 + 独立开放 API 过滤链） |
-| 数据 | PostgreSQL 16+ · pgvector · MyBatis-Plus（逻辑删除 + 分页） |
+| 后端 | Spring Boot 3.4 · Java 21 · Maven 多模块 · Spring Security |
+| 数据 | PostgreSQL 15+ · pgvector · MyBatis-Plus（逻辑删除 + 分页） |
 | LLM | LangChain4j · OpenAI / DASHSCOPE / DeepSeek / 自建 OpenAI 兼容端点 |
 | 工具 | LangChain4j Tool Calling · MCP（stdio / Streamable HTTP）· HTTP · 本地反射 · Skill |
-| Agent | Planner / StepExecutor / Reflection / HITL；多 Agent 另含 Crew / Graph / GroupChat 协调器 |
-| 工作流 | 自研 DAG 引擎：11 类节点、并行 fan-out/fan-in、版本快照、CRON/Webhook |
-| 鉴权 | 外部 OIDC token（JWKS 非对称公钥验签）+ RBAC 注解校验 + API Key（SHA-256） |
+| Agent | Planner / StepExecutor / Reflection / HITL；多 Agent 含 Crew / Graph / GroupChat |
+| 工作流 | 自研 DAG 引擎：11 类节点、并行 fan-out/fan-in、版本快照、CRON / Webhook |
+| 鉴权 | 外部 OIDC token（JWKS 非对称公钥验签）+ 本地会话凭证 + RBAC + API Key（SHA-256） |
 | 评估 | 检索侧 Recall@K / Precision@K / MRR / NDCG；生成侧 LLM-as-Judge |
-| 测试 | JUnit 5 + Mockito（75 个测试类 / 557 个 `@Test` 方法，以当前工作区统计）+ shell e2e/冒烟/压测脚本 |
-
-### 3.3 工程约定
-
-- 多模块启动：`mvn -f rag-app/pom.xml spring-boot:run`；用 `-pl` 时必须加 `-am`，避免读到 `~/.m2` 旧 jar。
-- 所有删除走逻辑删除（`deleted` 字段）。
-- SSE `content` 事件必须 JSON 包装文本，避免换行丢失；状态复位必须事件驱动。
-- Agent 先落库后推 SSE；HITL 暂停前不发 `step_start`，前端按 `plan_paused` 补建步骤。
-- surefire 排除 `**/*IntegrationTest.java`，集成测试用 `*ApiTest` / `*EngineTest` / `*Test` 命名。
-
-### 3.4 常量与约定
-
-- **按模块归属**：新增常量放在所属模块的 `src/main/java/com/wgh/rag/<module>/constant/` 包，不建跨业务域的“巨型常量类”。
-- **`rag-common` 只放通用项**：仅当常量被 ≥3 个模块使用且与具体业务无关时才放 `rag-common`（如 HTTP 头 `HttpConstants`、文件类型 `FileTypeConstant`、角色码 `RoleCodes`）。
-- **禁止裸字面量**：权限码、角色码、状态值、SSE 事件名、审计动作、存储 key 前缀、配置键前缀、默认超时/分片大小等必须引用常量类，不再直接写字符串或数字。
-- **不改值**：状态机、分享 scope 等“枚举语义”常量仍以字符串保存，值必须与既有 DB/序列化格式一致，抽取不得改变持久化内容。
-- **优先复用**：业务码统一用 `ResultCode`，文件类型用 `FileTypeConstant`，不要重复定义。
-
-| 模块 | 常量类 | 主要内容 |
-|------|--------|----------|
-| `rag-common` | `constant/HttpConstants`、`constant/FileTypeConstant`、`constant/RoleCodes` | HTTP 头 / Content-Type、文件类型、`admin`/`editor`/`viewer` 角色码 |
-| `rag-auth` | `constant/AuthConstants` | 权限码（`kb:read` 等）、`ROLE_` 前缀、token claim 名 |
-| `rag-chat` | `constant/ChatConstants`、`constant/ChatEvents` | 会话角色/消息类型/会话状态/默认温度与历史条数、SSE 事件名 |
-| `rag-workflow` | `constant/WorkflowConstants`、`constant/WorkflowEvents` | 节点类型、运行状态、错误策略、事件名 |
-| `rag-agent` / `rag-agent-multi` | `constant/AgentConstants`、`constant/MultiAgentConstants`、`*Events` | 计划/步骤状态、事件名 |
-| `rag-tool` | `constant/ToolConstants` | 工具类型、默认超时与重试轮次、结果截断长度 |
-| `rag-llm` | `constant/LlmConstants` | 模型类型（`CHAT`/`RERANK`） |
-| `rag-quota` | `constant/QuotaConstants` | 配额维度（`chat`/`token`） |
-| `rag-log` | `constant/AuditConstants` | 审计状态（`SUCCESS`/`FAIL`）与资源类型 |
-| `rag-storage` | `constant/StorageConstants` | 配置前缀、`local`/`oss`、存储 key 前缀、默认容量与重试、过期时间 |
-| 前端 | `src/utils/constants.js` | `STORAGE_KEYS`（`wgh_token` 等）、`BUSINESS_CODE`、`HTTP_STATUS`、鉴权头 |
-
-新增权限码时需同步 `rag-backend/sql/data.sql` 的 `wgh_permission` 种子与 `AuthConstants`，三处保持一致。
+| 测试 | JUnit 5 + Mockito；shell e2e / 冒烟 / 压测；离线召回率评测脚本 |
 
 ---
 
-## 4. 快速开始 / 部署
+## 5. 快速开始
 
-### 4.0 环境要求：JDK 21（必需）
+### 5.1 环境要求
 
-后端构建与测试统一固定在 **JDK 21**（CI 与本地一致）。先确认当前生效的 JDK：
+- **JDK 21（必需）**：编译目标与测试均固定在 JDK 21；JDK 25 下会在 `validate` 阶段直接失败。
+- Maven 3.9+、Node.js 18+（前端）、Docker 24+（可选，用于 PostgreSQL / Redis / Compose）。
 
 ```bash
 java -version 2>&1 | head -1     # 期望 openjdk version "21.x"
@@ -196,11 +202,9 @@ mvn -version | grep "Java version"   # 期望 Java version: 21
 # Linux 切换：export JAVA_HOME=/path/to/jdk-21
 ```
 
-- `rag-backend/pom.xml` 用 `maven.compiler.release=21` 统一字节码目标（major 65），并用 `maven-enforcer-plugin` 强制 Maven 运行在 JDK 21。
-- **JDK 25 下的行为**：`mvn test` 会在 `validate` 阶段直接失败，提示「本项目要求 JDK 21」，不会进入编译/测试；若手动 `-Denforcer.skip` 绕过，Mockito inline mock maker 在 JDK 25 下无法改写 `WorkflowEngine` 等类，`rag-workflow` 相关测试会报 Mockito/`NoClassDefFoundError` 错误。
-- 可选（不写入仓库、不保证跨机器可复现）：若希望本机 `mvn` 运行在任意 JDK 时自动改用 21，可在 `~/.m2/toolchains.xml` 注册 `<toolchain><type>jdk</type><provides><version>21</version></provides><configuration><jdkHome>/path/to/jdk-21</jdkHome></configuration></toolchain>`，并为父 POM 启用 `maven-toolchains-plugin`；仓库默认采用 Enforcer 快速失败，避免依赖机器本地文件。
+### 5.2 本地启动
 
-### 4.1 启动 PostgreSQL + pgvector
+1）启动 PostgreSQL + pgvector 并初始化：
 
 ```bash
 docker run -d --name postgres-with-vector \
@@ -210,455 +214,200 @@ docker run -d --name postgres-with-vector \
   -p 5432:5432 \
   pgvector/pgvector:pg16
 
-# 初始化：37 张表 + 业务索引 + 种子数据（幂等，可重复执行）
+# 37 张表 + 索引 + 种子数据（幂等，可重复执行）
 docker exec -i postgres-with-vector psql -U postgres -d wgh_rag < rag-backend/sql/init.sql
 ```
 
-### 4.2 后端（含可选 Redis）
+2）启动后端：
 
 ```bash
-# 可选：启动 Redis（公开访问的分布式限流 / 密码锁定 / 嵌入授权使用）
-docker compose up -d redis       # redis:8.10.1-alpine，默认 localhost:6379
-docker exec wgh-rag-redis redis-cli ping   # PONG
-
 cd rag-backend
-mvn install -DskipTests          # 多模块先安装，避免读到旧 jar
+export WGH_DB_PASSWORD=postgres          # 与上面容器口令一致
+export WGH_INIT_ADMIN_PASSWORD='<至少 8 位且含字母与数字>'
+mvn install -DskipTests
 mvn -f rag-app/pom.xml spring-boot:run
-# http://localhost:8080
+# 业务端口 http://localhost:8080；管理端口 http://localhost:9090
 ```
 
-> Redis 未启动也能正常启动应用：首次公开访问请求失败后自动降级为**单机内存**限流/计数，并每 30 秒最多输出一次 WARN。恢复 Redis 后自动回到 Redis（详见 [docs/design-public-access.md](docs/design-public-access.md) §4.3）。
-> 关闭 Redis 接入：`WGH_REDIS_ENABLED=false`。
+> 使用 `-pl` 时必须加 `-am`，否则可能读到 `~/.m2` 中的旧 jar。
 
-> 双认证并存：
-> - **本地管理员 / 体验账号**：登录页输入账号密码，后端 `POST /api/auth/login` 校验 BCrypt 密码并签发内部会话凭证（HS256，独立 `wgh.auth.local.jwt-secret`，有效期默认 2 小时）。仅 `wgh_user.source=local` 且为 admin 角色或体验账号（`trial=1`）可登录。
-> - **外部 OIDC 用户**：由 IdP 签发 Bearer token，后端按 JWKS 公钥验签；启动前需配置 `WGH_OIDC_ISSUER` / `WGH_OIDC_AUDIENCE` / `WGH_OIDC_JWKS_URI`。
-> 两种凭证都经统一认证过滤器识别，角色/权限统一查数据库角色表与权限表。
->
-> **生产部署不得使用默认口令**：`sql/data.sql` 只包含角色/权限等幂等种子，不再硬编码任何可登录账号。
-> 初始管理员由启动参数注入后创建：
->
-> ```bash
-> export WGH_INIT_ADMIN_PASSWORD='<至少 8 位且含字母与数字>'
-> mvn -f rag-app/pom.xml spring-boot:run
-> ```
->
-> 未注入该变量时**不会创建默认管理员**（启动日志输出 ERROR 提示）；首次启动创建的 admin 账号带
-> `password_must_change=1`，登录后必须先调用 `POST /api/auth/password` 改密，改密前除只读接口、
-> 登出与改密接口外的写请求都会被拒绝（业务码 1006）。已存在的 admin 账号不会被覆盖口令。
-> 本地会话凭证密钥 `wgh.auth.local.jwt-secret` 在生产 profile（`prod`/`production`）下必须显式配置，
-> 否则启动失败（fail-closed）；开发环境未配置时会生成随机密钥并打印 WARN（重启后旧会话全部失效）。
+3）可选：启动 Redis（公开访问分布式限流 / 密码锁定 / 嵌入授权）：
 
-### 4.3 前端
+```bash
+docker run -d --name wgh-rag-redis -p 6379:6379 redis:8.10.1-alpine
+docker exec wgh-rag-redis redis-cli ping   # PONG
+```
+
+4）启动前端：
 
 ```bash
 cd rag-frontend
 npm install
-npm run dev                      # http://localhost:5173
-npm run build                    # 产物 dist/，由 Nginx 或后端静态托管
+npm run dev          # http://localhost:5173
 ```
 
-### 4.4 配置模型
-
-登录后进入 **模型管理**，至少配置一个 Embedding 模型和一个 Chat 模型；可选标记 `compression_model=true` 作为压缩专用模型。
-
-- DASHSCOPE 走 OpenAI 兼容端点时，provider 选 `CUSTOM_OPENAI`（否则 SDK 路径拼接 404）
-- 通义 / DeepSeek 在 LangChain4j 的 `community` 包下，不在核心包
-
-### 4.5 体验路径
-
-1. **知识库**：新建知识库 → 上传文件（含 PPTX/HTML/JSON/EML）→ 检索测试看三率指标
-2. **RAG 对话**：新建聊天窗口 → 绑定知识库/工具 → 调试对话
-3. **Agent**：窗口开启「Agent 自动规划执行」→ 配置模型与反思阈值 → 发送多步目标
-4. **工作流**：模板市场选模板 → 画布编辑（可拖入 AGENT 节点）→ 运行调试（含 HITL 弹窗）
-5. **多 Agent**：Crew 管理配置角色 → 运行调试查看执行面板
-6. **开放能力**：开放平台 → 创建分享链接 / API Key；浏览器打开 `/share/{token}` 或 `rag-frontend/public/widget-demo.html` 验证
-
-### 4.6 运行测试
-
-```bash
-cd rag-backend
-mvn test                                  # 单元测试
-bash scripts/test-agent-e2e.sh            # Agent 主链路
-bash scripts/test-agent-hitl-e2e.sh       # Agent HITL
-bash scripts/test-workflow-e2e.sh         # 工作流节点 / 并行 / 版本 / 触发器
-bash scripts/test-multi-agent-smoke.sh    # 多 Agent 冒烟
-bash scripts/test-stress.sh               # 压力测试（依赖 ab）
-python3 eval/eval_recall.py --kb 2 --k 5  # 离线召回率评测
-```
-
-脚本依赖后端 8080 运行中、`postgres-with-vector` 可访问（默认库 `wgh_rag`）。
-测试用例与覆盖说明见 [docs/test-cases.md](docs/test-cases.md)。
-
-### 4.7 生产部署要点
-
-- 仓库提供完整的 `docker-compose.yml` 与前后端 Dockerfile，可一键拉起 **postgres（pgvector）/ backend / frontend / redis / prometheus / grafana**（见 §4.9）。
-- Redis 推荐独立部署或托管服务，开启持久化与访问密码，通过 `WGH_REDIS_HOST/PORT/DATABASE/PASSWORD/TIMEOUT` 注入；生产需监控连接与内存。
-- 生产必须通过环境变量注入 `WGH_OIDC_ISSUER`、`WGH_OIDC_AUDIENCE`、`WGH_OIDC_JWKS_URI`、数据库口令与模型 Key；`WGH_PROFILE=prod`。
-- 分享 / 开放 API 的限流、密码锁定、嵌入 grant 已集中到 Redis，多实例共享；Redis 故障时自动降级为单机内存，此时各实例计数不共享。
-- 客户端真实 IP：默认只信任 TCP 对端地址。若部署在 Nginx / 网关后，需配置 `wgh.public-access.trusted-proxies`（如 `10.0.0.10/32`、`172.17.0.0/16`），**不要配置为 `0.0.0.0/0`**，否则客户端可伪造 `X-Forwarded-For` 绕过 IP 白名单与限流。
-- 第三方页面嵌入 Widget 时，需在宿主 CSP 中放行 `script-src` 与 `frame-src` 指向本系统域名；如需禁止任意站点手工 iframe 分享页，请在网关/静态服务为分享页下发 `CSP frame-ancestors <白名单域名>`。
-
-### 4.8 对接外部 IdP（OIDC 资源服务器）
-
-本系统以 OIDC 资源服务器形态**不签发 token**，只验证外部 OIDC IdP 签发的 Bearer token（本地 admin/体验账号另走 §4.2 的内部会话凭证）：
-
-```yaml
-wgh:
-  auth:
-    oidc:
-      issuer: https://idp.example.com/realms/wgh
-      audience: wgh-rag
-      jwks-uri: https://idp.example.com/realms/wgh/protocol/openid-connect/certs  # 可留空自动发现
-      roles-claim: groups          # 也支持 roles；按 IdP 实际 claim 配置
-      username-claim: preferred_username
-      default-role: viewer
-      jwks-cache-ttl-seconds: 300
-      jwks-refresh-min-interval-seconds: 30
-      clock-skew-seconds: 30
-      role-mapping:
-        "wgh-admins": admin
-        "wgh-editors": editor
-```
-
-**验签与角色链路**：JWKS 取公钥（仅 RS/PS/ES，拒绝 HS256 与 none）→ 按 kid 选 key → 校验 iss/aud/exp/nbf →
-`roles-claim` 值经 `role-mapping` 得到 `role_code` → 匹配数据库 `wgh_role` → 查 `wgh_role_permission` 权限。
-token 无角色或映射后数据库不存在时按 `default-role`（viewer）处理。
-
-**宿主系统注入 token**：IdP 登录后将 token 写入 `localStorage.wgh_token`（可由宿主页面 `localStorage.setItem('wgh_token', idToken)`
-完成），或打开 `http://<host>/login?token=<token>`；前端会调用 `/api/auth/me` 拉取角色/权限。
-
-```bash
-curl -H "Authorization: Bearer $IDP_TOKEN" http://localhost:8080/api/auth/me
-```
-
-### 4.9 容器化部署（Docker Compose，一键全栈）
-
-前置条件：Docker 24+（含 Compose v2）；如需外部 OIDC，准备好 issuer / audience / JWKS。PostgreSQL + pgvector 由 Compose 内置，无需预置数据库。
+### 5.3 Docker Compose 一键启动
 
 ```bash
 cp .env.example .env
-# 至少填写 POSTGRES_PASSWORD、WGH_AUTH_LOCAL_JWT_SECRET、WGH_INIT_ADMIN_PASSWORD
+# 至少填写：
+#   POSTGRES_PASSWORD
+#   WGH_AUTH_LOCAL_JWT_SECRET   （至少 32 字节）
+#   WGH_INIT_ADMIN_PASSWORD
 docker compose up -d --build
-docker compose ps          # 观察 postgres / backend / frontend 是否 healthy
+docker compose ps
 ```
 
 | 服务 | 默认端口 | 说明 |
-| --- | --- | --- |
-| postgres | **默认不映射宿主机** | `pgvector/pgvector:pg15`，库名/用户/口令见 `POSTGRES_*`；仅容器网络内 `postgres:5432` 可达 |
-| frontend | `8088` → 容器 80 | Nginx 托管 SPA，`/api` 反代到 backend，SSE 已关闭代理缓冲 |
-| backend | `8080` → 容器 8080 | 业务端口，**不暴露 actuator** |
-| backend 管理端口 | 容器内 `9090`，默认不映射宿主机 | 供 Prometheus 抓取；生产禁止对外发布 |
+|------|----------|------|
+| frontend | `8088` → 容器 80 | Nginx 托管 SPA，`/api` 反代 backend，SSE 关闭缓冲 |
+| backend | `8080` → 容器 8080 | 业务 API / SSE；**不暴露 actuator** |
+| backend 管理端口 | 容器内 `9090`，默认不映射宿主机 | Prometheus 抓取；生产禁止对外发布 |
 | prometheus | `9091` → 容器 9090 | 抓取 `backend:9090/actuator/prometheus` |
-| grafana | `3000` | 预置数据源与「WGH RAG 业务总览」仪表盘 |
-| redis | `6379` | 公开访问分布式限流 / 密码锁定 / 嵌入授权 |
+| grafana | `3000` | 预置数据源与业务总览仪表盘 |
+| redis | `6379` | 限流 / 密码锁定 / 嵌入授权 |
+| postgres | **默认不映射宿主机** | `pgvector/pgvector:pg15`，仅容器网络内可达 |
 
-**数据库初始化与数据卷**
+> `docker compose down -v` 会删除 `pgdata` 与 Redis / Prometheus / Grafana 数据卷；只停服务请用 `docker compose down`。
+> 本地开发若需宿主直连数据库，可启用 `docker-compose.override.yml` 的 `127.0.0.1:5432` 绑定；生产不要启用，更不要把 5432 发布到 `0.0.0.0`。
 
-- 首次启动（数据卷为空）时，PostgreSQL 官方入口会自动按文件名顺序执行：
-  1. `rag-backend/sql/schema.sql`（先 `CREATE EXTENSION IF NOT EXISTS vector/pg_trgm`，再 `CREATE TABLE IF NOT EXISTS`）；
-  2. `rag-backend/sql/data.sql`（示例模型/工具/角色/权限/模板种子）。
-- 数据目录为命名卷 `pgdata`（`<项目名>_pgdata`，默认 `wgh-rag-system_pgdata`），`docker compose up/down/重建` 不会丢库。
-- 仅在**空卷**首次初始化时执行脚本；已有数据卷不会重复执行，也不会覆盖现有数据。
-- **清库警示**：`docker compose down -v` 会删除 `pgdata`（数据库全部数据）以及 Redis/Prometheus/Grafana 卷；只停服务请用 `docker compose down`。仅重置数据库可执行 `docker compose rm -sf postgres && docker volume rm wgh-rag-system_pgdata`。
-- 手工连库排查：`docker compose exec postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c '\dt'`。
+### 5.4 首次登录
 
-**切回外部数据库**
-
-- Compose 内 backend 使用 `SPRING_DATASOURCE_URL/USERNAME/PASSWORD`（由 `POSTGRES_*` 派生）。
-- 改为外部库：在 `.env` 中把 `POSTGRES_HOST/PORT/DB/USER/PASSWORD` 指向外部实例，并只启动 `docker compose up -d backend frontend`（不启动内置 `postgres`）。
-- 非 Compose（裸机 `java -jar`）运行 `prod` profile 时也可用 `PROD_DB_*`；优先级为 `SPRING_DATASOURCE_*` > `PROD_DB_*` > `application-prod.yml` 默认值。
-
-单独构建镜像：
-
-```bash
-docker build -t wgh-rag-backend:local -f rag-backend/Dockerfile rag-backend
-docker build -t wgh-rag-frontend:local -f rag-frontend/Dockerfile rag-frontend
-```
-
-镜像要点：后端多阶段构建、非 root 运行、`-XX:MaxRAMPercentage=75.0` 按容器限额设置堆、`HEALTHCHECK` 打管理端口；前端 Node 构建后由 Nginx 托管。
-
-### 4.10 运维与监控
-
-**两个端口的职责**
-
-- `8080`：业务 API / SSE。`/actuator/*` 在此端口返回 **404**。
-- `9090`：管理端口，仅暴露 `health / info / metrics / prometheus`。可通过 `WGH_MANAGEMENT_PORT` 改端口、`WGH_MANAGEMENT_ADDRESS` 绑定内网网卡。生产应只允许监控网络访问，不要映射到公网。
-
-**常用环境变量**
-
-| 变量 | 默认 | 说明 |
-| --- | --- | --- |
-| `WGH_PROFILE` | `dev`（容器镜像默认 `prod`） | 运行环境 |
-| `SERVER_PORT` | `8080` | 业务端口 |
-| `WGH_MANAGEMENT_PORT` | `9090` | 管理端口 |
-| `WGH_MANAGEMENT_ADDRESS` | `0.0.0.0` | 管理端口监听地址，生产建议内网网卡 |
-| `POSTGRES_HOST/PORT/DB/USER/PASSWORD` | `postgres/5432/wgh_rag/postgres/空` | Compose 内置数据库与 backend 数据源的**唯一真相**，密码必填 |
-| `PROD_DB_HOST/PORT/NAME/USERNAME/PASSWORD` | `localhost/5432/wgh_rag/postgres/空` | 可选：非 Compose（裸机 `prod`）或外部库；优先级低于 `SPRING_DATASOURCE_*` |
-| `WGH_DB_HOST/PORT/NAME/USERNAME/PASSWORD` | `localhost/5432/wgh_rag/postgres/123456` | 本地 dev profile 连接（非容器部署） |
-| `WGH_REDIS_ENABLED/HOST/PORT/PASSWORD` | `true/localhost/6379/空` | Redis 连接，不可用时自动降级单机内存 |
-| `WGH_AUTH_LOCAL_JWT_SECRET` | 空（随机密钥，重启失效） | 本地会话签名密钥，**生产必须注入，至少 32 字节** |
-| `WGH_JWT_SECRET` | 无 | 兼容 `prod` profile 的旧配置项，建议与上文同值 |
-| `WGH_INIT_ADMIN_PASSWORD` | 空 | 初始管理员口令，仅在库中无 admin 时创建，**禁止使用默认口令** |
-| `WGH_OIDC_ISSUER/AUDIENCE/JWKS_URI` | 空 | 外部 IdP 配置，不使用可留空 |
-
-**指标与日志**
-
-- 抓取：`curl http://<host>:9090/actuator/prometheus | grep wgh_`；
-- 指标字典、埋点位置、告警建议：见 [docs/design-observability.md](docs/design-observability.md)；
-- 请求关联：客户端可传 `X-Request-Id`（`[A-Za-z0-9._-]{8,64}`），响应头回写，日志中体现为 `[rid=...]`；
-- 敏感凭证（分享 token、嵌入 grant、API Key）日志已脱敏，仅保留首尾 4 位。
-
-### 4.11 从手工容器迁移到 Compose 内置 PostgreSQL（一次性）
-
-适用于历史上用 `docker run` 起的 `postgres-with-vector`，迁移到 Compose 的 `postgres` 服务。
-
-```bash
-# 0) 备份（先停写；旧容器保持运行，仅备份只读）
-docker exec postgres-with-vector pg_dump -U postgres -d wgh_rag -Fc > backups/wgh_rag-$(date +%Y%m%d-%H%M%S).dump
-ls -lh backups/*.dump
-docker run --rm -i -v "$PWD/backups:/b:ro" pgvector/pgvector:pg15 \
-  pg_restore --list /b/wgh_rag-<时间戳>.dump | head   # 确认 TOC 可读
-
-# 1) 记录基线（表数 / 扩展 / 关键行数），迁移后逐项比对
-docker exec postgres-with-vector psql -U postgres -d wgh_rag -c "\dt" | wc -l
-docker exec postgres-with-vector psql -U postgres -d wgh_rag -c "select count(*) from wgh_user;"
-# 其它关键表：wgh_role / wgh_permission / wgh_knowledge_base / wgh_knowledge_file / wgh_chat_message
-
-# 2) 起 Compose 内置库（空卷首启会执行 schema.sql + data.sql）
-docker compose up -d postgres
-
-# 3) 恢复：清空 initdb 建出的对象后整体恢复，避免种子行与 dump 主键冲突
-docker exec wgh-rag-postgres psql -U postgres -d wgh_rag -v ON_ERROR_STOP=1 -c "
-  DROP EXTENSION IF EXISTS vector CASCADE;
-  DROP EXTENSION IF EXISTS pg_trgm CASCADE;
-  DROP SCHEMA public CASCADE;
-  CREATE SCHEMA public AUTHORIZATION postgres;"
-docker exec -i wgh-rag-postgres pg_restore -U postgres -d wgh_rag \
-  --no-owner --no-privileges --single-transaction < backups/wgh_rag-<时间戳>.dump
-
-# 4) 停旧容器（只 stop，不 remove，保留回滚）
-docker stop postgres-with-vector
-
-# 5) dev 回环绑定由 docker-compose.override.yml 提供（127.0.0.1:5432），生产不要启用
-docker compose up -d postgres
-docker compose ps        # 期望 healthy，端口 127.0.0.1:5432->5432
-```
-
-**恢复策略说明**：采用“清空 + 全量恢复”，而非 `--data-only` 合并。原因是源库含 42 张表（initdb 只有 37 张，运行时还会创建向量表等），且 initdb 种子会与 dump 撞主键；全量恢复保证 schema 与数据完全一致。
-
-**行数核对**（迁移前后应一致；应用启动后 `wgh_audit_log` 等会因新请求增长）：
-
-```bash
-docker exec wgh-rag-postgres psql -U postgres -d wgh_rag -c "
-select 'wgh_user',count(*) from wgh_user union all
-select 'wgh_role',count(*) from wgh_role union all
-select 'wgh_permission',count(*) from wgh_permission union all
-select 'wgh_knowledge_base',count(*) from wgh_knowledge_base union all
-select 'wgh_knowledge_file',count(*) from wgh_knowledge_file union all
-select 'wgh_chat_message',count(*) from wgh_chat_message;"
-docker exec wgh-rag-postgres psql -U postgres -d wgh_rag -c "\dx"   # vector / pg_trgm
-```
-
-**回滚**（新库数据核对失败时）：
-
-```bash
-docker compose stop postgres
-docker start postgres-with-vector          # 旧容器原绑 0.0.0.0:5432，恢复宿主连接
-# 若旧容器端口绑定被改动过，用原启动命令重新 docker run -p 5432:5432 ...
-# 应用无需改配置（dev profile 默认连 localhost:5432，口令 123456）
-```
-
-**生产警示**：`5432` 仅回调环是**本地 dev 专用**（`docker-compose.override.yml`）。生产启动请用 `docker compose -f docker-compose.yml up -d` 或直接删除 override 文件，禁止把 5432 发布到 `0.0.0.0`；备份 dump 含口令哈希与业务数据，已在 `.gitignore` 忽略，**不要提交**。
+- 初始管理员用户名为 `admin`，口令来自 `WGH_INIT_ADMIN_PASSWORD`；仅当库中不存在 admin 时创建，已存在则不会覆盖。
+- 首次登录后必须先调用 `POST /api/auth/password` 改密；改密前写请求会被拒绝（业务码 1006）。
+- 不使用本地账号时可只配置 OIDC；外部 IdP 用户由 Bearer token 验签进入。
 
 ---
 
-## 5. 配置
+## 6. 配置说明
 
-### 5.1 环境变量
+### 6.1 认证与初始化管理员
 
-| 变量 | 默认 | 说明 |
+| 配置 | 默认 | 说明 |
 |------|------|------|
-| `WGH_PROFILE` | dev | Spring Profile（dev / test / prod） |
-| `WGH_DB_HOST` | localhost | PostgreSQL 主机 |
-| `WGH_DB_PORT` | 5432 | PostgreSQL 端口 |
-| `WGH_DB_NAME` | wgh_rag | 数据库名 |
-| `WGH_DB_USERNAME` | postgres | DB 用户 |
-| `WGH_DB_PASSWORD` | postgres | DB 密码 |
-| `WGH_OIDC_ISSUER` | - | 外部 IdP issuer（token `iss` 必须一致，生产必填） |
-| `WGH_OIDC_AUDIENCE` | - | 期望 audience（token `aud` 必须包含，生产必填） |
-| `WGH_OIDC_JWKS_URI` | - | JWKS 端点；留空则由 issuer 自动发现 |
-| `WGH_OIDC_ROLES_CLAIM` | roles | token 中承载角色的 claim 名 |
-| `WGH_OIDC_USERNAME_CLAIM` | sub | token 中承载用户名的 claim 名 |
-| `WGH_REDIS_ENABLED` | true | 是否启用 Redis；false 时公开访问直接使用单机内存 |
-| `WGH_REDIS_HOST` | localhost | Redis 主机 |
-| `WGH_REDIS_PORT` | 6379 | Redis 端口 |
-| `WGH_REDIS_DATABASE` | 0 | Redis 逻辑库 |
-| `WGH_REDIS_TIMEOUT` | 2s | Redis 连接 / 命令超时（影响故障降级延迟） |
-| `WGH_REDIS_PASSWORD` | - | Redis 访问密码 |
-| `WGH_RL_DEFAULT` | 60 | 限流默认每分钟上限 |
-| `WGH_RL_SHARE_TOKEN` | 20 | 分享 token + IP 每分钟上限 |
-| `WGH_RL_SHARE_IP` | 60 | 分享单 IP 每分钟上限 |
-| `WGH_RL_SHARE_CHAT` | 20 | 分享聊天接口每分钟上限 |
-| `WGH_RL_SHARE_KB` | 20 | 分享知识库检索每分钟上限 |
-| `WGH_RL_SHARE_EMBED` | 30 | Widget 嵌入授权每分钟上限 |
-| `WGH_RL_API_KEY` | 60 | 单个 API Key 每分钟上限 |
-| `WGH_RL_API_IP` | 120 | 开放 API 单 IP 每分钟上限 |
-| `WGH_SHARE_PWD_MAX_FAILURES` | 5 | 分享密码失败阈值 |
-| `WGH_SHARE_PWD_LOCK_MINUTES` | 15 | 分享密码锁定时长（分钟） |
-| `WGH_SHARE_PWD_RESET_ON_SUCCESS` | true | 密码验证成功后清零失败计数 |
-| `WGH_EMBED_GRANT_TTL_MINUTES` | 30 | Widget 嵌入 grant 有效期（分钟） |
-| `WGH_UPLOAD_DIR` | ./uploads | 本地存储根目录（`wgh.rag.storage.local.base-dir` 默认值） |
-| `WGH_STORAGE_TYPE` | local | 文件存储类型：`local` / `oss` |
-| `WGH_STORAGE_URL_PREFIX` | /uploads | 本地存储 `resolveUrl` 返回的逻辑访问前缀 |
-| `WGH_STORAGE_MAX_FILE_MB` | 50 | 存储层单文件大小上限（MB） |
-| `WGH_OSS_ENDPOINT` | - | 阿里云 OSS 公网 endpoint（如 `https://oss-cn-hangzhou.aliyuncs.com`） |
-| `WGH_OSS_INTERNAL_ENDPOINT` | - | OSS 内网 endpoint（可选，服务端读写优先使用） |
-| `WGH_OSS_BUCKET` | - | OSS bucket |
-| `WGH_OSS_ACCESS_KEY_ID` / `WGH_OSS_ACCESS_KEY_SECRET` | - | OSS 访问凭证 |
-| `WGH_OSS_KEY_PREFIX` | - | OSS 对象 key 前缀（可为空） |
-| `WGH_OSS_PUBLIC_READ` | false | true 返回公网直链；false 返回签名 URL |
-| `WGH_OSS_SIGNED_URL_EXPIRE_MINUTES` | 60 | 签名 URL 有效期（分钟） |
-| `WGH_OSS_MAX_RETRIES` | 3 | OSS 上传失败重试次数（含首次） |
-| `WGH_SKILL_BASE_PATH` | ./skills | Skill 磁盘目录 |
-| `OPENAI_API_KEY` | demo | OpenAI 兼容接口 Key |
-| `OPENAI_BASE_URL` | https://api.openai.com/v1 | OpenAI 兼容接口地址 |
-| `DASHSCOPE_API_KEY` | - | 通义千问 API Key |
-| `DEEPSEEK_API_KEY` | - | DeepSeek API Key |
+| `WGH_INIT_ADMIN_PASSWORD` | 空 | 初始管理员口令；未注入且库中无 admin 时不创建管理员，启动日志输出 ERROR；**禁止使用默认口令** |
+| `wgh.auth.local.jwt-secret` / `WGH_AUTH_LOCAL_JWT_SECRET` | 空 | 本地会话签名密钥；`prod` / `production` 下未配置会启动失败（fail-closed）；开发环境未配置会生成随机密钥，重启后旧会话失效 |
+| `WGH_JWT_SECRET` | 无 | 兼容旧 prod 配置项，建议与 `WGH_AUTH_LOCAL_JWT_SECRET` 同值 |
+| `wgh.auth.init-admin.password` | 空 | `WGH_INIT_ADMIN_PASSWORD` 的 YAML 等价配置项 |
 
-### 5.2 关键配置项（`application.yml`）
+本地账号仅允许 `wgh_user.source=local` 的 admin 或体验账号（`trial=1`）登录；外部 OIDC 用户即使 `password_hash` 为空也不能走本地密码登录。
 
-| key | 默认值 | 说明 |
-|-----|--------|------|
-| `wgh.file.max-single-file-mb` | 50 | 单文件上传/解析大小上限 |
-| `wgh.rag.storage.type` | local | 文件存储类型：`local`（本地磁盘）/ `oss`（阿里云 OSS） |
-| `wgh.rag.storage.local.base-dir` | ./uploads | 本地存储根目录（默认读 `WGH_UPLOAD_DIR`） |
-| `wgh.rag.storage.local.url-prefix` | /uploads | 本地 `resolveUrl` 逻辑前缀（当前未挂载静态服务） |
-| `wgh.rag.storage.local.max-file-size-mb` | 50 | 本地存储单文件大小上限 |
-| `wgh.rag.storage.oss.endpoint` | - | OSS 公网 endpoint |
-| `wgh.rag.storage.oss.internal-endpoint` | - | OSS 内网 endpoint（可选） |
-| `wgh.rag.storage.oss.bucket` | - | OSS bucket |
-| `wgh.rag.storage.oss.access-key-id` / `access-key-secret` | - | OSS 凭证（生产必须环境变量注入） |
-| `wgh.rag.storage.oss.key-prefix` | "" | 对象 key 前缀 |
-| `wgh.rag.storage.oss.public-read` | false | 公网直链 / 签名 URL |
-| `wgh.rag.storage.oss.signed-url-expire-minutes` | 60 | 签名 URL 有效期 |
-| `wgh.rag.storage.oss.max-retries` | 3 | 上传重试次数 |
-| `wgh.rag.storage.oss.max-file-size-mb` | 50 | OSS 存储单文件大小上限 |
-| `wgh.rag.cache.enabled` | true | 语义缓存全局开关（窗口级需同时开启） |
-| `wgh.rag.cache.similarity-threshold` | 0.95 | 缓存命中相似度阈值 |
-| `wgh.rag.cache.max-per-window` | 500 | 每窗口缓存条数上限 |
-| `wgh.public-access.share-max-expire-days` | 30 | 分享链接有效期上限（天） |
-| `wgh.public-access.share-default-expire-days` | 7 | 分享链接默认有效期（天） |
-| `wgh.public-access.max-images-per-request` | 4 | 单次提问图片数量上限 |
-| `wgh.rag.redis.enabled` | true | 启用 Redis（分布式限流 / 密码锁定 / 嵌入授权） |
-| `wgh.rag.redis.host/port/database/timeout/password` | localhost / 6379 / 0 / 2s / - | Redis 连接参数 |
-| `wgh.public-access.rate-limit.default-per-minute` | 60 | 未命中覆盖配置时的限流默认值 |
-| `wgh.public-access.rate-limit.overrides.*` | 见下表 | 按维度（`share-token` / `share-ip` / `share-chat` / `share-kb` / `share-embed` / `api-key` / `api-ip`）或 `维度:路径` 覆盖每分钟上限 |
-| `wgh.public-access.share-password.max-failures` | 5 | 密码错误阈值 |
-| `wgh.public-access.share-password.lock-minutes` | 15 | 锁定分钟数 |
-| `wgh.public-access.share-password.reset-on-success` | true | 验证成功后清零失败计数 |
-| `wgh.public-access.embed.grant-ttl-minutes` | 30 | Widget 嵌入 grant 有效期（分钟） |
-| `wgh.public-access.trusted-proxies` | `[]` | 可信反向代理 CIDR 列表；为空时不采信 `X-Forwarded-For` |
-| `wgh.auth.oidc.issuer` | - | 外部 IdP issuer（必填） |
-| `wgh.auth.oidc.audience` | - | 期望 audience（必填） |
-| `wgh.auth.oidc.jwks-uri` | - | JWKS 端点；留空则按 issuer 自动发现 |
-| `wgh.auth.oidc.roles-claim` | roles | 角色 claim 名（也常用 `groups`） |
-| `wgh.auth.oidc.role-mapping` | {} | claim 值 → `wgh_role.role_code` 映射表 |
-| `wgh.auth.oidc.default-role` | viewer | token 无角色或映射不到数据库角色时的默认角色 |
-| `wgh.auth.oidc.jwks-cache-ttl-seconds` | 300 | JWKS 本地缓存 TTL |
-| `wgh.auth.oidc.jwks-refresh-min-interval-seconds` | 30 | 未知 kid/网络失败时刷新最小间隔（限频） |
-| `wgh.auth.oidc.clock-skew-seconds` | 30 | exp/nbf 时钟偏差容忍 |
+### 6.2 外部 OIDC（资源服务器）
 
-> 限流覆盖默认值：`share-token=20`、`share-ip=60`、`share-chat=20`、`share-kb=20`、`share-embed=30`、`api-key=60`、`api-ip=120`；支持 `wgh.public-access.rate-limit.overrides["维度:路径"]` 做更细粒度覆盖。
-> 完整规则、原子性实现与降级策略见 [docs/design-public-access.md](docs/design-public-access.md)。
-> 配额相关配置（全局默认/用户自定义）由 `rag-quota` 模块提供，见 [docs/quota-design.md](docs/quota-design.md)。
-> 文件存储切换（本地 / 阿里云 OSS）、key 规则、迁移与回滚见 [docs/design-file-storage.md](docs/design-file-storage.md)：默认 `local`，未配置 OSS 时应用仍可启动，仅调用存储操作返回明确错误。
+| 配置 | 说明 |
+|------|------|
+| `WGH_OIDC_ISSUER` / `wgh.auth.oidc.issuer` | IdP issuer，token `iss` 必须一致 |
+| `WGH_OIDC_AUDIENCE` / `wgh.auth.oidc.audience` | 期望 audience，token `aud` 必须包含 |
+| `WGH_OIDC_JWKS_URI` / `wgh.auth.oidc.jwks-uri` | JWKS 端点；留空时按 issuer 自动发现 |
+| `WGH_OIDC_ROLES_CLAIM` / `wgh.auth.oidc.roles-claim` | 承载角色的 claim，默认 `roles`，常用 `groups` |
+| `WGH_OIDC_USERNAME_CLAIM` / `wgh.auth.oidc.username-claim` | 承载用户名的 claim，默认 `sub` |
+| `wgh.auth.oidc.role-mapping` | claim 值 → `wgh_role.role_code` 映射表 |
+| `wgh.auth.oidc.default-role` | token 无角色或映射不到数据库角色时的默认角色，默认 `viewer` |
+
+验签仅接受 RS / PS / ES 非对称算法，拒绝 HS256 与 `none`；JWKS 为进程内缓存，多实例不共享（见 §8）。
+
+### 6.3 文件存储（local / OSS）
+
+| 配置 | 默认 | 说明 |
+|------|------|------|
+| `WGH_STORAGE_TYPE` / `wgh.rag.storage.type` | `local` | `local` 本地磁盘 / `oss` 阿里云 OSS |
+| `WGH_UPLOAD_DIR` / `wgh.rag.storage.local.base-dir` | `./uploads` | 本地存储根目录 |
+| `WGH_STORAGE_URL_PREFIX` / `wgh.rag.storage.local.url-prefix` | `/uploads` | 本地 `resolveUrl` 逻辑前缀（需静态服务配合） |
+| `WGH_STORAGE_MAX_FILE_MB` | 50 | 存储层单文件大小上限 |
+| `WGH_OSS_ENDPOINT` / `wgh.rag.storage.oss.endpoint` | - | OSS 公网 endpoint |
+| `WGH_OSS_INTERNAL_ENDPOINT` | - | OSS 内网 endpoint（可选） |
+| `WGH_OSS_BUCKET` / `wgh.rag.storage.oss.bucket` | - | OSS bucket |
+| `WGH_OSS_ACCESS_KEY_ID` / `WGH_OSS_ACCESS_KEY_SECRET` | - | OSS 凭证，生产必须环境变量注入 |
+| `WGH_OSS_KEY_PREFIX` | 空 | 对象 key 前缀 |
+| `WGH_OSS_PUBLIC_READ` | `false` | `true` 返回公网直链；`false` 返回签名 URL |
+| `WGH_OSS_SIGNED_URL_EXPIRE_MINUTES` | 60 | 签名 URL 有效期 |
+| `WGH_OSS_MAX_RETRIES` | 3 | 上传失败重试次数（含首次） |
+
+OSS 配置不完整时不阻断启动，仅在真正调用存储操作时返回明确错误。存储切换、迁移与孤儿对象限制见 §8；完整设计见 [docs/design-file-storage.md](docs/design-file-storage.md)。
+
+### 6.4 数据库、Redis 与其他关键配置
+
+| 配置 | 默认 | 说明 |
+|------|------|------|
+| `WGH_PROFILE` | `dev` | Spring Profile：`dev` / `test` / `prod` |
+| `WGH_DB_HOST` / `PORT` / `NAME` / `USERNAME` / `PASSWORD` | localhost / 5432 / wgh_rag / postgres / 123456 | 本地 dev 数据源 |
+| `POSTGRES_*` | - | Compose 内置数据库与 backend 数据源的唯一真相，密码必填 |
+| `PROD_DB_*` | - | 非 Compose（裸机 `prod`）或外部库；优先级低于 `SPRING_DATASOURCE_*` |
+| `WGH_REDIS_ENABLED` / `HOST` / `PORT` / `PASSWORD` | true / localhost / 6379 / 空 | Redis 连接；不可用时降级为单机内存 |
+| `WGH_MANAGEMENT_PORT` | 9090 | 管理端口；业务端口不暴露 actuator |
+| `WGH_MANAGEMENT_ADDRESS` | 0.0.0.0 | 管理端口监听地址，生产建议内网网卡 |
+| `wgh.public-access.share-default-expire-days` | 7 | 分享链接默认有效期（上限 30 天） |
+| `wgh.public-access.share-password.max-failures` | 5 | 密码失败阈值 |
+| `wgh.public-access.share-password.lock-minutes` | 15 | 锁定时长（分钟） |
+| `wgh.rag.cache.similarity-threshold` | 0.95 | 语义缓存命中阈值 |
+| `wgh.file.max-single-file-mb` | 50 | 单文件上传 / 解析大小上限 |
+
+> 限流覆盖、可信代理、配额、Agent 与上下文压缩等完整配置与设计说明见 `docs/design-*.md`；接口侧的限流与错误码行为见 [docs/api.md](docs/api.md)。
+> `wgh.public-access.trusted-proxies` 默认空，只信任 TCP 对端；部署在 Nginx / 网关后需显式配置可信 CIDR，**不要配置为 `0.0.0.0/0`**。
 
 ---
 
-## 6. 接口概览
+## 7. 接口概览
 
-完整请求体与 SSE 事件协议见 [docs/api.md](docs/api.md)；分享/开放 API 细节见 [docs/design-public-access.md](docs/design-public-access.md)。
+完整请求体与 SSE 事件协议见 [docs/api.md](docs/api.md)；这里只列分组。
 
 | 模块 | 前缀 | 说明 |
 |------|------|------|
-| 鉴权 / OIDC | `/api/auth` | 登录、当前用户、OIDC authorize/callback/status |
-| 知识库 | `/api/kb` | 知识库/文件 CRUD、重切、检索测试、ground truth、召回评测 |
+| 鉴权 / OIDC | `/api/auth` | 本地登录、当前用户、改密、OIDC 状态 |
+| 知识库 | `/api/kb` | 知识库 / 文件 CRUD、重切、检索测试、ground truth、召回评测 |
 | 模型 | `/api/models` | Chat / Embedding / Rerank 模型 CRUD |
 | 聊天 | `/api/chat/windows` | 窗口 CRUD、会话、消息、SSE 对话、反馈 |
 | 分享（登录态旧入口） | `/api/chat/share` | 窗口分享开关与 token 管理 |
 | 工具 | `/api/chat/tools` | 工具 CRUD、在线调试、Skill 目录管理 |
-| Agent | `/api/agent` | 计划状态、HITL 确认、取消/重试/跳过 |
+| Agent | `/api/agent` | 计划状态、HITL 确认、取消 / 重试 / 跳过 |
 | 工作流 | `/api/workflows` | CRUD、校验、运行、HITL、版本、触发器、模板 |
-| 多 Agent | `/api/agent-multi` | Crew CRUD/校验、运行、SSE、state、HITL |
-| Prompt 模板 | `/api/prompt-templates` | CRUD、渲染预览、输入框前缀联想候选（`/suggest`） |
+| 多 Agent | `/api/agent-multi` | Crew CRUD / 校验、运行、SSE、state、HITL |
+| Prompt 模板 | `/api/prompt-templates` | CRUD、渲染预览、前缀联想候选（`/suggest`） |
 | 标签 / 版本 | `/api/tags`、`/api/kb/files/{id}/versions` | 标签 CRUD 与绑定、版本列表与回滚 |
-| 管理端 | `/api/admin` | 审计日志、成本/配额统计、差评、用户配额、分享链接、API Key |
-| 免登录分享 | `/api/public/share/{token}` | 信息/解锁/会话/消息/SSE 问答/知识库检索 |
+| 管理端 | `/api/admin` | 审计日志、成本 / 配额统计、差评、用户配额、角色权限、分享链接、API Key |
+| 免登录分享 | `/api/public/share/{token}` | 信息 / 解锁 / 会话 / 消息 / SSE 问答 / 知识库检索 |
 | 开放 API | `/api/open/v1` | `/me`、`/chat/stream`、`/kb/search`、`/usage`（`X-API-Key`） |
-
----
-
-## 7. 计划任务状态
-
-> 状态以当前代码与提交为准：已完成 / 部分完成 / 未完成 / 已取消。已知限制的细节见 §8。
-
-| 计划项 | 状态 | 依据 / 说明 |
-| --- | --- | --- |
-| Prompt 模板中心与输入框前缀联想 | 已完成 | `PromptTemplateService` / `PromptTemplateController`（含 `/api/prompt-templates/suggest`）；前端 `PromptTemplates.vue` 与输入框前缀触发、变量逐个填写；commit `6c00482` |
-| 知识库标签 | 已完成 | `TagService` / `TagController`；知识库与文件的多标签绑定及管理界面 |
-| 文档版本 | 已完成 | `FileVersionService` + 版本列表/回滚；回滚生成新版本，不覆盖旧版本 |
-| 多用户与权限体系 | 已完成 | OIDC 资源服务器 + RBAC（`@RequiresPermission` / `PermissionAspect`）+ 本地 admin/体验账号；租户隔离与知识库/文档级全量权限不在范围内 |
-| 角色与权限管理页面 | 已完成 | `AdminRoleController`（`/api/admin/roles`、`/api/admin/permissions`）+ `RoleManagement.vue`、`UserManagement.vue`；commit `8ba06ef` |
-| 配额模块与前后端页面 | 已完成 | 独立 `rag-quota` 模块；`QuotaAdminController` / `QuotaUserController`；`QuotaManagement.vue` / `MyQuota.vue` |
-| 免登录分享 / Widget 嵌入 / 开放 API | 已完成 | 独立 `rag-public-access` 模块；`ShareLinkService`、`PublicShareController`、`OpenApiController`、`widget.js` |
-| Redis 8.10.1 接入 | 已完成 | Compose `redis:8.10.1-alpine`；分布式限流、分享密码失败锁定（成功清零）、嵌入授权、API Key IP 白名单；不可用时降级为单机内存 |
-| 更多文档格式（PPTX/HTML/JSON/EML） | 已完成 | `PptxParser` / `HtmlParser` / `JsonParser` / `EmlParser` + `DocumentParserDispatcher`；图片 OCR 仍未支持 |
-| 工作流 AGENT 节点 | 已完成 | `AgentNodeExecutor` + 工作流编辑器中 AGENT 节点配置（`goal` / `maxSteps` / `timeoutMs` / `kbIds`） |
-| 可观测性（Prometheus + 独立 9090） | 已完成 | `RagMetrics` 业务指标 + `/actuator/prometheus`；管理端口默认 `9090`，业务端口不暴露 `/actuator` |
-| `rag-agent-multi` Controller 迁入 `rag-controller` | 已完成 | `rag-agent-multi` 已无 Controller，`MultiAgentController` 位于 `rag-controller` |
-| 常量统一抽取 | 已完成 | 各模块 `constant` 包；权限码、角色码、状态值、SSE 事件名、存储 key 前缀等改引用常量 |
-| `rag-public-access` 独立模块 + Enforcer 禁反向依赖 | 已完成 | 模块拆分与依赖约束（`0c1d447`、`c951a20`） |
-| `rag-storage` 独立模块（local / OSS 可插拔） | 已完成 | `FileStorageService` + `LocalFileStorageService` / `AliyunOssFileStorageService`（`8e20dbd`、`4ee3a4b`） |
-| OIDC 资源服务器形态验签 | 已完成 | `OidcTokenVerifier` / `JwksProvider`；仅接受非对称签名，拒绝 HS256 与 `none` |
-| 本地 admin / 体验账号登录 + `password_version` | 已完成 | `LocalLoginService` / `LocalTokenService`；`wgh_user.password_version` 校验会话失效 |
-| 安全整改 | 已完成 | 首登强制改密（`password_must_change`）、审计日志敏感信息脱敏、409 映射、`WGH_INIT_ADMIN_PASSWORD` 注入 |
-| JDK 21 统一 | 已完成 | `maven.compiler.release=21` + Enforcer 强制 JDK 21，CI 与本地一致 |
-| Compose 内置 PostgreSQL(pgvector) | 已完成 | `docker-compose.yml` 内置 `pgvector/pgvector:pg15`，空卷首启执行 `schema.sql` / `data.sql` |
-| 测试用例与设计文档补全 | 已完成 | `docs/test-cases.md`、`docs/design-overview.md`、`docs/design-detailed.md` 等；commit `614b03e`—`5a21428` |
-| 模型路由与故障转移 | 部分完成（存在已知缺陷） | `ModelRouter#resolveChain` + `RagChatService#runWithFailover` 支持普通 RAG 按 `route_group` 切链；但流式回调 `onError`（含首个 token 前的异步连接失败）只发送 `error` 事件并结束，不会回到切链循环；Agent / 工作流仍只用主模型 |
-| 大文件分片上传 | 未完成 | OSS 仅单次流式 `putObject`，无 multipart / 断点续传；业务侧默认上限 50MB |
-| `local` ↔ `oss` 历史对象自动迁移 | 未完成（已知限制） | 切换本身已支持，但旧对象仍留在原存储后端，需手工迁移或重新上传并重建向量 |
-| OSS 删除失败后的孤儿对象清理 | 未完成（已知限制） | 删除失败仅记录 WARN，数据库仍完成逻辑删除，对象可能残留 |
-| 多实例 JWKS 缓存不共享 | 未完成（已知限制） | `JwksProvider` 为进程内缓存，密钥轮换后各实例刷新时间不一致 |
 
 ---
 
 ## 8. 已知限制
 
 | 类别 | 限制 | 影响 / 建议 |
-|------|------|------------|
-| 权限体系 | 已提供角色/权限管理页面与接口；无租户隔离，资源级权限仅覆盖部分 Controller | 多团队共用需在网关或后续迭代补足 |
-| 可观测性 | 已提供 Prometheus 指标与管理端口（9090）、`X-Request-Id` 日志关联；未接入分布式链路追踪 | 跨服务调用链仍需日志/审计辅助 |
-| 部署编排 | 已提供前后端 Dockerfile 与全栈 docker-compose（postgres/pgvector、backend、frontend、redis、prometheus、grafana）；无 Kubernetes 级编排 | 大规模水平扩展需自行补编排 |
+|------|------|-------------|
+| 权限体系 | 已提供角色 / 权限管理页面与接口；无租户隔离，资源级权限仅覆盖部分 Controller | 多团队共用需在网关或后续迭代补足 |
+| 可观测性 | 已提供 Prometheus 指标与管理端口（9090）、`X-Request-Id` 日志关联；未接入分布式链路追踪 | 跨服务调用链仍需日志 / 审计辅助 |
+| 部署编排 | 已提供前后端 Dockerfile 与全栈 docker-compose；无 Kubernetes 级编排 | 大规模水平扩展需自行补编排 |
 | 限流 | Redis Lua 分布式滑动窗口，故障时降级单机内存 | Redis 故障期间多实例计数不共享、重启清零；建议 Redis 高可用 |
-| Widget | 仅 iframe 注入，无 `postMessage` 双向通信；`frame-ancestors` 需网关/静态服务配置 | 宿主页无法读取对话事件；手工 iframe 仍可能绕过 `widget.js`，需 CSP 兜底 |
-| 分享密码 | 失败 5 次锁定 15 分钟（可配置），无验证码 | 换 IP 可继续尝试；强防护可叠加网关限流/验证码 |
+| Widget | 仅 iframe 注入，无 `postMessage` 双向通信；`frame-ancestors` 需网关 / 静态服务配置 | 宿主页无法读取对话事件；手工 iframe 仍可能绕过 `widget.js`，需 CSP 兜底 |
+| 分享密码 | 失败 5 次锁定 15 分钟（可配置），无验证码 | 换 IP 可继续尝试；强防护可叠加网关限流 / 验证码 |
 | API Key | 无自动轮换；已有可选 IP 白名单 | 泄露后需人工吊销；建议始终配置 IP 白名单 |
 | 真实 IP | 默认只信任 TCP 对端，XFF 仅在可信代理下生效 | 代理拓扑变化时需同步 `trusted-proxies`，配置过宽会引入伪造风险 |
 | 反馈与评测 | 无数据集版本管理、无 A/B 对比 | 离线评测只能脚本化执行 |
-| 多模态 | 仅视觉模型图片输入，无 OCR | 扫描件/图片型 PDF 无法直接提取文字 |
-| 检索 | 单库 PostgreSQL + pgvector，无独立向量库/搜索引擎 | 超大规模语料需评估性能上限 |
-| 模型故障转移 | 仅普通 RAG 在发起调用前的同步异常会切链；流式 `onError`（含首个 token 前的异步连接失败）不回切链；Agent/工作流只用主模型 | 已知缺陷，详见 §7 |
+| 多模态 | 仅视觉模型图片输入，无 OCR | 扫描件 / 图片型 PDF 无法直接提取文字 |
+| 检索 | 单库 PostgreSQL + pgvector，无独立向量库 / 搜索引擎 | 超大规模语料需评估性能上限 |
+| **模型故障转移** | **仅普通 RAG 在发起调用前的同步异常会切链；流式 `onError`（含首个 token 前的异步连接失败）不回切链；Agent / 工作流只用主模型** | **已知缺陷，后续优先修复（见 §9）** |
 | 存储切换 | `local` ↔ `oss` 切换不自动迁移历史对象 | 需手工迁移或重新上传并重建向量 |
 | OSS 删除 | 删除失败仅 WARN，数据库仍逻辑删除，可能残留孤儿对象 | 需离线清理脚本 |
 | 大文件上传 | 未实现分片上传 / 断点续传，OSS 仅单次 `putObject`；默认上限 50MB | 超大文件与弱网场景需另行接入 |
 | 多实例 JWKS | `JwksProvider` 缓存为进程内，多实例不共享 | 单实例部署假设；多实例需接受轮换后的刷新时间差 |
 | 移动端 / 国际化 | 仅桌面端布局，无 i18n | — |
-| 扩展性 | 无 URL 抓取与第三方数据源连接器，无增量同步 | 文档需手工上传 |
+| 扩展性 | 无 URL 抓取与第三方数据源连接器，无增量同步 | 文档需手工上传或经 API 写入 |
 
 ---
 
-## 9. 系统截图
+## 9. 路线图 / 后续计划
 
-`rag-frontend/image/` 目录下：首页 / 模型管理 / 嵌入模型 / 聊天窗口管理 / 创建聊天窗口 / 调试聊天窗口 / 分享聊天窗口 / 工具管理。
+以下为候选方向，**未排期、不代表交付承诺**；优先级按当前风险与使用频率排序。
+
+| 优先级 | 方向 | 当前状态 | 说明 |
+|--------|------|----------|------|
+| P0 | 模型故障转移补全 | 部分完成 | 让流式 `onError`（含首个 token 前的异步连接失败）可回到切链循环；逐步扩展到 Agent / 工作流 |
+| P1 | 大文件分片上传 / 断点续传 | 未实现 | OSS multipart 与失败续传；业务侧分片大小与并发控制 |
+| P1 | 存储迁移与孤儿对象清理 | 未实现 | `local` ↔ `oss` 历史对象迁移工具；按 `file_path` 比对清理 OSS 残留对象 |
+| P2 | 多实例 JWKS 缓存共享 | 未实现 | 将 JWKS 缓存放至 Redis 或共享缓存，统一密钥轮换后的刷新时机 |
+| P2 | 分布式链路追踪 | 未实现 | 在现有 Prometheus + `X-Request-Id` 基础上接入 Tracing |
+| P2 | 数据源连接器与增量同步 | 未实现 | URL 抓取、第三方文档源同步、增量更新 |
+| P3 | 反馈 A/B 与数据集版本 | 未实现 | 版本化评测集、实验对比与效果回归 |
+| P3 | 图片 OCR | 未实现 | 扫描件 / 图片型 PDF 文本提取 |
+
+暂不规划：多租户隔离、独立向量数据库 / 搜索引擎、Kubernetes 级编排。当前设计以单库 PostgreSQL + pgvector 与单实例部署为优先，降低私有化部署与运维成本。
