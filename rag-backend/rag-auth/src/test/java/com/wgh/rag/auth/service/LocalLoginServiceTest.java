@@ -144,6 +144,44 @@ class LocalLoginServiceTest {
     }
 
     @Test
+    @DisplayName("外部 OIDC 账号即使密码哈希非空也拒绝密码登录")
+    void oidcSourceWithHashRejected() {
+        user("alice", "alice-pass", "oidc", 0, 1, null);
+
+        assertThatThrownBy(() -> localLoginService.login("alice", "alice-pass"))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getCode())
+                .isEqualTo(ResultCode.LOGIN_FAILED.getCode());
+    }
+
+    @Test
+    @DisplayName("外部 OIDC 账号密码哈希为空：拒绝密码登录（不落空指针/200）")
+    void oidcSourceWithEmptyHashRejected() {
+        WghUser emptyHashUser = new WghUser();
+        emptyHashUser.setId(1L);
+        emptyHashUser.setUsername("alice-empty");
+        emptyHashUser.setPasswordHash("");
+        emptyHashUser.setSource("oidc");
+        emptyHashUser.setTrial(0);
+        emptyHashUser.setStatus(1);
+        when(userMapper.selectOne(any())).thenReturn(emptyHashUser);
+
+        assertThatThrownBy(() -> localLoginService.login("alice-empty", "any"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("仅支持外部 OIDC 登录");
+    }
+
+    @Test
+    @DisplayName("source 为空（非显式 local）：拒绝密码登录，避免 OIDC 账号误配密码后被放行")
+    void nullSourceRejected() {
+        user("legacy-user", "legacy-pass", null, 0, 1, null);
+
+        assertThatThrownBy(() -> localLoginService.login("legacy-user", "legacy-pass"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("仅支持外部 OIDC 登录");
+    }
+
+    @Test
     @DisplayName("账号禁用：登录被拒")
     void disabledAccountRejected() {
         user("admin", "admin", "local", 0, 0, null);

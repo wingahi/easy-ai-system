@@ -115,8 +115,15 @@ public class LocalLoginService {
                 SecurityUtils.ANONYMOUS, "FAIL", reason);
     }
 
+    /**
+     * 严格按来源判定：只有显式 {@code source=local} 的账号才允许密码登录。
+     * <p>
+     * 不能把 {@code source=null} 当作本地账号：外部 OIDC 用户即使误配了
+     * {@code password_hash}（非空）也不会进入本地登录分支，避免"有密码即可登录"的漏洞。
+     */
     private boolean isLocalSource(WghUser user) {
-        return user.getSource() == null || SOURCE_LOCAL.equalsIgnoreCase(user.getSource());
+        return user.getSource() != null
+                && SOURCE_LOCAL.equalsIgnoreCase(user.getSource().trim());
     }
 
     private Set<String> loadRoles(Long userId) {

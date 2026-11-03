@@ -2,6 +2,7 @@ package com.wgh.rag.common.exception;
 
 import com.wgh.rag.common.result.Result;
 import com.wgh.rag.common.result.ResultCode;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.ConstraintViolationException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -12,6 +13,7 @@ import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.util.stream.Collectors;
 
@@ -83,6 +85,27 @@ public class GlobalExceptionHandler {
         return ResponseEntity
                 .status(HttpStatus.OK)
                 .body(Result.fail(ResultCode.PARAM_ERROR.getCode(), e.getMessage()));
+    }
+
+    /**
+     * 未映射路径：不再落进兜底 500。
+     * <p>
+     * Spring Boot 3.2+ 对无 handler 的请求抛 {@link NoResourceFoundException}。仅对
+     * {@code /api/**} 返回统一 404 业务码（3001），其余静态资源路径仍返回框架原有 404，
+     * 避免影响 doc.html / webjars / swagger-ui 等映射资源。
+     */
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<Result<Void>> handleNoResourceFound(NoResourceFoundException e,
+                                                              HttpServletRequest request) {
+        String uri = request.getRequestURI();
+        if (uri != null && uri.startsWith("/api/")) {
+            log.warn("未映射接口: {} {}", request.getMethod(), uri);
+            return ResponseEntity
+                    .status(HttpStatus.NOT_FOUND)
+                    .body(Result.fail(ResultCode.RESOURCE_NOT_FOUND.getCode(), "接口不存在"));
+        }
+        log.debug("未找到静态资源: {}", uri);
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
     }
 
     @ExceptionHandler(Exception.class)
