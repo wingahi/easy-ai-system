@@ -90,6 +90,7 @@ wgh-rag-system/
 │   ├── rag-auth/                 # 认证与 RBAC：OIDC 资源服务器 + 用户/角色/权限实体与 Mapper
 │   ├── rag-quota/                # 配额模块（全局默认 + 用户日/月配置）
 │   ├── rag-config/               # RagProperties（RAG / PgVector / Agent / Context 配置映射）
+│   ├── rag-storage/              # 可插拔文件存储：FileStorageService + 本地 / 阿里云 OSS 实现
 │   ├── rag-llm/                  # DB 动态模型 + 多厂商工厂 + 缓存热更新 + 模型路由
 │   ├── rag-kb/                   # 上传 → 解析 → 切分 → 向量化 → 检索增强 → 评测
 │   ├── rag-chat/                 # 窗口/会话、上下文压缩、流式 RAG、分享、图片、反馈
@@ -112,7 +113,8 @@ wgh-rag-system/
 ```
 rag-app
 └── rag-controller
-    ├── rag-public-access ─┬── rag-chat ── rag-kb ── rag-llm ── rag-config ── rag-common
+    ├── rag-public-access ─┬── rag-chat ── rag-kb ─┬── rag-storage ── rag-common
+    │                      │                        └── rag-llm ── rag-config ── rag-common
     │                      ├── rag-auth ─┬── rag-log ─── rag-common
     │                      │             └── rag-data ─── rag-common
     │                      └── rag-data ─── rag-common
@@ -120,10 +122,12 @@ rag-app
     │               └── rag-data ─── rag-common
     ├── rag-quota ───── rag-common / rag-data
     ├── rag-workflow / rag-agent / rag-agent-multi / rag-tool
-    └── rag-chat ── rag-kb ── rag-llm ── rag-config ── rag-common
+    └── rag-chat ── rag-kb ──┬── rag-storage ── rag-common
+                             └── rag-llm ── rag-config ── rag-common
 ```
 
 - `rag-common` 不依赖任何内部模块，也不含实体/Mapper/MyBatis 配置；
+- `rag-storage` 仅依赖 `rag-common`，提供 `FileStorageService` 与本地 / OSS 实现；`rag-config` 不依赖它；
 - `rag-data` 仅被需要 `BaseEntity`、类型处理器或 MyBatis-Plus 配置的模块依赖；
 - `rag-log` 承载审计能力，`rag-auth`、`rag-public-access` 与 `rag-controller` 通过它写入审计日志；
 - `rag-auth` 持有 `WghUser/WghRole/WghPermission` 及对应 Mapper，供 controller 的 RBAC 管理接口使用；
@@ -479,7 +483,18 @@ docker start postgres-with-vector          # 旧容器原绑 0.0.0.0:5432，恢�
 | `WGH_SHARE_PWD_LOCK_MINUTES` | 15 | 分享密码锁定时长（分钟） |
 | `WGH_SHARE_PWD_RESET_ON_SUCCESS` | true | 密码验证成功后清零失败计数 |
 | `WGH_EMBED_GRANT_TTL_MINUTES` | 30 | Widget 嵌入 grant 有效期（分钟） |
-| `WGH_UPLOAD_DIR` | ./uploads | 文件上传目录 |
+| `WGH_UPLOAD_DIR` | ./uploads | 本地存储根目录（`wgh.rag.storage.local.base-dir` 默认值） |
+| `WGH_STORAGE_TYPE` | local | 文件存储类型：`local` / `oss` |
+| `WGH_STORAGE_URL_PREFIX` | /uploads | 本地存储 `resolveUrl` 返回的逻辑访问前缀 |
+| `WGH_STORAGE_MAX_FILE_MB` | 50 | 存储层单文件大小上限（MB） |
+| `WGH_OSS_ENDPOINT` | - | 阿里云 OSS 公网 endpoint（如 `https://oss-cn-hangzhou.aliyuncs.com`） |
+| `WGH_OSS_INTERNAL_ENDPOINT` | - | OSS 内网 endpoint（可选，服务端读写优先使用） |
+| `WGH_OSS_BUCKET` | - | OSS bucket |
+| `WGH_OSS_ACCESS_KEY_ID` / `WGH_OSS_ACCESS_KEY_SECRET` | - | OSS 访问凭证 |
+| `WGH_OSS_KEY_PREFIX` | - | OSS 对象 key 前缀（可为空） |
+| `WGH_OSS_PUBLIC_READ` | false | true 返回公网直链；false 返回签名 URL |
+| `WGH_OSS_SIGNED_URL_EXPIRE_MINUTES` | 60 | 签名 URL 有效期（分钟） |
+| `WGH_OSS_MAX_RETRIES` | 3 | OSS 上传失败重试次数（含首次） |
 | `WGH_SKILL_BASE_PATH` | ./skills | Skill 磁盘目录 |
 | `OPENAI_API_KEY` | demo | OpenAI 兼容接口 Key |
 | `OPENAI_BASE_URL` | https://api.openai.com/v1 | OpenAI 兼容接口地址 |
@@ -491,6 +506,19 @@ docker start postgres-with-vector          # 旧容器原绑 0.0.0.0:5432，恢�
 | key | 默认值 | 说明 |
 |-----|--------|------|
 | `wgh.file.max-single-file-mb` | 50 | 单文件上传/解析大小上限 |
+| `wgh.rag.storage.type` | local | 文件存储类型：`local`（本地磁盘）/ `oss`（阿里云 OSS） |
+| `wgh.rag.storage.local.base-dir` | ./uploads | 本地存储根目录（默认读 `WGH_UPLOAD_DIR`） |
+| `wgh.rag.storage.local.url-prefix` | /uploads | 本地 `resolveUrl` 逻辑前缀（当前未挂载静态服务） |
+| `wgh.rag.storage.local.max-file-size-mb` | 50 | 本地存储单文件大小上限 |
+| `wgh.rag.storage.oss.endpoint` | - | OSS 公网 endpoint |
+| `wgh.rag.storage.oss.internal-endpoint` | - | OSS 内网 endpoint（可选） |
+| `wgh.rag.storage.oss.bucket` | - | OSS bucket |
+| `wgh.rag.storage.oss.access-key-id` / `access-key-secret` | - | OSS 凭证（生产必须环境变量注入） |
+| `wgh.rag.storage.oss.key-prefix` | "" | 对象 key 前缀 |
+| `wgh.rag.storage.oss.public-read` | false | 公网直链 / 签名 URL |
+| `wgh.rag.storage.oss.signed-url-expire-minutes` | 60 | 签名 URL 有效期 |
+| `wgh.rag.storage.oss.max-retries` | 3 | 上传重试次数 |
+| `wgh.rag.storage.oss.max-file-size-mb` | 50 | OSS 存储单文件大小上限 |
 | `wgh.rag.cache.enabled` | true | 语义缓存全局开关（窗口级需同时开启） |
 | `wgh.rag.cache.similarity-threshold` | 0.95 | 缓存命中相似度阈值 |
 | `wgh.rag.cache.max-per-window` | 500 | 每窗口缓存条数上限 |
@@ -519,6 +547,7 @@ docker start postgres-with-vector          # 旧容器原绑 0.0.0.0:5432，恢�
 > 限流覆盖默认值：`share-token=20`、`share-ip=60`、`share-chat=20`、`share-kb=20`、`share-embed=30`、`api-key=60`、`api-ip=120`；支持 `wgh.public-access.rate-limit.overrides["维度:路径"]` 做更细粒度覆盖。
 > 完整规则、原子性实现与降级策略见 [docs/design-public-access.md](docs/design-public-access.md)。
 > 配额相关配置（全局默认/用户自定义）由 `rag-quota` 模块提供，见 [docs/quota-design.md](docs/quota-design.md)。
+> 文件存储切换（本地 / 阿里云 OSS）、key 规则、迁移与回滚见 [docs/design-file-storage.md](docs/design-file-storage.md)：默认 `local`，未配置 OSS 时应用仍可启动，仅调用存储操作返回明确错误。
 
 ---
 
