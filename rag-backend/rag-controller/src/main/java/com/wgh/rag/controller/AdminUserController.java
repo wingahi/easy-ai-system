@@ -2,6 +2,7 @@ package com.wgh.rag.controller;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wgh.rag.auth.service.LocalLoginService;
+import com.wgh.rag.auth.service.LocalPasswordService;
 import com.wgh.rag.common.entity.WghRole;
 import com.wgh.rag.common.entity.WghUser;
 import com.wgh.rag.common.exception.BusinessException;
@@ -12,6 +13,7 @@ import com.wgh.rag.common.result.PageResult;
 import com.wgh.rag.common.result.Result;
 import com.wgh.rag.common.result.ResultCode;
 import com.wgh.rag.controller.dto.AdminUserRequest;
+import com.wgh.rag.controller.dto.PasswordResetRequest;
 import com.wgh.rag.quota.entity.UserQuotaConfig;
 import com.wgh.rag.quota.service.QuotaAdminGuard;
 import com.wgh.rag.quota.service.QuotaService;
@@ -64,6 +66,7 @@ public class AdminUserController {
     private final QuotaService quotaService;
     private final QuotaAdminGuard quotaAdminGuard;
     private final PasswordEncoder passwordEncoder;
+    private final LocalPasswordService localPasswordService;
 
     @Operation(summary = "分页列出用户（支持用户名/来源/角色/启用状态筛选）")
     @GetMapping
@@ -175,6 +178,17 @@ public class AdminUserController {
         applyQuota(username, request);
         log.info("修改体验账号 username={}", username);
         return Result.success(buildRow(userMapper.selectById(user.getId()), rolesOf(user.getId())));
+    }
+
+    @Operation(summary = "重置体验账号口令（重置后该账号下次登录须先改密）")
+    @PutMapping("/{username}/password")
+    public Result<Void> resetPassword(@PathVariable String username,
+                                      @RequestBody PasswordResetRequest request) {
+        quotaAdminGuard.requireAdmin();
+
+        WghUser user = requireTrialAccount(username);
+        localPasswordService.resetTrialPassword(user, request.getNewPassword());
+        return Result.success(null);
     }
 
     @Operation(summary = "禁用体验账号（选择禁用而非物理删除，保留审计与配额记录）")

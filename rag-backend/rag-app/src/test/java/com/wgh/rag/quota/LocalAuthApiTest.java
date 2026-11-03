@@ -11,8 +11,10 @@ import com.wgh.rag.auth.security.OidcTokenVerifier;
 import com.wgh.rag.auth.security.PasswordPolicy;
 import com.wgh.rag.auth.security.PasswordProperties;
 import com.wgh.rag.auth.security.TokenVerificationException;
+import com.wgh.rag.auth.service.AccountAuditService;
 import com.wgh.rag.auth.service.LocalLoginService;
 import com.wgh.rag.auth.service.LocalPasswordService;
+import com.wgh.rag.common.service.AuditLogService;
 import com.wgh.rag.common.config.MetaObjectHandlerImpl;
 import com.wgh.rag.common.exception.GlobalExceptionHandler;
 import com.wgh.rag.controller.AdminUserController;
@@ -82,6 +84,8 @@ class LocalAuthApiTest {
             PasswordPolicy.class,
             LocalLoginService.class,
             LocalPasswordService.class,
+            AccountAuditService.class,
+            AuditLogService.class,
             MetaObjectHandlerImpl.class,
             GlobalExceptionHandler.class,
             QuotaService.class,
@@ -277,6 +281,69 @@ class LocalAuthApiTest {
         JsonNode me = getJson("/api/auth/me", token);
         assertThat(me.path("data").path("passwordMustChange").asBoolean()).isFalse();
         assertThat(getJson("/api/admin/users", token).path("code").asInt()).isEqualTo(200);
+    }
+
+    @Test
+    @DisplayName("改密与重置口令的审计记录不含明文密码")
+    void passwordAuditIsMasked() throws Exception {
+        String adminToken = login("admin", "admin").path("data").path("token").asText();
+        postJson("/api/admin/users", adminToken,
+                "{\"username\":\"trial06\",\"password\":\"trial-pass\",\"role\":\"viewer\"}");
+
+        // 本人改密
+        postJson("/api/auth/password", adminToken,
+                "{\"oldPassword\":\"admin\",\"newPassword\":\"newAdmin123\"}");
+        // 管理员重置体验账号口令
+        JsonNode reset = putJson("/api/admin/users/trial06/password", adminToken,
+                "{\"newPassword\":\"resetPass123\"}");
+        assertThat(reset.path("code").asInt()).isEqualTo(200);
+
+        String details = jdbcTemplate.queryForObject(
+                "SELECT COALESCE(STRING_AGG(detail, ' | '), '') FROM wgh_audit_log", String.class);
+        assertThat(details).contains("target=admin").contains("result=SUCCESS");
+        assertThat(details).contains("target=trial06");
+        // 审计详情不得出现任何口令明文
+        assertThat(details).doesNotContain("newAdmin123")
+                .doesNotContain("resetPass123").doesNotContain("trial-pass")
+                .doesNotContain("oldPassword");
+    }
+
+    @Test
+    @DisplayName("管理员重置体验账号口令：旧口令失效、新口令可登录且需先改密")
+    void resetTrialPasswordFlow() throws Exception {
+        String adminToken = login("admin", "admin").path("data").path("token").asText();
+        postJson("/api/admin/users", adminToken,
+                "{\"username\":\"trial07\",\"password\":\"trial-pass\",\"role\":\"viewer\"}");
+        assertThat(login("trial07", "trial-pass").path("code").asInt()).isEqualTo(200);
+
+        JsonNode reset = putJson("/api/admin/users/trial07/password", adminToken,
+                "{\"newPassword\":\"resetPass123\"}");
+        assertThat(reset.path("code").asInt()).isEqualTo(200);
+
+        assertThat(login("trial07", "trial-pass").path("code").asInt()).isEqualTo(1005);
+
+        JsonNode relogin = login("trial07", "resetPass123");
+        assertThat(relogin.path("code").asInt()).isEqualTo(200);
+        assertThat(relogin.path("data").path("passwordMustChange").asBoolean()).isTrue();
+    }
+
+    @Test
+    @DisplayName("非体验账号（editor）不允许管理员重置口令")
+    void resetNonTrialRejected() throws Exception {
+        String adminToken = login("admin", "admin").path("data").path("token").asText();
+        JsonNode reset = putJson("/api/admin/users/editor/password", adminToken,
+                "{\"newPassword\":\"resetPass123\"}");
+        assertThat(reset.path("code").asInt()).isEqualTo(3003);
+    }
+
+    @Test
+    @DisplayName("密码强度不足被拒（2001）")
+    void weakNewPasswordRejected() throws Exception {
+        String adminToken = login("admin", "admin").path("data").path("token").asText();
+        JsonNode changed = postJson("/api/auth/password", adminToken,
+                "{\"oldPassword\":\"admin\",\"newPassword\":\"short\"}");
+        assertThat(changed.path("code").asInt()).isEqualTo(2001);
+        assertThat(changed.path("message").asText()).contains("至少 8 位");
     }
 
     // ==================== 双认证隔离 ====================

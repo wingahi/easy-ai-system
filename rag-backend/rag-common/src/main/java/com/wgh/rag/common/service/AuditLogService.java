@@ -32,6 +32,17 @@ public class AuditLogService {
     }
 
     /**
+     * 同步写入审计日志（用于账号安全类事件，保证落库后再返回；永不抛出）
+     */
+    public void saveNow(AuditLog auditLog) {
+        try {
+            auditLogMapper.insert(auditLog);
+        } catch (Exception e) {
+            log.warn("审计日志写入失败（同步）: action={}, reason={}", auditLog.getAction(), e.getMessage());
+        }
+    }
+
+    /**
      * 分页查询审计日志（按创建时间倒序）
      */
     public PageResult<AuditLog> page(long page, long size, String username, String action) {
