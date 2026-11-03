@@ -150,6 +150,21 @@ rag-app
 
 ## 4. 快速开始 / 部署
 
+### 4.0 环境要求：JDK 21（必需）
+
+后端构建与测试统一固定在 **JDK 21**（CI 与本地一致）。先确认当前生效的 JDK：
+
+```bash
+java -version 2>&1 | head -1     # 期望 openjdk version "21.x"
+mvn -version | grep "Java version"   # 期望 Java version: 21
+# macOS 切换：export JAVA_HOME=$(/usr/libexec/java_home -v 21)
+# Linux 切换：export JAVA_HOME=/path/to/jdk-21
+```
+
+- `rag-backend/pom.xml` 用 `maven.compiler.release=21` 统一字节码目标（major 65），并用 `maven-enforcer-plugin` 强制 Maven 运行在 JDK 21。
+- **JDK 25 下的行为**：`mvn test` 会在 `validate` 阶段直接失败，提示「本项目要求 JDK 21」，不会进入编译/测试；若手动 `-Denforcer.skip` 绕过，Mockito inline mock maker 在 JDK 25 下无法改写 `WorkflowEngine` 等类，`rag-workflow` 相关测试会报 Mockito/`NoClassDefFoundError` 错误。
+- 可选（不写入仓库、不保证跨机器可复现）：若希望本机 `mvn` 运行在任意 JDK 时自动改用 21，可在 `~/.m2/toolchains.xml` 注册 `<toolchain><type>jdk</type><provides><version>21</version></provides><configuration><jdkHome>/path/to/jdk-21</jdkHome></configuration></toolchain>`，并为父 POM 启用 `maven-toolchains-plugin`；仓库默认采用 Enforcer 快速失败，避免依赖机器本地文件。
+
 ### 4.1 启动 PostgreSQL + pgvector
 
 ```bash

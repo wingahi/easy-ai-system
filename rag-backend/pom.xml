@@ -20,6 +20,8 @@
 
     <properties>
         <java.version>21</java.version>
+        <!-- 统一编译目标：无论 Maven 运行在 JDK 21 还是 25，字节码均为 21（major 65） -->
+        <maven.compiler.release>21</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <langchain4j.version>1.19.0</langchain4j.version>
         <langchain4j.community.version>1.19.0-beta29</langchain4j.community.version>
@@ -249,8 +251,7 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
                 <configuration>
-                    <source>${java.version}</source>
-                    <target>${java.version}</target>
+                    <release>${maven.compiler.release}</release>
                     <encoding>UTF-8</encoding>
                     <annotationProcessorPaths>
                         <path>
@@ -260,6 +261,29 @@
                         </path>
                     </annotationProcessorPaths>
                 </configuration>
+            </plugin>
+            <!-- 固定构建 JDK 为 21：JDK 25 下 Mockito inline mock maker 无法改写 WorkflowEngine 等类，
+                 测试期才失败且报错难懂，因此在 validate 阶段快速失败并给出明确提示。 -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <version>3.5.0</version>
+                <executions>
+                    <execution>
+                        <id>enforce-jdk-21</id>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <requireJavaVersion>
+                                    <version>[21,22)</version>
+                                    <message>本项目要求 JDK 21（构建与测试统一固定）。请将 JAVA_HOME 指向 JDK 21 后重试，例如 macOS：export JAVA_HOME=$(/usr/libexec/java_home -v 21)；Linux：export JAVA_HOME=/path/to/jdk-21。</message>
+                                </requireJavaVersion>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
         </plugins>
     </build>

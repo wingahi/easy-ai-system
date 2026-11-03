@@ -20,3 +20,32 @@ jobs:
 
       - name: 检查测试方法命名与中文注释
         run: python3 rag-backend/scripts/check-test-conventions.py --root rag-backend
+
+  backend:
+    name: 后端编译与测试（JDK 21）
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      # 构建与测试统一固定 JDK 21：JDK 25 下 Mockito inline mock maker
+      # 无法改写 WorkflowEngine 等类，测试期才会以难以理解的错误失败。
+      - name: 设置 JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: 固定 JAVA_HOME 为 JDK 21
+        run: |
+          echo "JAVA_HOME=$JAVA_HOME" >> "$GITHUB_ENV"
+          java -version
+
+      - name: 编译（跳过测试）
+        working-directory: rag-backend
+        run: mvn -B -DskipTests compile
+
+      - name: 测试
+        working-directory: rag-backend
+        run: mvn -B test
