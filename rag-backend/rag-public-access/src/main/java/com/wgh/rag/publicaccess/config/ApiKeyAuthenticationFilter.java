@@ -1,6 +1,7 @@
 package com.wgh.rag.publicaccess.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.wgh.rag.auth.constant.AuthConstants;
 import com.wgh.rag.common.exception.BusinessException;
 import com.wgh.rag.common.result.Result;
 import com.wgh.rag.common.result.ResultCode;
@@ -89,9 +90,9 @@ public class ApiKeyAuthenticationFilter extends OncePerRequestFilter {
      * 路径 → 所需 scope
      */
     private String requiredScope(String uri) {
-        if (uri.contains("/v1/chat/")) return "chat:write";
-        if (uri.contains("/v1/kb/")) return "kb:read";
-        if (uri.contains("/v1/usage")) return "usage:read";
+        if (uri.contains("/v1/chat/")) return AuthConstants.PERM_CHAT_WRITE;
+        if (uri.contains("/v1/kb/")) return AuthConstants.PERM_KB_READ;
+        if (uri.contains("/v1/usage")) return AuthConstants.PERM_USAGE_READ;
         return null;
     }
 
