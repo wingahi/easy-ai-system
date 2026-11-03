@@ -131,7 +131,8 @@ rag-app
 - `rag-data` 仅被需要 `BaseEntity`、类型处理器或 MyBatis-Plus 配置的模块依赖；
 - `rag-log` 承载审计能力，`rag-auth`、`rag-public-access` 与 `rag-controller` 通过它写入审计日志；
 - `rag-auth` 持有 `WghUser/WghRole/WghPermission` 及对应 Mapper，供 controller 的 RBAC 管理接口使用；
-- `rag-public-access` 承载分享链接 / Widget 嵌入 / 开放 API Key 的实现层（Service、Store、安全链、过滤器、实体与 Mapper），Controller 仍留在 `rag-controller`，依赖方向固定为 `rag-controller → rag-public-access`。
+- `rag-public-access` 承载分享链接 / Widget 嵌入 / 开放 API Key 的实现层（Service、Store、安全链、过滤器、实体与 Mapper），Controller 仍留在 `rag-controller`，依赖方向固定为 `rag-controller → rag-public-access`；
+- `rag-public-access` 对 `rag-chat`/`rag-kb` 的依赖仅限创建分享链接时的目标存在性校验，不得增加其它业务调用；任何新增调用必须先回答“为什么不能把编排留在 Controller”。
 
 ### 3.2 技术栈
 

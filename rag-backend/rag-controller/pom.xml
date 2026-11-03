@@ -91,6 +91,20 @@
                     <argLine>-Dnet.bytebuddy.experimental=true</argLine>
                 </configuration>
             </plugin>
+            <!-- rag-controller 是 rag-public-access 唯一被允许的直接消费者，
+                 因此跳过父 POM 中禁止依赖 rag-public-access 的 enforcer 执行（JDK 校验仍保留）。 -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>enforce-public-access-not-consumed</id>
+                        <configuration>
+                            <skip>true</skip>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
         </plugins>
     </build>
 </project>
