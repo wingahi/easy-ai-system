@@ -117,4 +117,9 @@ public class ChatMessage extends BaseEntity {
      * 消息附件 JSON 数组（图片 data URL 或公网 URL，多模态问答）
      */
     private String attachments;
+
+    /**
+     * 助手消息生成状态：COMPLETED / STOPPED / FAILED（用户消息为 null）
+     */
+    private String status;
 }

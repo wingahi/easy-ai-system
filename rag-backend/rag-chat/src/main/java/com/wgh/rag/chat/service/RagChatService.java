@@ -150,10 +150,22 @@ public class RagChatService {
         }
 
         // 构建 SseEmitter
-        SseEmitter emitter = new SseEmitter(30 * 60 * 1000L); // 30分钟超时
-        emitter.onTimeout(() -> log.warn("SSE连接超时: session={}", session.getId()));
-        emitter.onError(e -> log.error("SSE连接错误: session={}", session.getId(), e));
-        emitter.onCompletion(() -> log.info("SSE连接完成: session={}", session.getId()));
+        SseEmitter emitter = new SseEmitter(ChatConstants.SSE_TIMEOUT_MS);
+        // 单次对话的取消句柄：客户端断开或显式取消时置位，流式回调据此短路
+        ChatStreamCancellation cancellation = new ChatStreamCancellation();
+        emitter.onTimeout(() -> {
+            log.warn("SSE连接超时，取消生成: session={}", session.getId());
+            cancellation.cancel();
+        });
+        emitter.onError(e -> {
+            log.warn("SSE连接错误，取消生成: session={}, reason={}", session.getId(), e.getMessage());
+            cancellation.cancel();
+        });
+        emitter.onCompletion(() -> {
+            log.info("SSE连接完成: session={}", session.getId());
+            // 客户端提前断开时 Spring 只会触发 completion，这里兜底取消（已正常终态则落库权已被抢占）
+            cancellation.cancel();
+        });
 
         // 保存用户消息（多模态：图片序列化进 attachments）
         com.wgh.rag.chat.entity.ChatMessage userMsg = new com.wgh.rag.chat.entity.ChatMessage();
@@ -178,7 +190,7 @@ public class RagChatService {
                     new AtomicReference<>("rag"), new AtomicBoolean(false), System.nanoTime());
             try {
                 doRagStreamChat(window, session, userMessage, emitter, userMsg, shareMode, quotaUsername, images,
-                        metricCtx);
+                        metricCtx, cancellation);
             } catch (Exception e) {
                 metrics.recordChatError("stream");
                 log.error("流式聊天异常", e);
@@ -269,7 +281,8 @@ public class RagChatService {
     private void doRagStreamChat(ChatWindow window, ChatSession session, String userMessage,
                                   SseEmitter emitter, com.wgh.rag.chat.entity.ChatMessage userMsg,
                                   boolean shareMode, String quotaUsername,
-                                  List<String> imageUrls, ChatMetricContext metricCtx) throws Exception {
+                                  List<String> imageUrls, ChatMetricContext metricCtx,
+                                  ChatStreamCancellation cancellation) throws Exception {
 
         // 1. 发送开始事件
         emitter.send(SseEmitter.event().name(ChatEvents.START).data(Map.of("sessionId", session.getId())));
@@ -519,7 +532,7 @@ public class RagChatService {
                     modelChain, request, toolSpecs, messages, emitter, retrievedMatches, hitRate,
                     evaluationScheme, session, window, userMessage, toolRoundCount, MAX_TOOL_ROUNDS,
                     toolRegistry, windowModelId, tokenUsageAcc, quotaUsername, actualModel,
-                    onModelSwitch, metricCtx);
+                    onModelSwitch, metricCtx, cancellation);
             startAttempt(failoverCtx, 0);
 
         } catch (Exception e) {
@@ -558,6 +571,8 @@ public class RagChatService {
         final AtomicReference<LlmModel> actualModel;
         final java.util.function.BiConsumer<LlmModel, String> onModelSwitch;
         final ChatMetricContext metricCtx;
+        /** 客户端断开/显式取消句柄 */
+        final ChatStreamCancellation cancellation;
 
         FailoverContext(List<LlmModel> chain, ChatRequest request,
                         List<ToolSpecification> toolSpecs, List<ChatMessage> messages,
@@ -569,7 +584,8 @@ public class RagChatService {
                         long[] tokenUsageAcc, String quotaUsername,
                         AtomicReference<LlmModel> actualModel,
                         java.util.function.BiConsumer<LlmModel, String> onModelSwitch,
-                        ChatMetricContext metricCtx) {
+                        ChatMetricContext metricCtx,
+                        ChatStreamCancellation cancellation) {
             this.chain = chain;
             this.request = request;
             this.toolSpecs = toolSpecs;
@@ -590,6 +606,7 @@ public class RagChatService {
             this.actualModel = actualModel;
             this.onModelSwitch = onModelSwitch;
             this.metricCtx = metricCtx;
+            this.cancellation = cancellation;
         }
     }
 
@@ -632,6 +649,20 @@ public class RagChatService {
             active.set(false);
         }
 
+        /** 追加流式片段（与取消快照互斥，避免停顿时读到半截文本） */
+        void appendPartial(String text) {
+            synchronized (content) {
+                content.append(text);
+            }
+        }
+
+        /** 取消时的内容快照 */
+        String snapshotContent() {
+            synchronized (content) {
+                return content.toString();
+            }
+        }
+
         /** 抢占首 token 前失败的切链权，避免 onError 重复回调触发多次切链 */
         boolean claimPreTokenFailure() {
             return active.compareAndSet(true, false);
@@ -647,6 +678,13 @@ public class RagChatService {
         LlmModel candidate = ctx.chain.get(index);
         StreamAttempt attempt = new StreamAttempt(index, ctx.chain.size(), candidate);
         ctx.toolRoundCount[0] = 0;
+        // 取消终态：把已生成的部分内容落库并结算 token（仅首个终态生效）
+        ctx.cancellation.onCancel(() -> persistStopped(ctx, attempt));
+        if (ctx.cancellation.isCancelled()) {
+            // 已断开：不再发起模型调用，直接完成停止落库
+            attempt.deactivate();
+            return;
+        }
         try {
             StreamingChatModel model = modelCacheManager.getStreamingChatModel(candidate.getId());
             if (index > 0) {
@@ -671,6 +709,12 @@ public class RagChatService {
             log.debug("忽略已失效模型尝试的失败回调: attempt={}/{}", attempt.index + 1, attempt.total);
             return;
         }
+        // 客户端主动断开：取消路径已落库，不切链、不下发错误事件
+        if (ctx.cancellation.isCancelled()) {
+            log.info("客户端已断开，忽略模型失败回调: attempt={}/{}", attempt.index + 1, attempt.total);
+            attempt.deactivate();
+            return;
+        }
         if (attempt.isStarted()) {
             // 已产出部分内容：不切换、不回滚、不重发，如实报错并结束
             attempt.deactivate();
@@ -678,6 +722,7 @@ public class RagChatService {
             log.error("LLM流式响应错误（已产出内容，不切换模型）: 模型={}(id={}), 尝试={}/{}, 错误={}",
                     attempt.model.getModelName(), attempt.model.getId(),
                     attempt.index + 1, attempt.total, describeError(error));
+            persistFailed(ctx, attempt);
             safeSend(ctx.emitter, ChatEvents.ERROR, Map.of("text", userFacingError(error)));
             try {
                 ctx.emitter.completeWithError(error);
@@ -706,6 +751,8 @@ public class RagChatService {
         String message = "所有候选模型均调用失败（共 " + ctx.chain.size() + " 个，最后错误: "
                 + userFacingError(error) + "）";
         log.error("[Failover] {}", message);
+        // 抢占终态，避免后续 onCompletion 误落库为「已停止」
+        ctx.cancellation.markFinalized();
         safeSend(ctx.emitter, ChatEvents.ERROR, Map.of("text", message));
         safeComplete(ctx.emitter);
     }
@@ -737,6 +784,11 @@ public class RagChatService {
         streamingModel.chat(request, new StreamingChatResponseHandler() {
             @Override
             public void onPartialResponse(String partialResponse) {
+                if (ctx.cancellation.isCancelled()) {
+                    log.debug("生成已取消，忽略后续 token: attempt={}/{}", attempt.index + 1, attempt.total);
+                    attempt.deactivate();
+                    return;
+                }
                 if (!attempt.markStarted()) {
                     log.debug("忽略已失效模型尝试的流式片段: attempt={}/{}", attempt.index + 1, attempt.total);
                     return;
@@ -746,11 +798,13 @@ public class RagChatService {
                     metrics.recordFirstToken(ctx.metricCtx.route().get(),
                             System.nanoTime() - ctx.metricCtx.startNanos());
                 }
-                attempt.content.append(partialResponse);
+                attempt.appendPartial(partialResponse);
                 try {
                     ctx.emitter.send(SseEmitter.event().name(ChatEvents.CONTENT).data(Map.of("text", partialResponse)));
                 } catch (IOException e) {
-                    log.warn("发送SSE数据失败", e);
+                    // 客户端断开：停止后续 token 消费，并把已生成内容落库为 STOPPED
+                    log.warn("发送SSE数据失败，取消生成: {}", e.getMessage());
+                    ctx.cancellation.cancel();
                 }
             }
 
@@ -758,6 +812,11 @@ public class RagChatService {
             public void onCompleteResponse(ChatResponse completeResponse) {
                 if (!attempt.isActive()) {
                     log.debug("忽略已失效模型尝试的完成回调: attempt={}/{}", attempt.index + 1, attempt.total);
+                    return;
+                }
+                if (ctx.cancellation.isCancelled()) {
+                    log.info("客户端已断开，跳过完成事件下发: attempt={}/{}", attempt.index + 1, attempt.total);
+                    attempt.deactivate();
                     return;
                 }
                 attempt.markStarted();
@@ -778,11 +837,12 @@ public class RagChatService {
                     if (ctx.toolRoundCount[0] > ctx.maxToolRounds) {
                         log.warn("工具调用超过最大轮次 {}，停止循环", ctx.maxToolRounds);
                         try {
-                            sendFinalEvents(ctx.emitter, attempt.content.toString(), ctx.retrievedMatches, ctx.hitRate,
+                            sendFinalEvents(ctx.emitter, attempt.snapshotContent(), ctx.retrievedMatches, ctx.hitRate,
                                     ctx.evaluationScheme, ctx.session, ctx.window, ctx.originalUserMessage,
-                                    ctx.tokenUsageAcc, ctx.quotaUsername, ctx.actualModel);
+                                    ctx.tokenUsageAcc, ctx.quotaUsername, ctx.actualModel, ctx.cancellation);
                         } catch (IOException ioe) {
                             log.error("发送最终事件失败", ioe);
+                            ctx.cancellation.cancel();
                         }
                         attempt.deactivate();
                         return;
@@ -798,13 +858,21 @@ public class RagChatService {
                                     "args", req.arguments()
                             )));
                         } catch (IOException e) {
-                            log.warn("发送 tool_call_start 失败", e);
+                            log.warn("发送 tool_call_start 失败，取消生成", e);
+                            ctx.cancellation.cancel();
+                            attempt.deactivate();
+                            return;
                         }
                     }
 
-                    // 执行所有工具调用
+                    // 执行所有工具调用（客户端已断开时不再继续执行，避免无谓的副作用与配额消耗）
                     List<ToolExecutionResultMessage> toolResults = new ArrayList<>();
                     for (ToolExecutionRequest req : toolCalls) {
+                        if (ctx.cancellation.isCancelled()) {
+                            log.info("客户端已断开，终止剩余工具调用");
+                            attempt.deactivate();
+                            return;
+                        }
                         long start = System.currentTimeMillis();
                         ToolExecutionResultMessage result = toolExecutionEngine.execute(req, ctx.toolRegistry, ctx.windowModelId);
                         long latency = System.currentTimeMillis() - start;
@@ -819,8 +887,17 @@ public class RagChatService {
                                     "latencyMs", latency
                             )));
                         } catch (IOException e) {
-                            log.warn("发送 tool_call_result 失败", e);
+                            log.warn("发送 tool_call_result 失败，取消生成", e);
+                            ctx.cancellation.cancel();
+                            attempt.deactivate();
+                            return;
                         }
+                    }
+
+                    if (ctx.cancellation.isCancelled()) {
+                        log.info("客户端已断开，不再发起下一轮模型调用");
+                        attempt.deactivate();
+                        return;
                     }
 
                     // 把 LLM 的 AiMessage（带 tool calls）加入 messages
@@ -840,11 +917,12 @@ public class RagChatService {
 
                 // 2. 没有 tool calls —— 最终回答，发送完成事件
                 try {
-                    sendFinalEvents(ctx.emitter, attempt.content.toString(), ctx.retrievedMatches, ctx.hitRate,
+                    sendFinalEvents(ctx.emitter, attempt.snapshotContent(), ctx.retrievedMatches, ctx.hitRate,
                             ctx.evaluationScheme, ctx.session, ctx.window, ctx.originalUserMessage,
-                            ctx.tokenUsageAcc, ctx.quotaUsername, ctx.actualModel);
+                            ctx.tokenUsageAcc, ctx.quotaUsername, ctx.actualModel, ctx.cancellation);
                 } catch (IOException e) {
                     log.error("完成SSE响应失败", e);
+                    ctx.cancellation.cancel();
                 }
                 attempt.deactivate();
             }
@@ -869,7 +947,14 @@ public class RagChatService {
                                   ChatSession session, ChatWindow window,
                                   String originalUserMessage,
                                   long[] tokenUsageAcc, String quotaUsername,
-                                  AtomicReference<LlmModel> actualModelRef) throws IOException {
+                                  AtomicReference<LlmModel> actualModelRef,
+                                  ChatStreamCancellation cancellation) throws IOException {
+
+        // 抢占终态：若已由取消路径落库，则不再下发完成事件、不再重复写入
+        if (!cancellation.markFinalized()) {
+            log.info("生成已被取消，跳过完成事件下发与落库");
+            return;
+        }
 
         List<Map<String, Object>> sourceList = buildSourcesList(retrievedMatches);
         emitter.send(SseEmitter.event().name(ChatEvents.SOURCES).data(sourceList));
@@ -919,6 +1004,43 @@ public class RagChatService {
         } else {
             emitter.complete();
         }
+    }
+
+    /**
+     * 用户停止/客户端断连的终态落库：保留已生成内容，状态标记 STOPPED，
+     * 并按实际产出估算 token 照常计入配额（不回滚为 0）。
+     */
+    private void persistStopped(FailoverContext ctx, StreamAttempt attempt) {
+        attempt.deactivate();
+        String partial = attempt.snapshotContent();
+        log.info("生成已停止：保留 {} 字符，session={}", partial.length(), ctx.session != null ? ctx.session.getId() : null);
+        com.wgh.rag.chat.entity.ChatMessage saved = saveAssistantMessage(
+                ctx.session, partial, List.of(), ctx.hitRate, null, null, null,
+                ChatConstants.MESSAGE_STATUS_STOPPED);
+        settleCostAndQuota(ctx.window, ctx.originalUserMessage, ctx.retrievedMatches, partial,
+                saved, ctx.tokenUsageAcc, ctx.quotaUsername, ctx.actualModel);
+        // SSE 连接已断开，不再发送 done / judge 事件
+    }
+
+    /**
+     * 生成失败（已产出部分内容）的终态落库：状态标记 FAILED，token 按实际产出计数。
+     */
+    private void persistFailed(FailoverContext ctx, StreamAttempt attempt) {
+        String partial = attempt.snapshotContent();
+        if (partial.isBlank()) {
+            // 无内容可保留，前端仅展示错误提示，不写入空消息
+            ctx.cancellation.markFinalized();
+            return;
+        }
+        // 抢占终态落库权；若已被取消路径处理则不重复写入
+        if (!ctx.cancellation.markFinalized()) {
+            return;
+        }
+        com.wgh.rag.chat.entity.ChatMessage saved = saveAssistantMessage(
+                ctx.session, partial, List.of(), ctx.hitRate, null, null, null,
+                ChatConstants.MESSAGE_STATUS_FAILED);
+        settleCostAndQuota(ctx.window, ctx.originalUserMessage, ctx.retrievedMatches, partial,
+                saved, ctx.tokenUsageAcc, ctx.quotaUsername, ctx.actualModel);
     }
 
     /**
@@ -1254,6 +1376,13 @@ public class RagChatService {
     private com.wgh.rag.chat.entity.ChatMessage saveAssistantMessage(
             ChatSession session, String content, List<?> sources,
             Double hitRate, Double accuracyRate, Double mrr, Double ndcg) {
+        return saveAssistantMessage(session, content, sources, hitRate, accuracyRate, mrr, ndcg,
+                ChatConstants.MESSAGE_STATUS_COMPLETED);
+    }
+
+    private com.wgh.rag.chat.entity.ChatMessage saveAssistantMessage(
+            ChatSession session, String content, List<?> sources,
+            Double hitRate, Double accuracyRate, Double mrr, Double ndcg, String status) {
         com.wgh.rag.chat.entity.ChatMessage msg = new com.wgh.rag.chat.entity.ChatMessage();
         try {
             msg.setSessionId(session.getId());
@@ -1264,6 +1393,7 @@ public class RagChatService {
             msg.setAccuracyRate(accuracyRate);
             msg.setMrr(mrr);
             msg.setNdcg(ndcg);
+            msg.setStatus(status);
             if (sources != null && !sources.isEmpty()) {
                 msg.setSources(objectMapper.writeValueAsString(sources));
             }

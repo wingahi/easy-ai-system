@@ -16,6 +16,14 @@ public interface ChatConstants {
     // ============ 会话状态 ============
     String SESSION_STATUS_ACTIVE = "ACTIVE";
 
+    // ============ 助手消息生成状态 ============
+    /** 正常生成完成 */
+    String MESSAGE_STATUS_COMPLETED = "COMPLETED";
+    /** 用户主动停止（含客户端断连） */
+    String MESSAGE_STATUS_STOPPED = "STOPPED";
+    /** 生成失败（已产出部分内容后中断） */
+    String MESSAGE_STATUS_FAILED = "FAILED";
+
     // ============ 评估方案 ============
     String EVALUATION_SCHEME_NONE = "NONE";
 

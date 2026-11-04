@@ -336,6 +336,7 @@ CREATE TABLE IF NOT EXISTS wgh_chat_message (
   role VARCHAR(20) NOT NULL,
   content TEXT,
   message_type VARCHAR(20) DEFAULT 'TEXT',
+  status VARCHAR(20),
   token_count INT DEFAULT 0,
   recall_rate DOUBLE PRECISION,
   coverage_rate DOUBLE PRECISION,
@@ -355,6 +356,7 @@ CREATE TABLE IF NOT EXISTS wgh_chat_message (
   deleted SMALLINT DEFAULT 0
 );
 ALTER TABLE wgh_chat_message ADD COLUMN IF NOT EXISTS coverage_rate DOUBLE PRECISION;
+ALTER TABLE wgh_chat_message ADD COLUMN IF NOT EXISTS status VARCHAR(20);
 CREATE INDEX IF NOT EXISTS idx_cm_session_create ON wgh_chat_message(session_id, create_time);
 COMMENT ON TABLE wgh_chat_message IS '聊天消息';
 COMMENT ON COLUMN wgh_chat_message.id IS '主键';
@@ -362,6 +364,7 @@ COMMENT ON COLUMN wgh_chat_message.session_id IS '所属会话 ID';
 COMMENT ON COLUMN wgh_chat_message.role IS '角色：SYSTEM / USER / ASSISTANT';
 COMMENT ON COLUMN wgh_chat_message.content IS '消息文本';
 COMMENT ON COLUMN wgh_chat_message.message_type IS '消息类型：TEXT / IMAGE / FILE / TOOL_CALL';
+COMMENT ON COLUMN wgh_chat_message.status IS '助手消息生成状态：COMPLETED / STOPPED / FAILED';
 COMMENT ON COLUMN wgh_chat_message.token_count IS 'token 数';
 COMMENT ON COLUMN wgh_chat_message.recall_rate IS '检索召回率 Recall@K（分母为标注的相关 chunk 数，需 ground truth；在线无标注时为 NULL）';
 COMMENT ON COLUMN wgh_chat_message.coverage_rate IS '召回覆盖率（实际返回条数/topK，衡量 topK 填充程度，非召回率）';

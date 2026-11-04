@@ -161,6 +161,7 @@ CREATE TABLE IF NOT EXISTS wgh_chat_message (
     session_id BIGINT NOT NULL,
     role VARCHAR(20) NOT NULL,
     content TEXT NOT NULL,
+    status VARCHAR(20),
     sources TEXT,
     hit_rate DOUBLE,
     accuracy_rate DOUBLE,

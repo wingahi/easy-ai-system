@@ -3,6 +3,7 @@ package com.wgh.rag.chat.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wgh.rag.agent.config.AgentProperties;
 import com.wgh.rag.agent.service.AgentOrchestrator;
+import com.wgh.rag.chat.constant.ChatConstants;
 import com.wgh.rag.chat.entity.ChatSession;
 import com.wgh.rag.chat.entity.ChatWindow;
 import com.wgh.rag.chat.evaluation.EvaluationScheme;
@@ -212,11 +213,110 @@ class ModelFailoverStreamTest {
         assertThat(emitter.textOf("content")).containsExactly("答案");
     }
 
+    @Test
+    void clientDisconnectDuringStream_stopsConsumingAndPersistsStopped() {
+        LlmModel primary = model(1L, "primary");
+        StreamingChatModel model = org.mockito.Mockito.mock(StreamingChatModel.class);
+        doAnswer(inv -> {
+            StreamingChatResponseHandler handler = inv.getArgument(1);
+            handler.onPartialResponse("第一段");
+            handler.onPartialResponse("第二段");
+            handler.onPartialResponse("第三段");
+            handler.onCompleteResponse(ChatResponse.builder()
+                    .aiMessage(AiMessage.from("第一段第二段第三段"))
+                    .build());
+            return null;
+        }).when(model).chat(any(ChatRequest.class), any(StreamingChatResponseHandler.class));
+        when(modelCacheManager.getStreamingChatModel(1L)).thenReturn(model);
+
+        FailAfterFirstContentEmitter emitter = new FailAfterFirstContentEmitter();
+        AtomicReference<LlmModel> actualModel = new AtomicReference<>();
+        List<LlmModel> switched = new ArrayList<>();
+        ChatStreamCancellation cancellation = new ChatStreamCancellation();
+
+        service.startAttempt(context(List.of(primary), emitter, actualModel, switched, cancellation), 0);
+
+        assertThat(cancellation.isCancelled()).isTrue();
+        assertThat(emitter.textOf("content")).containsExactly("第一段");
+        assertThat(emitter.eventsOf("done")).isEmpty();
+        assertThat(emitter.eventsOf("error")).isEmpty();
+        com.wgh.rag.chat.entity.ChatMessage saved = captureInsertedMessage();
+        assertThat(saved.getStatus()).isEqualTo(ChatConstants.MESSAGE_STATUS_STOPPED);
+        // 第二个 token 已追加但写失败，后续 token（第三段）不再消费
+        assertThat(saved.getContent()).isEqualTo("第一段第二段");
+        verify(quotaService).addTokens(org.mockito.ArgumentMatchers.eq("tester"),
+                org.mockito.ArgumentMatchers.longThat(tokens -> tokens > 0));
+    }
+
+    @Test
+    void explicitCancel_stopsFurtherTokensAndPersistsStopped() {
+        LlmModel primary = model(1L, "primary");
+        StreamingChatModel model = org.mockito.Mockito.mock(StreamingChatModel.class);
+        ChatStreamCancellation cancellation = new ChatStreamCancellation();
+        doAnswer(inv -> {
+            StreamingChatResponseHandler handler = inv.getArgument(1);
+            handler.onPartialResponse("A");
+            // 显式取消：等价于外部调用取消句柄
+            cancellation.cancel();
+            handler.onPartialResponse("B");
+            handler.onCompleteResponse(ChatResponse.builder().aiMessage(AiMessage.from("AB")).build());
+            return null;
+        }).when(model).chat(any(ChatRequest.class), any(StreamingChatResponseHandler.class));
+        when(modelCacheManager.getStreamingChatModel(1L)).thenReturn(model);
+
+        CapturingEmitter emitter = new CapturingEmitter();
+        AtomicReference<LlmModel> actualModel = new AtomicReference<>();
+        List<LlmModel> switched = new ArrayList<>();
+
+        service.startAttempt(context(List.of(primary), emitter, actualModel, switched, cancellation), 0);
+
+        assertThat(emitter.textOf("content")).containsExactly("A");
+        assertThat(emitter.eventsOf("done")).isEmpty();
+        com.wgh.rag.chat.entity.ChatMessage saved = captureInsertedMessage();
+        assertThat(saved.getStatus()).isEqualTo(ChatConstants.MESSAGE_STATUS_STOPPED);
+        assertThat(saved.getContent()).isEqualTo("A");
+        verify(quotaService).addTokens(org.mockito.ArgumentMatchers.eq("tester"),
+                org.mockito.ArgumentMatchers.longThat(tokens -> tokens > 0));
+    }
+
+    @Test
+    void normalCompletion_persistsCompletedStatusAndCountsTokens() {
+        LlmModel primary = model(1L, "primary");
+        StreamingChatModel model = answeringModel("答案");
+        when(modelCacheManager.getStreamingChatModel(1L)).thenReturn(model);
+
+        CapturingEmitter emitter = new CapturingEmitter();
+        AtomicReference<LlmModel> actualModel = new AtomicReference<>();
+        List<LlmModel> switched = new ArrayList<>();
+
+        service.startAttempt(context(List.of(primary), emitter, actualModel, switched), 0);
+
+        assertThat(emitter.eventsOf("done")).hasSize(1);
+        com.wgh.rag.chat.entity.ChatMessage saved = captureInsertedMessage();
+        assertThat(saved.getStatus()).isEqualTo(ChatConstants.MESSAGE_STATUS_COMPLETED);
+        verify(quotaService).addTokens(org.mockito.ArgumentMatchers.eq("tester"),
+                org.mockito.ArgumentMatchers.longThat(tokens -> tokens > 0));
+    }
+
+    private com.wgh.rag.chat.entity.ChatMessage captureInsertedMessage() {
+        org.mockito.ArgumentCaptor<com.wgh.rag.chat.entity.ChatMessage> captor =
+                org.mockito.ArgumentCaptor.forClass(com.wgh.rag.chat.entity.ChatMessage.class);
+        verify(messageMapper).insert(captor.capture());
+        return captor.getValue();
+    }
+
     // ==================== 辅助方法 ====================
 
     private RagChatService.FailoverContext context(List<LlmModel> chain, SseEmitter emitter,
                                                    AtomicReference<LlmModel> actualModel,
                                                    List<LlmModel> switched) {
+        return context(chain, emitter, actualModel, switched, new ChatStreamCancellation());
+    }
+
+    private RagChatService.FailoverContext context(List<LlmModel> chain, SseEmitter emitter,
+                                                   AtomicReference<LlmModel> actualModel,
+                                                   List<LlmModel> switched,
+                                                   ChatStreamCancellation cancellation) {
         return new RagChatService.FailoverContext(
                 chain,
                 ChatRequest.builder().messages(new ArrayList<>(List.of(UserMessage.from("hi")))).build(),
@@ -241,7 +341,8 @@ class ModelFailoverStreamTest {
                     actualModel.set(m);
                 },
                 new RagChatService.ChatMetricContext(new AtomicReference<>("rag"),
-                        new AtomicBoolean(false), System.nanoTime()));
+                        new AtomicBoolean(false), System.nanoTime()),
+                cancellation);
     }
 
     private static LlmModel model(long id, String name) {
@@ -277,16 +378,24 @@ class ModelFailoverStreamTest {
     }
 
     /** 记录 SSE 事件名与 payload 的 SseEmitter，用于断言事件序列 */
-    private static final class CapturingEmitter extends SseEmitter {
+    private static class CapturingEmitter extends SseEmitter {
         record Event(String name, Object data) {
         }
 
-        private final List<Event> events = Collections.synchronizedList(new ArrayList<>());
+        final List<Event> events = Collections.synchronizedList(new ArrayList<>());
         private volatile boolean completed;
         private volatile Throwable completedWithError;
 
         @Override
         public void send(SseEventBuilder builder) throws IOException {
+            record(toEvent(builder));
+        }
+
+        void record(Event event) {
+            events.add(event);
+        }
+
+        static Event toEvent(SseEventBuilder builder) {
             String name = "message";
             Object data = null;
             for (ResponseBodyEmitter.DataWithMediaType item : builder.build()) {
@@ -301,7 +410,7 @@ class ModelFailoverStreamTest {
                     data = value;
                 }
             }
-            events.add(new Event(name, data));
+            return new Event(name, data);
         }
 
         @Override
@@ -325,6 +434,21 @@ class ModelFailoverStreamTest {
                     .filter(Map.class::isInstance)
                     .map(data -> String.valueOf(((Map<?, ?>) data).get("text")))
                     .toList();
+        }
+    }
+
+    /** 第二个 content 事件写失败，模拟客户端在流式过程中断开 */
+    private static final class FailAfterFirstContentEmitter extends CapturingEmitter {
+        private final java.util.concurrent.atomic.AtomicInteger contentSendCount =
+                new java.util.concurrent.atomic.AtomicInteger();
+
+        @Override
+        public void send(SseEventBuilder builder) throws IOException {
+            Event event = toEvent(builder);
+            if ("content".equals(event.name()) && contentSendCount.incrementAndGet() > 1) {
+                throw new IOException("client disconnected");
+            }
+            record(event);
         }
     }
 }
