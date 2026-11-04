@@ -2,6 +2,7 @@ package com.wgh.rag.llm.entity;
 
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.wgh.rag.data.entity.BaseEntity;
 import com.wgh.rag.data.handler.BooleanToSmallintTypeHandler;
 import lombok.Data;
@@ -37,7 +38,10 @@ public class EmbeddingModelConfig extends BaseEntity {
 
     /**
      * API Key
+     * <p>
+     * 仅允许反序列化（新增/编辑时提交），永不参与序列化输出。
      */
+    @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
     private String apiKey;
 
     /**

@@ -30,6 +30,7 @@ public class LlmModelController {
 
     @Operation(summary = "分页查询 ChatModel")
     @GetMapping("/chat")
+    @RequiresPermission(AuthConstants.PERM_MODEL_READ)
     public Result<PageResult<LlmModel>> pageChatModels(
             @RequestParam(defaultValue = "1") Long page,
             @RequestParam(defaultValue = "10") Long size) {
@@ -38,6 +39,7 @@ public class LlmModelController {
 
     @Operation(summary = "获取 ChatModel 详情")
     @GetMapping("/chat/{id}")
+    @RequiresPermission(AuthConstants.PERM_MODEL_READ)
     public Result<LlmModel> getChatModel(@PathVariable Long id) {
         return Result.success(modelService.getChatModel(id));
     }
@@ -69,6 +71,7 @@ public class LlmModelController {
 
     @Operation(summary = "列出所有启用的 ChatModel")
     @GetMapping("/chat/list")
+    @RequiresPermission(AuthConstants.PERM_MODEL_READ)
     public Result<List<LlmModel>> listEnabledChatModels() {
         return Result.success(modelService.listEnabledChatModels());
     }
@@ -77,6 +80,7 @@ public class LlmModelController {
 
     @Operation(summary = "分页查询 RerankModel")
     @GetMapping("/rerank")
+    @RequiresPermission(AuthConstants.PERM_MODEL_READ)
     public Result<PageResult<LlmModel>> pageRerankModels(
             @RequestParam(defaultValue = "1") Long page,
             @RequestParam(defaultValue = "10") Long size) {
@@ -85,6 +89,7 @@ public class LlmModelController {
 
     @Operation(summary = "获取 RerankModel 详情")
     @GetMapping("/rerank/{id}")
+    @RequiresPermission(AuthConstants.PERM_MODEL_READ)
     public Result<LlmModel> getRerankModel(@PathVariable Long id) {
         return Result.success(modelService.getRerankModel(id));
     }
@@ -113,6 +118,7 @@ public class LlmModelController {
 
     @Operation(summary = "列出所有启用的 RerankModel")
     @GetMapping("/rerank/list")
+    @RequiresPermission(AuthConstants.PERM_MODEL_READ)
     public Result<List<LlmModel>> listEnabledRerankModels() {
         return Result.success(modelService.listEnabledRerankModels());
     }
@@ -121,6 +127,7 @@ public class LlmModelController {
 
     @Operation(summary = "分页查询嵌入模型")
     @GetMapping("/embedding")
+    @RequiresPermission(AuthConstants.PERM_MODEL_READ)
     public Result<PageResult<EmbeddingModelConfig>> pageEmbeddingModels(
             @RequestParam(defaultValue = "1") Long page,
             @RequestParam(defaultValue = "10") Long size) {
@@ -151,6 +158,7 @@ public class LlmModelController {
 
     @Operation(summary = "列出所有启用的嵌入模型")
     @GetMapping("/embedding/list")
+    @RequiresPermission(AuthConstants.PERM_MODEL_READ)
     public Result<List<EmbeddingModelConfig>> listEnabledEmbeddingModels() {
         return Result.success(modelService.listEnabledEmbeddingModels());
     }

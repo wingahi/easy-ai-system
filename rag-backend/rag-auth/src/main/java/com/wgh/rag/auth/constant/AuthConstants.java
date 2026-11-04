@@ -15,6 +15,7 @@ public interface AuthConstants {
     String PERM_WORKFLOW_EDIT = "workflow:edit";
     String PERM_TOOL_USE = "tool:use";
     String PERM_PROMPT_EDIT = "prompt:edit";
+    String PERM_MODEL_READ = "model:read";
     String PERM_MODEL_MANAGE = "model:manage";
     String PERM_AUDIT_VIEW = "audit:view";
     String PERM_CHAT_WRITE = "chat:write";

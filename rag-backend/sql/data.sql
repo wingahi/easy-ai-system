@@ -83,6 +83,7 @@ INSERT INTO wgh_permission (perm_code, perm_name, resource_type) VALUES
 ('workflow:edit', '编辑工作流',      'WORKFLOW'),
 ('tool:use',      '使用工具',        'TOOL'),
 ('prompt:edit',   '管理Prompt模板',  'PROMPT'),
+('model:read',    '查看模型配置',    'MODEL'),
 ('model:manage',  '管理模型',        'MODEL'),
 ('audit:view',    '查看审计日志',    'AUDIT')
 ON CONFLICT (perm_code) DO NOTHING;
@@ -100,7 +101,7 @@ INSERT INTO wgh_role_permission (role_id, permission_id)
 SELECT r.id, p.id
 FROM wgh_role r
 JOIN wgh_permission p ON p.perm_code IN
-    ('kb:read', 'kb:write', 'agent:use', 'workflow:use', 'workflow:edit', 'tool:use', 'prompt:edit')
+    ('kb:read', 'kb:write', 'agent:use', 'workflow:use', 'workflow:edit', 'tool:use', 'prompt:edit', 'model:read')
 WHERE r.role_code = 'editor'
 ON CONFLICT DO NOTHING;
 
@@ -108,6 +109,6 @@ ON CONFLICT DO NOTHING;
 INSERT INTO wgh_role_permission (role_id, permission_id)
 SELECT r.id, p.id
 FROM wgh_role r
-JOIN wgh_permission p ON p.perm_code IN ('kb:read', 'agent:use', 'workflow:use')
+JOIN wgh_permission p ON p.perm_code IN ('kb:read', 'agent:use', 'workflow:use', 'model:read')
 WHERE r.role_code = 'viewer'
 ON CONFLICT DO NOTHING;
