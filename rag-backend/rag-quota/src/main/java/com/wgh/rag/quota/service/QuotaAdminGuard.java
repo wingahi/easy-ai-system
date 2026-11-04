@@ -28,7 +28,7 @@ public class QuotaAdminGuard {
         }
         Set<String> roles = loginUser.getRoles();
         if (roles == null || !roles.contains(ADMIN_ROLE)) {
-            throw new BusinessException(ResultCode.PERMISSION_DENIED, "无权限访问：配额管理仅管理员可用");
+            throw new BusinessException(ResultCode.PERMISSION_DENIED, "当前账号无权限访问该管理接口");
         }
     }
 }

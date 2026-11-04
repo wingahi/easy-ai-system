@@ -1,16 +1,26 @@
 package com.wgh.rag.controller;
 
 import com.wgh.rag.auth.constant.AuthConstants;
+import com.wgh.rag.auth.mapper.PermissionMapper;
+import com.wgh.rag.auth.mapper.RoleMapper;
+import com.wgh.rag.auth.mapper.RolePermissionMapper;
+import com.wgh.rag.auth.mapper.UserMapper;
+import com.wgh.rag.auth.mapper.UserRoleMapper;
 import com.wgh.rag.auth.security.PermissionAspect;
+import com.wgh.rag.auth.service.AccountAuditService;
+import com.wgh.rag.auth.service.LocalPasswordService;
 import com.wgh.rag.common.exception.BusinessException;
 import com.wgh.rag.common.security.LoginUser;
 import com.wgh.rag.common.security.RequiresPermission;
+import com.wgh.rag.quota.service.QuotaAdminGuard;
+import com.wgh.rag.quota.service.QuotaService;
 import com.wgh.rag.tool.entity.ToolConfig;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.reflect.MethodSignature;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.core.annotation.AnnotationUtils;
+import org.springframework.security.crypto.password.PasswordEncoder;
 
 import java.lang.reflect.Method;
 import java.util.ArrayList;
@@ -112,6 +122,36 @@ class AdminEndpointPermissionTest {
         ChatController.maskExecutorConfig(tools);
 
         assertThat(tools.get(0).getExecutorConfig()).isNotNull();
+    }
+
+    @Test
+    void viewerAdminRolesRejectionMessageIsNotQuotaSpecific() {
+        loginAs("viewer", Set.of("kb:read"));
+        AdminRoleController controller = new AdminRoleController(
+                mock(RoleMapper.class), mock(PermissionMapper.class), mock(RolePermissionMapper.class),
+                mock(UserRoleMapper.class), new QuotaAdminGuard());
+
+        BusinessException ex = catchThrowableOfType(() -> controller.listRoles(), BusinessException.class);
+
+        assertThat(ex).isNotNull();
+        assertThat(ex.getCode()).isEqualTo(1004);
+        assertThat(ex.getMessage()).doesNotContain("配额").contains("无权限");
+    }
+
+    @Test
+    void viewerAdminUsersRejectionMessageIsNotQuotaSpecific() {
+        loginAs("viewer", Set.of("kb:read"));
+        AdminUserController controller = new AdminUserController(
+                mock(UserMapper.class), mock(UserRoleMapper.class), mock(RoleMapper.class),
+                mock(QuotaService.class), new QuotaAdminGuard(), mock(PasswordEncoder.class),
+                mock(LocalPasswordService.class), mock(AccountAuditService.class));
+
+        BusinessException ex = catchThrowableOfType(
+                () -> controller.list(1, 20, null, null, null, null), BusinessException.class);
+
+        assertThat(ex).isNotNull();
+        assertThat(ex.getCode()).isEqualTo(1004);
+        assertThat(ex.getMessage()).doesNotContain("配额").contains("无权限");
     }
 
     private ToolConfig toolWithExecutorConfig() {
