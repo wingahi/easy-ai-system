@@ -635,9 +635,14 @@ const onPickImage = async (e) => {
   }
 }
 
+// 用 DOM API 构建预览窗口内容，避免拼接 HTML 导致注入
 const previewImage = (url) => {
   const w = window.open()
-  if (w) w.document.write(`<img src="${url}" style="max-width:100%"/>`)
+  if (!w) return
+  const img = w.document.createElement('img')
+  img.src = url
+  img.style.maxWidth = '100%'
+  w.document.body.appendChild(img)
 }
 
 const send = async () => {
