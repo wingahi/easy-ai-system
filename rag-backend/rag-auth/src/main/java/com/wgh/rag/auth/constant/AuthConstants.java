@@ -11,6 +11,8 @@ public interface AuthConstants {
     String PERM_KB_WRITE = "kb:write";
     String PERM_KB_DELETE = "kb:delete";
     String PERM_AGENT_USE = "agent:use";
+    String PERM_AGENT_MANAGE = "agent:manage";
+    String PERM_CHAT_MANAGE = "chat:manage";
     String PERM_WORKFLOW_USE = "workflow:use";
     String PERM_WORKFLOW_EDIT = "workflow:edit";
     String PERM_TOOL_USE = "tool:use";
@@ -18,6 +20,9 @@ public interface AuthConstants {
     String PERM_MODEL_READ = "model:read";
     String PERM_MODEL_MANAGE = "model:manage";
     String PERM_AUDIT_VIEW = "audit:view";
+    String PERM_APIKEY_MANAGE = "apikey:manage";
+    String PERM_SHARE_MANAGE = "share:manage";
+    String PERM_PRICING_MANAGE = "pricing:manage";
     String PERM_CHAT_WRITE = "chat:write";
     String PERM_USAGE_READ = "usage:read";
 

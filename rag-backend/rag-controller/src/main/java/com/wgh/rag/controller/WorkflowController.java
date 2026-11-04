@@ -3,8 +3,10 @@ package com.wgh.rag.controller;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.wgh.rag.auth.constant.AuthConstants;
 import com.wgh.rag.common.result.PageResult;
 import com.wgh.rag.common.result.Result;
+import com.wgh.rag.common.security.RequiresPermission;
 import com.wgh.rag.llm.entity.LlmModel;
 import com.wgh.rag.llm.service.LlmModelService;
 import com.wgh.rag.workflow.entity.Workflow;
@@ -41,6 +43,7 @@ public class WorkflowController {
 
     @Operation(summary = "分页查询工作流")
     @GetMapping
+    @RequiresPermission(AuthConstants.PERM_WORKFLOW_USE)
     public Result<PageResult<Workflow>> page(
             @RequestParam(defaultValue = "1") Long page,
             @RequestParam(defaultValue = "10") Long size,
@@ -51,30 +54,35 @@ public class WorkflowController {
 
     @Operation(summary = "启用中的工作流列表")
     @GetMapping("/list")
+    @RequiresPermission(AuthConstants.PERM_WORKFLOW_USE)
     public Result<List<Workflow>> list() {
         return Result.success(workflowService.listEnabled());
     }
 
     @Operation(summary = "获取工作流详情（含图定义）")
     @GetMapping("/{id}")
+    @RequiresPermission(AuthConstants.PERM_WORKFLOW_USE)
     public Result<Workflow> get(@PathVariable Long id) {
         return Result.success(workflowService.getById(id));
     }
 
     @Operation(summary = "新建工作流")
     @PostMapping
+    @RequiresPermission(AuthConstants.PERM_WORKFLOW_EDIT)
     public Result<Workflow> create(@RequestBody Workflow workflow) {
         return Result.success(workflowService.create(workflow));
     }
 
     @Operation(summary = "保存工作流（版本号 +1）")
     @PutMapping("/{id}")
+    @RequiresPermission(AuthConstants.PERM_WORKFLOW_EDIT)
     public Result<Workflow> update(@PathVariable Long id, @RequestBody Workflow workflow) {
         return Result.success(workflowService.update(id, workflow));
     }
 
     @Operation(summary = "校验工作流图（可传前端草稿，不落库）")
     @PostMapping("/{id}/validate")
+    @RequiresPermission(AuthConstants.PERM_WORKFLOW_EDIT)
     public Result<List<String>> validate(@PathVariable Long id,
                                          @RequestBody(required = false) Workflow workflow) {
         String graphJson = workflow != null ? workflow.getGraphJson() : null;
@@ -83,6 +91,7 @@ public class WorkflowController {
 
     @Operation(summary = "删除工作流（逻辑删除）")
     @DeleteMapping("/{id}")
+    @RequiresPermission(AuthConstants.PERM_WORKFLOW_EDIT)
     public Result<Void> delete(@PathVariable Long id) {
         workflowService.delete(id);
         return Result.success();
@@ -90,6 +99,7 @@ public class WorkflowController {
 
     @Operation(summary = "启用工作流")
     @PostMapping("/{id}/enable")
+    @RequiresPermission(AuthConstants.PERM_WORKFLOW_EDIT)
     public Result<Void> enable(@PathVariable Long id) {
         workflowService.setStatus(id, 1);
         return Result.success();
@@ -97,6 +107,7 @@ public class WorkflowController {
 
     @Operation(summary = "停用工作流")
     @PostMapping("/{id}/disable")
+    @RequiresPermission(AuthConstants.PERM_WORKFLOW_EDIT)
     public Result<Void> disable(@PathVariable Long id) {
         workflowService.setStatus(id, 0);
         return Result.success();
@@ -106,12 +117,14 @@ public class WorkflowController {
 
     @Operation(summary = "内置模板列表")
     @GetMapping("/templates")
+    @RequiresPermission(AuthConstants.PERM_WORKFLOW_USE)
     public Result<List<WorkflowTemplateRegistry.WorkflowTemplate>> templates() {
         return Result.success(templateRegistry.list());
     }
 
     @Operation(summary = "从模板实例化工作流（走标准创建链路：图校验 + v1 版本快照）")
     @PostMapping("/templates/{templateId}/instantiate")
+    @RequiresPermission(AuthConstants.PERM_WORKFLOW_EDIT)
     public Result<Workflow> instantiate(@PathVariable String templateId,
                                         @RequestBody(required = false) Map<String, Object> body) {
         WorkflowTemplateRegistry.WorkflowTemplate template = templateRegistry.get(templateId);
@@ -159,18 +172,21 @@ public class WorkflowController {
 
     @Operation(summary = "版本历史列表")
     @GetMapping("/{id}/versions")
+    @RequiresPermission(AuthConstants.PERM_WORKFLOW_USE)
     public Result<List<WorkflowVersion>> versions(@PathVariable Long id) {
         return Result.success(workflowService.listVersions(id));
     }
 
     @Operation(summary = "版本详情")
     @GetMapping("/{id}/versions/{version}")
+    @RequiresPermission(AuthConstants.PERM_WORKFLOW_USE)
     public Result<WorkflowVersion> versionDetail(@PathVariable Long id, @PathVariable Integer version) {
         return Result.success(workflowService.getVersion(id, version));
     }
 
     @Operation(summary = "回滚到指定版本（生成新版本快照）")
     @PostMapping("/{id}/rollback/{version}")
+    @RequiresPermission(AuthConstants.PERM_WORKFLOW_EDIT)
     public Result<Workflow> rollback(@PathVariable Long id, @PathVariable Integer version) {
         return Result.success(workflowService.rollback(id, version));
     }
@@ -179,6 +195,7 @@ public class WorkflowController {
 
     @Operation(summary = "SSE 运行工作流")
     @PostMapping(value = "/{id}/run", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    @RequiresPermission(AuthConstants.PERM_WORKFLOW_USE)
     public SseEmitter run(@PathVariable Long id, @RequestBody(required = false) Map<String, Object> body) {
         String input = body != null && body.get("input") != null ? String.valueOf(body.get("input")) : "";
         return workflowService.run(id, input);
@@ -186,12 +203,14 @@ public class WorkflowController {
 
     @Operation(summary = "查询运行状态（刷新恢复）")
     @GetMapping("/runs/{runId}/state")
+    @RequiresPermission(AuthConstants.PERM_WORKFLOW_USE)
     public Result<Map<String, Object>> runState(@PathVariable Long runId) {
         return Result.success(workflowService.getRunState(runId));
     }
 
     @Operation(summary = "HITL 人工确认并续跑（SSE）")
     @PostMapping(value = "/runs/{runId}/hitl-confirm", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    @RequiresPermission(AuthConstants.PERM_WORKFLOW_USE)
     public SseEmitter hitlConfirm(@PathVariable Long runId,
                                   @RequestBody(required = false) Map<String, Object> body) {
         String userInput = body != null && body.get("userInput") != null
@@ -201,6 +220,7 @@ public class WorkflowController {
 
     @Operation(summary = "取消运行")
     @PostMapping("/runs/{runId}/cancel")
+    @RequiresPermission(AuthConstants.PERM_WORKFLOW_USE)
     public Result<Void> cancel(@PathVariable Long runId) {
         workflowService.cancel(runId);
         return Result.success();
@@ -208,6 +228,7 @@ public class WorkflowController {
 
     @Operation(summary = "运行历史分页")
     @GetMapping("/{id}/runs")
+    @RequiresPermission(AuthConstants.PERM_WORKFLOW_USE)
     public Result<PageResult<WorkflowRun>> pageRuns(
             @PathVariable Long id,
             @RequestParam(defaultValue = "1") Long page,
@@ -217,6 +238,7 @@ public class WorkflowController {
 
     @Operation(summary = "运行节点级记录回放")
     @GetMapping("/runs/{runId}/nodes")
+    @RequiresPermission(AuthConstants.PERM_WORKFLOW_USE)
     public Result<List<Map<String, Object>>> nodeRuns(@PathVariable Long runId) {
         return Result.success(workflowService.listNodeRuns(runId));
     }
@@ -225,18 +247,21 @@ public class WorkflowController {
 
     @Operation(summary = "开启分享运行页")
     @PostMapping("/{id}/share/enable")
+    @RequiresPermission(AuthConstants.PERM_WORKFLOW_EDIT)
     public Result<Workflow> shareEnable(@PathVariable Long id) {
         return Result.success(workflowService.enableShare(id));
     }
 
     @Operation(summary = "关闭分享运行页")
     @PostMapping("/{id}/share/disable")
+    @RequiresPermission(AuthConstants.PERM_WORKFLOW_EDIT)
     public Result<Workflow> shareDisable(@PathVariable Long id) {
         return Result.success(workflowService.disableShare(id));
     }
 
     @Operation(summary = "重新生成分享链接（旧链接立即失效）")
     @PostMapping("/{id}/share/regenerate")
+    @RequiresPermission(AuthConstants.PERM_WORKFLOW_EDIT)
     public Result<Workflow> shareRegenerate(@PathVariable Long id) {
         return Result.success(workflowService.regenerateShareToken(id));
     }

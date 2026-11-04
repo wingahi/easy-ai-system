@@ -85,7 +85,12 @@ INSERT INTO wgh_permission (perm_code, perm_name, resource_type) VALUES
 ('prompt:edit',   '管理Prompt模板',  'PROMPT'),
 ('model:read',    '查看模型配置',    'MODEL'),
 ('model:manage',  '管理模型',        'MODEL'),
-('audit:view',    '查看审计日志',    'AUDIT')
+('audit:view',    '查看审计日志',    'AUDIT'),
+('chat:manage',   '管理聊天窗口',    'CHAT'),
+('agent:manage',  '管理多Agent编排', 'AGENT'),
+('apikey:manage', '管理开放APIKey',  'API_KEY'),
+('share:manage',  '管理分享链接',    'SHARE_LINK'),
+('pricing:manage','管理模型价格',    'MODEL_PRICE')
 ON CONFLICT (perm_code) DO NOTHING;
 
 -- admin 角色拥有全部模块权限

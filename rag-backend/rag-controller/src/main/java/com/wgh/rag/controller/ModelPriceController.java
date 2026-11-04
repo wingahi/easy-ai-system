@@ -1,8 +1,10 @@
 package com.wgh.rag.controller;
 
+import com.wgh.rag.auth.constant.AuthConstants;
 import com.wgh.rag.log.annotation.Audit;
 import com.wgh.rag.common.result.PageResult;
 import com.wgh.rag.common.result.Result;
+import com.wgh.rag.common.security.RequiresPermission;
 import com.wgh.rag.llm.entity.ModelPrice;
 import com.wgh.rag.llm.service.ModelPriceService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -25,6 +27,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/admin/model-prices")
 @RequiredArgsConstructor
+@RequiresPermission(AuthConstants.PERM_PRICING_MANAGE)
 public class ModelPriceController {
 
     private final ModelPriceService modelPriceService;

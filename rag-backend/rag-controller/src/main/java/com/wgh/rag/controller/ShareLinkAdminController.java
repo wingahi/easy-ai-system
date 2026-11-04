@@ -1,8 +1,10 @@
 package com.wgh.rag.controller;
 
+import com.wgh.rag.auth.constant.AuthConstants;
 import com.wgh.rag.log.annotation.Audit;
 import com.wgh.rag.common.result.PageResult;
 import com.wgh.rag.common.result.Result;
+import com.wgh.rag.common.security.RequiresPermission;
 import com.wgh.rag.common.security.SecurityUtils;
 import com.wgh.rag.publicaccess.entity.ShareLink;
 import com.wgh.rag.publicaccess.service.ShareLinkService;
@@ -22,6 +24,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/admin/share-links")
 @RequiredArgsConstructor
+@RequiresPermission(AuthConstants.PERM_SHARE_MANAGE)
 public class ShareLinkAdminController {
 
     private final ShareLinkService shareLinkService;

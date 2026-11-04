@@ -1,11 +1,13 @@
 package com.wgh.rag.controller;
 
+import com.wgh.rag.auth.constant.AuthConstants;
 import com.wgh.rag.chat.dto.PromptTemplateSuggestion;
 import com.wgh.rag.chat.entity.PromptTemplate;
 import com.wgh.rag.chat.service.PromptTemplateService;
 import com.wgh.rag.log.annotation.Audit;
 import com.wgh.rag.common.result.PageResult;
 import com.wgh.rag.common.result.Result;
+import com.wgh.rag.common.security.RequiresPermission;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
@@ -27,6 +29,7 @@ public class PromptTemplateController {
 
     @Operation(summary = "分页查询模板")
     @GetMapping
+    @RequiresPermission(AuthConstants.PERM_PROMPT_EDIT)
     public Result<PageResult<PromptTemplate>> page(
             @RequestParam(defaultValue = "1") Long page,
             @RequestParam(defaultValue = "10") Long size,
@@ -58,6 +61,7 @@ public class PromptTemplateController {
     @Operation(summary = "创建模板")
     @PostMapping
     @Audit(action = "PROMPT_TEMPLATE_CREATE", resourceType = "PROMPT_TEMPLATE")
+    @RequiresPermission(AuthConstants.PERM_PROMPT_EDIT)
     public Result<PromptTemplate> create(@RequestBody PromptTemplate template) {
         return Result.success(templateService.create(template));
     }
@@ -65,6 +69,7 @@ public class PromptTemplateController {
     @Operation(summary = "更新模板（内容变更自动升版本号）")
     @PutMapping
     @Audit(action = "PROMPT_TEMPLATE_UPDATE", resourceType = "PROMPT_TEMPLATE")
+    @RequiresPermission(AuthConstants.PERM_PROMPT_EDIT)
     public Result<PromptTemplate> update(@RequestBody PromptTemplate template) {
         return Result.success(templateService.update(template));
     }
@@ -72,6 +77,7 @@ public class PromptTemplateController {
     @Operation(summary = "删除模板（内置模板不可删）")
     @DeleteMapping("/{id}")
     @Audit(action = "PROMPT_TEMPLATE_DELETE", resourceType = "PROMPT_TEMPLATE")
+    @RequiresPermission(AuthConstants.PERM_PROMPT_EDIT)
     public Result<Void> delete(@PathVariable Long id) {
         templateService.delete(id);
         return Result.success();

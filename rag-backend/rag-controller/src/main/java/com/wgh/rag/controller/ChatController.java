@@ -1,6 +1,7 @@
 package com.wgh.rag.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.wgh.rag.auth.constant.AuthConstants;
 import com.wgh.rag.chat.service.ChatImageService;
 import com.wgh.rag.chat.service.ChatWindowService;
 import com.wgh.rag.chat.service.ChatWorkflowService;
@@ -18,6 +19,7 @@ import com.wgh.rag.common.result.PageResult;
 import com.wgh.rag.common.result.Result;
 import com.wgh.rag.common.result.ResultCode;
 import com.wgh.rag.common.exception.BusinessException;
+import com.wgh.rag.common.security.RequiresPermission;
 import com.wgh.rag.workflow.service.WorkflowService;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.data.message.ToolExecutionResultMessage;
@@ -58,6 +60,7 @@ public class ChatController {
 
     @Operation(summary = "分页查询聊天窗口")
     @GetMapping("/windows")
+    @RequiresPermission(AuthConstants.PERM_CHAT_MANAGE)
     public Result<PageResult<ChatWindow>> pageWindows(
             @RequestParam(defaultValue = "1") Long page,
             @RequestParam(defaultValue = "10") Long size,
@@ -74,6 +77,7 @@ public class ChatController {
     @Operation(summary = "创建聊天窗口")
     @PostMapping("/windows")
     @Audit(action = "WINDOW_CREATE", resourceType = "CHAT_WINDOW")
+    @RequiresPermission(AuthConstants.PERM_CHAT_MANAGE)
     public Result<ChatWindow> createWindow(@Valid @RequestBody ChatWindow window) {
         return Result.success(windowService.create(window));
     }
@@ -81,6 +85,7 @@ public class ChatController {
     @Operation(summary = "编辑聊天窗口")
     @PutMapping("/windows")
     @Audit(action = "WINDOW_UPDATE", resourceType = "CHAT_WINDOW")
+    @RequiresPermission(AuthConstants.PERM_CHAT_MANAGE)
     public Result<ChatWindow> updateWindow(@Valid @RequestBody ChatWindow window) {
         return Result.success(windowService.update(window));
     }
@@ -88,6 +93,7 @@ public class ChatController {
     @Operation(summary = "删除聊天窗口（软删除）")
     @DeleteMapping("/windows/{id}")
     @Audit(action = "WINDOW_DELETE", resourceType = "CHAT_WINDOW")
+    @RequiresPermission(AuthConstants.PERM_CHAT_MANAGE)
     public Result<Void> deleteWindow(@PathVariable Long id) {
         windowService.delete(id);
         return Result.success();
@@ -95,6 +101,7 @@ public class ChatController {
 
     @Operation(summary = "停用聊天窗口")
     @PostMapping("/windows/{id}/disable")
+    @RequiresPermission(AuthConstants.PERM_CHAT_MANAGE)
     public Result<Void> disableWindow(@PathVariable Long id) {
         windowService.disable(id);
         return Result.success();
@@ -102,6 +109,7 @@ public class ChatController {
 
     @Operation(summary = "启用聊天窗口")
     @PostMapping("/windows/{id}/enable")
+    @RequiresPermission(AuthConstants.PERM_CHAT_MANAGE)
     public Result<Void> enableWindow(@PathVariable Long id) {
         windowService.enable(id);
         return Result.success();
@@ -109,18 +117,21 @@ public class ChatController {
 
     @Operation(summary = "启用分享")
     @PostMapping("/windows/{id}/share/enable")
+    @RequiresPermission(AuthConstants.PERM_CHAT_MANAGE)
     public Result<ChatWindow> enableShare(@PathVariable Long id) {
         return Result.success(windowService.enableShare(id));
     }
 
     @Operation(summary = "禁用分享")
     @PostMapping("/windows/{id}/share/disable")
+    @RequiresPermission(AuthConstants.PERM_CHAT_MANAGE)
     public Result<ChatWindow> disableShare(@PathVariable Long id) {
         return Result.success(windowService.disableShare(id));
     }
 
     @Operation(summary = "重新生成分享链接（旧 token 立即失效，历史会话保留）")
     @PostMapping("/windows/{id}/share/regenerate")
+    @RequiresPermission(AuthConstants.PERM_CHAT_MANAGE)
     public Result<ChatWindow> regenerateShare(@PathVariable Long id) {
         return Result.success(windowService.regenerateShareToken(id));
     }
@@ -150,6 +161,7 @@ public class ChatController {
 
     @Operation(summary = "窗口满意度统计（赞/踩/满意率）")
     @GetMapping("/windows/{windowId}/feedback/stats")
+    @RequiresPermission(AuthConstants.PERM_CHAT_MANAGE)
     public Result<Map<String, Object>> feedbackStats(@PathVariable Long windowId) {
         return Result.success(feedbackService.windowStats(windowId));
     }
@@ -364,6 +376,7 @@ public class ChatController {
 
     @Operation(summary = "分页查询工具配置")
     @GetMapping("/tools")
+    @RequiresPermission(AuthConstants.PERM_TOOL_USE)
     public Result<PageResult<ToolConfig>> pageTools(
             @RequestParam(defaultValue = "1") Long page,
             @RequestParam(defaultValue = "10") Long size,
@@ -375,6 +388,7 @@ public class ChatController {
     @Operation(summary = "新增工具")
     @PostMapping("/tools")
     @Audit(action = "TOOL_CREATE", resourceType = "TOOL")
+    @RequiresPermission(AuthConstants.PERM_TOOL_USE)
     public Result<ToolConfig> createTool(@Valid @RequestBody ToolConfig tool) {
         return Result.success(toolConfigService.create(tool));
     }
@@ -392,6 +406,7 @@ public class ChatController {
      */
     @Operation(summary = "调试工具（直接执行，返回原始结果）")
     @PostMapping("/tools/{id}/debug")
+    @RequiresPermission(AuthConstants.PERM_TOOL_USE)
     public Result<Map<String, Object>> debugTool(
             @PathVariable Long id,
             @RequestBody(required = false) Map<String, Object> body) {
@@ -444,6 +459,7 @@ public class ChatController {
     @Operation(summary = "编辑工具")
     @PutMapping("/tools")
     @Audit(action = "TOOL_UPDATE", resourceType = "TOOL")
+    @RequiresPermission(AuthConstants.PERM_TOOL_USE)
     public Result<ToolConfig> updateTool(@Valid @RequestBody ToolConfig tool) {
         return Result.success(toolConfigService.update(tool));
     }
@@ -451,6 +467,7 @@ public class ChatController {
     @Operation(summary = "删除工具")
     @DeleteMapping("/tools/{id}")
     @Audit(action = "TOOL_DELETE", resourceType = "TOOL")
+    @RequiresPermission(AuthConstants.PERM_TOOL_USE)
     public Result<Void> deleteTool(@PathVariable Long id) {
         toolConfigService.delete(id);
         return Result.success();
@@ -458,6 +475,7 @@ public class ChatController {
 
     @Operation(summary = "按类型列出工具（toolType 省略则返回全部启用工具）")
     @GetMapping("/tools/list")
+    @RequiresPermission(AuthConstants.PERM_TOOL_USE)
     public Result<List<ToolConfig>> listToolsByType(@RequestParam(required = false) String toolType) {
         return Result.success(toolConfigService.listByType(toolType));
     }
@@ -466,6 +484,7 @@ public class ChatController {
 
     @Operation(summary = "列出 skill base-path 下所有可用 skill 目录")
     @GetMapping("/tools/skill/dirs")
+    @RequiresPermission(AuthConstants.PERM_TOOL_USE)
     public Result<Map<String, Object>> scanSkillDirs() {
         Map<String, Object> res = new java.util.LinkedHashMap<>();
         res.put("basePath", skillFileService.getBasePath());
@@ -475,6 +494,7 @@ public class ChatController {
 
     @Operation(summary = "读取某个 skill 的完整 SKILL.md 内容 + front matter + 文件树")
     @GetMapping("/tools/skill/content")
+    @RequiresPermission(AuthConstants.PERM_TOOL_USE)
     public Result<SkillFileService.SkillContentInfo> readSkillContent(
             @RequestParam String dir) throws java.io.IOException {
         return Result.success(skillFileService.readSkillContent(dir));
@@ -482,6 +502,7 @@ public class ChatController {
 
     @Operation(summary = "保存 SKILL.md 内容到磁盘（在线编辑，可选回写 front matter）")
     @PostMapping("/tools/skill/save")
+    @RequiresPermission(AuthConstants.PERM_TOOL_USE)
     public Result<Void> saveSkillContent(@RequestBody Map<String, Object> body) throws java.io.IOException {
         String dir = (String) body.get("dir");
         String content = (String) body.get("content");
@@ -497,6 +518,7 @@ public class ChatController {
 
     @Operation(summary = "创建新的空 skill 目录（带初始 SKILL.md 模板）")
     @PostMapping("/tools/skill/create-dir")
+    @RequiresPermission(AuthConstants.PERM_TOOL_USE)
     public Result<Map<String, Object>> createSkillDir(@RequestBody Map<String, String> body) throws java.io.IOException {
         String dir = body.get("dir");
         String displayName = body.get("displayName");
@@ -510,6 +532,7 @@ public class ChatController {
 
     @Operation(summary = "删除 skill 目录（危险操作）")
     @DeleteMapping("/tools/skill/dir")
+    @RequiresPermission(AuthConstants.PERM_TOOL_USE)
     public Result<Void> deleteSkillDir(@RequestParam String dir) throws java.io.IOException {
         skillFileService.deleteSkillDir(dir);
         return Result.success();

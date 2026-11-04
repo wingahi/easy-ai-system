@@ -12,7 +12,9 @@ import com.wgh.rag.agentmulti.mapper.MultiAgentCrewMapper;
 import com.wgh.rag.agentmulti.mapper.MultiAgentStepMapper;
 import com.wgh.rag.agentmulti.runtime.MultiAgentRuntime;
 import com.wgh.rag.agentmulti.service.MultiAgentService;
+import com.wgh.rag.auth.constant.AuthConstants;
 import com.wgh.rag.common.result.Result;
+import com.wgh.rag.common.security.RequiresPermission;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
@@ -39,6 +41,7 @@ public class MultiAgentController {
 
     /** 创建多 Agent 运行并返回 runId（SSE 需另开 /runs/{runId}/stream 或由前端自行订阅） */
     @PostMapping("/runs")
+    @RequiresPermission(AuthConstants.PERM_AGENT_USE)
     public Result<Map<String, Object>> createRun(@RequestBody Map<String, Object> body) {
         // Controller 只做参数解析，装配逻辑在 MultiAgentService.createRun
         RunCreateRequest req = new RunCreateRequest();
@@ -76,6 +79,7 @@ public class MultiAgentController {
 
     /** 启动执行（SSE） —— 返回 SseEmitter，后端线程异步执行 run */
     @GetMapping("/runs/{runId}/stream")
+    @RequiresPermission(AuthConstants.PERM_AGENT_USE)
     public SseEmitter streamRun(@PathVariable String runId) {
         SseEmitter emitter = new SseEmitter(10 * 60 * 1000L); // 10 min
         emitter.onCompletion(() -> log.info("SSE runId={} completed", runId));
@@ -97,12 +101,14 @@ public class MultiAgentController {
 
     /** 查询 Run 状态 */
     @GetMapping("/runs/{runId}/state")
+    @RequiresPermission(AuthConstants.PERM_AGENT_USE)
     public Result<Map<String, Object>> getRunState(@PathVariable String runId) {
         return Result.success(runtime.getRunState(runId));
     }
 
     /** HITL 恢复（SSE） */
     @PostMapping("/runs/{runId}/hitl-confirm")
+    @RequiresPermission(AuthConstants.PERM_AGENT_USE)
     public SseEmitter hitlConfirm(@PathVariable String runId,
                                    @RequestBody(required = false) Map<String, Object> body) {
         String userInput = body != null && body.get("userInput") != null
@@ -126,6 +132,7 @@ public class MultiAgentController {
 
     /** 取消 Run */
     @PostMapping("/runs/{runId}/cancel")
+    @RequiresPermission(AuthConstants.PERM_AGENT_USE)
     public Result<Void> cancelRun(@PathVariable String runId) {
         runtime.cancelRun(runId);
         return Result.success(null);
@@ -133,6 +140,7 @@ public class MultiAgentController {
 
     /** 查询 Run 的 Steps 列表 */
     @GetMapping("/runs/{runId}/steps")
+    @RequiresPermission(AuthConstants.PERM_AGENT_USE)
     public Result<List<MultiAgentStep>> listSteps(@PathVariable String runId) {
         List<MultiAgentStep> steps = stepMapper.selectList(
                 new LambdaQueryWrapper<MultiAgentStep>()
@@ -144,6 +152,7 @@ public class MultiAgentController {
     // ==================== Crew API ====================
 
     @GetMapping("/crews")
+    @RequiresPermission(AuthConstants.PERM_AGENT_MANAGE)
     public Result<List<MultiAgentCrew>> listCrews() {
         List<MultiAgentCrew> crews = crewMapper.selectList(
                 new LambdaQueryWrapper<MultiAgentCrew>()
@@ -152,11 +161,13 @@ public class MultiAgentController {
     }
 
     @GetMapping("/crews/{id}")
+    @RequiresPermission(AuthConstants.PERM_AGENT_MANAGE)
     public Result<MultiAgentCrew> getCrew(@PathVariable Long id) {
         return Result.success(crewMapper.selectById(id));
     }
 
     @PostMapping("/crews")
+    @RequiresPermission(AuthConstants.PERM_AGENT_MANAGE)
     public Result<MultiAgentCrew> createCrew(@RequestBody MultiAgentCrew crew) {
         crew.setStatus(crew.getStatus() != null ? crew.getStatus() : 1);
         crewMapper.insert(crew);
@@ -164,6 +175,7 @@ public class MultiAgentController {
     }
 
     @PutMapping("/crews/{id}")
+    @RequiresPermission(AuthConstants.PERM_AGENT_MANAGE)
     public Result<MultiAgentCrew> updateCrew(@PathVariable Long id, @RequestBody MultiAgentCrew crew) {
         crew.setId(id);
         crewMapper.updateById(crew);
@@ -171,6 +183,7 @@ public class MultiAgentController {
     }
 
     @DeleteMapping("/crews/{id}")
+    @RequiresPermission(AuthConstants.PERM_AGENT_MANAGE)
     public Result<Void> deleteCrew(@PathVariable Long id) {
         crewMapper.deleteById(id);
         return Result.success(null);
@@ -178,6 +191,7 @@ public class MultiAgentController {
 
     /** 校验 Crew 的 agentsJson / graphJson 合法性 */
     @PostMapping("/crews/{id}/validate")
+    @RequiresPermission(AuthConstants.PERM_AGENT_MANAGE)
     public Result<Map<String, Object>> validateCrew(@PathVariable Long id) {
         MultiAgentCrew crew = crewMapper.selectById(id);
         Map<String, Object> result = new LinkedHashMap<>();

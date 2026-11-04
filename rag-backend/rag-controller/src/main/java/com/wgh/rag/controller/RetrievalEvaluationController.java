@@ -1,6 +1,8 @@
 package com.wgh.rag.controller;
 
+import com.wgh.rag.auth.constant.AuthConstants;
 import com.wgh.rag.common.result.Result;
+import com.wgh.rag.common.security.RequiresPermission;
 import com.wgh.rag.config.property.RagProperties;
 import com.wgh.rag.kb.entity.KbGroundTruth;
 import com.wgh.rag.kb.service.RetrievalEvaluationService;
@@ -21,6 +23,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/kb")
 @RequiredArgsConstructor
+@RequiresPermission(AuthConstants.PERM_KB_READ)
 public class RetrievalEvaluationController {
 
     private final RetrievalEvaluationService evaluationService;
@@ -34,6 +37,7 @@ public class RetrievalEvaluationController {
 
     @Operation(summary = "新增标注（查询 + 相关 chunk 键 fileId:chunkIndex）")
     @PostMapping("/{kbId}/ground-truth")
+    @RequiresPermission(AuthConstants.PERM_KB_WRITE)
     public Result<KbGroundTruth> create(@PathVariable Long kbId,
                                         @RequestBody GroundTruthPayload payload) {
         return Result.success(evaluationService.save(kbId, payload));
@@ -41,6 +45,7 @@ public class RetrievalEvaluationController {
 
     @Operation(summary = "批量导入标注（同查询覆盖，不重复）")
     @PostMapping("/{kbId}/ground-truth/import")
+    @RequiresPermission(AuthConstants.PERM_KB_WRITE)
     public Result<Integer> importBatch(@PathVariable Long kbId,
                                        @RequestBody List<GroundTruthPayload> payloads) {
         return Result.success(evaluationService.importBatch(kbId, payloads).size());
@@ -48,6 +53,7 @@ public class RetrievalEvaluationController {
 
     @Operation(summary = "更新标注")
     @PutMapping("/{kbId}/ground-truth/{id}")
+    @RequiresPermission(AuthConstants.PERM_KB_WRITE)
     public Result<KbGroundTruth> update(@PathVariable Long kbId, @PathVariable Long id,
                                         @RequestBody GroundTruthPayload payload) {
         return Result.success(evaluationService.update(kbId, id, payload));
@@ -55,6 +61,7 @@ public class RetrievalEvaluationController {
 
     @Operation(summary = "删除标注")
     @DeleteMapping("/{kbId}/ground-truth/{id}")
+    @RequiresPermission(AuthConstants.PERM_KB_WRITE)
     public Result<Void> delete(@PathVariable Long kbId, @PathVariable Long id) {
         evaluationService.delete(kbId, id);
         return Result.success();

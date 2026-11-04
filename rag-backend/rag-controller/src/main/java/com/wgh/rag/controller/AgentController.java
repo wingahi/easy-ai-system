@@ -8,7 +8,9 @@ import com.wgh.rag.agent.entity.AgentStep;
 import com.wgh.rag.agent.mapper.AgentPlanMapper;
 import com.wgh.rag.agent.mapper.AgentStepMapper;
 import com.wgh.rag.agent.service.AgentOrchestrator;
+import com.wgh.rag.auth.constant.AuthConstants;
 import com.wgh.rag.common.result.Result;
+import com.wgh.rag.common.security.RequiresPermission;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
@@ -25,6 +27,7 @@ import java.util.stream.Collectors;
 @RestController
 @RequestMapping("/api/agent")
 @RequiredArgsConstructor
+@RequiresPermission(AuthConstants.PERM_AGENT_USE)
 public class AgentController {
 
     private final AgentOrchestrator agentOrchestrator;
