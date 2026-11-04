@@ -181,7 +181,7 @@ viewer 调用 `/api/admin/roles`、`/api/admin/users` 时返回 `code=1004`，�
 | SSRF 测试工具（id 24/25） | 已通过 API 删除 |
 | XSS 注入消息（id 511） | 已物理删除（测试注入数据） |
 | 工作流 129 分享 | 已调用 `/share/disable` 恢复为未开启 |
-| viewer/editor 登录态 | 已恢复 `trial=0`；但为临时登录测试，其 `password_hash` 已被覆盖为 admin 的哈希（两账号仍无法密码登录，建议后续重置） |
+| viewer/editor 登录态 | 已重置，验证通过：两账号改为**各自独立**的初始口令（BCrypt 生成方式与应用 `PasswordPolicy` 一致），`password_must_change` 保持既有值 0；实测各自新口令登录成功，用 admin 口令登录两账号均返回 `code=1005 用户名或密码错误`。验证期间临时置 `trial=1` 开启密码登录，验证后已恢复 `trial=0`。口令明文不写入本报告，获取方式：由 admin 重置为独立口令（运维本地留档） |
 | 聊天窗口 24/17、会话 103 | 保留（真实 UI 交互产生，未删除） |
 
 ### 6.2 代码改动声明
