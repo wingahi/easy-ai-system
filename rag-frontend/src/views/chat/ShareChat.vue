@@ -49,6 +49,9 @@
               <div v-if="msg.streaming" class="typing">
                 <span></span><span></span><span></span>
               </div>
+              <div v-if="msg.stopped" class="stopped-tip">
+                <el-tag size="small" type="info">已停止生成</el-tag>
+              </div>
               <div v-if="dedupSources(msg.sources).length" class="sources">
                 <span v-for="(s, i) in dedupSources(msg.sources)" :key="i" class="source-tag">
                   📎 {{ s.kbName }}/{{ s.fileName }}
@@ -61,7 +64,8 @@
           <el-input v-model="input" type="textarea" :rows="2"
                     placeholder="输入消息..." @keydown.enter.exact.prevent="send"
                     :disabled="streaming" resize="none" />
-          <el-button type="primary" :icon="Promotion" :loading="streaming" @click="send">发送</el-button>
+          <el-button v-if="!streaming" type="primary" :icon="Promotion" @click="send">发送</el-button>
+          <el-button v-else type="danger" plain :icon="VideoPause" @click="stop">停止生成</el-button>
         </div>
       </div>
 
@@ -111,8 +115,9 @@
 import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Promotion, Plus, Delete, Loading } from '@element-plus/icons-vue'
+import { Promotion, VideoPause, Plus, Delete, Loading } from '@element-plus/icons-vue'
 import { renderMarkdown } from '../../utils/markdown'
+import { stopGeneration } from '../../utils/chatStream'
 import AgentPlanTree from '../../components/AgentPlanTree.vue'
 import WorkflowRunPanel from '../../components/WorkflowRunPanel.vue'
 import {
@@ -242,6 +247,7 @@ const loadHistory = async () => {
     messages.value = records.map(m => ({
       role: m.role,
       content: m.content,
+      stopped: m.status === 'STOPPED',
       sources: m.sources ? safeParseSources(m.sources) : []
     }))
     await nextTick(scroll)
@@ -251,7 +257,8 @@ const loadHistory = async () => {
 }
 
 const selectSession = async (s) => {
-  if (streaming.value || s.id === currentSessionId.value) return
+  if (s.id === currentSessionId.value) return
+  if (streaming.value) stop()
   currentSessionId.value = s.id
   messages.value = []
   await loadHistory()
@@ -261,10 +268,7 @@ const selectSession = async (s) => {
 
 // 新建会话：先调后端创建，再清空消息区
 const newSession = async () => {
-  if (streaming.value) {
-    streamer?.abort()
-    streaming.value = false
-  }
+  if (streaming.value) stop()
   try {
     const res = await shareCreateSession(token)
     const created = res.data
@@ -740,6 +744,14 @@ const onWorkflowCancel = async (runId) => {
   }
 }
 
+// 停止生成：中断 SSE，保留已生成内容并标记「已停止」
+const stop = () => {
+  if (!streaming.value) return
+  const last = messages.value[messages.value.length - 1]
+  stopGeneration(streamer, streaming, last?.role === 'ASSISTANT' ? last : null)
+  nextTick(scroll)
+}
+
 const send = async () => {
   const text = input.value.trim()
   if (!text || streaming.value || !window.value) return
@@ -1054,6 +1066,7 @@ onUnmounted(() => {
   span:nth-child(2) { animation-delay: 0.2s; }
   span:nth-child(3) { animation-delay: 0.4s; }
 }
+.stopped-tip { margin-top: 8px; }
 @keyframes blink {
   0%, 80%, 100% { opacity: 0.2; }
   40% { opacity: 1; }

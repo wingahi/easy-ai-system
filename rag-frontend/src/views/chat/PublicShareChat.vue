@@ -76,6 +76,9 @@
             <div class="bubble">
               <div v-html="renderMarkdown(msg.content)"></div>
               <div v-if="msg.streaming" class="typing"><span></span><span></span><span></span></div>
+              <div v-if="msg.stopped" class="stopped-tip">
+                <el-tag size="small" type="info">已停止生成</el-tag>
+              </div>
               <div v-if="dedupSources(msg.sources).length" class="sources">
                 <span v-for="(s, i) in dedupSources(msg.sources)" :key="i" class="source-tag">
                   📎 {{ s.kbName }}/{{ s.fileName }}
@@ -87,7 +90,8 @@
         <div v-if="!readOnly" class="input-area">
           <el-input v-model="input" type="textarea" :rows="2" placeholder="输入消息..."
                     @keydown.enter.exact.prevent="send" :disabled="streaming" resize="none" />
-          <el-button type="primary" :icon="Promotion" :loading="streaming" @click="send">发送</el-button>
+          <el-button v-if="!streaming" type="primary" :icon="Promotion" @click="send">发送</el-button>
+          <el-button v-else type="danger" plain :icon="VideoPause" @click="stop">停止生成</el-button>
         </div>
       </div>
     </div>
@@ -115,8 +119,9 @@
 import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Promotion, Plus, Delete } from '@element-plus/icons-vue'
+import { Promotion, VideoPause, Plus, Delete } from '@element-plus/icons-vue'
 import { renderMarkdown } from '../../utils/markdown'
+import { stopGeneration } from '../../utils/chatStream'
 import {
   publicShareInfo, publicShareUnlock, publicShareSessions, publicShareCreateSession,
   publicShareDeleteSession, publicShareMessages, publicShareKbSearch, streamPublicShareChat,
@@ -223,6 +228,7 @@ const loadHistory = async () => {
     messages.value = (res.data?.records || []).map(m => ({
       role: m.role,
       content: m.content,
+      stopped: m.status === 'STOPPED',
       sources: m.sources ? safeParseSources(m.sources) : []
     }))
     await nextTick(scroll)
@@ -232,14 +238,15 @@ const loadHistory = async () => {
 }
 
 const selectSession = async (s) => {
-  if (streaming.value || s.id === currentSessionId.value) return
+  if (s.id === currentSessionId.value) return
+  if (streaming.value) stop()
   currentSessionId.value = s.id
   messages.value = []
   await loadHistory()
 }
 
 const newSession = async () => {
-  if (streaming.value) { streamer?.abort(); streaming.value = false }
+  if (streaming.value) stop()
   try {
     const res = await publicShareCreateSession(token, password.value)
     currentSessionId.value = res.data.id
@@ -263,6 +270,14 @@ const deleteSession = async (s) => {
   } catch (e) {
     ElMessage.error('删除失败: ' + (e.message || ''))
   }
+}
+
+// 停止生成：中断 SSE，保留已生成内容并标记「已停止」
+const stop = () => {
+  if (!streaming.value) return
+  const last = messages.value[messages.value.length - 1]
+  stopGeneration(streamer, streaming, last?.role === 'ASSISTANT' ? last : null)
+  nextTick(scroll)
 }
 
 const send = async () => {
@@ -390,6 +405,7 @@ onUnmounted(() => {
   span { width: 8px; height: 8px; background: #909399; border-radius: 50%; animation: blink 1.4s infinite both; }
   span:nth-child(2) { animation-delay: 0.2s; }
   span:nth-child(3) { animation-delay: 0.4s; } }
+.stopped-tip { margin-top: 8px; }
 @keyframes blink { 0%, 80%, 100% { opacity: 0.2; } 40% { opacity: 1; } }
 .error-panel { flex: 1; display: flex; align-items: center; justify-content: center; }
 .pwd-lock-hint { margin-top: 8px; font-size: 12px; color: #f56c6c; line-height: 1.5; }

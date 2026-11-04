@@ -73,6 +73,9 @@
               <div v-if="msg.streaming" class="typing">
                 <span></span><span></span><span></span>
               </div>
+              <div v-if="msg.role === 'ASSISTANT' && msg.stopped" class="stopped-tip">
+                <el-tag size="small" type="info">已停止生成</el-tag>
+              </div>
               
               <!-- 语义缓存命中徽标（独立于 metrics，缓存命中时无检索指标） -->
               <div v-if="msg.role === 'ASSISTANT' && msg.cacheHit" class="msg-metrics">
@@ -185,8 +188,11 @@
                                  placeholder="输入消息，Ctrl+Enter 发送；输入 / 可联想 Prompt 模板"
                                  :disabled="streaming"
                                  @submit="send" />
-            <el-button type="primary" :icon="Promotion" :loading="streaming" @click="send">
+            <el-button v-if="!streaming" type="primary" :icon="Promotion" @click="send">
               发送
+            </el-button>
+            <el-button v-else type="danger" plain :icon="VideoPause" @click="stop">
+              停止生成
             </el-button>
           </div>
         </div>
@@ -262,8 +268,9 @@
 import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowLeft, Link, Promotion, Plus, Document, Loading, Tools, Delete, Connection } from '@element-plus/icons-vue'
+import { ArrowLeft, Link, Promotion, VideoPause, Plus, Document, Loading, Tools, Delete, Connection } from '@element-plus/icons-vue'
 import { renderMarkdown } from '../../utils/markdown'
+import { stopGeneration } from '../../utils/chatStream'
 import { windowGet, streamChatApi, windowMessages, windowSessions, windowCreateSession, windowDeleteSession,
   agentGetPlanState, agentCancelPlan, agentRetryStep, agentSkipStep, agentGetPlanBySession,
   chatWorkflowState, streamChatWorkflowHitl, chatWorkflowCancel,
@@ -401,6 +408,7 @@ const toViewMessage = (m) => {
     feedbackComment: m.feedbackComment || '',
     sources: m.sources ? dedupeSources(JSON.parse(m.sources)) : [],
     images: m.attachments ? (safeParse(m.attachments) || []) : [],
+    stopped: m.status === 'STOPPED',
     judgeDetails: m.judgeDetails ? safeParse(m.judgeDetails) : null
   }
   const metricsKeys = ['coverageRate', 'hitRate', 'accuracyRate', 'mrr', 'ndcg', 'faithfulness', 'answerRelevancy', 'judgeAgreement']
@@ -497,7 +505,8 @@ const loadSessions = async () => {
 
 // 切换会话
 const selectSession = async (s) => {
-  if (streaming.value || s.id === currentSessionId.value) return
+  if (s.id === currentSessionId.value) return
+  if (streaming.value) stop()
   currentSessionId.value = s.id
   messages.value = []
   await loadHistory()
@@ -507,10 +516,7 @@ const selectSession = async (s) => {
 
 // 新建会话：调用后端创建，选中后清空消息区
 const newSession = async () => {
-  if (streaming.value) {
-    streamer?.abort()
-    streaming.value = false
-  }
+  if (streaming.value) stop()
   try {
     const res = await windowCreateSession(windowId)
     const created = res.data
@@ -696,6 +702,14 @@ const send = async () => {
       ElMessage.error('聊天请求失败')
     }
   )
+}
+
+// 停止生成：立即中断 SSE，保留已生成内容并标记「已停止」
+const stop = () => {
+  if (!streaming.value) return
+  const last = messages.value[messages.value.length - 1]
+  stopGeneration(streamer, streaming, last?.role === 'ASSISTANT' ? last : null)
+  nextTick(scrollToBottom)
 }
 
 const handleEvent = (event, data, aiMsg) => {
@@ -1444,6 +1458,9 @@ onUnmounted(() => {
   gap: 6px;
   margin-top: 8px;
   flex-wrap: wrap;
+}
+.stopped-tip {
+  margin-top: 8px;
 }
 .msg-feedback {
   margin-top: 8px;
