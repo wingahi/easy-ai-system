@@ -20,6 +20,7 @@ import java.util.Arrays;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 开放 API Key 管理（创建 / 校验 / 吊销 / 范围管理）
@@ -33,8 +34,12 @@ public class ApiKeyService {
 
     private static final String PREFIX = "wgh_sk_";
     private static final SecureRandom RANDOM = new SecureRandom();
+    /** lastUsedTime 落库节流窗口：同一 Key 每分钟最多写一次，避免高频调用造成 DB 写放大 */
+    private static final long LAST_USED_THROTTLE_MS = 60_000L;
 
     private final ApiKeyMapper apiKeyMapper;
+    /** keyId -> 上次落库时间（毫秒），仅用于节流，进程内有效 */
+    private final ConcurrentHashMap<Long, Long> lastUsedWriteAt = new ConcurrentHashMap<>();
 
     /**
      * 创建 API Key，返回明文（仅此一次）
@@ -155,9 +160,26 @@ public class ApiKeyService {
         if (key.getExpiresAt() != null && !key.getExpiresAt().isAfter(LocalDateTime.now())) {
             throw new BusinessException(ResultCode.TOKEN_EXPIRED, "API Key 已过期");
         }
+        touchLastUsed(key);
+        return key;
+    }
+
+    /**
+     * 更新 lastUsedTime，按 Key 做时间窗口节流（多实例部署时各实例独立节流）。
+     */
+    private void touchLastUsed(ApiKey key) {
+        Long keyId = key.getId();
+        if (keyId == null) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        Long lastWriteAt = lastUsedWriteAt.get(keyId);
+        if (lastWriteAt != null && now - lastWriteAt < LAST_USED_THROTTLE_MS) {
+            return;
+        }
+        lastUsedWriteAt.put(keyId, now);
         key.setLastUsedTime(LocalDateTime.now());
         apiKeyMapper.updateById(key);
-        return key;
     }
 
     /**

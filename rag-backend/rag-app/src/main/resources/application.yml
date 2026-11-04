@@ -66,6 +66,14 @@ wgh:
   db:
     dialect: ${WGH_DB_DIALECT:postgresql}
 
+  # ===== CORS（业务接口来源白名单）=====
+  # 仅列出的来源可跨域访问业务接口；/api/public/**（Widget 嵌入、分享页）保持跨域开放且不携带凭证。
+  # 生产环境必须通过 WGH_CORS_ALLOWED_ORIGINS 配置实际前端域名（逗号分隔）。
+  security:
+    cors:
+      allowed-origins: ${WGH_CORS_ALLOWED_ORIGINS:http://localhost:5173,http://127.0.0.1:5173}
+      allow-credentials: ${WGH_CORS_ALLOW_CREDENTIALS:false}   # Bearer Token 模式无需开启
+
   # ===== 外部 OIDC 资源服务器（本系统只验签，不签发 token） =====
   # token 由上游 IdP 签发；issuer / audience / jwks-uri 必配（jwks-uri 留空则自动发现）。
   auth:
