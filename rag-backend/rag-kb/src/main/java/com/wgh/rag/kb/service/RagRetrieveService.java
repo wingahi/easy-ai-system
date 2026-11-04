@@ -61,8 +61,9 @@ public class RagRetrieveService {
         RetrievalOptions opts = options != null ? options : RetrievalOptions.defaults();
         long start = System.nanoTime();
         try {
-            requireKbsExist(kbIds);
-            RetrieveResult result = doSearchMultiple(kbIds, queryText, opts);
+            // 一次查询同时完成存在性校验与后续检索所需字段，避免同一 kbId 查两次库
+            List<KnowledgeBase> kbs = loadKbs(kbIds);
+            RetrieveResult result = doSearchMultiple(kbs, queryText, opts);
             metrics.recordRetrieval(System.nanoTime() - start,
                     opts.hybridEnabled(), opts.rerankEnabled(), !result.matches().isEmpty());
             return result;
@@ -74,23 +75,28 @@ public class RagRetrieveService {
     }
 
     /**
-     * 检索入口统一校验知识库存在性，避免各调用方各自漏判后返回空结果。
+     * 检索入口统一校验知识库存在性，并一次性取出检索所需字段；
+     * 抛出 RESOURCE_NOT_FOUND 的语义与原先逐库校验保持一致。
      */
-    private void requireKbsExist(List<Long> kbIds) {
-        if (kbIds == null || kbIds.isEmpty()) return;
+    private List<KnowledgeBase> loadKbs(List<Long> kbIds) {
+        if (kbIds == null || kbIds.isEmpty()) return List.of();
+        List<KnowledgeBase> kbs = new ArrayList<>(kbIds.size());
         for (Long kbId : kbIds) {
-            if (kbId == null || knowledgeBaseMapper.selectById(kbId) == null) {
+            KnowledgeBase kb = kbId != null ? knowledgeBaseMapper.selectById(kbId) : null;
+            if (kb == null) {
                 throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "知识库不存在");
             }
+            kbs.add(kb);
         }
+        return kbs;
     }
 
     /**
      * 多知识库联合检索 - 按 embeddingModelId 分组（不同模型维度不同，不能共享 query 向量）。
      * 开启 Rerank 时：向量候选放大至 min(topK*3, 30)，重排序后取 topK；失败降级为原始向量序。
      */
-    private RetrieveResult doSearchMultiple(List<Long> kbIds, String queryText, RetrievalOptions opts) {
-        if (kbIds == null || kbIds.isEmpty()) return RetrieveResult.empty();
+    private RetrieveResult doSearchMultiple(List<KnowledgeBase> kbs, String queryText, RetrievalOptions opts) {
+        if (kbs == null || kbs.isEmpty()) return RetrieveResult.empty();
 
         RagProperties.Retrieve retrieve = ragProperties.getRetrieve();
         // 评测可显式指定 K；否则用全局配置
@@ -112,13 +118,13 @@ public class RagRetrieveService {
 
         // 按 embeddingModelId 分组
         java.util.Map<Long, List<KnowledgeBase>> byModel = new java.util.LinkedHashMap<>();
-        for (Long kbId : kbIds) {
-            KnowledgeBase kb = knowledgeBaseMapper.selectById(kbId);
-            if (kb == null || kb.getCollectionName() == null || kb.getEmbeddingModelId() == null) continue;
+        for (KnowledgeBase kb : kbs) {
+            if (kb.getCollectionName() == null || kb.getEmbeddingModelId() == null) continue;
             byModel.computeIfAbsent(kb.getEmbeddingModelId(), k -> new ArrayList<>()).add(kb);
         }
         if (byModel.isEmpty()) {
-            log.warn("searchMultiple: 未找到可用的 EmbeddingModel, kbIds={}", kbIds);
+            log.warn("searchMultiple: 未找到可用的 EmbeddingModel, kbIds={}",
+                    kbs.stream().map(KnowledgeBase::getId).toList());
             return RetrieveResult.empty();
         }
 

@@ -28,6 +28,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -133,6 +134,18 @@ class RagRetrieveServiceModelGroupingTest {
 
         assertThat(result.matches()).isEmpty();
         verify(vectorStoreService, never()).createEmbeddingStore(anyString(), anyInt());
+    }
+
+    @Test
+    @DisplayName("同一 kbId 每次检索只查一次库（存在性校验与检索字段复用同一条记录）")
+    void sameKbIdQueriedOnlyOnce() {
+        mockKb(1L, "kb_a", 7L, 1536);
+        when(modelCacheManager.getEmbeddingModel(7L)).thenReturn(modelA);
+        when(storeA.search(any())).thenReturn(new EmbeddingSearchResult<>(matches("a1")));
+
+        service.searchMultiple(List.of(1L), "q", RetrievalOptions.defaults());
+
+        verify(kbMapper, times(1)).selectById(1L);
     }
 
     @Test
