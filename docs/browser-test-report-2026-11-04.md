@@ -221,3 +221,80 @@ viewer 调用 `/api/admin/roles`、`/api/admin/users` 时返回 `code=1004`，�
 - 安全：5 项指定安全用例全部通过（越权、密钥泄露、会话 IDOR、XSS、SSRF）。
 - 主要缺口：对话流式缺少用户可控的「停止生成」；启动期 `SsrfGuard` 构造器注解缺失已临时修复待正式提交。
 - 服务最终状态：8080 由 PID **14437** 监听，`/actuator/health`(9090)=200，运行正常。
+
+---
+
+## 9. 重启后回归（2026-11-04 14:10 ~ 14:23）
+
+> 本节为「生效收口」回归，用于确认已提交但未上线的「停止生成 / 消息状态落库 / 管理接口文案」在重启后真实生效；结论覆盖上文 §8 的旧状态。
+
+### 9.1 生效基线
+
+| 项目 | 值 |
+|---|---|
+| 构建 | JDK 21，`mvn -o -pl rag-app -am package -DskipTests`，14:10:37 BUILD SUCCESS |
+| 新 jar | `target/rag-app-1.0.0-SNAPSHOT.jar`，2026-11-04 14:10，130,310,347 bytes |
+| 旧 jar 备份 | `target/rag-app-1.0.0-SNAPSHOT.old-20261104.jar` |
+| 新进程 | PID **20410**（旧 PID 14437 已 SIGTERM 优雅退出，4 秒内释放 8080/9090） |
+| 启动方式 | cwd=`rag-backend/rag-app`，`/usr/bin/java -jar target/rag-app-1.0.0-SNAPSHOT.jar > logs/app-restart-20261104.out 2>&1`（后台方式） |
+| 启动耗时 | 42.9 秒（日志 `Started RagApplication`） |
+
+健康与鉴权复验：
+
+| 检查项 | 实际 | 结果 |
+|---|---|---|
+| 8080 / 9090 监听 | 均由 PID 20410 监听 | PASS |
+| `9090/actuator/health` | 200 | PASS |
+| `8080/actuator` | 404 | PASS |
+| admin 登录 | 200，JWT `roles`=`["admin"]` | PASS |
+| `/api/admin/roles`（admin token） | 200 | PASS |
+| `/api/admin/users`（admin token） | 200 | PASS |
+
+### 9.2 `status` 列生效证据
+
+- `schema.sql` 中的 `ALTER TABLE wgh_chat_message ADD COLUMN IF NOT EXISTS status VARCHAR(20)` 已执行；全量脚本 0 ERROR，可重复执行。
+- `\d wgh_chat_message` 可见 `status | character varying(20)`。
+- 实际落库（`SELECT id,session_id,role,status,length(content)`）：
+
+| 消息 id | 会话 | 场景 | status |
+|---|---|---|---|
+| 518 | 106 | 调试聊天（窗口 22）停止 | **STOPPED** |
+| 520 | 107 | 公开分享页停止 | **STOPPED** |
+| 522 | 108 | 登录态分享页停止 | **STOPPED** |
+| 516 | 105 | 完整生成（未停止） | COMPLETED |
+
+三个权限迁移经复核均已生效：`wgh_permission` 含 `model:read` 及 `chat/agent/apikey/share/pricing:manage`（共 16 个权限码）；`wgh_chat_session` 中 `user_identifier='default_user'` 为 **0** 条。
+
+### 9.3 回归用例结果
+
+| 编号 | 用例 | 期望 | 实际 | 结果 |
+|---|---|---|---|---|
+| R-01 | 调试聊天 `/chat/windows/22/playground` 停止生成 | 流式时「停止生成」出现且「发送」消失；点击后输入区立即恢复、内容保留、气泡显示「已停止生成」；刷新后仍显示 | 流式中 `stopBtn=true / sendBtn=false`；点击后 `sendBtn=true / stopBtn=false`、保留 372 字、`已停止生成` 可见；刷新后仍可见 | **PASS** |
+| R-02 | 登录态分享页 `/share/s_a94cf544…` 停止生成 | 同上 | 保留 438 字，停止标记与刷新回显均正常 | **PASS** |
+| R-03 | 公开分享页 `/share/s_a94cf544…`（未登录）停止生成 | 同上 | 保留 602 字，停止标记与刷新回显均正常 | **PASS** |
+| R-04 | 管理接口鉴权文案（viewer 身份） | 文案含「无权限」且不含「配额」 | `GET /api/admin/roles`、`GET /api/admin/users` 均返回 `code=1004`「当前账号无权限访问该管理接口」 | **PASS** |
+| R-05 | 模型接口密钥不回显 | `GET /api/models/chat` 无 `apiKey` | 4 条记录，响应全文不含 `apiKey` | **PASS** |
+| R-06 | 跨用户会话隔离 | A 不能读/写 B 的 `sessionId` | viewer 读 admin 的 sessionId=105：`code=1004`「会话不存在或无权访问」；`DELETE`：`code=1004`「无权删除他人会话」；会话 105 仍存在 | **PASS** |
+
+说明：
+
+- 前端已无独立路由的 `ShareChat.vue`（历史登录态分享页组件）。当前 `/share/:token` 统一路由到 `PublicShareChat.vue`，因此 R-02/R-03 以「带 admin 登录态」与「未登录」两种状态覆盖该分享链路；`ShareChat.vue` 属未挂载代码，不存在可访问页面，未纳入截图用例。
+- R-04 需临时让 viewer 具备密码登录条件：备份 viewer 原始 `password_hash/password_version/trial/password_must_change` 后，临时置 `trial=1` 并复用 admin 的 BCrypt 哈希完成登录，测试结束已按备份值精确还原（复核输出与备份完全一致）。
+- 停止生成截图均包含「流式中 → 已停止 → 刷新后」三态；证据见 §9.4。
+
+### 9.4 证据
+
+| 用例 | 证据文件 |
+|---|---|
+| R-01 调试聊天 | `2026-11-04-restart-01-playground-streaming.png`、`-stopped.png`、`-refreshed.png` |
+| R-03 公开分享页 | `2026-11-04-restart-02-share-streaming.png`、`-stopped.png`、`-refreshed.png` |
+| R-02 登录态分享页 | `2026-11-04-restart-02b-share-auth-streaming.png`、`-stopped.png`、`-refreshed.png` |
+| R-04 管理接口文案 | `2026-11-04-restart-03-admin-message-viewer.png` |
+| R-05 密钥不回显 | `2026-11-04-restart-04-models-no-apikey.png` |
+| R-06 跨用户会话 | `2026-11-04-restart-05-cross-user-session.png` |
+
+### 9.5 结论
+
+- 原 §8 列为缺口/未覆盖的「停止生成」：**从 FAIL 转为 PASS**（三页均通过，且 `STOPPED` 状态真实落库，刷新后可回显）。
+- 管理接口鉴权失败文案已修正为「当前账号无权限访问该管理接口」，不再出现「配额」。
+- 重启后服务由 PID **20410** 监听 8080/9090，运行正常；测试过程未修改业务代码。
