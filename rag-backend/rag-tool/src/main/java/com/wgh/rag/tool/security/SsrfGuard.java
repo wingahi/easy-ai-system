@@ -1,6 +1,7 @@
 package com.wgh.rag.tool.security;
 
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -51,6 +52,13 @@ public class SsrfGuard {
     private final long maxResponseBytes;
     private final HostResolver resolver;
 
+    /**
+     * Spring 装配入口：从配置注入参数，使用真实 DNS 解析器。
+     *
+     * <p>类中同时保留了供测试替换解析器的构造器，因此这里必须显式标注 {@link Autowired}，
+     * 否则 Spring 无法在两个 public 构造器中确定候选，启动时抛出 No default constructor found。
+     */
+    @Autowired
     public SsrfGuard(@Value("${wgh.tool.ssrf.allow-private-network:false}") boolean allowPrivateNetwork,
                      @Value("${wgh.tool.ssrf.trusted-hosts:}") String trustedHosts,
                      @Value("${wgh.tool.ssrf.max-redirects:" + DEFAULT_MAX_REDIRECTS + "}") int maxRedirects,
@@ -58,6 +66,7 @@ public class SsrfGuard {
         this(allowPrivateNetwork, trustedHosts, maxRedirects, maxResponseBytes, InetAddress::getAllByName);
     }
 
+    /** 测试用构造器：允许注入自定义域名解析器（生产装配走上面的配置构造器） */
     public SsrfGuard(boolean allowPrivateNetwork, String trustedHosts,
                      int maxRedirects, long maxResponseBytes, HostResolver resolver) {
         this.allowPrivateNetwork = allowPrivateNetwork;
