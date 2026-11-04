@@ -1,6 +1,7 @@
 package com.wgh.rag.agent.entity;
 
 import com.baomidou.mybatisplus.annotation.*;
+import com.wgh.rag.data.handler.JsonStringTypeHandler;
 import lombok.Data;
 
 import java.time.LocalDateTime;
@@ -15,6 +16,7 @@ public class AgentPlan {
     private Long llmModelId;
     private String status;
     private String userGoal;
+    @TableField(typeHandler = JsonStringTypeHandler.class)
     private String planJson;
     private Integer currentStepIndex;
     private Integer maxSteps;

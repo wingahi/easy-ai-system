@@ -62,6 +62,10 @@ mybatis-plus:
 
 # ===== WGH RAG 自定义配置 =====
 wgh:
+  # ===== 数据库方言（仅影响 MyBatis-Plus 分页语法，默认 PostgreSQL） =====
+  db:
+    dialect: ${WGH_DB_DIALECT:postgresql}
+
   # ===== 外部 OIDC 资源服务器（本系统只验签，不签发 token） =====
   # token 由上游 IdP 签发；issuer / audience / jwks-uri 必配（jwks-uri 留空则自动发现）。
   auth:

@@ -1,7 +1,9 @@
 package com.wgh.rag.workflow.entity;
 
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableName;
 import com.wgh.rag.data.entity.BaseEntity;
+import com.wgh.rag.data.handler.JsonStringTypeHandler;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
@@ -26,5 +28,6 @@ public class WorkflowVersion extends BaseEntity {
     private String description;
 
     /** 保存时的图定义快照 */
+    @TableField(typeHandler = JsonStringTypeHandler.class)
     private String graphJson;
 }

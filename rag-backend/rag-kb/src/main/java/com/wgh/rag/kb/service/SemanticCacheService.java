@@ -6,6 +6,7 @@ import com.wgh.rag.kb.entity.KnowledgeBase;
 import com.wgh.rag.kb.entity.SemanticCache;
 import com.wgh.rag.kb.mapper.KnowledgeBaseMapper;
 import com.wgh.rag.kb.mapper.SemanticCacheMapper;
+import com.wgh.rag.kb.port.VectorStorePort;
 import com.wgh.rag.llm.factory.ModelCacheManager;
 import dev.langchain4j.data.embedding.Embedding;
 import dev.langchain4j.data.document.Metadata;
@@ -50,7 +51,7 @@ public class SemanticCacheService {
 
     private final SemanticCacheMapper cacheMapper;
     private final KnowledgeBaseMapper knowledgeBaseMapper;
-    private final VectorStoreService vectorStoreService;
+    private final VectorStorePort vectorStoreService;
     private final ModelCacheManager modelCacheManager;
     private final RagProperties ragProperties;
 

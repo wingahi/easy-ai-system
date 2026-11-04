@@ -1,6 +1,7 @@
 package com.wgh.rag.agentmulti.entity;
 
 import com.baomidou.mybatisplus.annotation.*;
+import com.wgh.rag.data.handler.JsonStringTypeHandler;
 import lombok.Data;
 
 import java.time.LocalDateTime;
@@ -31,12 +32,15 @@ public class MultiAgentStep {
     private String role;
 
     /** 输入上下文（JSONB 字符串） */
+    @TableField(typeHandler = JsonStringTypeHandler.class)
     private String inputContext;
 
     private String outputText;
 
+    @TableField(typeHandler = JsonStringTypeHandler.class)
     private String toolCallsJson;
 
+    @TableField(typeHandler = JsonStringTypeHandler.class)
     private String ragSourcesJson;
 
     private Double reflectionScore;

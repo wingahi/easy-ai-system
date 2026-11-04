@@ -12,6 +12,7 @@ import com.wgh.rag.kb.entity.KnowledgeFile;
 import com.wgh.rag.kb.entity.KnowledgeFileVersion;
 import com.wgh.rag.kb.mapper.KnowledgeFileMapper;
 import com.wgh.rag.kb.mapper.KnowledgeFileVersionMapper;
+import com.wgh.rag.kb.port.VectorStorePort;
 import com.wgh.rag.kb.parser.DocumentParserDispatcher;
 import com.wgh.rag.kb.parser.ParsedDocument;
 import com.wgh.rag.kb.splitter.ChunkOutput;
@@ -46,7 +47,7 @@ public class KnowledgeFileService {
     private final KnowledgeBaseService kbService;
     private final DocumentParserDispatcher documentParser;
     private final TextSplitter textSplitter;
-    private final VectorStoreService vectorStoreService;
+    private final VectorStorePort vectorStoreService;
     private final SemanticCacheService semanticCacheService;
     private final ObjectMapper objectMapper;
     private final FileStorageService fileStorageService;

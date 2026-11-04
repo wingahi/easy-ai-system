@@ -1,6 +1,7 @@
 package com.wgh.rag.agentmulti.entity;
 
 import com.baomidou.mybatisplus.annotation.*;
+import com.wgh.rag.data.handler.JsonStringTypeHandler;
 import lombok.Data;
 
 import java.time.LocalDateTime;
@@ -21,15 +22,19 @@ public class MultiAgentCrew {
     private String executionMode;
 
     /** Crew 内 agent 定义列表 JSON */
+    @TableField(typeHandler = JsonStringTypeHandler.class)
     private String agentsJson;
 
     /** Graph 模式节点/边 JSON */
+    @TableField(typeHandler = JsonStringTypeHandler.class)
     private String graphJson;
 
     /** Crew 额外配置 JSON */
+    @TableField(typeHandler = JsonStringTypeHandler.class)
     private String crewConfigJson;
 
     /** GroupChat 配置 JSON */
+    @TableField(typeHandler = JsonStringTypeHandler.class)
     private String groupChatConfigJson;
 
     /** 启用状态：1 启用，0 禁用 */

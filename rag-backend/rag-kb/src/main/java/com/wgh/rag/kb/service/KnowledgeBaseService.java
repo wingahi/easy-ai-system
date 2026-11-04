@@ -11,6 +11,7 @@ import com.wgh.rag.kb.entity.KnowledgeBase;
 import com.wgh.rag.kb.entity.KnowledgeFile;
 import com.wgh.rag.kb.mapper.KnowledgeBaseMapper;
 import com.wgh.rag.kb.mapper.KnowledgeFileMapper;
+import com.wgh.rag.kb.port.VectorStorePort;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -30,7 +31,7 @@ public class KnowledgeBaseService {
     private final KnowledgeBaseMapper kbMapper;
     private final KnowledgeFileMapper fileMapper;
     private final LlmModelService llmModelService;
-    private final VectorStoreService vectorStoreService;
+    private final VectorStorePort vectorStoreService;
     private final SemanticCacheService semanticCacheService;
 
     public PageResult<KnowledgeBase> page(Long page, Long size, String keyword) {

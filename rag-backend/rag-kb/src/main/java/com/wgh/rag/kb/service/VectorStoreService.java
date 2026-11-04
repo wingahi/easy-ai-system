@@ -1,10 +1,12 @@
 package com.wgh.rag.kb.service;
 
 import com.wgh.rag.config.property.PgVectorProperties;
+import com.wgh.rag.kb.port.VectorStorePort;
 import com.wgh.rag.llm.factory.ModelCacheManager;
 import dev.langchain4j.data.embedding.Embedding;
 import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.model.embedding.EmbeddingModel;
+import dev.langchain4j.store.embedding.EmbeddingStore;
 import dev.langchain4j.store.embedding.pgvector.PgVectorEmbeddingStore;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -14,18 +16,19 @@ import javax.sql.DataSource;
 import java.util.List;
 
 /**
- * 向量存储服务 - 封装 PostgreSQL PGVector EmbeddingStore
+ * 向量存储服务 - PostgreSQL PGVector 实现（对外只暴露 {@link VectorStorePort} 契约）
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
-public class VectorStoreService {
+public class VectorStoreService implements VectorStorePort {
 
     private final DataSource dataSource;
     private final PgVectorProperties pgProps;
     private final ModelCacheManager modelCacheManager;
 
-    public PgVectorEmbeddingStore createEmbeddingStore(String tableName, int dimension) {
+    @Override
+    public EmbeddingStore<TextSegment> createEmbeddingStore(String tableName, int dimension) {
         log.info("▶ 创建 PgVectorEmbeddingStore: table={}, dimension={}, createTable={}, useIndex={}",
                 tableName, dimension, pgProps.getCreateTable(), pgProps.getUseIndex());
 
@@ -41,11 +44,13 @@ public class VectorStoreService {
                 .build();
     }
 
+    @Override
     public void ensureCollection(String tableName, Integer dimension) {
         log.debug("ensureCollection({}, {}) — PgVectorEmbeddingStore.createTable=true 时会自动建表",
                 tableName, dimension);
     }
 
+    @Override
     public void dropCollection(String tableName) {
         try (var conn = dataSource.getConnection();
              var stmt = conn.createStatement()) {
@@ -59,6 +64,7 @@ public class VectorStoreService {
     /**
      * 按 fileId 删除向量（reSplit / 删除文件前必须清理，否则旧向量残留导致召回错乱）
      */
+    @Override
     public void deleteByFileId(String tableName, Long fileId) {
         if (tableName == null || fileId == null) return;
         // 表可能不存在（文件从未成功入库），先检查
@@ -88,6 +94,7 @@ public class VectorStoreService {
     /**
      * 按 embedding_id 批量删除向量（语义缓存淘汰用）
      */
+    @Override
     public void deleteByEmbeddingIds(String tableName, java.util.Collection<String> embeddingIds) {
         if (tableName == null || embeddingIds == null || embeddingIds.isEmpty()) return;
         try (var conn = dataSource.getConnection();
@@ -119,6 +126,7 @@ public class VectorStoreService {
     /**
      * 真实向量化入库：EmbeddingModel embedAll() + PgVectorEmbeddingStore.addAll()
      */
+    @Override
     public void insertVectors(String tableName,
                               List<TextSegment> segments,
                               Long embeddingModelId,
@@ -139,7 +147,7 @@ public class VectorStoreService {
         List<Embedding> embeddings = embeddingModel.embedAll(segments).content();
         log.info("✓ 生成 {} 个向量", embeddings.size());
 
-        PgVectorEmbeddingStore store = createEmbeddingStore(tableName, dimension);
+        EmbeddingStore<TextSegment> store = createEmbeddingStore(tableName, dimension);
         store.addAll(embeddings, segments);
         log.info("✓ 已写入 pgvector 表 {}", tableName);
     }

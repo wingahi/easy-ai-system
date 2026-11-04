@@ -1,6 +1,7 @@
 package com.wgh.rag.agentmulti.entity;
 
 import com.baomidou.mybatisplus.annotation.*;
+import com.wgh.rag.data.handler.JsonStringTypeHandler;
 import lombok.Data;
 
 import java.time.LocalDateTime;
@@ -31,9 +32,11 @@ public class MultiAgentRun {
     private String executionMode;
 
     /** Crew 配置 JSON */
+    @TableField(typeHandler = JsonStringTypeHandler.class)
     private String crewConfigJson;
 
     /** 参与 agent 列表 JSON */
+    @TableField(typeHandler = JsonStringTypeHandler.class)
     private String agentsJson;
 
     private String userGoal;

@@ -1,6 +1,7 @@
 package com.wgh.rag.workflow.entity;
 
 import com.baomidou.mybatisplus.annotation.*;
+import com.wgh.rag.data.handler.JsonStringTypeHandler;
 import lombok.Data;
 
 import java.time.LocalDateTime;
@@ -29,8 +30,10 @@ public class WorkflowNodeRun {
     /** 循环体第几次执行（非循环节点为 0） */
     private Integer iteration;
 
+    @TableField(typeHandler = JsonStringTypeHandler.class)
     private String inputJson;
 
+    @TableField(typeHandler = JsonStringTypeHandler.class)
     private String outputJson;
 
     private String errorMessage;

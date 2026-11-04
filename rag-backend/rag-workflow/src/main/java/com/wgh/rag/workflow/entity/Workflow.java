@@ -3,6 +3,7 @@ package com.wgh.rag.workflow.entity;
 import com.baomidou.mybatisplus.annotation.*;
 import com.wgh.rag.data.entity.BaseEntity;
 import com.wgh.rag.data.handler.BooleanToSmallintTypeHandler;
+import com.wgh.rag.data.handler.JsonStringTypeHandler;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
@@ -27,6 +28,7 @@ public class Workflow extends BaseEntity {
     private Integer version;
 
     /** 图定义 JSON：{ "nodes": [...], "edges": [...] } */
+    @TableField(typeHandler = JsonStringTypeHandler.class)
     private String graphJson;
 
     /** 分享访问令牌（UUID 无横线），为空表示未生成 */

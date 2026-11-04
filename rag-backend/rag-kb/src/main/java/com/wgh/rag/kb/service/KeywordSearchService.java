@@ -1,6 +1,7 @@
 package com.wgh.rag.kb.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.wgh.rag.kb.port.KeywordSearchPort;
 import dev.langchain4j.data.document.Metadata;
 import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.store.embedding.EmbeddingMatch;
@@ -22,11 +23,13 @@ import java.util.regex.Pattern;
 /**
  * 关键词检索服务 - 基于 pg_trgm 相似度的关键词召回（混合检索关键词路）
  * chunk 原文在 pgvector 表 text 列，无需新表；GIN 索引惰性创建（幂等，进程内缓存）。
+ * <p>
+ * 对外实现 {@link KeywordSearchPort}，PG 方言细节（pg_trgm / GIN）收敛在本类。
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
-public class KeywordSearchService {
+public class KeywordSearchService implements KeywordSearchPort {
 
     /** 表名白名单：仅允许字母数字下划线（向量表名为系统生成，杜绝注入） */
     private static final Pattern TABLE_NAME_PATTERN = Pattern.compile("^[a-zA-Z0-9_]+$");
@@ -42,6 +45,7 @@ public class KeywordSearchService {
      * 关键词召回：similarity(text, query) 降序取 topN。
      * 任何失败（扩展缺失/表不存在）记 WARN 并返回空列表 —— 调用方自动退化为纯向量路。
      */
+    @Override
     public List<EmbeddingMatch<TextSegment>> search(String tableName, String query, int topN) {
         if (tableName == null || !TABLE_NAME_PATTERN.matcher(tableName).matches()) {
             log.warn("非法向量表名，拒绝关键词检索: {}", tableName);

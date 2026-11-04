@@ -6,6 +6,8 @@ import com.wgh.rag.common.result.ResultCode;
 import com.wgh.rag.config.property.RagProperties;
 import com.wgh.rag.kb.entity.KnowledgeBase;
 import com.wgh.rag.kb.mapper.KnowledgeBaseMapper;
+import com.wgh.rag.kb.port.KeywordSearchPort;
+import com.wgh.rag.kb.port.VectorStorePort;
 import com.wgh.rag.llm.factory.ModelCacheManager;
 import dev.langchain4j.data.embedding.Embedding;
 import dev.langchain4j.data.segment.TextSegment;
@@ -38,10 +40,10 @@ public class RagRetrieveService {
 
     private final KnowledgeBaseMapper knowledgeBaseMapper;
     private final ModelCacheManager modelCacheManager;
-    private final VectorStoreService vectorStoreService;
+    private final VectorStorePort vectorStoreService;
     private final RagProperties ragProperties;
     private final RerankService rerankService;
-    private final KeywordSearchService keywordSearchService;
+    private final KeywordSearchPort keywordSearchService;
     private final QueryTransformService queryTransformService;
     private final RagMetrics metrics;
 

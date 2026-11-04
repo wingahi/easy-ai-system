@@ -29,6 +29,8 @@ mybatis-plus:
     log-impl: org.apache.ibatis.logging.nologging.NoLoggingImpl
 
 wgh:
+  db:
+    dialect: h2
   auth:
     oidc:
       issuer: ""
