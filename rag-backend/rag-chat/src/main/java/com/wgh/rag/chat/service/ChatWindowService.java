@@ -227,7 +227,7 @@ public class ChatWindowService {
             session = sessionMapper.selectById(sessionId);
             if (session == null || !windowId.equals(session.getChatWindowId())
                     || !userIdentifier.equals(session.getUserIdentifier())) {
-                return new PageResult<>(0L, page, size, List.of());
+                throw new BusinessException(ResultCode.PERMISSION_DENIED, "会话不存在或无权访问");
             }
         } else {
             session = sessionMapper.selectOne(new LambdaQueryWrapper<ChatSession>()
@@ -306,10 +306,20 @@ public class ChatWindowService {
      */
     @Transactional
     public void deleteSession(Long sessionId, String userIdentifier) {
+        deleteSession(null, sessionId, userIdentifier);
+    }
+
+    /**
+     * 删除会话（限定窗口 + 用户归属校验）；窗口 ID 为空时仅校验用户归属。
+     */
+    @Transactional
+    public void deleteSession(Long windowId, Long sessionId, String userIdentifier) {
         ChatSession session = sessionMapper.selectById(sessionId);
         if (session == null) return;
-        if (!userIdentifier.equals(session.getUserIdentifier())) {
-            throw new BusinessException(ResultCode.OPERATION_NOT_ALLOWED, "无权删除他人会话");
+        boolean ownerMatches = userIdentifier != null && userIdentifier.equals(session.getUserIdentifier());
+        boolean windowMatches = windowId == null || windowId.equals(session.getChatWindowId());
+        if (!ownerMatches || !windowMatches) {
+            throw new BusinessException(ResultCode.PERMISSION_DENIED, "无权删除他人会话");
         }
         // 物理删除消息，避免大量孤儿消息堆积
         messageMapper.delete(new LambdaQueryWrapper<ChatMessage>()

@@ -142,9 +142,8 @@ public class ChatController {
             @PathVariable Long windowId,
             @RequestParam(defaultValue = "1") Long page,
             @RequestParam(defaultValue = "20") Long size,
-            @RequestParam(required = false) Long sessionId,
-            @RequestParam(defaultValue = "default_user") String userIdentifier) {
-        return Result.success(windowService.pageMessages(windowId, userIdentifier, sessionId, page, size));
+            @RequestParam(required = false) Long sessionId) {
+        return Result.success(windowService.pageMessages(windowId, currentUsername(), sessionId, page, size));
     }
 
     @Operation(summary = "提交消息反馈（1 赞 / -1 踩 / 0 取消，仅助手消息）")
@@ -168,27 +167,22 @@ public class ChatController {
 
     @Operation(summary = "列出窗口下的历史会话")
     @GetMapping("/windows/{windowId}/sessions")
-    public Result<List<ChatSession>> listSessions(
-            @PathVariable Long windowId,
-            @RequestParam(defaultValue = "default_user") String userIdentifier) {
-        return Result.success(windowService.listSessions(windowId, userIdentifier));
+    public Result<List<ChatSession>> listSessions(@PathVariable Long windowId) {
+        return Result.success(windowService.listSessions(windowId, currentUsername()));
     }
 
     @Operation(summary = "新建会话")
     @PostMapping("/windows/{windowId}/sessions")
-    public Result<ChatSession> createSession(
-            @PathVariable Long windowId,
-            @RequestParam(defaultValue = "default_user") String userIdentifier) {
-        return Result.success(windowService.createSession(windowId, userIdentifier));
+    public Result<ChatSession> createSession(@PathVariable Long windowId) {
+        return Result.success(windowService.createSession(windowId, currentUsername()));
     }
 
     @Operation(summary = "删除会话（软删会话 + 清空消息）")
     @DeleteMapping("/windows/{windowId}/sessions/{sessionId}")
     public Result<Void> deleteSession(
             @PathVariable Long windowId,
-            @PathVariable Long sessionId,
-            @RequestParam(defaultValue = "default_user") String userIdentifier) {
-        windowService.deleteSession(sessionId, userIdentifier);
+            @PathVariable Long sessionId) {
+        windowService.deleteSession(windowId, sessionId, currentUsername());
         return Result.success();
     }
 
@@ -228,11 +222,7 @@ public class ChatController {
      * 从 SecurityContext 获取当前登录用户名；分享链路下会话按 username + windowId 归属
      */
     private String currentUsername() {
-        var auth = SecurityContextHolder.getContext().getAuthentication();
-        if (auth == null || auth.getName() == null) {
-            throw new BusinessException(ResultCode.UNAUTHORIZED, "未登录");
-        }
-        return auth.getName();
+        return com.wgh.rag.common.security.SecurityUtils.currentUsername();
     }
 
     @Operation(summary = "获取分享窗口信息（需登录）")

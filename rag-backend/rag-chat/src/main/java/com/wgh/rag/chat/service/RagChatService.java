@@ -19,6 +19,7 @@ import com.wgh.rag.common.exception.BusinessException;
 import com.wgh.rag.common.log.MdcContext;
 import com.wgh.rag.common.metrics.RagMetrics;
 import com.wgh.rag.quota.service.QuotaService;
+import com.wgh.rag.common.result.ResultCode;
 import com.wgh.rag.common.security.SecurityUtils;
 import com.wgh.rag.config.property.RagProperties;
 import com.wgh.rag.kb.service.RagRetrieveService;
@@ -135,8 +136,8 @@ public class RagChatService {
         final String quotaUsername = SecurityUtils.currentUsername();
         quotaService.checkAndIncrementChat(quotaUsername);
 
-        // 确保会话存在
-        ChatSession session = ensureSession(sessionId, window);
+        // 确保会话存在（会话归属当前登录身份，防止跨用户续聊）
+        ChatSession session = ensureSession(sessionId, window, SecurityUtils.currentUsername());
 
         // 首条消息生成会话标题，避免历史会话列表全是「新对话」
         if (session.getTitle() == null || "新对话".equals(session.getTitle())) {
@@ -1349,16 +1350,18 @@ public class RagChatService {
 
     // ============ Session 管理 ============
 
-    private ChatSession ensureSession(Long sessionId, ChatWindow window) {
+    private ChatSession ensureSession(Long sessionId, ChatWindow window, String userIdentifier) {
         if (sessionId != null) {
             ChatSession session = sessionMapper.selectById(sessionId);
-            if (session != null && session.getStatus().equals("ACTIVE")) {
-                return session;
+            if (session == null || !window.getId().equals(session.getChatWindowId())
+                    || !userIdentifier.equals(session.getUserIdentifier())
+                    || !"ACTIVE".equals(session.getStatus())) {
+                throw new BusinessException(ResultCode.PERMISSION_DENIED, "会话不存在或无权访问");
             }
+            return session;
         }
 
         // 按 userIdentifier 查找该窗口下的已有会话
-        String userIdentifier = "default_user";
         ChatSession existing = sessionMapper.selectOne(new LambdaQueryWrapper<ChatSession>()
                 .eq(ChatSession::getChatWindowId, window.getId())
                 .eq(ChatSession::getUserIdentifier, userIdentifier)
