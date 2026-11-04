@@ -20,6 +20,7 @@ import com.wgh.rag.common.result.PageResult;
 import com.wgh.rag.common.result.Result;
 import com.wgh.rag.common.result.ResultCode;
 import com.wgh.rag.common.exception.BusinessException;
+import com.wgh.rag.common.security.LoginUser;
 import com.wgh.rag.common.security.RequiresPermission;
 import com.wgh.rag.workflow.service.WorkflowService;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
@@ -376,13 +377,15 @@ public class ChatController {
             @RequestParam(defaultValue = "10") Long size,
             @RequestParam(required = false) String toolType,
             @RequestParam(required = false) String keyword) {
-        return Result.success(toolConfigService.page(page, size, toolType, keyword));
+        PageResult<ToolConfig> result = toolConfigService.page(page, size, toolType, keyword);
+        maskExecutorConfig(result.getRecords());
+        return Result.success(result);
     }
 
     @Operation(summary = "新增工具")
     @PostMapping("/tools")
     @Audit(action = "TOOL_CREATE", resourceType = "TOOL")
-    @RequiresPermission(AuthConstants.PERM_TOOL_USE)
+    @RequiresPermission(AuthConstants.PERM_CHAT_MANAGE)
     public Result<ToolConfig> createTool(@Valid @RequestBody ToolConfig tool) {
         return Result.success(toolConfigService.create(tool));
     }
@@ -453,7 +456,7 @@ public class ChatController {
     @Operation(summary = "编辑工具")
     @PutMapping("/tools")
     @Audit(action = "TOOL_UPDATE", resourceType = "TOOL")
-    @RequiresPermission(AuthConstants.PERM_TOOL_USE)
+    @RequiresPermission(AuthConstants.PERM_CHAT_MANAGE)
     public Result<ToolConfig> updateTool(@Valid @RequestBody ToolConfig tool) {
         return Result.success(toolConfigService.update(tool));
     }
@@ -461,7 +464,7 @@ public class ChatController {
     @Operation(summary = "删除工具")
     @DeleteMapping("/tools/{id}")
     @Audit(action = "TOOL_DELETE", resourceType = "TOOL")
-    @RequiresPermission(AuthConstants.PERM_TOOL_USE)
+    @RequiresPermission(AuthConstants.PERM_CHAT_MANAGE)
     public Result<Void> deleteTool(@PathVariable Long id) {
         toolConfigService.delete(id);
         return Result.success();
@@ -471,7 +474,25 @@ public class ChatController {
     @GetMapping("/tools/list")
     @RequiresPermission(AuthConstants.PERM_TOOL_USE)
     public Result<List<ToolConfig>> listToolsByType(@RequestParam(required = false) String toolType) {
-        return Result.success(toolConfigService.listByType(toolType));
+        List<ToolConfig> tools = toolConfigService.listByType(toolType);
+        maskExecutorConfig(tools);
+        return Result.success(tools);
+    }
+
+    /**
+     * executorConfig 可能包含内部地址与调用凭证，仅对具备管理权限的账号回显；
+     * 普通使用者在列表中拿到 null，不影响其对工具的调用。
+     */
+    static void maskExecutorConfig(List<ToolConfig> tools) {
+        if (tools == null || tools.isEmpty()) {
+            return;
+        }
+        LoginUser user = LoginUser.get();
+        if (user != null && user.getPermissions() != null
+                && user.getPermissions().contains(AuthConstants.PERM_CHAT_MANAGE)) {
+            return;
+        }
+        tools.forEach(tool -> tool.setExecutorConfig(null));
     }
 
     // ===== Skill 专用 API =====
@@ -496,7 +517,7 @@ public class ChatController {
 
     @Operation(summary = "保存 SKILL.md 内容到磁盘（在线编辑，可选回写 front matter）")
     @PostMapping("/tools/skill/save")
-    @RequiresPermission(AuthConstants.PERM_TOOL_USE)
+    @RequiresPermission(AuthConstants.PERM_CHAT_MANAGE)
     public Result<Void> saveSkillContent(@RequestBody Map<String, Object> body) throws java.io.IOException {
         String dir = (String) body.get("dir");
         String content = (String) body.get("content");
@@ -512,7 +533,7 @@ public class ChatController {
 
     @Operation(summary = "创建新的空 skill 目录（带初始 SKILL.md 模板）")
     @PostMapping("/tools/skill/create-dir")
-    @RequiresPermission(AuthConstants.PERM_TOOL_USE)
+    @RequiresPermission(AuthConstants.PERM_CHAT_MANAGE)
     public Result<Map<String, Object>> createSkillDir(@RequestBody Map<String, String> body) throws java.io.IOException {
         String dir = body.get("dir");
         String displayName = body.get("displayName");
@@ -526,7 +547,7 @@ public class ChatController {
 
     @Operation(summary = "删除 skill 目录（危险操作）")
     @DeleteMapping("/tools/skill/dir")
-    @RequiresPermission(AuthConstants.PERM_TOOL_USE)
+    @RequiresPermission(AuthConstants.PERM_CHAT_MANAGE)
     public Result<Void> deleteSkillDir(@RequestParam String dir) throws java.io.IOException {
         skillFileService.deleteSkillDir(dir);
         return Result.success();
@@ -536,7 +557,7 @@ public class ChatController {
 
     @Operation(summary = "将磁盘 skill 目录导入为 ToolConfig DB 记录（同名时跳过，并返回 duplicated=true）")
     @PostMapping("/tools/skill/import")
-    @RequiresPermission(AuthConstants.PERM_TOOL_USE)
+    @RequiresPermission(AuthConstants.PERM_CHAT_MANAGE)
     public Result<Map<String, Object>> importSkill(@RequestBody Map<String, String> body) throws java.io.IOException {
         String dir = body.get("dir");
         String displayName = body.get("name");  // 可选：覆盖数据库工具名

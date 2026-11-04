@@ -5,6 +5,7 @@ import com.wgh.rag.auth.security.PermissionAspect;
 import com.wgh.rag.common.exception.BusinessException;
 import com.wgh.rag.common.security.LoginUser;
 import com.wgh.rag.common.security.RequiresPermission;
+import com.wgh.rag.tool.entity.ToolConfig;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.reflect.MethodSignature;
 import org.junit.jupiter.api.AfterEach;
@@ -12,6 +13,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.core.annotation.AnnotationUtils;
 
 import java.lang.reflect.Method;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -83,12 +86,38 @@ class AdminEndpointPermissionTest {
         assertMethodPermission(ChatController.class, "pageWindows", AuthConstants.PERM_CHAT_MANAGE,
                 Long.class, Long.class, String.class);
         assertMethodPermission(ChatController.class, "deleteWindow", AuthConstants.PERM_CHAT_MANAGE, Long.class);
-        assertMethodPermission(ChatController.class, "createTool", AuthConstants.PERM_TOOL_USE, com.wgh.rag.tool.entity.ToolConfig.class);
+        assertMethodPermission(ChatController.class, "createTool", AuthConstants.PERM_CHAT_MANAGE, com.wgh.rag.tool.entity.ToolConfig.class);
         assertMethodPermission(WorkflowController.class, "delete", AuthConstants.PERM_WORKFLOW_EDIT, Long.class);
         assertMethodPermission(WorkflowController.class, "run", AuthConstants.PERM_WORKFLOW_USE,
                 Long.class, java.util.Map.class);
         assertMethodPermission(PromptTemplateController.class, "delete", AuthConstants.PERM_PROMPT_EDIT, Long.class);
         assertMethodPermission(MultiAgentController.class, "deleteCrew", AuthConstants.PERM_AGENT_MANAGE, Long.class);
+    }
+
+    @Test
+    void viewerCannotSeeToolExecutorConfig() {
+        loginAs("viewer", Set.of(AuthConstants.PERM_TOOL_USE));
+        List<ToolConfig> tools = new ArrayList<>(List.of(toolWithExecutorConfig()));
+
+        ChatController.maskExecutorConfig(tools);
+
+        assertThat(tools.get(0).getExecutorConfig()).isNull();
+    }
+
+    @Test
+    void adminCanSeeToolExecutorConfig() {
+        loginAs("admin", Set.of(AuthConstants.PERM_CHAT_MANAGE));
+        List<ToolConfig> tools = new ArrayList<>(List.of(toolWithExecutorConfig()));
+
+        ChatController.maskExecutorConfig(tools);
+
+        assertThat(tools.get(0).getExecutorConfig()).isNotNull();
+    }
+
+    private ToolConfig toolWithExecutorConfig() {
+        ToolConfig tool = new ToolConfig();
+        tool.setExecutorConfig("{\"url\":\"http://internal.example.com\"}");
+        return tool;
     }
 
     private void assertClassPermission(Class<?> type, String expected) {
