@@ -4,6 +4,7 @@ import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 import com.wgh.rag.tool.executor.HttpToolExecutor;
+import com.wgh.rag.tool.security.SsrfGuard;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.data.message.ToolExecutionResultMessage;
 import org.junit.jupiter.api.AfterEach;
@@ -40,7 +41,9 @@ class HttpToolExecutorTest {
 
     @BeforeEach
     void setUp() throws IOException {
-        executor = new HttpToolExecutor();
+        // 测试环境仅把本机 mock 服务加入管理员受信白名单，其余私网/元数据地址仍按默认策略拦截
+        executor = new HttpToolExecutor(new SsrfGuard(
+                false, "localhost,127.0.0.1", SsrfGuard.DEFAULT_MAX_REDIRECTS, SsrfGuard.DEFAULT_MAX_RESPONSE_BYTES));
         startMockServer();
     }
 
@@ -56,6 +59,16 @@ class HttpToolExecutorTest {
         server.createContext("/api/simulate-error", new ErrorHandler());
         server.createContext("/api/simulate-timeout", new SlowHandler(12000)); // 超时触发
         server.createContext("/api/simulate-long-response", new LongResponseHandler());
+        server.createContext("/api/redirect-to-metadata", exchange -> {
+            exchange.getResponseHeaders().add("Location", "http://169.254.169.254/latest/meta-data/");
+            exchange.sendResponseHeaders(302, -1);
+            exchange.close();
+        });
+        server.createContext("/api/redirect-to-local", exchange -> {
+            exchange.getResponseHeaders().add("Location", "/api/weather");
+            exchange.sendResponseHeaders(302, -1);
+            exchange.close();
+        });
         server.start();
         port = server.getAddress().getPort();
     }
@@ -265,6 +278,70 @@ class HttpToolExecutorTest {
 
             assertThat(result.text()).hasSizeLessThanOrEqualTo(4100); // 4000 + "...[truncated]" 约 4012
             assertThat(result.text()).contains("truncated");
+        }
+    }
+
+    @Nested
+    @DisplayName("SSRF 防护")
+    class SsrfProtection {
+
+        /** 云元数据地址被拒绝，不会真正发起请求 */
+        @Test
+        @DisplayName("169.254.169.254 元数据地址被拒绝")
+        void execute_metadataAddress_blocked() {
+            Map<String, Object> config = Map.of(
+                    "url", "http://169.254.169.254/latest/meta-data/",
+                    "method", "GET"
+            );
+
+            ToolExecutionResultMessage result = executor.execute(config, buildRequest("{}"));
+
+            assertThat(result.text()).startsWith("Error:");
+            assertThat(result.text()).contains("SsrfBlockedException");
+        }
+
+        /** 非 http/https 协议被拒绝 */
+        @Test
+        @DisplayName("file:// 协议被拒绝")
+        void execute_fileScheme_blocked() {
+            Map<String, Object> config = Map.of(
+                    "url", "file:///etc/passwd",
+                    "method", "GET"
+            );
+
+            ToolExecutionResultMessage result = executor.execute(config, buildRequest("{}"));
+
+            assertThat(result.text()).startsWith("Error:");
+            assertThat(result.text()).contains("仅允许 http/https");
+        }
+
+        /** 30x 跳转到元数据地址时，第二跳被重新校验并拒绝 */
+        @Test
+        @DisplayName("302 跳转到内网元数据地址被拒绝")
+        void execute_redirectToMetadata_blocked() {
+            Map<String, Object> config = Map.of(
+                    "url", "http://localhost:" + port + "/api/redirect-to-metadata",
+                    "method", "GET"
+            );
+
+            ToolExecutionResultMessage result = executor.execute(config, buildRequest("{}"));
+
+            assertThat(result.text()).startsWith("Error:");
+            assertThat(result.text()).contains("SsrfBlockedException");
+        }
+
+        /** 正常同站跳转（受信范围内）可跟随 */
+        @Test
+        @DisplayName("受信范围内的 302 跳转可正常跟随")
+        void execute_redirectToAllowed_followed() {
+            Map<String, Object> config = Map.of(
+                    "url", "http://localhost:" + port + "/api/redirect-to-local",
+                    "method", "GET"
+            );
+
+            ToolExecutionResultMessage result = executor.execute(config, buildRequest("{}"));
+
+            assertThat(result.text()).contains("sunny");
         }
     }
 
