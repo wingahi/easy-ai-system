@@ -199,7 +199,7 @@ import { ref, reactive, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ArrowLeft, Loading, Tools, VideoPlay } from '@element-plus/icons-vue'
-import { marked } from 'marked'
+import { renderMarkdown } from '../../utils/markdown'
 import {
   multiAgentCrewList, multiAgentRunState, multiAgentCreateRun, multiAgentCancelRun,
   streamMultiAgentRun, streamMultiAgentHitl
@@ -209,8 +209,6 @@ const route = useRoute()
 
 const HISTORY_KEY = 'wgh_multi_agent_history'
 const PALETTE = ['#409eff', '#67c23a', '#e6a23c', '#f56c6c', '#909399', '#9254de', '#13c2c2', '#eb2f96']
-
-marked.setOptions({ breaks: true })
 
 const crews = ref([])
 const selectedCrewId = ref(route.query.crewId ? Number(route.query.crewId) : null)
@@ -307,8 +305,6 @@ const agentColor = (agentId) => agentMeta.value[agentId]?.color || '#909399'
 const safeParse = (json) => {
   try { return json ? JSON.parse(json) : null } catch { return null }
 }
-
-const renderMarkdown = (text) => marked.parse(text || '', { async: false })
 
 const formatTime = (ts) => {
   if (!ts) return ''

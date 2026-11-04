@@ -18,7 +18,7 @@
         <div v-for="(m, i) in messages" :key="i" class="swf-msg" :class="m.role === 'USER' ? 'is-user' : 'is-ai'">
           <div class="swf-bubble">
             <div v-if="m.role === 'USER'" class="swf-text">{{ m.content }}</div>
-            <div v-else class="swf-md" v-html="renderMd(m.content)"></div>
+            <div v-else class="swf-md" v-html="renderMarkdown(m.content)"></div>
           </div>
         </div>
         <div v-if="streaming" class="swf-msg is-ai">
@@ -63,7 +63,7 @@ import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Promotion, Loading } from '@element-plus/icons-vue'
-import { marked } from 'marked'
+import { renderMarkdown } from '../../utils/markdown'
 import WorkflowRunPanel from '../../components/WorkflowRunPanel.vue'
 import {
   workflowShareInfo, streamWorkflowShareRun, workflowShareRunState,
@@ -86,8 +86,6 @@ const confirming = ref(false)
 let streamer = null
 let pollTimer = null
 let pollAbort = null
-
-const renderMd = (text) => marked.parse(text || '')
 
 // ===== 生命周期：加载元信息 + 恢复上次运行 =====
 onMounted(async () => {

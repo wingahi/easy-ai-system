@@ -112,7 +112,7 @@ import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Promotion, Plus, Delete, Loading } from '@element-plus/icons-vue'
-import { marked } from 'marked'
+import { renderMarkdown } from '../../utils/markdown'
 import AgentPlanTree from '../../components/AgentPlanTree.vue'
 import WorkflowRunPanel from '../../components/WorkflowRunPanel.vue'
 import {
@@ -204,8 +204,6 @@ const statusInfo = computed(() => {
 
 // 分享页已要求登录：会话归属取当前登录用户名，不再使用匿名 sessionKey
 const currentSessionId = ref(null)
-
-marked.setOptions({ breaks: true })
 
 const load = async () => {
   try {
@@ -793,9 +791,6 @@ const send = async () => {
 }
 
 const scroll = () => nextTick(() => { if (messagesRef.value) messagesRef.value.scrollTop = messagesRef.value.scrollHeight })
-// marked v14 默认异步返回 Promise，需显式同步解析供 v-html 使用
-const renderMarkdown = (t) => marked.parse(t || '', { async: false })
-
 const safeParseSources = (json) => {
   try { return JSON.parse(json) || [] } catch { return [] }
 }

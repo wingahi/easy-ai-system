@@ -263,7 +263,7 @@ import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft, Link, Promotion, Plus, Document, Loading, Tools, Delete, Connection } from '@element-plus/icons-vue'
-import { marked } from 'marked'
+import { renderMarkdown } from '../../utils/markdown'
 import { windowGet, streamChatApi, windowMessages, windowSessions, windowCreateSession, windowDeleteSession,
   agentGetPlanState, agentCancelPlan, agentRetryStep, agentSkipStep, agentGetPlanBySession,
   chatWorkflowState, streamChatWorkflowHitl, chatWorkflowCancel,
@@ -374,8 +374,6 @@ const historyPageSize = 20
 const historyTotal = ref(0)
 const historyLoading = ref(false)
 const noMoreHistory = ref(false)
-
-marked.setOptions({ breaks: true })
 
 const parseKbs = (json) => {
   try { return JSON.parse(json || '[]') } catch { return [] }
@@ -948,9 +946,6 @@ const handleScroll = () => {
     loadMoreHistory()
   }
 }
-
-// marked v14 默认异步返回 Promise，需显式同步解析供 v-html 使用
-const renderMarkdown = (text) => marked.parse(text || '', { async: false })
 
 // 复制到剪贴板：优先 navigator.clipboard，降级为 textarea + execCommand（适配非 HTTPS/IP 访问）
 const copyText = async (text) => {

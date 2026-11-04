@@ -116,7 +116,7 @@ import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Promotion, Plus, Delete } from '@element-plus/icons-vue'
-import { marked } from 'marked'
+import { renderMarkdown } from '../../utils/markdown'
 import {
   publicShareInfo, publicShareUnlock, publicShareSessions, publicShareCreateSession,
   publicShareDeleteSession, publicShareMessages, publicShareKbSearch, streamPublicShareChat,
@@ -151,8 +151,6 @@ let streamer = null
 const kbQuery = ref('')
 const kbResults = ref([])
 const kbLoading = ref(false)
-
-marked.setOptions({ breaks: true })
 
 const mode = computed(() => info.value?.mode || 'chat')
 const readOnly = computed(() => !!info.value?.readOnly)
@@ -321,7 +319,7 @@ const kbSearch = async () => {
 const scroll = () => nextTick(() => {
   if (messagesRef.value) messagesRef.value.scrollTop = messagesRef.value.scrollHeight
 })
-const renderMarkdown = (t) => marked.parse(t || '', { async: false })
+
 const safeParseSources = (json) => { try { return JSON.parse(json) || [] } catch { return [] } }
 const dedupSources = (list) => {
   if (!Array.isArray(list)) return []
