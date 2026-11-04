@@ -9,8 +9,14 @@ import com.wgh.rag.agent.mapper.AgentPlanMapper;
 import com.wgh.rag.agent.mapper.AgentStepMapper;
 import com.wgh.rag.agent.service.AgentOrchestrator;
 import com.wgh.rag.auth.constant.AuthConstants;
+import com.wgh.rag.chat.service.ChatWindowService;
+import com.wgh.rag.common.constant.RoleCodes;
+import com.wgh.rag.common.exception.BusinessException;
 import com.wgh.rag.common.result.Result;
+import com.wgh.rag.common.result.ResultCode;
+import com.wgh.rag.common.security.LoginUser;
 import com.wgh.rag.common.security.RequiresPermission;
+import com.wgh.rag.common.security.SecurityUtils;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
@@ -35,12 +41,14 @@ public class AgentController {
     private final AgentStepMapper stepMapper;
     private final AgentProperties agentProperties;
     private final com.wgh.rag.chat.service.RagChatService ragChatService;
+    private final ChatWindowService chatWindowService;
 
     /** 查询 plan 当前状态（刷新页面恢复面板用）。 */
     @GetMapping("/plans/{planId}/state")
     public Result<Map<String, Object>> getPlanState(@PathVariable Long planId) {
         AgentPlan plan = planMapper.selectById(planId);
         if (plan == null) return Result.fail("Plan 不存在");
+        assertPlanAccessible(plan);
 
         List<AgentStep> steps = stepMapper.selectList(
                 new LambdaQueryWrapper<AgentStep>()
@@ -90,6 +98,7 @@ public class AgentController {
 
         AgentPlan plan = planMapper.selectById(step.getPlanId());
         if (plan == null) return Result.fail("Plan 不存在");
+        assertPlanAccessible(plan);
 
         String userInput = body != null ? body.getOrDefault("userInput", "") : "";
         double threshold = planMapper.selectById(plan.getId()) != null
@@ -117,8 +126,9 @@ public class AgentController {
     /** 取消整个计划。 */
     @PostMapping("/plans/{planId}/cancel")
     public Result<Map<String, Object>> cancel(@PathVariable Long planId) {
-        agentOrchestrator.cancel(planId, null);
         AgentPlan plan = planMapper.selectById(planId);
+        assertPlanAccessible(plan);
+        agentOrchestrator.cancel(planId, null);
         Map<String, Object> resp = new HashMap<>();
         resp.put("planId", planId);
         resp.put("status", plan != null ? plan.getStatus() : "CANCELLED");
@@ -132,6 +142,7 @@ public class AgentController {
         if (step == null) return Result.fail("Step 不存在");
 
         AgentPlan plan = planMapper.selectById(step.getPlanId());
+        assertPlanAccessible(plan);
         AgentStepResult result = agentOrchestrator.retryStep(
                 plan.getId(), step.getStepId(),
                 agentProperties.getDefaultReflectionThreshold(),
@@ -151,6 +162,7 @@ public class AgentController {
     public Result<Map<String, Object>> skipStep(@PathVariable Long stepId) {
         AgentStep step = stepMapper.selectById(stepId);
         if (step == null) return Result.fail("Step 不存在");
+        assertPlanAccessible(planMapper.selectById(step.getPlanId()));
         agentOrchestrator.skipStep(step.getPlanId(), step.getStepId(), null);
 
         Map<String, Object> resp = new HashMap<>();
@@ -170,6 +182,7 @@ public class AgentController {
                         .orderByDesc(AgentPlan::getId)
                         .last("LIMIT 1"));
         if (plan == null) return Result.success(null);
+        assertPlanAccessible(plan);
 
         List<AgentStep> steps = stepMapper.selectList(
                 new LambdaQueryWrapper<AgentStep>()
@@ -203,5 +216,28 @@ public class AgentController {
         state.put("currentStepIndex", plan.getCurrentStepIndex());
         state.put("createTime", plan.getCreateTime());
         return Result.success(state);
+    }
+
+    /**
+     * 计划归属校验：有会话时按会话归属（窗口 + 用户）校验，
+     * 无会话的历史计划按创建人匹配，无归属记录仅管理员可访问。
+     */
+    private void assertPlanAccessible(AgentPlan plan) {
+        if (plan == null) return;
+        if (plan.getSessionId() != null && plan.getChatWindowId() != null) {
+            chatWindowService.getOwnedSession(
+                    plan.getChatWindowId(), plan.getSessionId(), SecurityUtils.currentUsername());
+            return;
+        }
+        String username = SecurityUtils.currentUsername();
+        if (username.equals(plan.getCreateBy()) || isAdmin()) {
+            return;
+        }
+        throw new BusinessException(ResultCode.PERMISSION_DENIED, "无权访问该计划");
+    }
+
+    private boolean isAdmin() {
+        LoginUser user = LoginUser.get();
+        return user != null && user.getRoles() != null && user.getRoles().contains(RoleCodes.ADMIN);
     }
 }

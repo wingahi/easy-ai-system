@@ -2,6 +2,7 @@ package com.wgh.rag.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wgh.rag.auth.constant.AuthConstants;
+import com.wgh.rag.controller.support.RunAccessGuard;
 import com.wgh.rag.chat.service.ChatImageService;
 import com.wgh.rag.chat.service.ChatWindowService;
 import com.wgh.rag.chat.service.ChatWorkflowService;
@@ -55,6 +56,7 @@ public class ChatController {
     private final ToolConfigService toolConfigService;
     private final SkillFileService skillFileService;
     private final ToolExecutionEngine toolExecutionEngine;
+    private final RunAccessGuard runAccessGuard;
 
     // ===== 管理端：聊天窗口 =====
 
@@ -285,7 +287,7 @@ public class ChatController {
     public Result<Map<String, Object>> workflowState(
             @PathVariable Long windowId, @PathVariable Long sessionId) {
         windowService.getById(windowId);
-        windowService.getOwnedSession(windowId, sessionId, "default_user");
+        windowService.getOwnedSession(windowId, sessionId, currentUsername());
         return Result.success(chatWorkflowService.getSessionRunState(sessionId));
     }
 
@@ -297,9 +299,10 @@ public class ChatController {
             @PathVariable Long runId,
             @RequestBody(required = false) Map<String, Object> params) {
         windowService.getById(windowId);
+        runAccessGuard.assertAccessible(runId);
         Long sessionId = parseSessionId(params);
         if (sessionId != null) {
-            windowService.getOwnedSession(windowId, sessionId, "default_user");
+            windowService.getOwnedSession(windowId, sessionId, currentUsername());
         }
         return chatWorkflowService.hitlConfirm(runId, sessionId, extractUserInput(params), false);
     }
@@ -308,6 +311,7 @@ public class ChatController {
     @PostMapping("/windows/{windowId}/workflow-runs/{runId}/cancel")
     public Result<Void> workflowCancel(@PathVariable Long windowId, @PathVariable Long runId) {
         windowService.getById(windowId);
+        runAccessGuard.assertAccessible(runId);
         workflowService.cancel(runId);
         return Result.success();
     }
@@ -532,6 +536,7 @@ public class ChatController {
 
     @Operation(summary = "将磁盘 skill 目录导入为 ToolConfig DB 记录（同名时跳过，并返回 duplicated=true）")
     @PostMapping("/tools/skill/import")
+    @RequiresPermission(AuthConstants.PERM_TOOL_USE)
     public Result<Map<String, Object>> importSkill(@RequestBody Map<String, String> body) throws java.io.IOException {
         String dir = body.get("dir");
         String displayName = body.get("name");  // 可选：覆盖数据库工具名

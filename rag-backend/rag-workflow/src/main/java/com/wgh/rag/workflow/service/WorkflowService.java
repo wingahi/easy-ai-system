@@ -8,6 +8,7 @@ import com.wgh.rag.common.event.DomainEventPublisher;
 import com.wgh.rag.common.exception.BusinessException;
 import com.wgh.rag.common.result.PageResult;
 import com.wgh.rag.common.result.ResultCode;
+import com.wgh.rag.common.security.SecurityUtils;
 import com.wgh.rag.workflow.constant.WorkflowConstants;
 import com.wgh.rag.workflow.constant.WorkflowEvents;
 import com.wgh.rag.workflow.dto.RunContext;
@@ -355,6 +356,7 @@ public class WorkflowService {
         run.setWorkflowVersion(wf.getVersion());
         run.setInputText(input == null ? "" : input);
         run.setStatus(WorkflowConstants.STATUS_RUNNING);
+        run.setCreateBy(SecurityUtils.currentUsername());
         run.setGraphSnapshot(wf.getGraphJson());
         run.setExecutedNodes(0);
         run.setTotalNodes(graph.getNodes().size());

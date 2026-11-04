@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.wgh.rag.auth.constant.AuthConstants;
+import com.wgh.rag.controller.support.RunAccessGuard;
 import com.wgh.rag.common.result.PageResult;
 import com.wgh.rag.common.result.Result;
 import com.wgh.rag.common.security.RequiresPermission;
@@ -38,6 +39,7 @@ public class WorkflowController {
     private final WorkflowTemplateRegistry templateRegistry;
     private final LlmModelService llmModelService;
     private final ObjectMapper objectMapper;
+    private final RunAccessGuard runAccessGuard;
 
     // ==================== 定义 CRUD ====================
 
@@ -205,6 +207,7 @@ public class WorkflowController {
     @GetMapping("/runs/{runId}/state")
     @RequiresPermission(AuthConstants.PERM_WORKFLOW_USE)
     public Result<Map<String, Object>> runState(@PathVariable Long runId) {
+        assertRunAccessible(runId);
         return Result.success(workflowService.getRunState(runId));
     }
 
@@ -213,6 +216,7 @@ public class WorkflowController {
     @RequiresPermission(AuthConstants.PERM_WORKFLOW_USE)
     public SseEmitter hitlConfirm(@PathVariable Long runId,
                                   @RequestBody(required = false) Map<String, Object> body) {
+        assertRunAccessible(runId);
         String userInput = body != null && body.get("userInput") != null
                 ? String.valueOf(body.get("userInput")) : "";
         return workflowService.hitlConfirm(runId, userInput);
@@ -222,6 +226,7 @@ public class WorkflowController {
     @PostMapping("/runs/{runId}/cancel")
     @RequiresPermission(AuthConstants.PERM_WORKFLOW_USE)
     public Result<Void> cancel(@PathVariable Long runId) {
+        assertRunAccessible(runId);
         workflowService.cancel(runId);
         return Result.success();
     }
@@ -240,6 +245,7 @@ public class WorkflowController {
     @GetMapping("/runs/{runId}/nodes")
     @RequiresPermission(AuthConstants.PERM_WORKFLOW_USE)
     public Result<List<Map<String, Object>>> nodeRuns(@PathVariable Long runId) {
+        assertRunAccessible(runId);
         return Result.success(workflowService.listNodeRuns(runId));
     }
 
@@ -315,5 +321,11 @@ public class WorkflowController {
         workflowService.assertRunOfWorkflow(wf.getId(), runId);
         workflowService.cancel(runId);
         return Result.success();
+    }
+
+    // ==================== 登录链路运行态归属校验 ====================
+
+    private void assertRunAccessible(Long runId) {
+        runAccessGuard.assertAccessible(runId);
     }
 }
