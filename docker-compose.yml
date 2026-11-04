@@ -16,8 +16,8 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
       # 首次初始化（数据卷为空）时按文件名顺序执行：扩展/建表 → 种子数据
-      - ./rag-backend/sql/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
-      - ./rag-backend/sql/data.sql:/docker-entrypoint-initdb.d/02-data.sql:ro
+      - ./rag-backend/sql/schema/01-schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./rag-backend/sql/seed/02-data.sql:/docker-entrypoint-initdb.d/02-data.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
       interval: 10s
