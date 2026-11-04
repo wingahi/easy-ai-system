@@ -1220,3 +1220,32 @@ CREATE TABLE IF NOT EXISTS wgh_api_call_log (
 COMMENT ON TABLE wgh_api_call_log IS '开放 API 调用日志（谁、接口、状态码、耗时）';
 CREATE INDEX IF NOT EXISTS idx_api_call_log_key ON wgh_api_call_log(api_key_id, create_time);
 
+-- ============ 向量表 HNSW 索引（pgvector >= 0.5.0） ============
+-- 知识库向量表名为动态表（wgh_knowledge_base.collection_name，形如 wgh_kb_<毫秒>），
+-- 表由 PgVectorEmbeddingStore 首次建表时创建，无法在上方静态 DDL 中声明索引。
+-- 应用侧在知识库建表/入库时会幂等创建 HNSW 索引；本块用于在已有库上重跑 schema.sql 时一次性补齐，
+-- 并覆盖自动建表的语义缓存向量表。索引名规则需与 VectorStoreService#hnswIndexName 保持一致（<表名>_hnsw_idx）。
+DO $$
+DECLARE
+  v_table TEXT;
+BEGIN
+  IF to_regclass('wgh_knowledge_base') IS NOT NULL THEN
+    FOR v_table IN
+      SELECT collection_name FROM wgh_knowledge_base
+      WHERE collection_name IS NOT NULL AND collection_name <> ''
+    LOOP
+      IF to_regclass(v_table) IS NOT NULL THEN
+        EXECUTE format(
+          'CREATE INDEX IF NOT EXISTS %I ON %I USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64)',
+          v_table || '_hnsw_idx', v_table);
+      END IF;
+    END LOOP;
+  END IF;
+
+  IF to_regclass('wgh_semantic_cache_vec') IS NOT NULL THEN
+    EXECUTE 'CREATE INDEX IF NOT EXISTS wgh_semantic_cache_vec_hnsw_idx'
+            || ' ON wgh_semantic_cache_vec USING hnsw (embedding vector_cosine_ops)'
+            || ' WITH (m = 16, ef_construction = 64)';
+  END IF;
+END $$;
+
