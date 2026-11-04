@@ -91,8 +91,14 @@ wgh:
     default-dimension: 1536
     create-table: true
     skip-create-vector-extension: ${WGH_PGVECTOR_SKIP_EXT:false}   # DB 侧没装 pgvector 时设为 true，由 DBA 预先执行 CREATE EXTENSION vector
-    use-index: false                                              # >10万条数据时开启 IVFFlat
+    # LangChain4j 内置 IVFFlat 开关：本项目统一用下面的 HNSW，保持 false 避免双 ANN 索引
+    use-index: false
     index-list-size: 100
+    # HNSW 索引（pgvector >= 0.5.0）：知识库建表/入库时幂等创建；历史表见 schema.sql 末尾补建块
+    use-hnsw-index: ${WGH_PGVECTOR_HNSW:true}
+    hnsw-m: 16                                                    # 每节点最大邻居数（越大召回越高、内存越大）
+    hnsw-ef-construction: 64                                      # 构建候选列表（越大建索引越慢、质量越好）
+    store-cache-max-size: 64                                      # EmbeddingStore 句柄进程内 LRU 上限（按 表名+维度）
     default-table-name: rag_vector_store
     connect-on-startup: true
     allow-fallback-to-in-memory: ${WGH_PGVECTOR_FALLBACK:false}

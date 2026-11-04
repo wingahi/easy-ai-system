@@ -13,7 +13,12 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import javax.sql.DataSource;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 向量存储服务 - PostgreSQL PGVector 实现（对外只暴露 {@link VectorStorePort} 契约）
@@ -27,12 +32,40 @@ public class VectorStoreService implements VectorStorePort {
     private final PgVectorProperties pgProps;
     private final ModelCacheManager modelCacheManager;
 
+    /**
+     * EmbeddingStore 句柄进程内缓存（LRU，上限 storeCacheMaxSize）。
+     * <p>
+     * key = 表名 + '#' + 维度：知识库与 embedding 模型一一绑定，模型切换会带来维度变化，
+     * 因此维度参与 key 即可隔离不同维度表；同维度的不同模型共用句柄是安全的
+     * （句柄只持有 DataSource/表名/维度，不绑定具体模型）。
+     * <p>
+     * 句柄本身无状态（每次检索都直接查库），所以写入/删除不需要失效缓存；
+     * 仅"删表/换维度"这类表身份变化需要失效（见 {@link #dropCollection}）。
+     */
+    private final Map<String, EmbeddingStore<TextSegment>> storeCache =
+            Collections.synchronizedMap(new LinkedHashMap<>(16, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<String, EmbeddingStore<TextSegment>> eldest) {
+                    int max = pgProps.getStoreCacheMaxSize() != null ? pgProps.getStoreCacheMaxSize() : 64;
+                    return size() > max;
+                }
+            });
+
+    /** 已确保 HNSW 索引存在的表名（进程内去重，避免每次检索重复 DDL） */
+    private final Set<String> hnswIndexedTables = ConcurrentHashMap.newKeySet();
+
     @Override
     public EmbeddingStore<TextSegment> createEmbeddingStore(String tableName, int dimension) {
-        log.info("▶ 创建 PgVectorEmbeddingStore: table={}, dimension={}, createTable={}, useIndex={}",
+        String cacheKey = cacheKey(tableName, dimension);
+        EmbeddingStore<TextSegment> cached = storeCache.get(cacheKey);
+        if (cached != null) {
+            return cached;
+        }
+
+        log.debug("构建 PgVectorEmbeddingStore: table={}, dimension={}, createTable={}, useIndex={}",
                 tableName, dimension, pgProps.getCreateTable(), pgProps.getUseIndex());
 
-        return PgVectorEmbeddingStore.datasourceBuilder()
+        EmbeddingStore<TextSegment> store = PgVectorEmbeddingStore.datasourceBuilder()
                 .datasource(dataSource)
                 .table(tableName)
                 .dimension(dimension)
@@ -42,12 +75,18 @@ public class VectorStoreService implements VectorStorePort {
                 .indexListSize(Boolean.TRUE.equals(pgProps.getUseIndex()) ? pgProps.getIndexListSize() : null)
                 // 不传 metadataStorageConfig — 用默认 COMBINED_JSON（无需 metadata 列定义）
                 .build();
+        storeCache.put(cacheKey, store);
+        return store;
     }
 
     @Override
     public void ensureCollection(String tableName, Integer dimension) {
-        log.debug("ensureCollection({}, {}) — PgVectorEmbeddingStore.createTable=true 时会自动建表",
-                tableName, dimension);
+        if (tableName == null) return;
+        int dim = dimension != null ? dimension : pgProps.getDefaultDimension();
+        // 借用 PgVectorEmbeddingStore 的建表能力（CREATE TABLE IF NOT EXISTS）
+        createEmbeddingStore(tableName, dim);
+        ensureHnswIndex(tableName);
+        log.debug("ensureCollection({}, {}) 完成", tableName, dim);
     }
 
     @Override
@@ -55,6 +94,7 @@ public class VectorStoreService implements VectorStorePort {
         try (var conn = dataSource.getConnection();
              var stmt = conn.createStatement()) {
             stmt.execute("DROP TABLE IF EXISTS " + tableName);
+            recallStoredHandle(tableName);
             log.info("✓ 向量表 {} 已删除", tableName);
         } catch (Exception e) {
             log.warn("删除向量表 {} 失败: {}", tableName, e.getMessage());
@@ -131,13 +171,12 @@ public class VectorStoreService implements VectorStorePort {
                               List<TextSegment> segments,
                               Long embeddingModelId,
                               Integer dimension) {
-        log.info("▶ 向量化入库: table={}, segments={}, embeddingModelId={}, dimension={}",
-                tableName, segments.size(), embeddingModelId, dimension);
-
         if (segments == null || segments.isEmpty()) {
             log.warn("segments 为空，跳过向量化");
             return;
         }
+        log.info("▶ 向量化入库: table={}, segments={}, embeddingModelId={}, dimension={}",
+                tableName, segments.size(), embeddingModelId, dimension);
 
         EmbeddingModel embeddingModel = modelCacheManager.getEmbeddingModel(embeddingModelId);
         if (embeddingModel == null) {
@@ -148,7 +187,54 @@ public class VectorStoreService implements VectorStorePort {
         log.info("✓ 生成 {} 个向量", embeddings.size());
 
         EmbeddingStore<TextSegment> store = createEmbeddingStore(tableName, dimension);
+        // 空表首次建索引代价极低；历史表若已存在，由 schema.sql 补建或人工 SQL 处理，避免请求线程执行长 DDL
+        ensureHnswIndex(tableName);
         store.addAll(embeddings, segments);
         log.info("✓ 已写入 pgvector 表 {}", tableName);
+    }
+
+    /**
+     * 幂等创建 HNSW 索引（cosine 距离）。
+     * <p>
+     * pgvector &gt;= 0.5.0 才支持 HNSW；扩展缺失/权限不足时只告警，不影响检索主流程。
+     * 进程内按表名去重，同一张表每个进程最多执行一次 DDL。
+     */
+    void ensureHnswIndex(String tableName) {
+        if (tableName == null || !Boolean.TRUE.equals(pgProps.getUseHnswIndex())) return;
+        if (!hnswIndexedTables.add(tableName)) return;
+
+        int m = pgProps.getHnswM() != null ? pgProps.getHnswM() : 16;
+        int efConstruction = pgProps.getHnswEfConstruction() != null ? pgProps.getHnswEfConstruction() : 64;
+        String sql = "CREATE INDEX IF NOT EXISTS " + hnswIndexName(tableName)
+                + " ON " + tableName
+                + " USING hnsw (embedding vector_cosine_ops)"
+                + " WITH (m = " + m + ", ef_construction = " + efConstruction + ")";
+        try (var conn = dataSource.getConnection();
+             var stmt = conn.createStatement()) {
+            stmt.execute(sql);
+            log.info("✓ HNSW 索引已就绪: table={}, m={}, ef_construction={}", tableName, m, efConstruction);
+        } catch (Exception e) {
+            // 允许后续重试（例如扩容后权限恢复）
+            hnswIndexedTables.remove(tableName);
+            log.warn("创建 HNSW 索引失败（降级为无 ANN 索引检索）: table={}, reason={}", tableName, e.getMessage());
+        }
+    }
+
+    /** 索引名保持 <=63 字节（PostgreSQL 标识符上限），与 schema.sql 补建脚本保持一致 */
+    static String hnswIndexName(String tableName) {
+        return tableName + "_hnsw_idx";
+    }
+
+    private static String cacheKey(String tableName, int dimension) {
+        return tableName + "#" + dimension;
+    }
+
+    /** 删表后移除该表的全部维度句柄（表身份变化，旧句柄不应再被复用） */
+    private void recallStoredHandle(String tableName) {
+        String prefix = tableName + "#";
+        synchronized (storeCache) {
+            storeCache.keySet().removeIf(k -> k.startsWith(prefix));
+        }
+        hnswIndexedTables.remove(tableName);
     }
 }

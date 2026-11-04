@@ -34,7 +34,9 @@ public class PgVectorProperties {
     private Boolean skipCreateVectorExtension = false;
 
     /**
-     * 是否使用 IVFFlat 索引加速查询（大数据量 > 10 万条时建议开启）
+     * LangChain4j 内置 IVFFlat 索引开关（useIndex=true 时其建表逻辑会创建 ivfflat 索引）。
+     * <p>
+     * 本项目统一使用 HNSW（见 {@link #useHnswIndex}），保持 false 以避免同一向量列上出现两套 ANN 索引。
      */
     private Boolean useIndex = false;
 
@@ -42,6 +44,30 @@ public class PgVectorProperties {
      * IVFFlat nlist 数量（useIndex=true 时生效，建议 sqrt(行数) ~ 100-10000）
      */
     private Integer indexListSize = 100;
+
+    /**
+     * 是否在向量表上创建 HNSW 索引（cosine 距离）。
+     * <p>
+     * 知识库建表/入库时按 {@code CREATE INDEX IF NOT EXISTS ... USING hnsw (embedding vector_cosine_ops)}
+     * 幂等创建；已存在的历史表可通过 schema.sql 末尾的补建脚本或人工 SQL 一次性补齐。
+     */
+    private Boolean useHnswIndex = true;
+
+    /**
+     * HNSW 每个节点的最大邻居数（pgvector 默认 16）
+     */
+    private Integer hnswM = 16;
+
+    /**
+     * HNSW 构建时的候选邻居列表大小（越大召回越好、建索引越慢，pgvector 默认 64）
+     */
+    private Integer hnswEfConstruction = 64;
+
+    /**
+     * 进程内 EmbeddingStore 句柄缓存上限（按 表名+维度 维度隔离，LRU 淘汰）。
+     * 句柄本身只持有 DataSource 与表名，内存占用很小；64 足够覆盖常见在建知识库数量。
+     */
+    private Integer storeCacheMaxSize = 64;
 
     /**
      * 默认向量表名（知识库维度不同时会按 kbId 分表）
