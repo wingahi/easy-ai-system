@@ -104,7 +104,7 @@
 | 审计与成本统计 | 已完成 | `@Audit` 异步记录写操作；模型价格表 + 消息成本 / 模型名回填；管理端聚合统计 |
 | 安全整改 | 已完成 | 首登强制改密（`password_must_change`）、审计日志敏感信息脱敏、409 映射、`WGH_INIT_ADMIN_PASSWORD` 注入 |
 | 可观测性（Prometheus + 独立 9090） | 已完成 | `RagMetrics` 业务指标 + `/actuator/prometheus`；管理端口默认 `9090`，业务端口不暴露 `/actuator` |
-| Compose 内置 PostgreSQL(pgvector) | 已完成 | `docker-compose.yml` 内置 `pgvector/pgvector:pg15`，空卷首启执行 `schema.sql` / `data.sql` |
+| Compose 内置 PostgreSQL(pgvector) | 已完成 | `docker-compose.yml` 内置 `pgvector/pgvector:pg15`，空卷首启执行 `schema/01-schema.sql` / `seed/02-data.sql` |
 
 ### 3.5 模型与工程
 
@@ -118,7 +118,7 @@
 | `rag-agent-multi` Controller 迁入 `rag-controller` | 已完成 | `rag-agent-multi` 已无 Controller，`MultiAgentController` 位于 `rag-controller` |
 | 常量统一抽取 | 已完成 | 各模块 `constant` 包；权限码、角色码、状态值、SSE 事件名、存储 key 前缀等改引用常量 |
 | JDK 21 统一 | 已完成 | `maven.compiler.release=21` + Enforcer 强制 JDK 21，CI 与本地一致 |
-| 测试用例与设计文档补全 | 已完成 | JUnit 5 + Mockito；`scripts/` 提供 e2e / 冒烟 / 压测；`docs/test-cases.md`、`docs/design-*.md` 已补齐 |
+| 测试用例与设计文档补全 | 已完成 | JUnit 5 + Mockito；`scripts/` 提供 e2e / 冒烟 / 压测；`docs/testing/test-cases.md`、`docs/design/design-*.md` 已补齐 |
 
 ---
 
@@ -146,11 +146,11 @@ wgh-rag-system/
 │   ├── rag-public-access/        # 分享 / Widget / 开放 API 实现层（无 Controller）
 │   ├── rag-controller/           # REST 层（含 /api/public、/api/open/v1）
 │   ├── rag-app/                  # 启动模块 + application*.yml + 集成测试
-│   ├── sql/                      # schema.sql（37 张表）/ data.sql / init.sql
+│   ├── sql/                      # schema/01-schema.sql（37 张表）/ seed/02-data.sql / migrations/ / init.sql
 │   ├── eval/                     # eval_recall.py（Recall@K）、eval_rag.py（含 LLM Judge）
 │   └── scripts/                  # e2e / 冒烟 / 压测脚本
 ├── rag-frontend/                 # Vue 3 前端（含 public/widget.js）
-└── docs/                         # 设计与测试文档
+└── docs/                         # 设计与测试文档（索引见 docs/README.md）
 ```
 
 关键依赖约束：
@@ -160,7 +160,7 @@ wgh-rag-system/
 - `rag-storage` 仅依赖 `rag-common`，上层业务通过 `FileStorageService` 抽象使用；
 - `rag-auth` 持有用户 / 角色 / 权限实体与 Mapper，供 Controller 的 RBAC 管理接口使用。
 
-更完整的模块依赖与边界说明见 [docs/design-overview.md](docs/design-overview.md) 与 [docs/design-detailed.md](docs/design-detailed.md)。
+更完整的模块依赖与边界说明见 [docs/design/design-overview.md](docs/design/design-overview.md) 与 [docs/design/design-detailed.md](docs/design/design-detailed.md)。
 
 ### 4.2 关键设计
 
@@ -342,14 +342,14 @@ OSS 配置不完整时不阻断启动，仅在真正调用存储操作时返回�
 | `wgh.rag.cache.similarity-threshold` | 0.95 | 语义缓存命中阈值 |
 | `wgh.file.max-single-file-mb` | 50 | 单文件上传 / 解析大小上限 |
 
-> 限流覆盖、可信代理、配额、Agent 与上下文压缩等完整配置与设计说明见 `docs/design-*.md`；接口侧的限流与错误码行为见 [docs/api.md](docs/api.md)。
+> 限流覆盖、可信代理、配额、Agent 与上下文压缩等完整配置与设计说明见 `docs/design/design-*.md`；接口侧的限流与错误码行为见 [docs/api/api.md](docs/api/api.md)。
 > `wgh.public-access.trusted-proxies` 默认空，只信任 TCP 对端；部署在 Nginx / 网关后需显式配置可信 CIDR，**不要配置为 `0.0.0.0/0`**。
 
 ---
 
 ## 7. 接口概览
 
-完整请求体与 SSE 事件协议见 [docs/api.md](docs/api.md)；这里只列分组。
+完整请求体与 SSE 事件协议见 [docs/api/api.md](docs/api/api.md)；这里只列分组。
 
 | 模块 | 前缀 | 说明 |
 |------|------|------|

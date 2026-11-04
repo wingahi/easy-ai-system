@@ -1,7 +1,7 @@
 # 配额模块设计（rag-quota）
 
 > 状态：已完成（分阶段落地）。本文覆盖模块结构、数据表、接口、配置项、调用链与验收标准。
-> 关联用例：[docs/test-cases.md](test-cases.md) 第 14 节。
+> 关联用例：[docs/testing/test-cases.md](../testing/test-cases.md) 第 14 节。
 
 ## 1. 目标与范围
 
@@ -54,7 +54,7 @@
 | enabled | SMALLINT | 是否启用自定义（0/1，禁用时回退全局默认） |
 | remark | VARCHAR(500) | 备注 |
 
-DDL 位于 [rag-backend/sql/schema.sql](../rag-backend/sql/schema.sql)，均为 `CREATE TABLE IF NOT EXISTS` 幂等增量。
+DDL 位于 [rag-backend/sql/schema/01-schema.sql](../../rag-backend/sql/schema/01-schema.sql)，均为 `CREATE TABLE IF NOT EXISTS` 幂等增量。
 「恢复默认」采用逻辑删除；再次保存时通过 `selectAnyByUsername` + `restoreDeleted` 复活原行，避免 username 唯一键冲突。
 
 ## 4. 配置项

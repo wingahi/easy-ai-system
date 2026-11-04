@@ -7,7 +7,7 @@
 | 代码基线 | `main@212e90c` + 工作区当前代码（本次仅只读核对，未执行构建/测试） |
 | 文档定位 | 实现级详细设计，面向开发、测试与代码评审 |
 | 上层文档 | [design-overview.md](design-overview.md) |
-| 接口清单 | [api.md](api.md) |
+| 接口清单 | [api.md](../api/api.md) |
 
 > 本文所有结论均来自当前源码与配置核对；与代码冲突时以代码为准。专项实现的更深说明见 `design-public-access.md`、`quota-design.md`、`design-file-storage.md`、`design-observability.md`、`agent-design.md`、`workflow-design.md`、`multi-agent-detail-design.md`。
 
@@ -662,9 +662,9 @@ SSE：`multi_agent_start`、`agent_start`、`agent_rag`、`agent_tool_call_start
 
 ### 8.5 SQL 组织
 
-- `schema.sql`：全部 DDL、索引、COMMENT，使用 `CREATE TABLE IF NOT EXISTS`、`CREATE INDEX IF NOT EXISTS`；
-- `data.sql`：种子数据（角色、权限、体验账号、内置模板等）与兼容修复，使用幂等 `INSERT ... ON CONFLICT`；
-- `init.sql`：通过 `\ir schema.sql`、`\ir data.sql` 串联；
+- `schema/01-schema.sql`：全部 DDL、索引、COMMENT，使用 `CREATE TABLE IF NOT EXISTS`、`CREATE INDEX IF NOT EXISTS`；
+- `seed/02-data.sql`：种子数据（角色、权限、体验账号、内置模板等）与兼容修复，使用幂等 `INSERT ... ON CONFLICT`；
+- `init.sql`：通过 `\ir schema/01-schema.sql`、`\ir seed/02-data.sql` 串联；
 - 重复执行无 ERROR 是验收标准。
 
 ---
@@ -695,7 +695,7 @@ SSE：`multi_agent_start`、`agent_start`、`agent_rag`、`agent_tool_call_start
 | `OpenApiController` | `/api/open/v1` | 开放 API：聊天、知识库检索、用量 |
 | `ApiKeyAdminController` | `/api/admin/api-keys` | API Key 管理 |
 
-接口明细与请求/响应示例见 [api.md](api.md)；未映射的 `/api/**` 由 `GlobalExceptionHandler` 统一返回 HTTP 404 + `3001`，非 `/api` 路径保持原行为。
+接口明细与请求/响应示例见 [api.md](../api/api.md)；未映射的 `/api/**` 由 `GlobalExceptionHandler` 统一返回 HTTP 404 + `3001`，非 `/api` 路径保持原行为。
 
 ---
 

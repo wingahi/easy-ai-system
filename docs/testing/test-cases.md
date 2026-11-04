@@ -950,7 +950,7 @@
 
 > 实现：`PromptTemplateService` + `PromptTemplateController`（`/api/prompt-templates` 增删改查、`/{id}/render`、`/suggest` 前缀联想）；表 `wgh_prompt_template`；窗口 systemPrompt 支持 `template:{id}` 引用。
 > 前端：`src/components/PromptTemplateInput.vue`（前缀触发/联想过滤/键盘选择/填入/变量填写），配置项存 localStorage（`wgh_prompt_trigger_config`：启用、前缀字符、最大候选数）。
-> 自动化：`PromptTemplateServiceTest`（9 项）+ `PromptTemplateSuggestTest`（6 项，覆盖 name/remark/category 模糊匹配、limit 归一化与上限、无结果、variables 解析回退；rag-chat）；浏览器实测见 `docs/browser-evidence/prompt-prefix-open.png`。
+> 自动化：`PromptTemplateServiceTest`（9 项）+ `PromptTemplateSuggestTest`（6 项，覆盖 name/remark/category 模糊匹配、limit 归一化与上限、无结果、variables 解析回退；rag-chat）；浏览器实测见 `docs/testing/evidence/2026-11-04-29-prompt-prefix-suggest.png`。
 
 | 编号 | 分类 | 前置条件 | 用例 / 步骤 | 预期结果 | 覆盖类型 | 自动化落点 |
 |------|------|---------|------------|---------|---------|-----------|
@@ -1049,7 +1049,7 @@
 
 > 环境：后端 `localhost:8080`、前端 `localhost:5173`、PostgreSQL 16 + pgvector（`docker postgres-with-vector`）。
 > 工具：TRAE-browseruse 子代理（脚本 + 快照 + 网络/控制台采集）。
-> 证据截图统一存放在 `docs/browser-evidence/`（文件名与测试时间一一对应）。
+> 证据截图统一存放在 `docs/testing/evidence/`（文件名与测试时间一一对应）。
 > 说明：后端从干净 HEAD 工作树启动，避免混入其他会话未提交的 auth/quota 改动。
 
 ### 25.1 流程结果

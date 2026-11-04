@@ -6,7 +6,7 @@
 | 更新日期 | 2026-11-03 |
 | 代码基线 | `main@212e90c` + 工作区当前代码（本次仅只读核对） |
 | 文档定位 | 系统级总体设计，面向架构评审、需求评审与新成员入门 |
-| 配套文档 | 详细设计见 [design-detailed.md](design-detailed.md)；接口清单见 [api.md](api.md) |
+| 配套文档 | 详细设计见 [design-detailed.md](design-detailed.md)；接口清单见 [api.md](../api/api.md) |
 
 > 本文按代码实际状态重写，不描述未实现能力。文中“已实现”均可在对应模块源码中定位；专项能力（Agent、工作流、公开访问、存储、可观测性）的深挖文档见 §1.3。
 
@@ -42,18 +42,18 @@ WGH RAG System 是一套面向企业知识库的 RAG 应用平台，核心能力
 | 文档 | 内容 | 与本文关系 |
 | --- | --- | --- |
 | [design-detailed.md](design-detailed.md) | 模块、关键类、认证、配额、公开访问、存储、数据、SSE 等详细设计 | 本文的展开 |
-| [api.md](api.md) | 对外接口清单与示例 | 接口视图 |
+| [api.md](../api/api.md) | 对外接口清单与示例 | 接口视图 |
 | [design-public-access.md](design-public-access.md) | 分享 / Widget / 开放 API | 专项设计 |
 | [quota-design.md](quota-design.md) | 配额模块 | 专项设计 |
-| [design-file-storage.md](design-file-storage.md) | 本地 / 阿里云 OSS 存储抽象 | 专项设计 |
+| [design-file-storage.md](../design-file-storage.md) | 本地 / 阿里云 OSS 存储抽象 | 专项设计 |
 | [design-observability.md](design-observability.md) | 指标、日志、告警 | 专项设计 |
 | [design-document-formats.md](design-document-formats.md) | 文档解析格式 | 专项设计 |
-| [agent-design.md](agent-design.md) | 单 Agent | 专项设计 |
-| [workflow-design.md](workflow-design.md) | 工作流 | 专项设计 |
-| [multi-agent-overall-design.md](multi-agent-overall-design.md) / [multi-agent-detail-design.md](multi-agent-detail-design.md) | 多 Agent | 专项设计 |
-| [design-rag-retrieval-enhancement.md](design-rag-retrieval-enhancement.md) | 混合检索、重排、查询变换、语义缓存 | 专项设计 |
+| [agent-design.md](../agent-design.md) | 单 Agent | 专项设计 |
+| [workflow-design.md](../workflow-design.md) | 工作流 | 专项设计 |
+| [multi-agent-overall-design.md](../multi-agent-overall-design.md) / [multi-agent-detail-design.md](../multi-agent-detail-design.md) | 多 Agent | 专项设计 |
+| [design-rag-retrieval-enhancement.md](../design-rag-retrieval-enhancement.md) | 混合检索、重排、查询变换、语义缓存 | 专项设计 |
 | [design-phase5-platform-features.md](design-phase5-platform-features.md) | 平台化特性阶段记录 | 历史阶段 |
-| [design-pattern-refactoring.md](design-pattern-refactoring.md) | 重构记录 | 历史阶段 |
+| [design-pattern-refactoring.md](../design-pattern-refactoring.md) | 重构记录 | 历史阶段 |
 
 ### 1.4 版本记录
 
@@ -352,7 +352,7 @@ SSE 事件：`start`、`retrieve`、`content`、`sources`、`accuracy`、`metric
 - **逻辑删除**：MyBatis-Plus 全局 `deleted`（0/1），删除操作默认逻辑删除；
 - **布尔约定**：PostgreSQL 列使用 `SMALLINT`，实体 `Boolean` 字段配 `@TableField(typeHandler = BooleanToSmallintTypeHandler.class)`；`LambdaQueryWrapper` 比较使用字面量 `1/0`；
 - **向量**：`EmbeddingStore<TextSegment>` 抽象，默认 pgvector 表 `rag_vector_store`；按 embedding 模型 ID 分组，避免不同维度向量混用；重切/删除文件时同步清理旧向量；
-- **SQL 组织**：`schema.sql`（DDL + 索引 + COMMENT）与 `data.sql`（种子 + 兼容修复）由 `init.sql` 通过 `\ir` 串联，全部幂等可重复执行。
+- **SQL 组织**：`schema/01-schema.sql`（DDL + 索引 + COMMENT）与 `seed/02-data.sql`（种子 + 兼容修复）由 `init.sql` 通过 `\ir` 串联，全部幂等可重复执行。
 
 ---
 

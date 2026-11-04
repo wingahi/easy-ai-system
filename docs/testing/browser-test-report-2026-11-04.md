@@ -152,7 +152,7 @@ default 会话：76 条 → user_identifier=admin
 
 **影响**：长回答/工具链路/Agent 计划执行过程中无法由用户主动终止，交互体验与资源占用不可控。
 
-**证据**：[2026-11-04-49-chat-stop-check.png](browser-evidence/2026-11-04-49-chat-stop-check.png)（`stopControlExists=false`；中断后无错误 toast，说明 AbortController 兜底生效）
+**证据**：[2026-11-04-49-chat-stop-check.png](evidence/2026-11-04-49-chat-stop-check.png)（`stopControlExists=false`；中断后无错误 toast，说明 AbortController 兜底生效）
 
 **建议**：在流式期间将发送按钮切换为「停止生成」，调用现有 `streamer.abort()` / `AbortController`；Agent/工作流执行期间同步暴露「终止计划」入口。
 
@@ -199,7 +199,7 @@ viewer 调用 `/api/admin/roles`、`/api/admin/users` 时返回 `code=1004`，�
 
 ## 7. 证据索引
 
-截图目录：[docs/browser-evidence](browser-evidence)（共 **54** 张，均为本次真实会话产生）
+截图目录：[docs/testing/evidence](evidence)（共 **54** 张，均为本次真实会话产生）
 
 | 用例区间 | 证据文件 |
 |---|---|

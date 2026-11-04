@@ -2,7 +2,7 @@
 
 > 范围：`rag-backend` 全部数据访问链路（MyBatis-Plus、自定义 SQL、pgvector / pg_trgm、schema 与测试基座）。
 > 方法：只读静态盘点（代码、SQL、配置、测试资源），未执行 mvn / npm，未修改任何代码。
-> 关联文档：[overall-design.md](overall-design.md)、[design-detailed.md](design-detailed.md)、[quota-design.md](quota-design.md)、[design-file-storage.md](design-file-storage.md)。
+> 关联文档：[overall-design.md](../overall-design.md)、[design-detailed.md](design-detailed.md)、[quota-design.md](quota-design.md)、[design-file-storage.md](../design-file-storage.md)。
 
 ---
 
@@ -27,11 +27,11 @@
 
 `rag-backend/pom.xml` 共 17 个模块（`rag-common`、`rag-data`、`rag-log`、`rag-auth`、`rag-quota`、`rag-config`、`rag-storage`、`rag-llm`、`rag-kb`、`rag-chat`、`rag-tool`、`rag-agent`、`rag-workflow`、`rag-agent-multi`、`rag-public-access`、`rag-controller`、`rag-app`）。
 
-- `rag-data` 只承载 `BaseEntity`、MyBatis-Plus 配置、类型处理器，**没有仓储层**（[rag-data/pom.xml](../rag-backend/rag-data/pom.xml)）。
+- `rag-data` 只承载 `BaseEntity`、MyBatis-Plus 配置、类型处理器，**没有仓储层**（[rag-data/pom.xml](../../rag-backend/rag-data/pom.xml)）。
 - PostgreSQL 驱动不是集中声明，而是分散在 `rag-config`、`rag-agent`、`rag-agent-multi`、`rag-workflow` 的 pom 中（各自直接依赖 `org.postgresql:postgresql`）。
 - 全仓库**没有** Flyway / Liquibase / JOOQ / R2DBC / Hibernate 依赖（对全部 `pom.xml` 检索无命中）。
-- **没有任何 MyBatis XML Mapper**：`**/*Mapper.xml` 命中 0；但 `application.yml` 仍配置了 `mapper-locations: classpath*:/mapper/**/*.xml`（[application.yml#L44-L46](../rag-backend/rag-app/src/main/resources/application.yml#L44-L46)），属于历史遗留的空配置。
-- 已有可借鉴的抽象先例：`FileStorageService`（local / OSS，按 `@ConditionalOnProperty` 装配，见 [design-file-storage.md](design-file-storage.md)）、`PublicAccessStore` 接口、LangChain4j 的 `EmbeddingStore<TextSegment>`。**说明项目具备"按能力抽象"的工程习惯，只是尚未用于数据库。**
+- **没有任何 MyBatis XML Mapper**：`**/*Mapper.xml` 命中 0；但 `application.yml` 仍配置了 `mapper-locations: classpath*:/mapper/**/*.xml`（[application.yml#L44-L46](../../rag-backend/rag-app/src/main/resources/application.yml#L44-L46)），属于历史遗留的空配置。
+- 已有可借鉴的抽象先例：`FileStorageService`（local / OSS，按 `@ConditionalOnProperty` 装配，见 [design-file-storage.md](../design-file-storage.md)）、`PublicAccessStore` 接口、LangChain4j 的 `EmbeddingStore<TextSegment>`。**说明项目具备"按能力抽象"的工程习惯，只是尚未用于数据库。**
 
 ### 1.2 MyBatis-Plus 使用广度
 
@@ -43,10 +43,10 @@
 | Wrapper | 158 处 `LambdaQueryWrapper` / `UpdateWrapper` 等（不含 import），分布于 40 个文件 | 检索计数 |
 | 自定义 SQL | 仅 8 个 Mapper 使用注解 SQL（`@Select/@Update/@Insert/@Delete`），其余 25 个纯 BaseMapper | `**/mapper/*.java` 检索 |
 | `.last("LIMIT n")` | 28 处 | 检索计数 |
-| 分页方言 | 硬编码 `DbType.POSTGRE_SQL` | [MybatisPlusConfig.java#L19](../rag-backend/rag-data/src/main/java/com/wgh/rag/data/mybatis/MybatisPlusConfig.java#L19) |
+| 分页方言 | 硬编码 `DbType.POSTGRE_SQL` | [MybatisPlusConfig.java#L19](../../rag-backend/rag-data/src/main/java/com/wgh/rag/data/mybatis/MybatisPlusConfig.java#L19) |
 | 布尔列 | 11 个 `@TableField(typeHandler = BooleanToSmallintTypeHandler.class)`，分布于 9 个实体 | `ChatWindow`、`LlmModel`、`ShareLink` 等 |
-| 逻辑删除 | `@TableLogic` + 全局 `logic-delete-field: deleted` | [BaseEntity.java#L33-L38](../rag-backend/rag-data/src/main/java/com/wgh/rag/data/entity/BaseEntity.java#L33-L38)、[application.yml#L56-L61](../rag-backend/rag-app/src/main/resources/application.yml#L56-L61) |
-| ID | `@TableId(type = IdType.AUTO)`，依赖数据库自增 | [BaseEntity.java#L18-L19](../rag-backend/rag-data/src/main/java/com/wgh/rag/data/entity/BaseEntity.java#L18-L19) |
+| 逻辑删除 | `@TableLogic` + 全局 `logic-delete-field: deleted` | [BaseEntity.java#L33-L38](../../rag-backend/rag-data/src/main/java/com/wgh/rag/data/entity/BaseEntity.java#L33-L38)、[application.yml#L56-L61](../../rag-backend/rag-app/src/main/resources/application.yml#L56-L61) |
+| ID | `@TableId(type = IdType.AUTO)`，依赖数据库自增 | [BaseEntity.java#L18-L19](../../rag-backend/rag-data/src/main/java/com/wgh/rag/data/entity/BaseEntity.java#L18-L19) |
 
 **解读**：CRUD 主体已经是"表结构 + 通用 Mapper"模式，换库时这部分主要受**列类型**（`SMALLINT` vs `TINYINT`/`BOOLEAN`）与**自增策略**影响，而不是受 SQL 写法影响。真正不可移植的只有少量自定义 SQL（详见 1.3）。
 
@@ -56,39 +56,39 @@
 
 | 特性 | 位置 | 说明 / 可移植性 |
 |------|------|----------------|
-| `CREATE EXTENSION vector` | [schema.sql#L8](../rag-backend/sql/schema.sql#L8)；[PgVectorConfig.java#L44-L47](../rag-backend/rag-config/src/main/java/com/wgh/rag/config/PgVectorConfig.java#L44-L47) | 启动期强依赖：默认失败即阻断启动，`allow-fallback-to-in-memory=true` 时降级为告警；`skip-create-vector-extension` 只跳过建扩展，不改变依赖本身 |
-| `vector(n)` 列、余弦距离 `<=>`、可选 IVFFlat/HNSW 索引 | 由 `PgVectorEmbeddingStore` 运行时建表（[VectorStoreService.java#L28-L42](../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/VectorStoreService.java#L28-L42)）；配置见 [application.yml#L86-L94](../rag-backend/rag-app/src/main/resources/application.yml#L86-L94) | LangChain4j 内部生成 DDL 与距离算子；表名 `rag_vector_store`、`wgh_semantic_cache_vec` 均为运行时建表，不在 `schema.sql` 中 |
-| `metadata` 为 JSONB，查询用 `metadata->>'fileId'` | [VectorStoreService.java#L79](../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/VectorStoreService.java#L79) | JSONB + `->>` 专用 |
-| `embedding_id` 为 `uuid`，删除用 `?::uuid` | [VectorStoreService.java#L107](../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/VectorStoreService.java#L107) | PG 类型转换 |
-| 直接读 `information_schema.tables`（限定 `table_schema='public'`） | [VectorStoreService.java#L68](../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/VectorStoreService.java#L68)、[#L96](../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/VectorStoreService.java#L96) | schema 概念与目录表均按 PG 假设 |
-| `pg_trgm`：`similarity()`、`%` 运算符、`GIN (text gin_trgm_ops)` | [schema.sql#L10](../rag-backend/sql/schema.sql#L10)；[KeywordSearchService.java#L54-L55](../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/KeywordSearchService.java#L54-L55)、[#L83-L85](../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/KeywordSearchService.java#L83-L85) | 混合检索关键词路；失败时静默降级为纯向量（返回空列表） |
-| 评测侧按 chunk 分页：`(metadata->>'chunkIndex')::int` + `LIMIT/OFFSET` | [RetrievalEvaluationService.java#L205](../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/RetrievalEvaluationService.java#L205)、[#L216-L217](../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/RetrievalEvaluationService.java#L216-L217) | JSONB + 强转 |
-| 语义缓存：向量表 + metadata 过滤 `IsEqualTo("windowId", ...)` | [SemanticCacheService.java#L74-L80](../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/SemanticCacheService.java#L74-L80) | 依赖 LangChain4j metadata filter 与 pgvector 实现 |
+| `CREATE EXTENSION vector` | [schema.sql#L8](../../rag-backend/sql/schema/01-schema.sql#L8)；[PgVectorConfig.java#L44-L47](../../rag-backend/rag-config/src/main/java/com/wgh/rag/config/PgVectorConfig.java#L44-L47) | 启动期强依赖：默认失败即阻断启动，`allow-fallback-to-in-memory=true` 时降级为告警；`skip-create-vector-extension` 只跳过建扩展，不改变依赖本身 |
+| `vector(n)` 列、余弦距离 `<=>`、可选 IVFFlat/HNSW 索引 | 由 `PgVectorEmbeddingStore` 运行时建表（[VectorStoreService.java#L28-L42](../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/VectorStoreService.java#L28-L42)）；配置见 [application.yml#L86-L94](../../rag-backend/rag-app/src/main/resources/application.yml#L86-L94) | LangChain4j 内部生成 DDL 与距离算子；表名 `rag_vector_store`、`wgh_semantic_cache_vec` 均为运行时建表，不在 `schema.sql` 中 |
+| `metadata` 为 JSONB，查询用 `metadata->>'fileId'` | [VectorStoreService.java#L79](../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/VectorStoreService.java#L79) | JSONB + `->>` 专用 |
+| `embedding_id` 为 `uuid`，删除用 `?::uuid` | [VectorStoreService.java#L107](../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/VectorStoreService.java#L107) | PG 类型转换 |
+| 直接读 `information_schema.tables`（限定 `table_schema='public'`） | [VectorStoreService.java#L68](../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/VectorStoreService.java#L68)、[#L96](../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/VectorStoreService.java#L96) | schema 概念与目录表均按 PG 假设 |
+| `pg_trgm`：`similarity()`、`%` 运算符、`GIN (text gin_trgm_ops)` | [schema.sql#L10](../../rag-backend/sql/schema/01-schema.sql#L10)；[KeywordSearchService.java#L54-L55](../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/KeywordSearchService.java#L54-L55)、[#L83-L85](../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/KeywordSearchService.java#L83-L85) | 混合检索关键词路；失败时静默降级为纯向量（返回空列表） |
+| 评测侧按 chunk 分页：`(metadata->>'chunkIndex')::int` + `LIMIT/OFFSET` | [RetrievalEvaluationService.java#L205](../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/RetrievalEvaluationService.java#L205)、[#L216-L217](../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/RetrievalEvaluationService.java#L216-L217) | JSONB + 强转 |
+| 语义缓存：向量表 + metadata 过滤 `IsEqualTo("windowId", ...)` | [SemanticCacheService.java#L74-L80](../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/SemanticCacheService.java#L74-L80) | 依赖 LangChain4j metadata filter 与 pgvector 实现 |
 
-#### 1.3.2 业务库结构（`sql/schema.sql`，1222 行）
+#### 1.3.2 业务库结构（`sql/schema/01-schema.sql`，1222 行）
 
 | 构造 | 数量 / 位置 | 跨库兼容性 |
 |------|-------------|-----------|
-| `BIGSERIAL PRIMARY KEY` | 35 处（如 [schema.sql#L15](../rag-backend/sql/schema.sql#L15)） | PG 专用；MySQL 需 `AUTO_INCREMENT`，Oracle 需 sequence/identity |
+| `BIGSERIAL PRIMARY KEY` | 35 处（如 [schema.sql#L15](../../rag-backend/sql/schema/01-schema.sql#L15)） | PG 专用；MySQL 需 `AUTO_INCREMENT`，Oracle 需 sequence/identity |
 | `COMMENT ON TABLE/COLUMN` | 372 条 | PG 专用；MySQL 用 `COMMENT=`，Oracle 用独立语句 |
-| `DO $$ ... $$` 兼容块 | [schema.sql#L34-L43](../rag-backend/sql/schema.sql#L34-L43) | PG 专用（PL/pgSQL 匿名块） |
-| `ALTER COLUMN ... TYPE ... USING` | [schema.sql#L38-L41](../rag-backend/sql/schema.sql#L38-L41) | PG 专用重写语法 |
-| `JSONB` 列 | `plan_json` [L427](../rag-backend/sql/schema.sql#L427)、`graph_json` [L516](../rag-backend/sql/schema.sql#L516)/[L552](../rag-backend/sql/schema.sql#L552)、`context_json`/`graph_snapshot` [L619-L620](../rag-backend/sql/schema.sql#L619-L620)、`input_json`/`output_json` [L669-L670](../rag-backend/sql/schema.sql#L669-L670)、多智能体 `crew_config_json`/`agents_json`/`input_context`/`tool_calls_json`/`rag_sources_json`/`group_chat_config_json` [L710-L711](../rag-backend/sql/schema.sql#L710-L711)、[L751-L754](../rag-backend/sql/schema.sql#L751-L754)、[L787-L790](../rag-backend/sql/schema.sql#L787-L790) | Java 侧均为 `String`（见 1.3.3），但列类型与写入校验为 PG 语义 |
-| 部分索引 `WHERE feedback <> 0` | [schema.sql#L909](../rag-backend/sql/schema.sql#L909) | PG 支持；MySQL 不支持部分索引 |
-| GIN 索引（运行时创建） | [KeywordSearchService.java#L84-L85](../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/KeywordSearchService.java#L84-L85) | PG 专用 |
-| `ON CONFLICT` | `sql/data.sql` 5 处（[L75](../rag-backend/sql/data.sql#L75)、[L88](../rag-backend/sql/data.sql#L88)、[L96](../rag-backend/sql/data.sql#L96)、[L105](../rag-backend/sql/data.sql#L105)、[L113](../rag-backend/sql/data.sql#L113)） | 种子数据专用；H2 用 `MERGE` |
-| `jsonb_build_object(...)::text` | [data.sql#L37-L44](../rag-backend/sql/data.sql#L37-L44) | PG 专用 JSON 函数 |
-| `E'...'` 转义字符串 | [data.sql#L18](../rag-backend/sql/data.sql#L18) | PG 专用 |
-| `DO $$` 类型修正 | [data.sql#L54-L62](../rag-backend/sql/data.sql#L54-L62) | PG 专用 |
-| JDBC `stringtype=unspecified` | 4 份配置：[application.yml#L16](../rag-backend/rag-app/src/main/resources/application.yml#L16)、`application-dev.yml`、`application-test.yml`、`application-prod.yml` | PG JDBC 专用参数（用于让 String 写入 JSONB 不报类型错） |
+| `DO $$ ... $$` 兼容块 | [schema.sql#L34-L43](../../rag-backend/sql/schema/01-schema.sql#L34-L43) | PG 专用（PL/pgSQL 匿名块） |
+| `ALTER COLUMN ... TYPE ... USING` | [schema.sql#L38-L41](../../rag-backend/sql/schema/01-schema.sql#L38-L41) | PG 专用重写语法 |
+| `JSONB` 列 | `plan_json` [L427](../../rag-backend/sql/schema/01-schema.sql#L427)、`graph_json` [L516](../../rag-backend/sql/schema/01-schema.sql#L516)/[L552](../../rag-backend/sql/schema/01-schema.sql#L552)、`context_json`/`graph_snapshot` [L619-L620](../../rag-backend/sql/schema/01-schema.sql#L619-L620)、`input_json`/`output_json` [L669-L670](../../rag-backend/sql/schema/01-schema.sql#L669-L670)、多智能体 `crew_config_json`/`agents_json`/`input_context`/`tool_calls_json`/`rag_sources_json`/`group_chat_config_json` [L710-L711](../../rag-backend/sql/schema/01-schema.sql#L710-L711)、[L751-L754](../../rag-backend/sql/schema/01-schema.sql#L751-L754)、[L787-L790](../../rag-backend/sql/schema/01-schema.sql#L787-L790) | Java 侧均为 `String`（见 1.3.3），但列类型与写入校验为 PG 语义 |
+| 部分索引 `WHERE feedback <> 0` | [schema.sql#L909](../../rag-backend/sql/schema/01-schema.sql#L909) | PG 支持；MySQL 不支持部分索引 |
+| GIN 索引（运行时创建） | [KeywordSearchService.java#L84-L85](../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/KeywordSearchService.java#L84-L85) | PG 专用 |
+| `ON CONFLICT` | `sql/seed/02-data.sql` 5 处（[L75](../../rag-backend/sql/seed/02-data.sql#L75)、[L88](../../rag-backend/sql/seed/02-data.sql#L88)、[L96](../../rag-backend/sql/seed/02-data.sql#L96)、[L105](../../rag-backend/sql/seed/02-data.sql#L105)、[L113](../../rag-backend/sql/seed/02-data.sql#L113)） | 种子数据专用；H2 用 `MERGE` |
+| `jsonb_build_object(...)::text` | [data.sql#L37-L44](../../rag-backend/sql/seed/02-data.sql#L37-L44) | PG 专用 JSON 函数 |
+| `E'...'` 转义字符串 | [data.sql#L18](../../rag-backend/sql/seed/02-data.sql#L18) | PG 专用 |
+| `DO $$` 类型修正 | [data.sql#L54-L62](../../rag-backend/sql/seed/02-data.sql#L54-L62) | PG 专用 |
+| JDBC `stringtype=unspecified` | 4 份配置：[application.yml#L16](../../rag-backend/rag-app/src/main/resources/application.yml#L16)、`application-dev.yml`、`application-test.yml`、`application-prod.yml` | PG JDBC 专用参数（用于让 String 写入 JSONB 不报类型错） |
 
 #### 1.3.3 JSON 字段在 Java 侧的表达
 
 实体把 JSON 列一律映射为 `String`，没有自定义 JSON 类型处理器：
 
-- [WorkflowRun.java#L36-L39](../rag-backend/rag-workflow/src/main/java/com/wgh/rag/workflow/entity/WorkflowRun.java#L36-L39)：`contextJson`、`graphSnapshot` 均为 `String`。
-- [MultiAgentStep.java#L33](../rag-backend/rag-agent-multi/src/main/java/com/wgh/rag/agentmulti/entity/MultiAgentStep.java#L33)：注释明确"输入上下文（JSONB 字符串）"。
-- [GraphCoordinator.java#L351](../rag-backend/rag-agent-multi/src/main/java/com/wgh/rag/agentmulti/graph/GraphCoordinator.java#L351)：注释"The HITL step.inputContext 存暂停节点 ID（JSONB 列要求合法 JSON）"——**业务代码已在心智上依赖"写库时 JSON 必须合法"** 这一 PG 行为。
+- [WorkflowRun.java#L36-L39](../../rag-backend/rag-workflow/src/main/java/com/wgh/rag/workflow/entity/WorkflowRun.java#L36-L39)：`contextJson`、`graphSnapshot` 均为 `String`。
+- [MultiAgentStep.java#L33](../../rag-backend/rag-agent-multi/src/main/java/com/wgh/rag/agentmulti/entity/MultiAgentStep.java#L33)：注释明确"输入上下文（JSONB 字符串）"。
+- [GraphCoordinator.java#L351](../../rag-backend/rag-agent-multi/src/main/java/com/wgh/rag/agentmulti/graph/GraphCoordinator.java#L351)：注释"The HITL step.inputContext 存暂停节点 ID（JSONB 列要求合法 JSON）"——**业务代码已在心智上依赖"写库时 JSON 必须合法"** 这一 PG 行为。
 
 这带来一个双面结论：
 
@@ -106,52 +106,52 @@
 
 **唯一一处 PG 专属查询语义**是成本统计：
 
-- `to_char(create_time, 'YYYY-MM-DD')`、`CAST(#{to} AS DATE) + INTERVAL '1 day'`（[ChatMessageMapper.java#L18-L30](../rag-backend/rag-chat/src/main/java/com/wgh/rag/chat/mapper/ChatMessageMapper.java#L18-L30)）。
-- `LIMIT #{size} OFFSET #{offset}`（[ChatMessageMapper.java#L59](../rag-backend/rag-chat/src/main/java/com/wgh/rag/chat/mapper/ChatMessageMapper.java#L59)）——该写法在 PG/MySQL/SQLite/H2 均可用，不算方言。
+- `to_char(create_time, 'YYYY-MM-DD')`、`CAST(#{to} AS DATE) + INTERVAL '1 day'`（[ChatMessageMapper.java#L18-L30](../../rag-backend/rag-chat/src/main/java/com/wgh/rag/chat/mapper/ChatMessageMapper.java#L18-L30)）。
+- `LIMIT #{size} OFFSET #{offset}`（[ChatMessageMapper.java#L59](../../rag-backend/rag-chat/src/main/java/com/wgh/rag/chat/mapper/ChatMessageMapper.java#L59)）——该写法在 PG/MySQL/SQLite/H2 均可用，不算方言。
 
 ### 1.4 测试基座
 
 **现状：已有 H2，但不是"多数据库支持"，而是"第二套 DDL"。**
 
-- H2 依赖仅在 `rag-app` 且为 `test` scope（[rag-app/pom.xml#L74-L79](../rag-backend/rag-app/pom.xml#L74-L79)）。
-- 测试数据源：`jdbc:h2:mem:wgh_rag_test;DB_CLOSE_DELAY=-1;MODE=PostgreSQL`（[src/test/resources/application.yml#L12](../rag-backend/rag-app/src/test/resources/application.yml#L12)）。
+- H2 依赖仅在 `rag-app` 且为 `test` scope（[rag-app/pom.xml#L74-L79](../../rag-backend/rag-app/pom.xml#L74-L79)）。
+- 测试数据源：`jdbc:h2:mem:wgh_rag_test;DB_CLOSE_DELAY=-1;MODE=PostgreSQL`（[src/test/resources/application.yml#L12](../../rag-backend/rag-app/src/test/resources/application.yml#L12)）。
 - 测试 schema 由 `src/test/resources/schema.sql` 单独维护（278 行），**不是**生产 `schema.sql` 的派生物。
 
 #### 1.4.1 漂移事实（关键风险）
 
-| 维度 | 生产 `rag-backend/sql/schema.sql` | 测试 `rag-app/src/test/resources/schema.sql` |
+| 维度 | 生产 `rag-backend/sql/schema/01-schema.sql` | 测试 `rag-app/src/test/resources/schema.sql` |
 |------|-----------------------------------|----------------------------------------------|
 | 表数量 | 37 张 | 15 张 |
-| 会话表列 | `chat_window_id`、`user_identifier`、`persistent`、`message_count`、`total_tokens`、`status` 等 | `window_id`、`user_id`，缺上述列（[schema.sql#L136-L157](../rag-backend/rag-app/src/test/resources/schema.sql#L136-L157)） |
-| 知识文件列 | `knowledge_base_id`、`file_name`、`split_config`、`error_message` | `kb_id`、`original_name`、`split_params`、`error_msg`（[schema.sql#L194-L211](../rag-backend/rag-app/src/test/resources/schema.sql#L194-L211)） |
-| LLM 模型列 | `status SMALLINT`、`compression_model SMALLINT` | `enabled BOOLEAN`、`compression_model BOOLEAN`（[schema.sql#L213-L229](../rag-backend/rag-app/src/test/resources/schema.sql#L213-L229)） |
-| 种子策略 | `INSERT ... ON CONFLICT` | `MERGE INTO ... KEY(...)`（[schema.sql#L60-L93](../rag-backend/rag-app/src/test/resources/schema.sql#L60-L93)） |
+| 会话表列 | `chat_window_id`、`user_identifier`、`persistent`、`message_count`、`total_tokens`、`status` 等 | `window_id`、`user_id`，缺上述列（[schema.sql#L136-L157](../../rag-backend/rag-app/src/test/resources/schema.sql#L136-L157)） |
+| 知识文件列 | `knowledge_base_id`、`file_name`、`split_config`、`error_message` | `kb_id`、`original_name`、`split_params`、`error_msg`（[schema.sql#L194-L211](../../rag-backend/rag-app/src/test/resources/schema.sql#L194-L211)） |
+| LLM 模型列 | `status SMALLINT`、`compression_model SMALLINT` | `enabled BOOLEAN`、`compression_model BOOLEAN`（[schema.sql#L213-L229](../../rag-backend/rag-app/src/test/resources/schema.sql#L213-L229)） |
+| 种子策略 | `INSERT ... ON CONFLICT` | `MERGE INTO ... KEY(...)`（[schema.sql#L60-L93](../../rag-backend/rag-app/src/test/resources/schema.sql#L60-L93)） |
 | 缺失表 | — | Agent（`wgh_agent_plan/step`）、Workflow（4 张）、多智能体（3 张）、`wgh_prompt_template`、`wgh_audit_log`、`wgh_semantic_cache`、标签与文件版本、分享/API Key 等 |
 
 **结论**：H2 只覆盖"用户/角色/配额/窗口/会话/知识库基础 CRUD + Web 层"；Agent、Workflow、Prompt 模板、语义缓存、分享/开放 API 等模块**没有数据库级集成测试**。更糟的是，已有表的列名/列类型与生产不一致，一旦业务代码按生产 schema 写 SQL，H2 测试会给出**假阴性或假阳性**。
 
 依赖 H2 的集成测试示例：
 
-- [RagApplicationIntegrationTest.java#L16-L19](../rag-backend/rag-app/src/test/java/com/wgh/rag/RagApplicationIntegrationTest.java#L16-L19)（上下文、鉴权、分享）；
+- [RagApplicationIntegrationTest.java#L16-L19](../../rag-backend/rag-app/src/test/java/com/wgh/rag/RagApplicationIntegrationTest.java#L16-L19)（上下文、鉴权、分享）；
 - `QuotaApiTest`、`QuotaConcurrencyTest`、`KnowledgeBaseEndpointTest`、`SkillManagementApiTest`、`LocalAuthApiTest`、`PublicAccessRedisSecurityTest`。
 - 其余大量测试是 Mockito 纯单元测试（如 `TextSplitterTest`），不接触数据库。
 
 #### 1.4.2 `rag-quota` 的"PG/H2 可移植原子 upsert"是怎么做的
 
-实现位于 [QuotaUsageMapper.java#L44-L55](../rag-backend/rag-quota/src/main/java/com/wgh/rag/quota/mapper/QuotaUsageMapper.java#L44-L55)：
+实现位于 [QuotaUsageMapper.java#L44-L55](../../rag-backend/rag-quota/src/main/java/com/wgh/rag/quota/mapper/QuotaUsageMapper.java#L44-L55)：
 
-1. 先执行 `UPDATE ... SET chat_count = chat_count + ? ...`（[L20-L28](../rag-backend/rag-quota/src/main/java/com/wgh/rag/quota/mapper/QuotaUsageMapper.java#L20-L28)）；
-2. 未命中（返回 0）则 `INSERT`（[L30-L35](../rag-backend/rag-quota/src/main/java/com/wgh/rag/quota/mapper/QuotaUsageMapper.java#L30-L35)）；
+1. 先执行 `UPDATE ... SET chat_count = chat_count + ? ...`（[L20-L28](../../rag-backend/rag-quota/src/main/java/com/wgh/rag/quota/mapper/QuotaUsageMapper.java#L20-L28)）；
+2. 未命中（返回 0）则 `INSERT`（[L30-L35](../../rag-backend/rag-quota/src/main/java/com/wgh/rag/quota/mapper/QuotaUsageMapper.java#L30-L35)）；
 3. 插入撞唯一键 `(username, date_key)` 时捕获 `DuplicateKeyException`，回退再执行一次 `UPDATE`。
 
-正确性由 `QuotaConcurrencyTest` 在 H2 上以 16 线程 × 10 次真实并发提交验证（[QuotaConcurrencyTest.java#L73-L111](../rag-backend/rag-app/src/test/java/com/wgh/rag/quota/QuotaConcurrencyTest.java#L73-L111)）。
+正确性由 `QuotaConcurrencyTest` 在 H2 上以 16 线程 × 10 次真实并发提交验证（[QuotaConcurrencyTest.java#L73-L111](../../rag-backend/rag-app/src/test/java/com/wgh/rag/quota/QuotaConcurrencyTest.java#L73-L111)）。
 
 **可推广边界**：
 
 - 可推广：所有"单行幂等累加/幂等 upsert"，前提是**有唯一约束**、操作只涉及标准 `UPDATE`/`INSERT`。
 - 不可推广：`RETURNING` 取值、JSONB 局部更新（`jsonb_set`）、数组操作、部分索引依赖、`ON CONFLICT DO NOTHING` 批量种子、`to_char/INTERVAL` 类日期格式化。
 
-另一个可借鉴点（但方向相反）：`UserQuotaConfigMapper` 的注释明确写着"enabled 用 0/1，避免 PostgreSQL smallint 类型不匹配"（[UserQuotaConfigMapper.java#L23-L36](../rag-backend/rag-quota/src/main/java/com/wgh/rag/quota/mapper/UserQuotaConfigMapper.java#L23-L36)）。这说明布尔/smallint 的差异**已经通过约定被收敛到类型处理器**，是当前最成功的"方言隔离"实践。
+另一个可借鉴点（但方向相反）：`UserQuotaConfigMapper` 的注释明确写着"enabled 用 0/1，避免 PostgreSQL smallint 类型不匹配"（[UserQuotaConfigMapper.java#L23-L36](../../rag-backend/rag-quota/src/main/java/com/wgh/rag/quota/mapper/UserQuotaConfigMapper.java#L23-L36)）。这说明布尔/smallint 的差异**已经通过约定被收敛到类型处理器**，是当前最成功的"方言隔离"实践。
 
 #### 1.4.3 H2 `MODE=PostgreSQL` 与 PG 的真实差距
 
@@ -175,12 +175,12 @@
 
 - **没有**。全仓库检索 `AbstractRoutingDataSource`、`@DS`、`@Primary`、读写分离、多数据源均无命中。
 - 只有单一 `spring.datasource`，被 4 个服务直接注入并手写 JDBC：
-  - [VectorStoreService.java#L24](../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/VectorStoreService.java#L24)
-  - [KeywordSearchService.java#L35](../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/KeywordSearchService.java#L35)
+  - [VectorStoreService.java#L24](../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/VectorStoreService.java#L24)
+  - [KeywordSearchService.java#L35](../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/KeywordSearchService.java#L35)
   - `RetrievalEvaluationService`
-  - [PgVectorConfig.java#L34](../rag-backend/rag-config/src/main/java/com/wgh/rag/config/PgVectorConfig.java#L34)
+  - [PgVectorConfig.java#L34](../../rag-backend/rag-config/src/main/java/com/wgh/rag/config/PgVectorConfig.java#L34)
 - 这些类共 19 处 `getConnection()/prepareStatement/createStatement`，是**直连 PG 方言的主要载体**；除此之外，唯一的 PG 专属注解 SQL 是 `ChatMessageMapper` 的 `to_char` / `INTERVAL` 日期统计。
-- 启动健康检查用 `SELECT extname FROM pg_extension`（[PgVectorConfig.java#L50-L51](../rag-backend/rag-config/src/main/java/com/wgh/rag/config/PgVectorConfig.java#L50-L51)），属于 PG 目录表硬编码。
+- 启动健康检查用 `SELECT extname FROM pg_extension`（[PgVectorConfig.java#L50-L51](../../rag-backend/rag-config/src/main/java/com/wgh/rag/config/PgVectorConfig.java#L50-L51)），属于 PG 目录表硬编码。
 
 **结论**：现状不是"多库架构缺一层"，而是"单库架构里有一小簇 PG 直连代码 + 一套与生产漂移的 H2 测试库"。
 
@@ -193,11 +193,11 @@
 | 场景 | 当前是否需要 | 判断依据 |
 |------|--------------|----------|
 | H2/内存库做单测 | **部分需要，但方式错误** | 已有 H2，但用第二套 DDL 且只覆盖 15/37 表；继续扩 H2 只会放大漂移，不等于"支持多库" |
-| SQLite / MySQL 部署 | **不需要** | README 明确"单库 PostgreSQL + pgvector"为设计原则（[README.md#L32](../README.md#L32)、[#L167](../README.md#L167)、[#L387](../README.md#L387)、[#L414](../README.md#L414)）；无任何 MySQL 配置/依赖/兼容代码 |
+| SQLite / MySQL 部署 | **不需要** | README 明确"单库 PostgreSQL + pgvector"为设计原则（[README.md#L32](../../README.md#L32)、[#L167](../../README.md#L167)、[#L387](../../README.md#L387)、[#L414](../../README.md#L414)）；无任何 MySQL 配置/依赖/兼容代码 |
 | 国产化信创（达梦 / 人大金仓 / OceanBase / 高斯） | **当前无需求，延后** | 无客户合同/招标约束证据；且 pgvector 在这些库上要么缺失、要么是另一套向量扩展（Kingbase/OceanBase 各自不同），迁移成本主要在向量层而非 CRUD |
 | 分库分表 | **不需要** | 37 张表、单实例、`IdType.AUTO` 自增；无分片键、无分布式 ID 基建；当前压测/部署形态未见分片诉求 |
 | 读写分离 | **不需要（现在）** | 无只读副本配置；评测/统计查询量级未证明需要；引入后要处理"写完立刻读"的一致性 |
-| 独立向量库（Milvus / Qdrant / ES） | **不需要** | README 明确"不做独立向量数据库/搜索引擎"（[README.md#L32](../README.md#L32)、[#L387](../README.md#L387)、[#L414](../README.md#L414)） |
+| 独立向量库（Milvus / Qdrant / ES） | **不需要** | README 明确"不做独立向量数据库/搜索引擎"（[README.md#L32](../../README.md#L32)、[#L387](../../README.md#L387)、[#L414](../../README.md#L414)） |
 | 多租户 | **不做** | README 明确排除 |
 
 ### 2.2 换库的真实阻碍（按成本排序）
@@ -331,9 +331,9 @@ rag-data/.../dialect/
 
 **现状问题**：
 
-- `init.sql` 只是 `\ir schema.sql; \ir data.sql;`（[init.sql#L16-L17](../rag-backend/sql/init.sql#L16-L17)），依赖 `psql`，应用内不能执行；
+- `init.sql` 只是 `\ir schema/01-schema.sql; \ir seed/02-data.sql;`（[init.sql#L16-L17](../../rag-backend/sql/init.sql#L16-L17)），依赖 `psql`，应用内不能执行；
 - 无版本表、无校验和、无回滚；"结构 + 种子 + 老库修复"混在一起；
-- 生产部署依赖 compose 挂载初始化目录（README 记录"空卷首启执行 schema.sql/data.sql"），已建库只能手工重跑；
+- 生产部署依赖 compose 挂载初始化目录（README 记录"空卷首启执行 schema/01-schema.sql 与 seed/02-data.sql"），已建库只能手工重跑；
 - 幂等靠 `IF NOT EXISTS` / `DO $$` / `ON CONFLICT` 手工保证。
 
 **建议**：
@@ -359,7 +359,7 @@ db/migration/mysql/V2__mysql_indexes.sql
 
 现状：
 
-- 布尔：`BooleanToSmallintTypeHandler`（[BooleanToSmallintTypeHandler.java#L19-L42](../rag-backend/rag-data/src/main/java/com/wgh/rag/data/handler/BooleanToSmallintTypeHandler.java#L19-L42)），把 `Boolean` ↔ `SMALLINT`。这是**已经收敛好的方言点**。
+- 布尔：`BooleanToSmallintTypeHandler`（[BooleanToSmallintTypeHandler.java#L19-L42](../../rag-backend/rag-data/src/main/java/com/wgh/rag/data/handler/BooleanToSmallintTypeHandler.java#L19-L42)），把 `Boolean` ↔ `SMALLINT`。这是**已经收敛好的方言点**。
 - JSON：全部为 `String`，依赖 PG `JSONB` 的写入校验（`stringtype=unspecified` 令 String 可写入 JSONB）。
 - ID：`IdType.AUTO`，依赖 `BIGSERIAL`/`AUTO_INCREMENT`。
 
@@ -427,7 +427,7 @@ db/migration/mysql/V2__mysql_indexes.sql
 
 **理由**：
 
-- README 已把"单库 PostgreSQL + pgvector、不做独立向量库"写成设计原则（[README.md#L32](../README.md#L32)、[#L387](../README.md#L387)、[#L414](../README.md#L414)）；
+- README 已把"单库 PostgreSQL + pgvector、不做独立向量库"写成设计原则（[README.md#L32](../../README.md#L32)、[#L387](../../README.md#L387)、[#L414](../../README.md#L414)）；
 - 向量检索、关键词混合检索、向量表 DDL 三处都无跨库等价物；换库的真实成本由**向量层**决定，而不是 JDBC 驱动；
 - 在无客户需求的前提下做多库适配，会把每一条新功能都变成"多方言维护"。
 
@@ -467,7 +467,7 @@ db/migration/mysql/V2__mysql_indexes.sql
 
 ## 附录 A：本次盘点中发现的文档/实现不一致（建议顺手修正）
 
-- [quota-design.md#L12](quota-design.md#L12)、[#L44](quota-design.md#L44)、[#L114](quota-design.md#L114) 仍写"使用 `ON CONFLICT` 原子累加"，但实现已改为"H2/PG 可移植的 UPDATE-first + 唯一键回退"（[QuotaUsageMapper.java#L37-L55](../rag-backend/rag-quota/src/main/java/com/wgh/rag/quota/mapper/QuotaUsageMapper.java#L37-L55)）。建议更新文档，否则后续读者会误判方言依赖。
+- [quota-design.md#L12](quota-design.md#L12)、[#L44](quota-design.md#L44)、[#L114](quota-design.md#L114) 仍写"使用 `ON CONFLICT` 原子累加"，但实现已改为"H2/PG 可移植的 UPDATE-first + 唯一键回退"（[QuotaUsageMapper.java#L37-L55](../../rag-backend/rag-quota/src/main/java/com/wgh/rag/quota/mapper/QuotaUsageMapper.java#L37-L55)）。建议更新文档，否则后续读者会误判方言依赖。
 - `application.yml` 仍配置 `mapper-locations`，但仓库无 XML Mapper；可保留（未来可能使用），但应在注释中说明"当前无 XML"。
 
 ## 附录 B：本次未覆盖的内容

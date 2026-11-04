@@ -1,7 +1,7 @@
 # 设计模式重构方案
 
 > 版本：v1.0｜日期：2026-10-28｜范围：rag-backend 10 个模块
-> 关联文档：[overall-design.md](./overall-design.md)｜[detail-design.md](./detail-design.md)｜[test-cases.md](./test-cases.md)
+> 关联文档：[overall-design.md](./overall-design.md)｜[detail-design.md](./detail-design.md)｜[test-cases.md](./testing/test-cases.md)
 > 原则：**不改变外部行为**（所有 e2e 测试保持绿色）、**小步重构**（每模式独立提交）、**有测试兜底**（重构前补单元测试）
 
 ---
