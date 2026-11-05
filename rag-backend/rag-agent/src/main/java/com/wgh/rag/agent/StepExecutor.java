@@ -7,6 +7,8 @@ import com.wgh.rag.agent.dto.AgentStepResult.RagSourceRecord;
 import com.wgh.rag.agent.dto.AgentStepResult.ToolInvocationRecord;
 import com.wgh.rag.kb.service.RagRetrieveService;
 import com.wgh.rag.llm.factory.ModelCacheManager;
+import com.wgh.rag.llm.util.RagContextBudgeter;
+import com.wgh.rag.llm.util.TokenEstimator;
 import com.wgh.rag.tool.entity.ToolConfig;
 import com.wgh.rag.tool.executor.ToolExecutionEngine;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
@@ -63,6 +65,14 @@ public class StepExecutor {
             if (requiresRAG && ragQuery != null && !ragQuery.isBlank()
                     && kbIds != null && !kbIds.isEmpty()) {
                 List<EmbeddingMatch<TextSegment>> matches = ragRetrieveService.searchMultiple(kbIds, ragQuery);
+                // Agent 链路拿不到模型配置，使用默认预算参数（兜底窗口 8192 + 硬上限 6000）
+                RagContextBudgeter.Result budgetResult = RagContextBudgeter.trimWithDefaults(
+                        matches, TokenEstimator.estimate(stepPrompt) + 32);
+                matches = budgetResult.kept();
+                log.info("StepExecutor RAG 上下文预算: budget={}, 原始 {} 条/{} tokens, 保留 {} 条/{} tokens, 丢弃 {} 条, 截断={}",
+                        budgetResult.budgetTokens(), budgetResult.originalCount(), budgetResult.originalTokens(),
+                        budgetResult.keptCount(), budgetResult.keptTokens(), budgetResult.dropped().size(),
+                        budgetResult.truncated());
                 ragSources = buildRagSourceRecords(matches);
                 String ragContext = extractRagContext(matches);
                 enrichedPrompt = """

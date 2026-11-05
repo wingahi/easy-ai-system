@@ -6,6 +6,8 @@ import com.wgh.rag.agentmulti.dto.AgentInstance;
 import com.wgh.rag.agentmulti.dto.AgentInstanceResult;
 import com.wgh.rag.kb.service.RagRetrieveService;
 import com.wgh.rag.llm.factory.ModelCacheManager;
+import com.wgh.rag.llm.util.RagContextBudgeter;
+import com.wgh.rag.llm.util.TokenEstimator;
 import com.wgh.rag.tool.definition.ToolDefinitionParser;
 import com.wgh.rag.tool.entity.ToolConfig;
 import com.wgh.rag.tool.executor.ToolExecutionEngine;
@@ -91,10 +93,19 @@ public class AgentInstanceExecutor {
 
             // ========== 可选 RAG ==========
             String enrichedInput = input == null ? "" : input;
+            String systemPrompt = buildSystemPrompt(agent);
             if (agent.getKbIds() != null && !agent.getKbIds().isEmpty()
                     && enrichedInput != null && !enrichedInput.isBlank()) {
                 List<EmbeddingMatch<TextSegment>> matches = ragRetrieveService.searchMultiple(
                         agent.getKbIds(), enrichedInput);
+                // 多 Agent 链路拿不到模型配置，使用默认预算参数（兜底窗口 8192 + 硬上限 6000）
+                RagContextBudgeter.Result budgetResult = RagContextBudgeter.trimWithDefaults(matches,
+                        TokenEstimator.estimate(enrichedInput) + TokenEstimator.estimate(systemPrompt) + 32);
+                matches = budgetResult.kept();
+                log.info("Agent {} RAG 上下文预算: budget={}, 原始 {} 条/{} tokens, 保留 {} 条/{} tokens, 丢弃 {} 条, 截断={}",
+                        agentId, budgetResult.budgetTokens(), budgetResult.originalCount(),
+                        budgetResult.originalTokens(), budgetResult.keptCount(), budgetResult.keptTokens(),
+                        budgetResult.dropped().size(), budgetResult.truncated());
                 ragSources = buildRagSources(matches);
                 String ragContext = extractRagContext(matches);
                 if (!ragContext.isBlank()) {
@@ -112,7 +123,6 @@ public class AgentInstanceExecutor {
             // ========== 初始 messages ==========
             List<ChatMessage> messages = new ArrayList<>();
 
-            String systemPrompt = buildSystemPrompt(agent);
             if (!systemPrompt.isBlank()) {
                 messages.add(SystemMessage.from(systemPrompt));
             }

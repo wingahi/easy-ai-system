@@ -3,12 +3,14 @@ package com.wgh.rag.workflow.engine.executor;
 import com.wgh.rag.workflow.constant.WorkflowConstants;
 
 import com.wgh.rag.kb.service.RagRetrieveService;
+import com.wgh.rag.llm.util.RagContextBudgeter;
 import com.wgh.rag.workflow.dto.NodeResult;
 import com.wgh.rag.workflow.dto.RunContext;
 import com.wgh.rag.workflow.engine.VariableResolver;
 import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.store.embedding.EmbeddingMatch;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -19,6 +21,7 @@ import java.util.Map;
 /**
  * RETRIEVAL 节点 —— 知识库检索并拼接片段文本。
  */
+@Slf4j
 @Component
 @RequiredArgsConstructor
 public class RetrievalNodeExecutor implements NodeExecutor {
@@ -45,6 +48,14 @@ public class RetrievalNodeExecutor implements NodeExecutor {
         List<EmbeddingMatch<TextSegment>> matches = ragRetrieveService.searchMultiple(kbIds, query);
         if (matches == null) matches = List.of();
         if (matches.size() > topK) matches = matches.subList(0, topK);
+
+        // 工作流节点拿不到下游 LLM 节点的模型配置，使用默认预算参数（兜底窗口 8192 + 硬上限 6000）
+        RagContextBudgeter.Result budgetResult = RagContextBudgeter.trimWithDefaults(matches, 0);
+        matches = budgetResult.kept();
+        log.info("工作流 RETRIEVAL 上下文预算: budget={}, 原始 {} 条/{} tokens, 保留 {} 条/{} tokens, 丢弃 {} 条, 截断={}",
+                budgetResult.budgetTokens(), budgetResult.originalCount(), budgetResult.originalTokens(),
+                budgetResult.keptCount(), budgetResult.keptTokens(), budgetResult.dropped().size(),
+                budgetResult.truncated());
 
         StringBuilder text = new StringBuilder();
         List<Map<String, Object>> sources = new ArrayList<>();

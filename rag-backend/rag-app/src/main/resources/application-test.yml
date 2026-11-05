@@ -46,6 +46,10 @@ wgh:
       long-term-facts-tokens: 400
       summary-max-tokens: 600
       summary-timeout-seconds: 20
+      context-max-tokens: 6000
+      context-window-ratio: 0.6
+      fallback-window-tokens: 8192
+      min-chunk-tokens: 120
 
 logging:
   level:

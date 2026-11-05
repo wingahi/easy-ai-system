@@ -79,6 +79,17 @@ public class RagProperties {
         private Integer summaryMaxTokens = 600;
         /** 分层压缩：摘要 LLM 调用超时（秒） */
         private Integer summaryTimeoutSeconds = 20;
+
+        // ============ 检索上下文 Token 预算 ============
+
+        /** 检索上下文 Token 硬上限（默认 6000：5×512 字 ≈ 2500 Tokens，留约 2.4 倍余量） */
+        private Integer contextMaxTokens = 6000;
+        /** 输入侧最多占模型窗口比例，其余留给输出与估算误差（默认 0.6） */
+        private Double contextWindowRatio = 0.6;
+        /** 模型未配置 maxContextTokens 时的兜底窗口（默认 8192，兼容 8k 上下文模型） */
+        private Integer fallbackWindowTokens = 8192;
+        /** 预算耗尽时单条 chunk 的最小保留 Token（默认 120，避免整条上下文丢失） */
+        private Integer minChunkTokens = 120;
     }
 
     @Data

@@ -32,6 +32,7 @@ import com.wgh.rag.llm.factory.ModelCacheManager;
 import com.wgh.rag.llm.service.LlmModelService;
 import com.wgh.rag.llm.service.ModelPriceService;
 import com.wgh.rag.llm.service.ModelRouter;
+import com.wgh.rag.llm.util.RagContextBudgeter;
 import com.wgh.rag.llm.util.TokenEstimator;
 import com.wgh.rag.tool.entity.ToolConfig;
 import com.wgh.rag.tool.constant.ToolConstants;
@@ -500,6 +501,8 @@ public class RagChatService {
         // 有检索结果时把知识库内容拼进用户消息；只配了工具但没有知识库结果时用原始消息
         String userPromptText = userMessage;
         if (!retrievedMatches.isEmpty()) {
+            // 先按模型窗口 + 已占用 prompt 计算预算并裁剪，再拼接（引用来源随后统一取裁剪后的列表）
+            applyRagContextBudget(retrievedMatches, messages, modelChain.get(0));
             String finalContext = extractRagContext(retrievedMatches);
             userPromptText = """
                     已知知识库内容：
@@ -1253,6 +1256,74 @@ public class RagChatService {
         }
         
         return messages;
+    }
+
+    /** 拼接上下文模板（"已知知识库内容：xxx 用户问题：xxx …"）的固定 Token 开销 */
+    private static final int RAG_PROMPT_TEMPLATE_TOKENS = 64;
+
+    /**
+     * 按模型上下文窗口对检索结果做确定性裁剪。
+     * <p>
+     * 预算 = min(硬上限, floor(模型窗口 × 输入占比) - 已占用 prompt Tokens)；
+     * 裁剪按分数（rerank / RRF / 余弦）降序保留，并把结果写回原列表，
+     * 保证 prompt 拼接、引用来源、正确率计算使用同一批 chunk。
+     */
+    private void applyRagContextBudget(List<EmbeddingMatch<TextSegment>> matches,
+                                       List<ChatMessage> messages, LlmModel model) {
+        RagProperties.Context props = ragProperties.getContext();
+        int promptTokens = estimatePromptTokens(messages) + RAG_PROMPT_TEMPLATE_TOKENS;
+        int cap = props != null && props.getContextMaxTokens() != null
+                ? props.getContextMaxTokens() : RagContextBudgeter.DEFAULT_MAX_CONTEXT_TOKENS;
+        double ratio = props != null && props.getContextWindowRatio() != null
+                ? props.getContextWindowRatio() : RagContextBudgeter.DEFAULT_INPUT_WINDOW_RATIO;
+        int minChunk = props != null && props.getMinChunkTokens() != null
+                ? props.getMinChunkTokens() : RagContextBudgeter.DEFAULT_MIN_CHUNK_TOKENS;
+        Integer window = model.getMaxContextTokens() != null && model.getMaxContextTokens() > 0
+                ? model.getMaxContextTokens()
+                : (props != null ? props.getFallbackWindowTokens() : null);
+
+        int budget = RagContextBudgeter.computeBudget(window, promptTokens, cap, ratio, minChunk);
+        RagContextBudgeter.Result result = RagContextBudgeter.trim(matches, budget, minChunk);
+
+        metrics.recordRagContextBudget(result.budgetTokens(), result.originalTokens(),
+                result.keptTokens(), result.dropped().size(), result.truncated());
+        log.info("RAG 上下文预算: model={}, window={}, promptTokens={}, budget={}, 原始 {} 条/{} tokens, "
+                        + "保留 {} 条/{} tokens, 丢弃 {} 条, 截断={}",
+                model.getModelName(), window, promptTokens, result.budgetTokens(),
+                result.originalCount(), result.originalTokens(),
+                result.keptCount(), result.keptTokens(), result.dropped().size(), result.truncated());
+        for (RagContextBudgeter.DroppedChunk dropped : result.dropped()) {
+            log.info("RAG 上下文丢弃 chunk: {}", dropped);
+        }
+        if (result.singleChunkSaturated()) {
+            log.warn("RAG 检索上下文已撑满预算（保留 {} 条、丢弃 {} 条、截断={}）："
+                            + "问整篇总结类问题时需引入分段摘要（map-reduce），当前版本仅做确定性裁剪",
+                    result.keptCount(), result.dropped().size(), result.truncated());
+        }
+
+        matches.clear();
+        matches.addAll(result.kept());
+    }
+
+    /** 估算已构建消息（system + 历史 + 当前问题）占用的 Tokens。 */
+    private int estimatePromptTokens(List<ChatMessage> messages) {
+        int total = 0;
+        for (ChatMessage message : messages) {
+            if (message instanceof SystemMessage systemMessage) {
+                total += TokenEstimator.estimate(systemMessage.text());
+            } else if (message instanceof AiMessage aiMessage) {
+                total += TokenEstimator.estimate(aiMessage.text());
+            } else if (message instanceof UserMessage userMessage) {
+                for (Content content : userMessage.contents()) {
+                    if (content instanceof TextContent textContent) {
+                        total += TokenEstimator.estimate(textContent.text());
+                    }
+                }
+            } else if (message instanceof ToolExecutionResultMessage toolMessage) {
+                total += TokenEstimator.estimate(toolMessage.text());
+            }
+        }
+        return total;
     }
 
     private String extractRagContext(List<EmbeddingMatch<TextSegment>> matches) {
