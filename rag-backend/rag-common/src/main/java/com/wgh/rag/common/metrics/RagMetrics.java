@@ -32,6 +32,10 @@ public class RagMetrics {
     public static final String RETRIEVAL_HITS = "wgh.retrieval.hits";
     /** 检索异常数 */
     public static final String RETRIEVAL_ERRORS = "wgh.retrieval.errors";
+    /** 检索上下文 Token（kind: budget/kept/original） */
+    public static final String RAG_CONTEXT_TOKENS = "wgh.rag.context.tokens";
+    /** 检索上下文被裁剪情况（kind: chunk/truncated） */
+    public static final String RAG_CONTEXT_DROPPED = "wgh.rag.context.dropped";
 
     /** LLM 调用次数（provider 为有限提供商枚举） */
     public static final String LLM_CALLS = "wgh.llm.calls";
@@ -107,6 +111,19 @@ public class RagMetrics {
 
     public void recordRetrievalError() {
         counter(RETRIEVAL_ERRORS).increment();
+    }
+
+    /**
+     * 检索上下文预算使用情况：预算/原始/保留 Tokens 与丢弃条数。
+     * 标签均为有限枚举，不写 windowId/sessionId 等高基数值。
+     */
+    public void recordRagContextBudget(int budgetTokens, int originalTokens, int keptTokens,
+                                       int droppedChunks, boolean truncated) {
+        counter(RAG_CONTEXT_TOKENS, "kind", "budget").increment(Math.max(budgetTokens, 0));
+        counter(RAG_CONTEXT_TOKENS, "kind", "original").increment(Math.max(originalTokens, 0));
+        counter(RAG_CONTEXT_TOKENS, "kind", "kept").increment(Math.max(keptTokens, 0));
+        if (droppedChunks > 0) counter(RAG_CONTEXT_DROPPED, "kind", "chunk").increment(droppedChunks);
+        if (truncated) counter(RAG_CONTEXT_DROPPED, "kind", "truncated").increment();
     }
 
     // ==================== LLM ====================
