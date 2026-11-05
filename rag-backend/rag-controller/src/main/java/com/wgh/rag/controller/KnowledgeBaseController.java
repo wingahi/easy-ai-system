@@ -133,6 +133,15 @@ public class KnowledgeBaseController {
         return Result.success(fileService.previewSplit(fileId));
     }
 
+    @Operation(summary = "重建知识库向量（全部文件重新切分与嵌入，异步执行）")
+    @PostMapping("/{id}/rebuild")
+    @Audit(action = "KB_REBUILD", resourceType = "KNOWLEDGE_BASE")
+    @RequiresPermission(AuthConstants.PERM_KB_WRITE)
+    public Result<Void> rebuild(@PathVariable Long id) {
+        fileService.rebuildAll(id);
+        return Result.success();
+    }
+
     // ===== RAG 检索测试 =====
 
     @Operation(summary = "知识库搜索测试")

@@ -14,6 +14,7 @@ import org.springframework.stereotype.Service;
 
 import javax.sql.DataSource;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -161,6 +162,46 @@ public class VectorStoreService implements VectorStorePort {
         } catch (Exception e) {
             log.warn("按 embedding_id 删除向量失败 table={}: {}", tableName, e.getMessage());
         }
+    }
+
+    /**
+     * 读取集合中已写入的 chunk 内容哈希（metadata.contentHash），入库前去重用。
+     * <p>
+     * 表不存在返回空集合；查询失败记 WARN 并返回空集合（降级为不去重，不影响入库主流程）。
+     */
+    @Override
+    public Set<String> existingContentHashes(String tableName) {
+        if (tableName == null) return Set.of();
+        try (var conn = dataSource.getConnection();
+             var check = conn.createStatement();
+             var rs = check.executeQuery(
+                     "SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='" + tableName + "'")) {
+            if (!rs.next()) {
+                log.debug("向量表 {} 不存在，跳过去重检查", tableName);
+                return Set.of();
+            }
+        } catch (Exception e) {
+            log.warn("检查向量表 {} 失败，跳过去重检查: {}", tableName, e.getMessage());
+            return Set.of();
+        }
+
+        Set<String> hashes = new HashSet<>();
+        try (var conn = dataSource.getConnection();
+             var stmt = conn.createStatement();
+             var rs = stmt.executeQuery(
+                     "SELECT DISTINCT metadata->>'contentHash' AS h FROM " + tableName
+                             + " WHERE metadata ? 'contentHash'")) {
+            while (rs.next()) {
+                String hash = rs.getString(1);
+                if (hash != null && !hash.isBlank()) {
+                    hashes.add(hash);
+                }
+            }
+        } catch (Exception e) {
+            log.warn("读取 contentHash 失败 table={}，本次入库不去重: {}", tableName, e.getMessage());
+            return Set.of();
+        }
+        return hashes;
     }
 
     /**

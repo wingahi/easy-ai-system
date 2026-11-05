@@ -67,4 +67,9 @@ public class KnowledgeFile extends BaseEntity {
      * 当前版本号（重切/重传时 +1，配合 wgh_knowledge_file_version 记录历史）
      */
     private Integer version;
+
+    /**
+     * 文件内容 SHA-256（同一知识库内重复内容据此去重，避免重复入库/重复嵌入）
+     */
+    private String contentHash;
 }

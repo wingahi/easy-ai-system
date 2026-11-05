@@ -142,6 +142,7 @@ CREATE TABLE IF NOT EXISTS wgh_knowledge_file (
   chunk_count INT DEFAULT 0,
   status VARCHAR(20) DEFAULT 'PENDING',
   error_message TEXT,
+  content_hash VARCHAR(64),
   create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   create_by VARCHAR(50) DEFAULT 'system',
@@ -162,6 +163,7 @@ COMMENT ON COLUMN wgh_knowledge_file.split_config IS '切分策略配置 JSON（
 COMMENT ON COLUMN wgh_knowledge_file.chunk_count IS '切分后 chunk 数';
 COMMENT ON COLUMN wgh_knowledge_file.status IS '处理状态：PENDING / PARSING / SPLITTING / EMBEDDING / SUCCESS / FAILED';
 COMMENT ON COLUMN wgh_knowledge_file.error_message IS '失败原因';
+COMMENT ON COLUMN wgh_knowledge_file.content_hash IS '文件内容 SHA-256（同知识库内重复内容去重）';
 COMMENT ON COLUMN wgh_knowledge_file.create_time IS '创建时间';
 COMMENT ON COLUMN wgh_knowledge_file.update_time IS '更新时间';
 COMMENT ON COLUMN wgh_knowledge_file.create_by IS '创建人';
@@ -1036,6 +1038,11 @@ COMMENT ON TABLE wgh_file_tag_rel IS '知识库文件-标签关系';
 
 ALTER TABLE wgh_knowledge_file ADD COLUMN IF NOT EXISTS version INT DEFAULT 1;
 COMMENT ON COLUMN wgh_knowledge_file.version IS '当前版本号（重切/重传时 +1）';
+
+-- content_hash 去重：同一知识库内相同文件内容不重复入库（存量行留空，不回溯计算）
+ALTER TABLE wgh_knowledge_file ADD COLUMN IF NOT EXISTS content_hash VARCHAR(64);
+COMMENT ON COLUMN wgh_knowledge_file.content_hash IS '文件内容 SHA-256（同知识库内重复内容去重）';
+CREATE INDEX IF NOT EXISTS idx_kfile_kb_content_hash ON wgh_knowledge_file(knowledge_base_id, content_hash);
 
 CREATE TABLE IF NOT EXISTS wgh_knowledge_file_version (
   id BIGSERIAL PRIMARY KEY,

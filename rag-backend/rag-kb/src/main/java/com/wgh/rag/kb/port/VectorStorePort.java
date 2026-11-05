@@ -5,6 +5,7 @@ import dev.langchain4j.store.embedding.EmbeddingStore;
 
 import java.util.Collection;
 import java.util.List;
+import java.util.Set;
 
 /**
  * 向量存储端口。
@@ -43,4 +44,11 @@ public interface VectorStorePort {
      * 向量化并写入指定集合。
      */
     void insertVectors(String tableName, List<TextSegment> segments, Long embeddingModelId, Integer dimension);
+
+    /**
+     * 读取集合中已写入的 chunk 内容哈希（metadata.contentHash），用于入库前去重。
+     * <p>
+     * 表不存在或查询失败时返回空集合（降级为不去重），由实现记录 WARN。
+     */
+    Set<String> existingContentHashes(String tableName);
 }

@@ -76,6 +76,7 @@ class KnowledgeFileServiceStorageTest {
                 new MockMultipartFile("file", "a.txt", "text/plain", "hello".getBytes()), "AUTO", null);
 
         assertThat(file.getFilePath()).matches("kb/1/[0-9a-fA-F-]{36}/a.txt");
+        assertThat(file.getContentHash()).isEqualTo(KnowledgeFileService.sha256Hex("hello"));
         verify(fileMapper).insert(file);
     }
 
