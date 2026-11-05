@@ -39,12 +39,16 @@ public class RecursiveChunkingStrategy implements ChunkingStrategy {
     }
 
     /**
-     * 对整段文本执行递归分块（含相邻 chunk 重叠）
+     * 对整段文本执行递归分块（含相邻 chunk 重叠）。
+     * <p>
+     * 切割上限先扣掉 overlap，为重叠留出空间：这样"上一块末尾 overlap + 下一块正文"恰好不超过 maxLength，
+     * 不会因为超长而被迫丢弃重叠（旧实现满长 chunk 上 overlap 恒被丢弃）。
      */
     public List<String> splitRecursive(String text) {
         int maxLength = ragProperties.getSplit().getMaxLength();
-        int overlap = ragProperties.getSplit().getOverlapLength();
-        List<String> pieces = cut(text);
+        int overlap = Math.max(0, Math.min(ragProperties.getSplit().getOverlapLength(), Math.max(0, maxLength - 1)));
+        int pieceLimit = Math.max(1, maxLength - overlap);
+        List<String> pieces = recursiveCut(text, pieceLimit, 0);
         return mergeWithOverlap(pieces, maxLength, overlap);
     }
 
@@ -126,8 +130,10 @@ public class RecursiveChunkingStrategy implements ChunkingStrategy {
         for (String piece : pieces) {
             String merged = prevTail.isEmpty() ? piece : prevTail + piece;
             if (merged.length() > maxLength) {
-                // overlap 导致超长则放弃重叠
-                merged = piece;
+                // 兜底（如 overlap 配置大于 maxLength）：按可用空间收缩重叠，而不是整段丢弃
+                int keep = Math.max(0, maxLength - piece.length());
+                String tail = keep == 0 ? "" : (prevTail.length() > keep ? prevTail.substring(prevTail.length() - keep) : prevTail);
+                merged = tail + piece;
             }
             if (!merged.isBlank()) result.add(merged);
             prevTail = piece.length() > overlap

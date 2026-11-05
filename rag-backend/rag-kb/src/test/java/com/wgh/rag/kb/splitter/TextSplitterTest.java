@@ -178,7 +178,8 @@ class TextSplitterTest {
     void paragraphSlidingWindowOverlap() {
         TextSplitter splitter = newSplitter(50, 10);
         String para1 = "甲".repeat(40);
-        String para2 = "乙".repeat(40);
+        // 39 = maxLength(50) - overlap(10) - 分隔符(1)，保证重叠能放下的同时不超上限
+        String para2 = "乙".repeat(39);
 
         List<String> result = splitter.split(List.of(para1, para2), Strategy.PARAGRAPH, null);
 
@@ -186,7 +187,8 @@ class TextSplitterTest {
         assertThat(result.get(0)).isEqualTo(para1);
         // 第二 chunk 以第一 chunk 末尾 10 字（overlap）开头
         assertThat(result.get(1)).startsWith("甲".repeat(10));
-        assertThat(result.get(1)).contains("乙".repeat(40));
+        assertThat(result.get(1)).contains("乙".repeat(39));
+        assertThat(result).allSatisfy(chunk -> assertThat(chunk.length()).isLessThanOrEqualTo(50));
     }
 
     /** 超过 maxLength 的段落会被再次切分，每个 chunk 长度均不超过上限。 */
@@ -208,8 +210,9 @@ class TextSplitterTest {
     @Test
     @DisplayName("RECURSIVE - 相邻 chunk 按 overlap 重叠且不超 maxLength")
     void recursiveAdjacentChunkOverlap() {
-        TextSplitter splitter = newSplitter(30, 5);
-        String text = "AAAA。BBBB。CCCC。DDDD。EEEE。FFFF。GGGG。"; // 35 字，句边界清晰
+        // 正文上限 = maxLength(35) - overlap(5) = 30，正好容纳 6 句；第 7 句带 5 字重叠进入下一块
+        TextSplitter splitter = newSplitter(35, 5);
+        String text = "AAAA。BBBB。CCCC。DDDD。EEEE。FFFF。GGGG。";
 
         List<String> result = splitter.split(List.of(text), Strategy.RECURSIVE, null);
 
@@ -217,5 +220,6 @@ class TextSplitterTest {
         assertThat(result.get(0)).hasSize(30);
         // 第二 chunk = 第一 chunk 末尾 5 字（FFFF。）+ 剩余内容（GGGG。）
         assertThat(result.get(1)).isEqualTo("FFFF。GGGG。");
+        assertThat(result).allSatisfy(chunk -> assertThat(chunk.length()).isLessThanOrEqualTo(35));
     }
 }
