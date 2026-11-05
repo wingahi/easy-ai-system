@@ -268,12 +268,7 @@ public class KnowledgeFileService {
                 // 构造 TextSegment（附带 metadata 记录来源文件 + 切分属性如 headingPath/semanticBlockIndex）
                 List<TextSegment> segments = new ArrayList<>();
                 for (int i = 0; i < chunks.size(); i++) {
-                    Map<String, Object> meta = new HashMap<>();
-                    meta.put("fileId", file.getId());
-                    meta.put("fileName", file.getFileName());
-                    meta.put("kbId", kb.getId());
-                    meta.put("chunkIndex", i);
-                    meta.putAll(chunks.get(i).attributes());
+                    Map<String, Object> meta = buildChunkMetadata(file, kb, i, chunks.get(i).attributes());
                     Metadata metadata = Metadata.from(meta);
                     segments.add(TextSegment.from(chunks.get(i).text(), metadata));
                 }
@@ -301,6 +296,22 @@ public class KnowledgeFileService {
                 deleteTempQuietly(parsedFile);
             }
         });
+    }
+
+    /**
+     * 构造 chunk 元数据：来源信息（fileId/fileName/kbId/kbName/chunkIndex）+ 切分属性。
+     * kbName 供检索侧直接标注来源，避免每次引用再去查库。
+     */
+    Map<String, Object> buildChunkMetadata(KnowledgeFile file, KnowledgeBase kb, int chunkIndex,
+                                           Map<String, Object> attributes) {
+        Map<String, Object> meta = new HashMap<>();
+        meta.put("fileId", file.getId());
+        meta.put("fileName", file.getFileName());
+        meta.put("kbId", kb.getId());
+        meta.put("kbName", kb.getName());
+        meta.put("chunkIndex", chunkIndex);
+        if (attributes != null) meta.putAll(attributes);
+        return meta;
     }
 
     /**

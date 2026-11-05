@@ -9,6 +9,7 @@ import com.wgh.rag.kb.mapper.KnowledgeBaseMapper;
 import com.wgh.rag.kb.port.KeywordSearchPort;
 import com.wgh.rag.kb.port.VectorStorePort;
 import com.wgh.rag.llm.factory.ModelCacheManager;
+import dev.langchain4j.data.document.Metadata;
 import dev.langchain4j.data.embedding.Embedding;
 import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.model.embedding.EmbeddingModel;
@@ -198,15 +199,68 @@ public class RagRetrieveService {
 
         // Rerank 始终面向原查询（保留用户意图）
         if (!opts.rerankEnabled()) {
-            return new RetrieveResult(fused.stream().limit(topK).toList(), false, 0,
+            List<EmbeddingMatch<TextSegment>> top = fused.stream().limit(topK).toList();
+            return new RetrieveResult(enrichKbNames(top, kbs), false, 0,
                     opts.hybridEnabled(), keywordOnlyIds,
                     transform.transformedQueries(), transform.latencyMs(), scoreType);
         }
         RetrieveResult reranked = applyRerank(fused, queryText, opts.rerankModelId(), topK);
-        return new RetrieveResult(reranked.matches(), reranked.rerankApplied(), reranked.rerankLatencyMs(),
+        return new RetrieveResult(enrichKbNames(reranked.matches(), kbs),
+                reranked.rerankApplied(), reranked.rerankLatencyMs(),
                 opts.hybridEnabled(), keywordOnlyIds,
                 transform.transformedQueries(), transform.latencyMs(),
                 reranked.rerankApplied() ? RetrieveResult.ScoreType.RERANK : scoreType);
+    }
+
+    /**
+     * 补齐存量向量的知识库名称。
+     * <p>
+     * 历史向量没有 {@code kbName} 元数据（写入侧后补），读取侧不能因此显示 null：
+     * 优先按 chunk 的 {@code kbId} 回查本次检索已加载的知识库；单库检索且缺失 kbId 时直接用该库名称。
+     * 新写入的数据已带 kbName，这里原样返回，不重复构造。
+     */
+    private List<EmbeddingMatch<TextSegment>> enrichKbNames(List<EmbeddingMatch<TextSegment>> matches,
+                                                            List<KnowledgeBase> kbs) {
+        if (matches == null || matches.isEmpty() || kbs == null || kbs.isEmpty()) return matches;
+        java.util.Map<Long, String> nameByKbId = new java.util.HashMap<>();
+        for (KnowledgeBase kb : kbs) {
+            if (kb.getId() != null && kb.getName() != null) nameByKbId.put(kb.getId(), kb.getName());
+        }
+        String singleKbName = kbs.size() == 1 ? kbs.get(0).getName() : null;
+        List<EmbeddingMatch<TextSegment>> enriched = new ArrayList<>(matches.size());
+        for (EmbeddingMatch<TextSegment> match : matches) {
+            enriched.add(enrichKbName(match, nameByKbId, singleKbName));
+        }
+        return enriched;
+    }
+
+    private EmbeddingMatch<TextSegment> enrichKbName(EmbeddingMatch<TextSegment> match,
+                                                      java.util.Map<Long, String> nameByKbId,
+                                                      String singleKbName) {
+        TextSegment segment = match.embedded();
+        if (segment == null || segment.metadata() == null) return match;
+
+        String existingName;
+        try {
+            existingName = segment.metadata().getString("kbName");
+        } catch (RuntimeException e) {
+            existingName = null;
+        }
+        if (existingName != null && !existingName.isBlank()) return match;
+
+        Long kbId;
+        try {
+            kbId = segment.metadata().getLong("kbId");
+        } catch (RuntimeException e) {
+            kbId = null;
+        }
+        String resolved = kbId != null ? nameByKbId.get(kbId) : singleKbName;
+        if (resolved == null) return match;
+
+        java.util.Map<String, Object> meta = new java.util.HashMap<>(segment.metadata().toMap());
+        meta.put("kbName", resolved);
+        return new EmbeddingMatch<>(match.score(), match.embeddingId(), match.embedding(),
+                TextSegment.from(segment.text(), Metadata.from(meta)));
     }
 
     /**
