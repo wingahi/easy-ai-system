@@ -51,4 +51,11 @@ public interface VectorStorePort {
      * 表不存在或查询失败时返回空集合（降级为不去重），由实现记录 WARN。
      */
     Set<String> existingContentHashes(String tableName);
+
+    /**
+     * 统计集合中的向量条数（重建收尾按新表实际行数回填 chunk_count）。
+     * <p>
+     * 表不存在或查询失败时返回 0，由实现记录 WARN。
+     */
+    int countVectors(String tableName);
 }

@@ -187,7 +187,8 @@ public class KnowledgeBaseService {
             patch.setCollectionName(plan.targetCollection());
             patch.setEmbeddingModelId(plan.targetModelId());
             patch.setDimension(plan.targetDimension());
-            patch.setChunkCount(0);
+            // 以新表实际行数回填（重建期间逐个文件 updateCounts 会有新旧表混合的中间值，收尾统一校准）
+            patch.setChunkCount(vectorStoreService.countVectors(plan.targetCollection()));
             kbMapper.updateById(patch);
             // 清空待生效字段（updateById 无法写 null）
             kbMapper.update(null, new LambdaUpdateWrapper<KnowledgeBase>()

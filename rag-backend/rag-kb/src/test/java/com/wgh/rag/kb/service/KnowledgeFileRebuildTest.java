@@ -102,6 +102,8 @@ class KnowledgeFileRebuildTest {
         when(documentParser.parse(any(File.class), anyString())).thenReturn(List.of("段落"));
         when(textSplitter.splitDetailed(anyList(), any(), any(), any())).thenReturn(List.of());
         when(vectorStoreService.existingContentHashes(anyString())).thenReturn(Set.of());
+        // 新表实际行数（重建收尾据此回填 chunk_count，不能用文件数或 rebuild_total）
+        when(vectorStoreService.countVectors(anyString())).thenReturn(3);
 
         KnowledgeBaseService.RebuildPlan plan = kbService.claimRebuild(1L);
         fileService.runRebuild(plan);
@@ -110,7 +112,8 @@ class KnowledgeFileRebuildTest {
         verify(kbMapper).updateById((KnowledgeBase) argThat((KnowledgeBase k) -> "SUCCEEDED".equals(k.getRebuildStatus())
                 && plan.targetCollection().equals(k.getCollectionName())
                 && Long.valueOf(8L).equals(k.getEmbeddingModelId())
-                && Integer.valueOf(768).equals(k.getDimension())));
+                && Integer.valueOf(768).equals(k.getDimension())
+                && Integer.valueOf(3).equals(k.getChunkCount())));
         verify(vectorStoreService).dropCollection("wgh_kb_old");
         verify(vectorStoreService, never()).insertVectors(anyString(), anyList(), anyLong(), anyInt());
     }

@@ -204,6 +204,32 @@ public class VectorStoreService implements VectorStorePort {
         return hashes;
     }
 
+    @Override
+    public int countVectors(String tableName) {
+        if (tableName == null) return 0;
+        try (var conn = dataSource.getConnection();
+             var check = conn.createStatement();
+             var rs = check.executeQuery(
+                     "SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='" + tableName + "'")) {
+            if (!rs.next()) {
+                log.debug("向量表 {} 不存在，按 0 计", tableName);
+                return 0;
+            }
+        } catch (Exception e) {
+            log.warn("检查向量表 {} 失败，按 0 计: {}", tableName, e.getMessage());
+            return 0;
+        }
+
+        try (var conn = dataSource.getConnection();
+             var stmt = conn.createStatement();
+             var rs = stmt.executeQuery("SELECT count(*) FROM " + tableName)) {
+            return rs.next() ? rs.getInt(1) : 0;
+        } catch (Exception e) {
+            log.warn("统计向量表 {} 行数失败，按 0 计: {}", tableName, e.getMessage());
+            return 0;
+        }
+    }
+
     /**
      * 真实向量化入库：EmbeddingModel embedAll() + PgVectorEmbeddingStore.addAll()
      */
