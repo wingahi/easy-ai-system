@@ -1,5 +1,6 @@
 package com.wgh.rag.kb.service;
 
+import com.wgh.rag.common.exception.BusinessException;
 import com.wgh.rag.common.metrics.RagMetrics;
 import com.wgh.rag.config.property.RagProperties;
 import com.wgh.rag.kb.entity.KnowledgeBase;
@@ -25,16 +26,15 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
-import org.springframework.context.ApplicationEventPublisher;
 
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -42,10 +42,10 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
- * 换 embedding 模型必须切表重建：旧 collection 删除、新 collection 生效，
- * 检索只读新表（旧语义空间向量不可能再被召回）；模型未变时不做任何切换。
+ * 换 embedding 模型只置 PENDING 标记，不自动重建；重建中禁止再切模型；
+ * 未重建完成前检索继续使用旧 collection + 旧模型（配成对，语义自洽）。
  */
-@DisplayName("知识库 - embedding 模型切换与重建")
+@DisplayName("知识库 - embedding 模型切换只标记不重建")
 class KnowledgeBaseEmbeddingSwitchTest {
 
     private final KnowledgeBaseMapper kbMapper = Mockito.mock(KnowledgeBaseMapper.class);
@@ -53,29 +53,29 @@ class KnowledgeBaseEmbeddingSwitchTest {
     private final LlmModelService llmModelService = Mockito.mock(LlmModelService.class);
     private final VectorStorePort vectorStoreService = Mockito.mock(VectorStorePort.class);
     private final SemanticCacheService semanticCacheService = Mockito.mock(SemanticCacheService.class);
-    private final ApplicationEventPublisher eventPublisher = Mockito.mock(ApplicationEventPublisher.class);
 
     private KnowledgeBaseService service;
 
     @BeforeAll
     static void initMybatisTableInfo() {
-        // 单测无 MyBatis 上下文：LambdaUpdateWrapper.set 会立即解析列名，需先注册实体元数据
-        TableInfoHelper.initTableInfo(
-                new MapperBuilderAssistant(new MybatisConfiguration(), ""), KnowledgeFile.class);
+        MapperBuilderAssistant assistant = new MapperBuilderAssistant(new MybatisConfiguration(), "");
+        TableInfoHelper.initTableInfo(assistant, KnowledgeFile.class);
+        TableInfoHelper.initTableInfo(assistant, KnowledgeBase.class);
     }
 
     @BeforeEach
     void setUp() {
         service = new KnowledgeBaseService(kbMapper, fileMapper, llmModelService,
-                vectorStoreService, semanticCacheService, eventPublisher);
+                vectorStoreService, semanticCacheService);
     }
 
     @Test
-    @DisplayName("模型变更：切换新 collection、删除旧 collection、标记文件待重建并发布事件")
-    void update_modelChanged_switchesCollectionAndDropsOld() {
-        KnowledgeBase existing = kb(1L, "wgh_kb_old", 7L, 1536);
+    @DisplayName("模型变更：只置 PENDING 与待生效模型，不改 collection/模型指针，不触发任何重建")
+    void update_modelChanged_onlyMarksPending() {
+        KnowledgeBase existing = kb(1L, "wgh_kb_old", 7L, 1536, "");
         when(kbMapper.selectById(1L)).thenReturn(existing);
         when(llmModelService.getEmbeddingModel(8L)).thenReturn(embeddingModel(8L, 768));
+        when(fileMapper.selectCount(any())).thenReturn(3L);
 
         KnowledgeBase request = new KnowledgeBase();
         request.setId(1L);
@@ -84,24 +84,21 @@ class KnowledgeBaseEmbeddingSwitchTest {
 
         KnowledgeBase updated = service.update(request);
 
-        assertThat(updated.getCollectionName())
-                .startsWith("wgh_kb_1_")
-                .isNotEqualTo("wgh_kb_old");
-        assertThat(updated.getDimension()).isEqualTo(768);
-        assertThat(updated.getChunkCount()).isZero();
+        assertThat(updated.getRebuildStatus()).isEqualTo("PENDING");
+        assertThat(updated.getPendingEmbeddingModelId()).isEqualTo(8L);
+        assertThat(updated.getRebuildTotal()).isEqualTo(3);
+        assertThat(updated.getRebuildProcessed()).isZero();
+        assertThat(updated.getCollectionName()).isNull();
+        assertThat(updated.getEmbeddingModelId()).isEqualTo(8L);
 
-        verify(vectorStoreService).ensureCollection(updated.getCollectionName(), 768);
-        verify(vectorStoreService).dropCollection("wgh_kb_old");
-        verify(fileMapper).update(isNull(), any());
-        verify(semanticCacheService).invalidateByKbId(1L);
-        verify(eventPublisher).publishEvent(any(KbEmbeddingModelChangedEvent.class));
+        verifyNoInteractions(vectorStoreService, semanticCacheService);
         verify(kbMapper).updateById(request);
     }
 
     @Test
-    @DisplayName("模型未变：保持原 collection，不触发重建")
-    void update_modelUnchanged_keepsCollection() {
-        KnowledgeBase existing = kb(1L, "wgh_kb_old", 7L, 1536);
+    @DisplayName("模型未变：普通编辑，不产生重建标记")
+    void update_modelUnchanged_keepsStatus() {
+        KnowledgeBase existing = kb(1L, "wgh_kb_old", 7L, 1536, "");
         when(kbMapper.selectById(1L)).thenReturn(existing);
 
         KnowledgeBase request = new KnowledgeBase();
@@ -111,59 +108,35 @@ class KnowledgeBaseEmbeddingSwitchTest {
 
         KnowledgeBase updated = service.update(request);
 
-        assertThat(updated.getCollectionName()).isNull();
-        verifyNoInteractions(vectorStoreService, eventPublisher, semanticCacheService);
-        verify(fileMapper, never()).update(any(), any());
+        assertThat(updated.getRebuildStatus()).isNull();
+        verifyNoInteractions(llmModelService, vectorStoreService, semanticCacheService);
         verify(kbMapper).updateById(request);
     }
 
     @Test
-    @DisplayName("模型变更后检索只走新 collection，旧表向量不参与召回")
-    void update_modelChanged_oldCollectionNotRecallable() {
-        KnowledgeBase existing = kb(1L, "wgh_kb_old", 7L, 1536);
+    @DisplayName("重建进行中：禁止切换模型")
+    void update_whileRebuildRunning_rejected() {
+        KnowledgeBase existing = kb(1L, "wgh_kb_old", 7L, 1536, "RUNNING");
+        when(kbMapper.selectById(1L)).thenReturn(existing);
+
         KnowledgeBase request = new KnowledgeBase();
         request.setId(1L);
         request.setEmbeddingModelId(8L);
-        // 第一次查询为 update 读取旧值，第二次为检索读取切换后的新值
-        when(kbMapper.selectById(1L)).thenReturn(existing, request);
-        when(llmModelService.getEmbeddingModel(8L)).thenReturn(embeddingModel(8L, 768));
 
-        service.update(request);
-        String newCollection = request.getCollectionName();
-        assertThat(newCollection).isNotEqualTo("wgh_kb_old");
-
-        EmbeddingModel newModel = mock(EmbeddingModel.class);
-        when(newModel.embed(anyString())).thenReturn(Response.from(new Embedding(new float[]{0.1f})));
-        ModelCacheManager modelCacheManager = mock(ModelCacheManager.class);
-        when(modelCacheManager.getEmbeddingModel(8L)).thenReturn(newModel);
-
-        EmbeddingStore<TextSegment> newStore = mock(PgVectorEmbeddingStore.class);
-        when(newStore.search(any())).thenReturn(new EmbeddingSearchResult<>(List.of()));
-        when(vectorStoreService.createEmbeddingStore(anyString(), anyInt())).thenReturn(newStore);
-        when(vectorStoreService.createEmbeddingStore(eq(newCollection), eq(768))).thenReturn(newStore);
-
-        RagProperties props = new RagProperties();
-        props.getRetrieve().setTopK(3);
-        props.getRetrieve().setMinScore(0.4);
-        RagRetrieveService retrieveService = new RagRetrieveService(
-                kbMapper, modelCacheManager, vectorStoreService, props,
-                mock(RerankService.class), mock(KeywordSearchService.class),
-                mock(QueryTransformService.class), mock(RagMetrics.class));
-
-        RetrieveResult result = retrieveService.searchMultiple(
-                List.of(1L), "问题", RetrievalOptions.defaults());
-
-        assertThat(result.matches()).isEmpty();
-        verify(vectorStoreService).createEmbeddingStore(eq(newCollection), eq(768));
-        verify(vectorStoreService, never()).createEmbeddingStore(eq("wgh_kb_old"), anyInt());
+        assertThatThrownBy(() -> service.update(request))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("正在重建");
+        verify(llmModelService, never()).getEmbeddingModel(any());
+        verify(kbMapper, never()).updateById(any(KnowledgeBase.class));
     }
 
-    private static KnowledgeBase kb(Long id, String collection, Long modelId, Integer dimension) {
+    private static KnowledgeBase kb(Long id, String collection, Long modelId, Integer dimension, String rebuildStatus) {
         KnowledgeBase kb = new KnowledgeBase();
         kb.setId(id);
         kb.setCollectionName(collection);
         kb.setEmbeddingModelId(modelId);
         kb.setDimension(dimension);
+        kb.setRebuildStatus(rebuildStatus);
         return kb;
     }
 

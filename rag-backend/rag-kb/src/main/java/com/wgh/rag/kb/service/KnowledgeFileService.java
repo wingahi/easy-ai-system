@@ -25,8 +25,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.event.TransactionPhase;
-import org.springframework.transaction.event.TransactionalEventListener;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.File;
@@ -264,50 +262,39 @@ public class KnowledgeFileService {
     }
 
     /**
-     * 全量重建知识库向量。
+     * 显式触发全量重建（唯一实际执行入口，由 POST /api/kb/{id}/rebuild 调用）。
      * <p>
-     * 换 embedding 模型后由 {@link KbEmbeddingModelChangedEvent} 自动触发，也可通过管理接口手动触发。
-     * 每个文件先清理旧向量（换模型时新表为空，此处为空操作），再提交到文件线程池异步重切/重嵌，
-     * 调用方不阻塞；源文件始终从对象存储重新读取，不依赖任何旧向量。
+     * 抢占 RUNNING 后立刻返回，后台逐文件重切/重嵌并更新 rebuild_processed/rebuild_total；
+     * 目标表是新建的，旧 collection 不动，成功后才切换指针并清理旧表。
      */
     public void rebuildAll(Long kbId) {
-        KnowledgeBase kb = kbService.getById(kbId);
-        List<KnowledgeFile> files = fileMapper.selectList(new LambdaQueryWrapper<KnowledgeFile>()
-                .eq(KnowledgeFile::getKnowledgeBaseId, kbId));
-        if (files.isEmpty()) {
-            log.info("知识库 {} 无文件，跳过重建", kbId);
-            return;
-        }
-
-        for (KnowledgeFile file : files) {
-            vectorStoreService.deleteByFileId(kb.getCollectionName(), file.getId());
-            file.setStatus("PENDING");
-            file.setChunkCount(0);
-            file.setErrorMessage(null);
-            fileMapper.updateById(file);
-        }
-        kbService.updateCounts(kbId);
-        for (KnowledgeFile file : files) {
-            processFileAsync(file, kb);
-        }
-        log.info("知识库 {} 向量重建已提交: {} 个文件", kbId, files.size());
+        KnowledgeBaseService.RebuildPlan plan = kbService.claimRebuild(kbId);
+        FILE_PROCESSOR.submit(() -> runRebuild(plan));
     }
 
     /**
-     * embedding 模型切换后重放全部文件。
-     * <p>
-     * AFTER_COMMIT 保证知识库集合指针已提交到库，避免异步任务读到旧 collectionName；
-     * 重建异常只记 ERROR（此时库内已是 PENDING 状态），可通过重建接口重新触发。
+     * 同步执行重建（单测直接调用）。任一文件失败即整体判失败：
+     * 目标表被清理、collection/模型指针不切换，检索继续使用旧向量。
      */
-    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
-    public void onEmbeddingModelChanged(KbEmbeddingModelChangedEvent event) {
-        log.info("知识库 {} embedding 模型变更（{} -> {}），开始全量重建",
-                event.kbId(), event.oldModelId(), event.newModelId());
+    void runRebuild(KnowledgeBaseService.RebuildPlan plan) {
+        KnowledgeBase kb = plan.kb();
+        int total = plan.kb().getRebuildTotal() == null ? 0 : plan.kb().getRebuildTotal();
+        int processed = 0;
+        boolean success = true;
         try {
-            rebuildAll(event.kbId());
+            List<KnowledgeFile> files = fileMapper.selectList(new LambdaQueryWrapper<KnowledgeFile>()
+                    .eq(KnowledgeFile::getKnowledgeBaseId, kb.getId()));
+            for (KnowledgeFile file : files) {
+                processFile(file, kb, plan.targetCollection(), plan.targetModelId(), plan.targetDimension());
+                processed++;
+                kbService.updateRebuildProgress(kb.getId(), processed, total);
+                log.info("知识库 {} 重建进度 {}/{}", kb.getId(), processed, total);
+            }
         } catch (Exception e) {
-            log.error("知识库 {} 重建提交失败，可通过重建接口手动触发", event.kbId(), e);
+            success = false;
+            log.error("知识库 {} 重建失败（已完成 {}/{}），旧数据继续可用", kb.getId(), processed, total, e);
         }
+        kbService.finishRebuild(plan, processed, success);
     }
 
     // ============ 私有方法 ============
@@ -373,60 +360,70 @@ public class KnowledgeFileService {
     private void processFileAsync(KnowledgeFile file, KnowledgeBase kb) {
         // 使用线程池异步处理（避免裸 new Thread 导致并发失控）
         FILE_PROCESSOR.submit(() -> {
-            File parsedFile = null;
             try {
-                file.setStatus("PROCESSING");
-                fileMapper.updateById(file);
-
-                parsedFile = materializeToTempFile(file.getFilePath(), file.getFileType());
-                List<String> paragraphs = documentParser.parse(parsedFile, file.getFileType());
-                TextSplitter.Strategy strategy = TextSplitter.Strategy.valueOf(file.getSplitStrategy());
-                // SEMANTIC 需要知识库绑定的 embedding 模型；STRUCTURED/SEMANTIC 会产出 chunk 属性
-                List<ChunkOutput> chunks = textSplitter.splitDetailed(paragraphs, strategy, file.getSplitConfig(),
-                        new SplitContext(kb.getEmbeddingModelId()));
-
-                // 构造 TextSegment（附带 metadata 记录来源文件 + 切分属性如 headingPath/semanticBlockIndex）
-                List<TextSegment> segments = new ArrayList<>();
-                for (int i = 0; i < chunks.size(); i++) {
-                    Map<String, Object> meta = buildChunkMetadata(file, kb, i, chunks.get(i).attributes());
-                    meta.put("contentHash", sha256Hex(chunks.get(i).text()));
-                    Metadata metadata = Metadata.from(meta);
-                    segments.add(TextSegment.from(chunks.get(i).text(), metadata));
-                }
-
-                // 同一知识库内相同内容的 chunk 不重复嵌入（reSplit 会先删本文件旧向量，故不会自排除）
-                Set<String> existingHashes = vectorStoreService.existingContentHashes(kb.getCollectionName());
-                List<TextSegment> toInsert = dedupeSegments(segments, existingHashes);
-                int skipped = segments.size() - toInsert.size();
-                if (skipped > 0) {
-                    log.info("文件 {} chunk 去重跳过 {} 条（知识库已存在或文件内重复）", file.getFileName(), skipped);
-                }
-
-                // 向量化并存入 pgvector
-                if (!toInsert.isEmpty()) {
-                    vectorStoreService.insertVectors(
-                            kb.getCollectionName(),
-                            toInsert,
-                            kb.getEmbeddingModelId(),
-                            kb.getDimension());
-                }
-
-                file.setChunkCount(toInsert.size());
-                file.setStatus("SUCCESS");
-                fileMapper.updateById(file);
-
-                kbService.updateCounts(kb.getId());
-                log.info("文件处理完成: {} -> {} chunks（去重跳过 {}）", file.getFileName(), toInsert.size(), skipped);
-
+                processFile(file, kb, kb.getCollectionName(),
+                        kb.getEmbeddingModelId(), kb.getDimension());
             } catch (Exception e) {
                 log.error("文件处理失败: {}", file.getFileName(), e);
-                file.setStatus("FAILED");
-                file.setErrorMessage(e.getMessage());
-                fileMapper.updateById(file);
-            } finally {
-                deleteTempQuietly(parsedFile);
             }
         });
+    }
+
+    /**
+     * 同步处理单个文件（上传/重切/重建共用），失败时标记 FAILED 并抛出，交由调用方决定整体语义。
+     */
+    private void processFile(KnowledgeFile file, KnowledgeBase kb, String collection,
+                             Long embeddingModelId, Integer dimension) throws Exception {
+        File parsedFile = null;
+        try {
+            file.setStatus("PROCESSING");
+            fileMapper.updateById(file);
+
+            parsedFile = materializeToTempFile(file.getFilePath(), file.getFileType());
+            List<String> paragraphs = documentParser.parse(parsedFile, file.getFileType());
+            TextSplitter.Strategy strategy = TextSplitter.Strategy.valueOf(file.getSplitStrategy());
+            // SEMANTIC 需要知识库绑定的 embedding 模型；STRUCTURED/SEMANTIC 会产出 chunk 属性
+            List<ChunkOutput> chunks = textSplitter.splitDetailed(paragraphs, strategy, file.getSplitConfig(),
+                    new SplitContext(embeddingModelId));
+
+            // 构造 TextSegment（附带 metadata 记录来源文件 + 切分属性如 headingPath/semanticBlockIndex）
+            List<TextSegment> segments = new ArrayList<>();
+            for (int i = 0; i < chunks.size(); i++) {
+                Map<String, Object> meta = buildChunkMetadata(file, kb, i, chunks.get(i).attributes());
+                meta.put("contentHash", sha256Hex(chunks.get(i).text()));
+                Metadata metadata = Metadata.from(meta);
+                segments.add(TextSegment.from(chunks.get(i).text(), metadata));
+            }
+
+            // 同一知识库内相同内容的 chunk 不重复嵌入（目标表为新建表，重建时不会自排除）
+            Set<String> existingHashes = vectorStoreService.existingContentHashes(collection);
+            List<TextSegment> toInsert = dedupeSegments(segments, existingHashes);
+            int skipped = segments.size() - toInsert.size();
+            if (skipped > 0) {
+                log.info("文件 {} chunk 去重跳过 {} 条（知识库已存在或文件内重复）", file.getFileName(), skipped);
+            }
+
+            // 向量化并存入 pgvector
+            if (!toInsert.isEmpty()) {
+                vectorStoreService.insertVectors(collection, toInsert, embeddingModelId, dimension);
+            }
+
+            file.setChunkCount(toInsert.size());
+            file.setStatus("SUCCESS");
+            fileMapper.updateById(file);
+
+            kbService.updateCounts(kb.getId());
+            log.info("文件处理完成: {} -> {} chunks（去重跳过 {}）", file.getFileName(), toInsert.size(), skipped);
+
+        } catch (Exception e) {
+            log.error("文件处理失败: {}", file.getFileName(), e);
+            file.setStatus("FAILED");
+            file.setErrorMessage(e.getMessage());
+            fileMapper.updateById(file);
+            throw e;
+        } finally {
+            deleteTempQuietly(parsedFile);
+        }
     }
 
     /**

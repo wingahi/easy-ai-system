@@ -107,6 +107,11 @@ CREATE TABLE IF NOT EXISTS wgh_knowledge_base (
   file_count INT DEFAULT 0,
   chunk_count INT DEFAULT 0,
   status SMALLINT DEFAULT 1,
+  rebuild_status VARCHAR(20) DEFAULT '',
+  rebuild_total INT DEFAULT 0,
+  rebuild_processed INT DEFAULT 0,
+  pending_collection VARCHAR(100),
+  pending_embedding_model_id BIGINT,
   create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   create_by VARCHAR(50) DEFAULT 'system',
@@ -1043,6 +1048,16 @@ COMMENT ON COLUMN wgh_knowledge_file.version IS '当前版本号（重切/重传
 ALTER TABLE wgh_knowledge_file ADD COLUMN IF NOT EXISTS content_hash VARCHAR(64);
 COMMENT ON COLUMN wgh_knowledge_file.content_hash IS '文件内容 SHA-256（同知识库内重复内容去重）';
 CREATE INDEX IF NOT EXISTS idx_kfile_kb_content_hash ON wgh_knowledge_file(knowledge_base_id, content_hash);
+
+-- 重建状态机：换 embedding 模型只置 PENDING，实际重建由显式接口触发
+ALTER TABLE wgh_knowledge_base ADD COLUMN IF NOT EXISTS rebuild_status VARCHAR(20) DEFAULT '';
+ALTER TABLE wgh_knowledge_base ADD COLUMN IF NOT EXISTS rebuild_total INT DEFAULT 0;
+ALTER TABLE wgh_knowledge_base ADD COLUMN IF NOT EXISTS rebuild_processed INT DEFAULT 0;
+ALTER TABLE wgh_knowledge_base ADD COLUMN IF NOT EXISTS pending_collection VARCHAR(100);
+ALTER TABLE wgh_knowledge_base ADD COLUMN IF NOT EXISTS pending_embedding_model_id BIGINT;
+COMMENT ON COLUMN wgh_knowledge_base.rebuild_status IS '重建状态：空/PENDING/RUNNING/SUCCEEDED/FAILED';
+COMMENT ON COLUMN wgh_knowledge_base.rebuild_total IS '重建文件总数（进度分母）';
+COMMENT ON COLUMN wgh_knowledge_base.rebuild_processed IS '已重建文件数（进度分子）';
 
 CREATE TABLE IF NOT EXISTS wgh_knowledge_file_version (
   id BIGSERIAL PRIMARY KEY,

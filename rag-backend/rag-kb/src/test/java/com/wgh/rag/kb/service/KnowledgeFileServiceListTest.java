@@ -42,8 +42,7 @@ class KnowledgeFileServiceListTest {
                 fileMapper,
                 Mockito.mock(LlmModelService.class),
                 Mockito.mock(VectorStoreService.class),
-                Mockito.mock(SemanticCacheService.class),
-                Mockito.mock(org.springframework.context.ApplicationEventPublisher.class));
+                Mockito.mock(SemanticCacheService.class));
         service = new KnowledgeFileService(
                 fileMapper,
                 Mockito.mock(KnowledgeFileVersionMapper.class),
