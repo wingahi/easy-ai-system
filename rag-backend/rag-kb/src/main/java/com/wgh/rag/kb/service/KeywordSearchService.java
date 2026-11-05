@@ -35,6 +35,17 @@ public class KeywordSearchService implements KeywordSearchPort {
     private static final Pattern TABLE_NAME_PATTERN = Pattern.compile("^[a-zA-Z0-9_]+$");
     private static final String TRGM_INDEX_SUFFIX = "_text_trgm_idx";
 
+    /**
+     * word_similarity 命中阈值（0~1）。
+     * <p>
+     * 选型依据（离线 pg_trgm 同构对照，语料为仓库文档切出的 1077 个 ~512 字块，均值 463 字）：
+     * 完全包含的 12 字中文查询相似度 0.86；单字错别字 0.53；双错别字 0.30；库外无关查询 0.05。
+     * 0.6 会漏掉单错别字（0.53），0.4 与 0.5 的命中集相同但 0.5 更保守，故取 0.5。
+     * 真实库上可用下列 SQL 复核（word_similarity(查询, chunk) 与函数名/参数顺序一致）：
+     * SELECT word_similarity('查询串', text) FROM <wgh_kb_表> ORDER BY 1 DESC LIMIT 10;
+     */
+    private static final double WORD_SIMILARITY_THRESHOLD = 0.5;
+
     private final DataSource dataSource;
     private final ObjectMapper objectMapper;
 
@@ -42,8 +53,14 @@ public class KeywordSearchService implements KeywordSearchPort {
     private final Set<String> indexedTables = ConcurrentHashMap.newKeySet();
 
     /**
-     * 关键词召回：similarity(text, query) 降序取 topN。
-     * 任何失败（扩展缺失/表不存在）记 WARN 并返回空列表 —— 调用方自动退化为纯向量路。
+     * 关键词召回：word_similarity(query, text) 降序取 topN。
+     * <p>
+     * 不能用 similarity(text, query)：长 chunk（~512 字，约 510 个 trigram）对短 query（~8 个 trigram）
+     * 的相似度被分母稀释到 1% 量级，低于默认阈值 0.3，导致关键词路恒为空。
+     * word_similarity 以 query 的 trigram 数量为窗口在 text 上滑动取最大匹配，专为"短 query vs 长文本"设计。
+     * <p>
+     * 查询失败（扩展缺失/表不存在/SQL 异常）记 WARN 并返回空列表；无命中只记 DEBUG，
+     * 两种结果在日志上可区分，调用方仍自动退化为纯向量路。
      */
     @Override
     public List<EmbeddingMatch<TextSegment>> search(String tableName, String query, int topN) {
@@ -55,14 +72,16 @@ public class KeywordSearchService implements KeywordSearchPort {
 
         ensureTrgmIndex(tableName);
 
-        String sql = "SELECT embedding_id, text, metadata, similarity(text, ?) AS score "
-                + "FROM " + tableName + " WHERE text % ? ORDER BY score DESC LIMIT ?";
+        String sql = "SELECT embedding_id, text, metadata, word_similarity(?, text) AS score "
+                + "FROM " + tableName
+                + " WHERE word_similarity(?, text) >= ? ORDER BY score DESC LIMIT ?";
         List<EmbeddingMatch<TextSegment>> matches = new ArrayList<>();
         try (Connection conn = dataSource.getConnection();
              PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, query);
             ps.setString(2, query);
-            ps.setInt(3, topN);
+            ps.setDouble(3, WORD_SIMILARITY_THRESHOLD);
+            ps.setInt(4, topN);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
                     TextSegment segment = TextSegment.from(rs.getString("text"), parseMetadata(rs.getString("metadata")));
@@ -71,8 +90,12 @@ public class KeywordSearchService implements KeywordSearchPort {
                 }
             }
         } catch (Exception e) {
-            log.warn("关键词检索失败 table={}: {}", tableName, e.getMessage());
+            // 查询失败必须区别于"无命中"：带异常栈打 WARN，便于定位扩展/表/权限问题
+            log.warn("关键词检索失败 table={}, query={}: {}", tableName, query, e.toString(), e);
             return List.of();
+        }
+        if (matches.isEmpty()) {
+            log.debug("关键词检索无命中: table={}, query={}, threshold={}", tableName, query, WORD_SIMILARITY_THRESHOLD);
         }
         return matches;
     }
