@@ -6,9 +6,9 @@
 
 | 文档 | 一句话定位 | 更新时间 |
 |---|---|---|
-| [design-overview.md](design/design-overview.md) | 系统总体设计：模块边界、分层、关键流程与数据层 | 2026-11-04 |
-| [design-detailed.md](design/design-detailed.md) | 详细设计：模块/关键类、认证、配额、公开访问、存储、SSE | 2026-11-04 |
-| [design-phase5-platform-features.md](design/design-phase5-platform-features.md) | 阶段五平台化特性（工具、工作流、多 Agent 等）阶段记录 | 2026-11-03 |
+| [design-overview.md](design/design-overview.md) | 系统总体设计：模块边界、分层、关键流程与数据层 | 2026-11-06 |
+| [design-detailed.md](design/design-detailed.md) | 详细设计：模块/关键类、认证、配额、公开访问、存储、SSE | 2026-11-06 |
+| [design-phase5-platform-features.md](design/design-phase5-platform-features.md) | 阶段五平台化特性（工具、工作流、多 Agent 等）阶段记录 | 2026-11-06 |
 | [design-public-access.md](design/design-public-access.md) | 免登录分享、嵌入 Widget 与开放 API 设计 | 2026-11-04 |
 | [design-document-formats.md](design/design-document-formats.md) | 文档解析格式支持范围与解析链路 | 2026-11-02 |
 | [design-observability.md](design/design-observability.md) | 指标、日志、告警与 Prometheus 接入 | 2026-11-03 |
@@ -26,9 +26,9 @@
 
 | 文档 | 一句话定位 | 更新时间 |
 |---|---|---|
-| [test-cases.md](testing/test-cases.md) | 全量测试用例（编号、前置条件、步骤、预期与自动化落点） | 2026-11-04 |
+| [test-cases.md](testing/test-cases.md) | 全量测试用例（编号、前置条件、步骤、预期与自动化落点） | 2026-11-06 |
 | [unit-test-report.md](testing/unit-test-report.md) | 单元测试执行结果与覆盖说明 | 2026-11-04 |
-| [browser-test-report-2026-11-03.md](testing/browser-test-report-2026-11-03.md) | 2026-11-03 浏览器回归报告 | 2026-11-04 |
+| [browser-test-report-2026-11-03.md](testing/browser-test-report-2026-11-03.md) | 2026-11-03 浏览器回归报告 | 2026-11-06 |
 | [browser-test-report-2026-11-04.md](testing/browser-test-report-2026-11-04.md) | 2026-11-04 浏览器全量回归与重启后复验报告 | 2026-11-04 |
 | [browser-e2e-report-2026-11-06.md](testing/browser-e2e-report-2026-11-06.md) | 2026-11-06 页面端到端测试报告：用例分布、缺陷修复复验与 BLOCKED 解除记录 | 2026-11-06 |
 

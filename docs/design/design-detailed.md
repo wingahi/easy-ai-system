@@ -518,7 +518,7 @@ LLM-as-judge：
 | `sources` | 去重后的文档引用（同文档保留最高分） |
 | `accuracy` | 在线正确率/覆盖率 |
 | `metrics` | 检索耗时、首 token、总耗时、token、成本 |
-| `model_switch` | `from`、`to`、`reason` |
+| `model_switch` | `modelName`、`modelId`、`reason` |
 | `tool_call_start` | `toolName`、`arguments`、`round` |
 | `tool_call_result` | `toolName`、`result`、`truncated`、`durationMs` |
 | `judge` | `faithfulness`、`answerRelevancy`、`judgeAgreement`、`judgeCount` |
@@ -536,9 +536,14 @@ resolveChain(routeGroup, llmModelId):
   3. 仍为空 → BusinessException
 ```
 
-- `route_group` 用于普通 RAG 的优先级切链；
-- Agent / Workflow 只使用 `primaryModelId`（链首），不做跨模型切链；
-- 流式 `onError` 在回调线程直接发送 `error`，不会回到 `runWithFailover`，因此首 token 前失败也不进切链（已知限制）。
+- `route_group` 用于普通 RAG、Agent 与工作流 LLM 节点的优先级切链；
+- 切链组件位于 `rag-llm` 的 `failover` 包，三类调用共用同一 `FailoverAttempt` 尝试状态机：
+  - `StreamingModelFailover`：普通 RAG 的流式 SSE 链路（回调驱动，首 token 前失败切链）；
+  - `BlockingModelFailover`：Agent（Planner / StepExecutor / Reflection）与工作流 LLM 节点的同步调用；
+  - `ModelFailoverService`：统一链解析（窗口 `route_group` 优先 → 模型自身路由组 → 单模型）；
+- 切链判定一致：首内容 / 首响应前失败 → 切下一个候选；已产出内容（含已执行工具）后失败 → 不切链、不回滚、不重发，直接返回错误；全部候选失败 → 明确业务错误（单模型保留原始错误文案）；
+- 三类链路均下发 `model_switch`（`modelName`、`modelId`、`reason`），错误与日志经 `FailoverErrors` 脱敏；
+- Agent 的恢复 / 重试入口没有实时窗口上下文，由 `AgentController` 按 `plan.chatWindowId` 回查窗口路由组后传入同一链路口径。
 
 ---
 
@@ -873,7 +878,7 @@ sequenceDiagram
 | 2 | `local` ↔ `oss` 不迁移 | key 中不含后端类型；切换后旧对象不可跨后端读取；无迁移工具 |
 | 3 | OSS 删除失败留孤儿 | `delete` 捕获异常仅 WARN；数据库逻辑删除继续 |
 | 4 | 多实例 JWKS 缓存不共享 | `JwksProvider` 缓存为进程内 `volatile Map`；无分布式缓存 |
-| 5 | 模型故障转移受限 | 普通 RAG 才调用 `resolveChain`；流转异步 `onError` 不回到切链；Agent/Workflow 用 `primaryModelId` |
+| 5 | 模型故障转移边界 | 普通 RAG、Agent、工作流 LLM 节点统一复用 `failover` 包；已产出内容后失败不切链 / 不回滚 / 不重发；不支持续接或拼接第二个模型输出 |
 | 6 | Redis 降级单机 | `DefaultPublicAccessStore` 回退进程内 Map/Deque，多实例不一致 |
 | 7 | 本地 `resolveUrl` 非下载服务 | 仅返回 `url-prefix + key`；应用未挂载静态目录 |
 

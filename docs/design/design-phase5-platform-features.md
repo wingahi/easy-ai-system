@@ -177,12 +177,14 @@ A → B → C → D → E → F → G，每阶段：schema + 实体/Mapper + Ser
 - **测试**：❌ 缺 `TagServiceTest`、❌ 缺 `FileVersionServiceTest`
 - **未做**：前端 `KnowledgeBase.vue` 标签 chip + 版本历史 Tab（本次剩余任务 #1）
 
-### G. 模型路由与故障转移 — 🔶 后端已完成，前端未做
+### G. 模型路由与故障转移 — ✅ 后端已完成（普通 RAG / Agent / 工作流），前端已完成
 - **表**：`wgh_llm_model.route_group` / `route_priority`、`wgh_chat_window.model_route_group`
-- **后端**：`ModelRouter.resolveChain(routeGroup, llmModelId)` 按 priority ASC 排序形成链路；`RagChatService.runWithFailover` 首 token 前异常 → 切下一个模型重试 → SSE 推 `model_switch` 事件
-- **测试**：❌ 缺 `ModelRouterTest`
-- **成本回填问题**：`settleCostAndQuota` 用路由链首模型而非实际响应模型的 modelName（本次剩余任务 #4 修复）
-- **未做**：前端 `ChatModels.vue` routeGroup/routePriority 字段、`ChatWindows.vue` modelRouteGroup 下拉（本次剩余任务 #2）
+- **后端**：`ModelRouter.resolveChain(routeGroup, llmModelId)` 按 priority ASC 排序形成链路；切链逻辑已从 `RagChatService` 抽到 `rag-llm` 的 `failover` 包：`StreamingModelFailover`（普通 RAG，回调驱动）、`BlockingModelFailover`（Agent / 工作流 LLM 节点，同步调用）、`ModelFailoverService`（统一链解析）；首内容前失败 → 切下一个模型 → SSE 推 `model_switch`；已产出内容后失败不切链
+- **恢复入口**：Agent 的 HITL 恢复 / 步骤重试由 `AgentController` 按 `plan.chatWindowId` 回查窗口 `model_route_group`，与首轮切链口径一致（窗口已删除时回退模型自身路由组）
+- **测试**：`ModelFailoverStreamTest`（7 项，普通 RAG）、`BlockingModelFailoverTest`（4 项，同步链路）、`AgentOrchestratorTest` 与工作流节点测试覆盖接入行为；仍缺 `ModelRouterTest`
+- **成本回填**：已修复 —— `settleCostAndQuota` 优先取故障转移中实际响应的模型（`actualModel`）回填 `model_name` / `cost`，缺省再回退链路首模型
+- **未做**：无（前端 `ChatModels.vue` routeGroup/routePriority 字段、`ChatWindows.vue` modelRouteGroup 下拉已完成，见本节末尾 #17）
+- **2026-11-06 补充**：普通 RAG 的 7 项故障转移单测保持全绿；Agent 与工作流 LLM 节点接入同一 `FailoverAttempt` 状态机并下发 `model_switch`（commit `8e357bb`）；已产出内容后不切链、不重发，全部候选失败返回明确业务错误
 
 ### 代码质量已知问题（本次剩余任务 #4）
 
@@ -192,6 +194,8 @@ A → B → C → D → E → F → G，每阶段：schema + 实体/Mapper + Ser
 | P1 | G `runWithFailover` 首 token 后异常无显式区分 | 已输出内容的错误可能被误重试 | 在 handler 外包裹 `AtomicBoolean firstTokenSent`，首 token 后抛异常只记错误事件不切链 |
 | P1 | F `TagService.setKbTags` 全量覆盖（DELETE + BATCH INSERT），前端误传空数组会清空绑定 | 数据丢失 | 改为 INSERT ... ON CONFLICT DO NOTHING + DELETE WHERE tagId NOT IN (newIds) 的 diff 逻辑 |
 | P2 | F/G 阶段独立 Service 无单元测试 | 回归风险 | 新增 3 个 Test 类 |
+
+> 2026-11-06 状态：P0 成本回填、P1 首 token 后异常区分均已修复（`e496f71`）；切链逻辑已抽至 `rag-llm/failover` 并被 Agent / 工作流复用（`8e357bb`）。
 
 ---
 

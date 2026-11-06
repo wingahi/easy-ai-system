@@ -991,14 +991,14 @@
 
 ## 22. 模型路由与故障转移
 
-> 实现：`ModelRouter#resolveChain`（窗口 `model_route_group` 非空时按 `route_priority` 升序成链，否则回退 `llm_model_id`）、`RagChatService#runWithFailover`；字段 `wgh_llm_model.route_group/route_priority`、`wgh_chat_window.model_route_group`。
-> **无自动化单测**（缺 `ModelRouterTest`），本组用例均为「仅手工」。
-> 实测（2026-11-02）：ROUTE-01 通过；ROUTE-02 **失败**——首模型连接失败经异步 `onError` 上报，未进入 `runWithFailover` 的切链逻辑，直接向前端返回 `event:error`（详见 §25 F4，遗留）。
+> 实现：`ModelRouter#resolveChain`（窗口 `model_route_group` 非空时按 `route_priority` 升序成链，否则回退 `llm_model_id`）、`rag-llm/failover` 包的 `FailoverAttempt` / `StreamingModelFailover`（普通 RAG 流式）/ `BlockingModelFailover`（Agent 与工作流 LLM 节点同步调用）；字段 `wgh_llm_model.route_group/route_priority`、`wgh_chat_window.model_route_group`。
+> 自动化：`ModelFailoverStreamTest`（7 项，普通 RAG 切链语义）、`BlockingModelFailoverTest`（4 项，同步链路）；仍缺 `ModelRouterTest`，ROUTE-01~05 路由用例保留「仅手工」。
+> 实测（2026-11-02）：ROUTE-01 通过；ROUTE-02 当时的 FAIL 已由 commit `e496f71` 修复（首 token 前失败纳入切链）。
 
 | 编号 | 分类 | 前置条件 | 用例 / 步骤 | 预期结果 | 覆盖类型 | 自动化落点 |
 |------|------|---------|------------|---------|---------|-----------|
 | ROUTE-01 | 接口 | 两个模型同 route_group，优先级 1/2；窗口选择该组 | 发起对话 | 命中优先级 1 的模型 | 仅手工 | `ChatModels.vue` / `ChatWindows.vue` |
-| ROUTE-02 | 异常 | 优先级 1 模型不可用（错误 key/超时） | 发起对话 | 自动降级到优先级 2，答复成功且日志记录失败模型 | 仅手工 | `RagChatService#runWithFailover` |
+| ROUTE-02 | 异常 | 优先级 1 模型不可用（错误 key/超时） | 发起对话 | 自动降级到优先级 2，答复成功且日志记录失败模型 | 仅手工 + 单元 | `StreamingModelFailover`、`ModelFailoverStreamTest` |
 | ROUTE-03 | 异常 | 链路全部失败 | 发起对话 | 返回明确错误，不无限重试 | 仅手工 | `RagChatService` |
 | ROUTE-04 | 边界 | 路由组无可用模型 | 发起对话 | 回退窗口 `llmModelId`；仍无则明确报错 | 仅手工 | `ModelRouter#resolveChain` |
 | ROUTE-05 | 边界 | 窗口未配置路由组 | 发起对话 | 直接使用 `llm_model_id`（行为与改造前一致） | 仅手工 | `RagChatService` |
@@ -1078,7 +1078,7 @@
 | F1 | `widget-demo.html` 内联脚本字符串含字面量 `</script>`，HTML 提前闭合脚本，demo 完全不执行 | 已修复 | 改为 `'</scr' + 'ipt>'`，复测 iframe 注入成功 |
 | F2 | `AdminStats.vue` 对 axios 返回值多做一层 `data.data` 解包，导致 TypeError、统计页全空 | 已修复 | 统一改为 `res.data`，复测数据正常渲染 |
 | F3 | `GraphValidator.NODE_TYPES` 缺 `AGENT`，含 AGENT 节点的工作流保存即报“节点类型非法” | 已修复 | 加入 `AGENT`，复测创建与运行通过 |
-| F4 | 模型故障转移仅覆盖同步异常：首模型连接失败经异步 `onError` 上报，未进入 `runWithFailover` 切链，直接返回 `event:error` | 未修复（遗留） | 需以 CompletableFuture/CountDownLatch 将首 token 前异步失败纳入切链；涉及核心流式链路，本轮未改动 |
+| F4 | 模型故障转移仅覆盖同步异常：首模型连接失败经异步 `onError` 上报，未进入切链，直接返回 `event:error` | 已修复（commit `e496f71`） | 改为回调驱动的 `StreamingModelFailover`，首 token 前 `onError` 统一进入切链；`ModelFailoverStreamTest` 7 项覆盖 |
 | F5 | `POST /api/auth/login` 响应不含 `roles`，前端 `isAdmin=false`，`requiresAdmin` 路由（`/admin/quota`）被重定向到 `/kb` | 未修复（遗留） | 受“不改 auth/角色”约束；接口层 `/api/admin/quota` 已验证可用，建议登录后补拉 `/auth/me` 或登录响应补 roles |
 | F6 | EML 原始 UTF-8 非编码 Subject 显示乱码 | 非缺陷 | 测试数据应使用 RFC2047 编码（`=?UTF-8?B?...?=`）；已用 v2 样例验证解析正确 |
 | F7 | 限流/配额业务错误的 HTTP 状态为 200，实际语义码（429）放在响应体 `code` | 待优化 | 前端按 `code` 处理可用；对外开放 API 建议统一为 HTTP 429，便于第三方网关识别 |
@@ -1334,11 +1334,11 @@
 | WAG-11 | 异常 | 节点必填项缺失 | LLM 缺 modelId、RETRIEVAL 缺 kbIds、TOOL 缺 toolId、CONDITION 缺 expression、WORKFLOW 缺 workflowId | 保存或校验 | HTTP 200 / code 2001（参数校验失败，具体映射待确认）；按类型返回明确缺失项错误；不落库 | 单元 | `GraphValidator` |
 | WAG-12 | 正常 | 保存并运行 AGENT 节点 | AGENT 配置 goal、modelId、maxSteps、timeoutMs、kbIds | 保存 → 运行 | 保存成功；SSE 产生 AGENT 步骤事件；最终 SUCCESS，输出文本与 stepCount 符合 §23 WAG-01~07 | 接口 | `WorkflowEditor.vue`、`AgentNodeExecutor` |
 
-### 30.3 模型路由与故障转移（含已知缺陷）
+### 30.3 模型路由与故障转移（含切链边界）
 
 | 编号 | 分类 | 名称 | 前置条件 | 操作步骤 | 预期结果（HTTP / 业务码） | 覆盖类型 | 自动化落点 |
 |------|------|------|---------|---------|--------------------------|---------|-----------|
-| ROUTE-06 | 已知缺陷 | 首 token 前异步失败不切链 | 路由组含优先级 1/2 两个模型；优先级 1 在建立流式连接阶段失败 | 发起对话 | 期望自动切到优先级 2 并答复成功；当前实际返回 SSE `event:error`，日志仅记录“使用模型 ... 原因: 首模型...”，未进入 `runWithFailover`。该用例标记 FAIL，缺陷编号 F4（§25）；优先链、回退、全失败等其余路由用例见 §22 ROUTE-01~05 | 仅手工 | `RagChatService#streamChatWithTools`、`ModelRouter` |
+| ROUTE-06 | 异常 | 首 token 前异步失败切链（原 F4，已修复） | 路由组含优先级 1/2 两个模型；优先级 1 在建立流式连接阶段失败 | 发起对话 | 自动切到优先级 2 并答复成功；日志记录失败模型与切换原因，SSE 推 `model_switch`。原 F4 已由 commit `e496f71` 修复；优先链、回退、全失败等其余路由用例见 §22 ROUTE-01~05 | 单元 + 仅手工 | `StreamingModelFailover`、`ModelFailoverStreamTest`、`ModelRouter` |
 
 ### 30.4 标签与文件版本（自动化落点补正）
 
@@ -1366,7 +1366,7 @@
 | L-04 | 多实例 JWKS 缓存不共享 | `JwksProvider` 缓存为进程内，TTL 300 秒；未知 kid 刷新最小间隔 30 秒；各实例独立拉取 | Auth-65~67 | 多实例部署时接受轮换延迟，或引入共享缓存/统一网关验签 |
 | L-05 | 无服务端 token 吊销列表 | 登出仅客户端丢弃 token；服务端无黑名单；token 在 `exp` 前仍有效（改密/禁用通过 `pv` 间接失效本地 token） | Auth-45 | 需要即时吊销时缩短 TTL 或引入 jti 黑名单 |
 | L-06 | 开发环境随机本地密钥 | 非 prod 且未配置 secret 时每次启动随机生成，重启后所有本地会话失效；多实例之间本地 token 互不认可 | Auth-44 | 开发联调也配置固定 secret；生产必须配置 |
-| L-07 | 故障转移不覆盖首 token 前异步失败 | 首模型在流式连接建立阶段失败经异步 `onError` 上报，未进入 `runWithFailover` 切链，直接返回 `event:error`（§25 F4） | ROUTE-06 | 以 CompletableFuture/CountDownLatch 将首 token 前失败纳入切链 |
+| L-07 | 首 token 前异步失败切链 | 已覆盖：`StreamingModelFailover` 将首 token 前的 `onError` 纳入切链（原 F4，commit `e496f71`） | ROUTE-06 | 保持 `ModelFailoverStreamTest` 7 项回归 |
 | L-08 | 业务错误统一 HTTP 200 + body code | 多数 Service 层 `BusinessException`（含 429、1004、3003、500）由全局异常处理返回 HTTP 200；真实 4xx 仅出现在过滤器层（401/403）、唯一键冲突（409/3002）与个别控制器显式映射（如删除绑定角色 409/3003） | QTA-04/05、RBA-11、RBA-22、STO-18 | 对外开放 API 建议单独映射真实 HTTP 状态（§25 F7） |
 | L-09 | Actuator 默认监听全部网卡 | `WGH_MANAGEMENT_ADDRESS` 默认 `0.0.0.0`，9090 默认对内网/容器开放 | OBS-01、OBS-16 | 生产绑定内网网卡并用防火墙限制来源 |
 | L-10 | 分享密码锁定按 token + IP | 失败计数 key 为 token + 客户端 IP；攻击者更换 IP 可绕过；同一 NAT 出口多个用户共享计数 | SHARE-16、PWD-01/02 | 需要更强防护时叠加账号/全局维度；合理配置可信代理 |
@@ -1375,6 +1375,6 @@
 | L-13 | 权限项只读，无权限 CRUD | `/api/admin/permissions` 仅返回种子权限，无新增/删除权限接口；角色只能分配已有权限码 | RBA-24~28 | 新增权限需通过种子数据/迁移发布 |
 | L-14 | 体验账号接口只支持单角色 | `AdminUserController` 创建/修改每次替换为用户单个角色；底层 `wgh_user_role` 支持多角色但管理端未暴露 | RBA-32、RBA-36 | 多角色需求走数据库/后续接口扩展 |
 | L-15 | 本地存储不跨实例共享 | `local` 类型写入各实例本地磁盘；多实例部署时上传与读取可能落到不同实例 | STO-01~15 | 多实例生产使用 OSS 或共享存储 |
-| L-16 | 模型路由/故障转移无自动化单测 | 现有测试未覆盖 `ModelRouter#resolveChain` 与首 token 失败切链；仅手工验证 | ROUTE-01~10 | 补充 `ModelRouterTest` 与流式失败切链集成测试 |
+| L-16 | 模型路由缺少自动化单测 | 流式切链（`ModelFailoverStreamTest` 7 项）与同步切链（`BlockingModelFailoverTest` 4 项）已覆盖；`ModelRouter#resolveChain` 本身仍无单测，路由命中/回退仅手工验证 | ROUTE-01~10 | 补充 `ModelRouterTest` |
 | L-17 | 登出/改密/重置后旧 token 语义依赖 pv | 本地 token 通过 `pv` 比对失效；外部 OIDC token 无 pv 概念，改密/重置不影响其有效性 | Auth-35、Auth-50、Auth-56 | 外部 token 生命周期由 IdP 管理；必要时缩短 IdP token TTL |
 | L-18 | 缺少大文件病毒扫描/内容安全检测 | 上传仅做格式、大小、空文件校验；无恶意内容扫描 | KB-08~17、STO-01~26 | 按合规要求接入扫描服务（当前未实现） |
