@@ -662,10 +662,9 @@ SSE：`multi_agent_start`、`agent_start`、`agent_rag`、`agent_tool_call_start
 
 ### 8.5 SQL 组织
 
-- `schema/01-schema.sql`：全部 DDL、索引、COMMENT，使用 `CREATE TABLE IF NOT EXISTS`、`CREATE INDEX IF NOT EXISTS`；
-- `seed/02-data.sql`：种子数据（角色、权限、体验账号、内置模板等）与兼容修复，使用幂等 `INSERT ... ON CONFLICT`；
-- `init.sql`：通过 `\ir schema/01-schema.sql`、`\ir seed/02-data.sql` 串联；
-- 重复执行无 ERROR 是验收标准。
+- `schema/01-schema.sql`：全部 DDL、索引、COMMENT，使用 `CREATE TABLE IF NOT EXISTS`、`CREATE INDEX IF NOT EXISTS`（结构幂等，可重复执行）；
+- `seed/02-data.sql`：种子数据（角色、权限、体验账号、内置模板等）与兼容修复，使用 `INSERT ... ON CONFLICT`；种子含示例数据，不建议对存量库重跑；
+- 两个脚本按 `01-schema.sql` → `02-data.sql` 顺序执行。
 
 ---
 
@@ -846,7 +845,7 @@ sequenceDiagram
 ### 12.2 启动顺序与初始化
 
 1. postgres 启动并通过 `pg_isready`；
-2. Compose 首次初始化执行挂载的 `01-schema.sql`（`schema.sql`）与 `02-data.sql`（`data.sql`）；`init.sql` 供本地手动初始化时通过 `\ir` 串联；
+2. Compose 首次初始化按顺序执行挂载的 `schema/01-schema.sql` 与 `seed/02-data.sql`；本地手动初始化可挂载 sql 目录后用 `psql -f` 依次执行；
 3. redis 启动并通过 `redis-cli ping`；
 4. backend 启动，管理端口 9090 暴露 health/prometheus；
 5. frontend nginx 启动，代理 `/api` 到 backend；

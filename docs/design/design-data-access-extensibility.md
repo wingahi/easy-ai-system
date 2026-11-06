@@ -331,7 +331,7 @@ rag-data/.../dialect/
 
 **现状问题**：
 
-- `init.sql` 只是 `\ir schema/01-schema.sql; \ir seed/02-data.sql;`（[init.sql#L16-L17](../../rag-backend/sql/init.sql#L16-L17)），依赖 `psql`，应用内不能执行；
+- 无统一入口脚本：`schema/01-schema.sql` 与 `seed/02-data.sql` 需按顺序分别执行，依赖 `psql`，应用内不能执行；
 - 无版本表、无校验和、无回滚；"结构 + 种子 + 老库修复"混在一起；
 - 生产部署依赖 compose 挂载初始化目录（README 记录"空卷首启执行 schema/01-schema.sql 与 seed/02-data.sql"），已建库只能手工重跑；
 - 幂等靠 `IF NOT EXISTS` / `DO $$` / `ON CONFLICT` 手工保证。
@@ -397,7 +397,7 @@ db/migration/mysql/V2__mysql_indexes.sql
 | 2 | 修测试基线漂移：优先 Testcontainers PostgreSQL；否则由生产 schema 机械派生 H2 schema | 15/37 表且列名/列型与生产不一致（§1.4.1），已在产生假信心 | 中（测试基建 + 2–3 个基类，200–400 行） |
 | 3 | 分页方言去硬编码；方言能力集中到 `wgh.db.dialect` 属性 | `DbType.POSTGRE_SQL` 硬编码（§1.2） | 小（80–150 行） |
 | 4 | JSON 列统一 `JsonStringTypeHandler`，布尔/ID 约定写入文档 | JSON 合法性当前依赖 PG（§1.3.3）；布尔已收敛但无文档 | 小（100–200 行） |
-| 5 | 拆出 `compat-fix.sql`，增加 `schema_version` 表 | `data.sql` 同时承担种子与老库修复（§1.3.2）；`init.sql` 不可被应用执行 | 小（50–100 行 SQL） |
+| 5 | 拆出 `compat-fix.sql`，增加 `schema_version` 表 | `seed/02-data.sql` 同时承担种子与老库修复（§1.3.2）；`schema/01-schema.sql` 只能手工执行 | 小（50–100 行 SQL） |
 
 ### 4.2 建议不做（现在）
 

@@ -170,7 +170,7 @@ update_by        VARCHAR(50) DEFAULT 'system'
 deleted          SMALLINT    DEFAULT 0
 ```
 
-### 1.6 完整 DDL（init.sql 追加）
+### 1.6 完整 DDL（schema/01-schema.sql 追加）
 
 ```sql
 -- ========== 多 Agent 运行实例 ==========

@@ -352,7 +352,7 @@ SSE 事件：`start`、`retrieve`、`content`、`sources`、`accuracy`、`metric
 - **逻辑删除**：MyBatis-Plus 全局 `deleted`（0/1），删除操作默认逻辑删除；
 - **布尔约定**：PostgreSQL 列使用 `SMALLINT`，实体 `Boolean` 字段配 `@TableField(typeHandler = BooleanToSmallintTypeHandler.class)`；`LambdaQueryWrapper` 比较使用字面量 `1/0`；
 - **向量**：`EmbeddingStore<TextSegment>` 抽象，默认 pgvector 表 `rag_vector_store`；按 embedding 模型 ID 分组，避免不同维度向量混用；重切/删除文件时同步清理旧向量；
-- **SQL 组织**：`schema/01-schema.sql`（DDL + 索引 + COMMENT）与 `seed/02-data.sql`（种子 + 兼容修复）由 `init.sql` 通过 `\ir` 串联，全部幂等可重复执行。
+- **SQL 组织**：`schema/01-schema.sql`（DDL + 索引 + COMMENT，结构幂等）与 `seed/02-data.sql`（种子 + 兼容修复；含示例数据，不建议对存量库重跑），按顺序执行。
 
 ---
 
@@ -514,7 +514,7 @@ flowchart TD
 
 | 服务 | 镜像 | 端口 | 说明 |
 | --- | --- | --- | --- |
-| `postgres` | `pgvector/pgvector:pg15` | 容器内 5432 | 首次启动执行 `schema.sql` / `data.sql`；默认不映射宿主端口 |
+| `postgres` | `pgvector/pgvector:pg15` | 容器内 5432 | 首次启动执行挂载的 `schema/01-schema.sql` / `seed/02-data.sql`；默认不映射宿主端口 |
 | `redis` | `redis:8.10.1-alpine` | 6379:6379 | 限流、密码锁定、Widget grant；AOF 持久化 |
 | `backend` | 本地构建 `eclipse-temurin:21-jre-alpine` | 8080（管理 9090 仅容器网络） | Spring Boot 单实例 |
 | `frontend` | 本地构建 `nginx:1.27-alpine` | 8088 → 80 | 静态资源 + API 代理 |

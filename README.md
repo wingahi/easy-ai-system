@@ -146,7 +146,7 @@ wgh-rag-system/
 │   ├── rag-public-access/        # 分享 / Widget / 开放 API 实现层（无 Controller）
 │   ├── rag-controller/           # REST 层（含 /api/public、/api/open/v1）
 │   ├── rag-app/                  # 启动模块 + application*.yml + 集成测试
-│   ├── sql/                      # schema/01-schema.sql（37 张表）/ seed/02-data.sql / migrations/ / init.sql
+│   ├── sql/                      # schema/01-schema.sql（37 张表）/ seed/02-data.sql
 │   ├── eval/                     # eval_recall.py（Recall@K）、eval_rag.py（含 LLM Judge）
 │   └── scripts/                  # e2e / 冒烟 / 压测脚本
 ├── rag-frontend/                 # Vue 3 前端（含 public/widget.js）
@@ -212,10 +212,12 @@ docker run -d --name postgres-with-vector \
   -e POSTGRES_PASSWORD=postgres \
   -e POSTGRES_DB=wgh_rag \
   -p 5432:5432 \
-  pgvector/pgvector:pg16
+  -v "$(pwd)/rag-backend/sql:/sql:ro" \
+  pgvector/pgvector:pg15
 
-# 37 张表 + 索引 + 种子数据（幂等，可重复执行）
-docker exec -i postgres-with-vector psql -U postgres -d wgh_rag < rag-backend/sql/init.sql
+# 37 张表 + 索引 + 种子数据：按顺序用 -f 执行（结构脚本幂等，种子含示例数据，不建议对存量库重跑）
+docker exec -i postgres-with-vector psql -U postgres -d wgh_rag \
+  -f /sql/schema/01-schema.sql -f /sql/seed/02-data.sql
 ```
 
 2）启动后端：

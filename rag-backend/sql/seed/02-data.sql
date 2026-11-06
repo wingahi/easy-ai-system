@@ -34,7 +34,7 @@ INSERT INTO wgh_tool (name, tool_type, description, definition, executor_config,
 -- RBAC 种子数据（仅角色/权限结构，不含任何可登录账号）
 -- 仓库内不再硬编码默认口令：初始管理员由启动参数 WGH_INIT_ADMIN_PASSWORD 注入，
 -- 由 InitialAdminAccountInitializer 在首次启动时创建（首登强制改密）。
--- 全部语句幂等，可重复执行。
+-- 结构侧幂等（ON CONFLICT DO NOTHING）；种子含示例数据与兼容修复，不建议对存量库直接重跑。
 -- ========================================================
 INSERT INTO wgh_role (role_code, role_name, description) VALUES
 ('admin',  '管理员', '拥有全部模块权限'),
