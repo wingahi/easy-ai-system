@@ -9,7 +9,10 @@ import com.wgh.rag.agent.mapper.AgentPlanMapper;
 import com.wgh.rag.agent.mapper.AgentStepMapper;
 import com.wgh.rag.agent.service.AgentOrchestrator;
 import com.wgh.rag.auth.constant.AuthConstants;
+import com.wgh.rag.chat.entity.ChatWindow;
 import com.wgh.rag.chat.service.ChatWindowService;
+import com.wgh.rag.llm.entity.LlmModel;
+import com.wgh.rag.llm.service.ModelRouter;
 import com.wgh.rag.common.constant.RoleCodes;
 import com.wgh.rag.common.exception.BusinessException;
 import com.wgh.rag.common.result.Result;
@@ -42,6 +45,7 @@ public class AgentController {
     private final AgentProperties agentProperties;
     private final com.wgh.rag.chat.service.RagChatService ragChatService;
     private final ChatWindowService chatWindowService;
+    private final ModelRouter modelRouter;
 
     /** 查询 plan 当前状态（刷新页面恢复面板用）。 */
     @GetMapping("/plans/{planId}/state")
@@ -104,11 +108,14 @@ public class AgentController {
         double threshold = planMapper.selectById(plan.getId()) != null
                 ? agentProperties.getDefaultReflectionThreshold() : 7.0;
 
+        // 恢复入口没有实时窗口上下文，按 plan.chatWindowId 回查窗口路由组，保持与首轮一致的切链口径
+        WindowChains chains = resolveWindowChains(plan);
+
         // 用 no-op sink（REST 不走 SSE）
         AgentStepResult result = agentOrchestrator.resume(
                 plan.getId(), userInput,
                 threshold, agentProperties.getDefaultReflectionRetries(),
-                null);
+                null, chains.executor(), chains.planner());
 
         Map<String, Object> resp = new HashMap<>();
         resp.put("planId", plan.getId());
@@ -143,11 +150,12 @@ public class AgentController {
 
         AgentPlan plan = planMapper.selectById(step.getPlanId());
         assertPlanAccessible(plan);
+        WindowChains chains = resolveWindowChains(plan);
         AgentStepResult result = agentOrchestrator.retryStep(
                 plan.getId(), step.getStepId(),
                 agentProperties.getDefaultReflectionThreshold(),
                 agentProperties.getDefaultReflectionRetries(),
-                null);
+                null, chains.executor(), chains.planner());
 
         Map<String, Object> resp = new HashMap<>();
         resp.put("planId", plan.getId());
@@ -216,6 +224,23 @@ public class AgentController {
         state.put("currentStepIndex", plan.getCurrentStepIndex());
         state.put("createTime", plan.getCreateTime());
         return Result.success(state);
+    }
+
+    /** 恢复入口的模型链路：优先窗口 route_group，其次窗口/计划的模型配置。 */
+    private WindowChains resolveWindowChains(AgentPlan plan) {
+        ChatWindow window = plan == null ? null : chatWindowService.findById(plan.getChatWindowId());
+        Long executorModelId = window != null && window.getAgentExecutorModelId() != null
+                ? window.getAgentExecutorModelId()
+                : (window != null && window.getLlmModelId() != null ? window.getLlmModelId() : plan.getLlmModelId());
+        Long plannerModelId = window != null && window.getAgentPlannerModelId() != null
+                ? window.getAgentPlannerModelId() : executorModelId;
+        String routeGroup = window != null ? window.getModelRouteGroup() : null;
+        return new WindowChains(
+                modelRouter.resolveChain(routeGroup, executorModelId),
+                modelRouter.resolveChain(routeGroup, plannerModelId));
+    }
+
+    private record WindowChains(List<LlmModel> executor, List<LlmModel> planner) {
     }
 
     /**

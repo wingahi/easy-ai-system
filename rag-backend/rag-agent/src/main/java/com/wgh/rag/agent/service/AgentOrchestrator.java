@@ -132,6 +132,18 @@ public class AgentOrchestrator {
     public AgentStepResult resume(Long planId, String userInput,
                                    double reflectionThreshold, int reflectionMaxRetries,
                                    BiConsumer<String, Map<String, Object>> sse) {
+        return resume(planId, userInput, reflectionThreshold, reflectionMaxRetries, sse, null, null);
+    }
+
+    /**
+     * 从 HITL_PENDING 步骤恢复（显式传入故障转移链路）。
+     * 恢复入口没有实时窗口上下文，由调用方按 plan.chatWindowId 解析窗口 route_group 后传入；
+     * 传 null 时退回模型自身路由组（兼容既有调用）。
+     */
+    public AgentStepResult resume(Long planId, String userInput,
+                                   double reflectionThreshold, int reflectionMaxRetries,
+                                   BiConsumer<String, Map<String, Object>> sse,
+                                   List<LlmModel> executorChain, List<LlmModel> plannerChain) {
         AgentPlan plan = planLifecycleService.findPlan(planId);
         if (plan == null) throw new AgentException("Plan 不存在: " + planId);
         if (!AgentConstants.STATUS_PAUSED.equals(plan.getStatus())) throw new AgentException("Plan 非 PAUSED 状态，无法 resume");
@@ -172,7 +184,7 @@ public class AgentOrchestrator {
         // 继续执行剩余步骤
         return executeSteps(plan, remainingStepDTOs, plan.getLlmModelId(),
                 null, null, false, List.of(), plan.getUserGoal(),
-                reflectionThreshold, reflectionMaxRetries, true, sse, contextBuilder, null, null);
+                reflectionThreshold, reflectionMaxRetries, true, sse, contextBuilder, executorChain, plannerChain);
     }
 
     // ==================== 执行控制 API ====================
@@ -189,6 +201,16 @@ public class AgentOrchestrator {
     public AgentStepResult retryStep(Long planId, String stepId,
                                       double reflectionThreshold, int reflectionMaxRetries,
                                       BiConsumer<String, Map<String, Object>> sse) {
+        return retryStep(planId, stepId, reflectionThreshold, reflectionMaxRetries, sse, null, null);
+    }
+
+    /**
+     * 重试单个步骤（显式传入故障转移链路），链路解析口径与 resume 一致。
+     */
+    public AgentStepResult retryStep(Long planId, String stepId,
+                                      double reflectionThreshold, int reflectionMaxRetries,
+                                      BiConsumer<String, Map<String, Object>> sse,
+                                      List<LlmModel> executorChain, List<LlmModel> plannerChain) {
         AgentPlan plan = planLifecycleService.findPlan(planId);
         AgentStep step = planLifecycleService.findStep(planId, stepId);
         if (plan == null || step == null) throw new AgentException("plan/step 不存在");
@@ -218,7 +240,7 @@ public class AgentOrchestrator {
 
         return executeSteps(plan, List.of(dto), plan.getLlmModelId(),
                 null, null, false, List.of(), plan.getUserGoal(),
-                reflectionThreshold, reflectionMaxRetries, true, sse, ctx, null, null);
+                reflectionThreshold, reflectionMaxRetries, true, sse, ctx, executorChain, plannerChain);
     }
 
     /** 跳过单个 FAILED / PENDING 步骤。 */

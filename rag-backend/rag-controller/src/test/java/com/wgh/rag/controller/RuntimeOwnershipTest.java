@@ -14,6 +14,7 @@ import com.wgh.rag.common.exception.BusinessException;
 import com.wgh.rag.common.result.Result;
 import com.wgh.rag.common.security.LoginUser;
 import com.wgh.rag.controller.support.RunAccessGuard;
+import com.wgh.rag.llm.service.ModelRouter;
 import com.wgh.rag.workflow.entity.WorkflowRun;
 import com.wgh.rag.workflow.service.WorkflowService;
 import org.junit.jupiter.api.AfterEach;
@@ -52,6 +53,8 @@ class RuntimeOwnershipTest {
     private RagChatService ragChatService;
     @Mock
     private ChatWindowService chatWindowService;
+    @Mock
+    private ModelRouter modelRouter;
 
     @AfterEach
     void tearDown() {
@@ -151,7 +154,7 @@ class RuntimeOwnershipTest {
 
     private AgentController agentController() {
         return new AgentController(agentOrchestrator, planMapper, stepMapper, agentProperties,
-                ragChatService, chatWindowService);
+                ragChatService, chatWindowService, modelRouter);
     }
 
     private AgentPlan planOwnedBy() {

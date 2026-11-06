@@ -53,6 +53,14 @@ public class ChatWindowService {
         return window;
     }
 
+    /**
+     * 查询窗口，不存在（含已软删除）时返回 null。
+     * 用于恢复类入口：历史计划对应的窗口可能已删除，不应阻断恢复。
+     */
+    public ChatWindow findById(Long id) {
+        return id == null ? null : windowMapper.selectById(id);
+    }
+
     @Transactional
     public ChatWindow create(ChatWindow window) {
         validateWorkflow(window);
