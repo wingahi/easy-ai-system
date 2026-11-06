@@ -1033,6 +1033,8 @@ CREATE INDEX IF NOT EXISTS idx_kfile_kb_content_hash ON wgh_knowledge_file(knowl
 COMMENT ON COLUMN wgh_knowledge_base.rebuild_status IS '重建状态：空/PENDING/RUNNING/SUCCEEDED/FAILED';
 COMMENT ON COLUMN wgh_knowledge_base.rebuild_total IS '重建文件总数（进度分母）';
 COMMENT ON COLUMN wgh_knowledge_base.rebuild_processed IS '已重建文件数（进度分子）';
+COMMENT ON COLUMN wgh_knowledge_base.pending_collection IS '重建中的目标向量表名（成功后切换为 collection_name，失败时清理）';
+COMMENT ON COLUMN wgh_knowledge_base.pending_embedding_model_id IS '重建中待生效的嵌入模型 ID（成功后替换 embedding_model_id）';
 
 CREATE TABLE IF NOT EXISTS wgh_knowledge_file_version (
   id BIGSERIAL PRIMARY KEY,

@@ -5,15 +5,28 @@
 
 -- ============ 初始化示例数据 ============
 
+-- 示例嵌入模型：占位 Key 一律禁用（status=0），由管理员填入真实 Key 后再启用
 INSERT INTO wgh_embedding_model (name, provider, model_name, base_url, api_key, dimension, status, is_default, remark) VALUES
-('通义 text-embedding-v2', 'DASHSCOPE', 'text-embedding-v2', 'https://dashscope.aliyuncs.com/compatible-mode/v1', 'YOUR_DASHSCOPE_API_KEY', 1536, 1, 1, '阿里云通义嵌入模型示例')
+('通义 text-embedding-v2', 'DASHSCOPE', 'text-embedding-v2', 'https://dashscope.aliyuncs.com/compatible-mode/v1', 'YOUR_DASHSCOPE_API_KEY', 1536, 0, 1, '阿里云通义嵌入模型示例')
 ON CONFLICT DO NOTHING;
 
-INSERT INTO wgh_llm_model (name, model_type, provider, model_name, base_url, api_key, max_context_tokens, temperature, compression_model, status, remark) VALUES
-('通义 qwen-plus', 'CHAT', 'DASHSCOPE', 'qwen-plus', 'https://dashscope.aliyuncs.com/compatible-mode/v1', 'YOUR_DASHSCOPE_API_KEY', 4096, 0.7, 0, 1, '阿里云通义模型示例'),
-('DeepSeek V3', 'CHAT', 'DEEPSEEK', 'deepseek-chat', 'https://api.deepseek.com/v1', 'YOUR_DEEPSEEK_API_KEY', 65536, 0.7, 0, 1, 'DeepSeek 模型示例');
+-- 示例 Chat 模型：占位 Key 一律禁用（status=0），填入真实 Key 后再启用；
+-- 按 (provider, model_name) 判重，存量库重跑不产生重复行
+INSERT INTO wgh_llm_model (name, model_type, provider, model_name, base_url, api_key, max_context_tokens, temperature, compression_model, status, remark)
+SELECT v.name, v.model_type, v.provider, v.model_name, v.base_url, v.api_key, v.max_context_tokens, v.temperature, v.compression_model, v.status, v.remark
+FROM (VALUES
+('通义 qwen-plus', 'CHAT', 'DASHSCOPE', 'qwen-plus', 'https://dashscope.aliyuncs.com/compatible-mode/v1', 'YOUR_DASHSCOPE_API_KEY', 4096, 0.7, 0, 0, '阿里云通义模型示例'),
+('DeepSeek V3', 'CHAT', 'DEEPSEEK', 'deepseek-chat', 'https://api.deepseek.com/v1', 'YOUR_DEEPSEEK_API_KEY', 65536, 0.7, 0, 0, 'DeepSeek 模型示例')
+) AS v(name, model_type, provider, model_name, base_url, api_key, max_context_tokens, temperature, compression_model, status, remark)
+WHERE NOT EXISTS (
+    SELECT 1 FROM wgh_llm_model m
+    WHERE m.provider = v.provider AND m.model_name = v.model_name
+);
 
-INSERT INTO wgh_tool (name, tool_type, description, definition, executor_config, status, is_example) VALUES
+-- 示例工具：按 (name, tool_type) 判重，存量库重跑不产生重复行
+INSERT INTO wgh_tool (name, tool_type, description, definition, executor_config, status, is_example)
+SELECT v.name, v.tool_type, v.description, v.definition, v.executor_config, v.status, v.is_example
+FROM (VALUES
 ('天气查询 Skill', 'SKILL', '查询指定城市当前天气状况',
  '{"type":"function","function":{"name":"get_weather","description":"获取指定城市的当前天气","parameters":{"type":"object","properties":{"city":{"type":"string","description":"城市名称如：北京、上海"},"unit":{"type":"string","enum":["celsius","fahrenheit"],"description":"温度单位"}},"required":["city"]}}}',
  E'{"mode":"inline","promptTemplate":"---SYSTEM---\\n你是天气查询助手，请根据用户提供的城市给出当前天气概况。\\n参数不足时请说明缺少什么。\\n---USER---\\n查询城市：{{city}}","subModelDefault":true}', 1, 1),
@@ -28,7 +41,12 @@ INSERT INTO wgh_tool (name, tool_type, description, definition, executor_config,
 
 ('用户订单查询 Function', 'FUNCTION_CALLING', '反射调用本地 handler 查询用户订单',
  '{"type":"function","function":{"name":"query_user_order","description":"查询指定用户的订单列表","parameters":{"type":"object","properties":{"userId":{"type":"string","description":"用户ID，如 U1001"},"status":{"type":"string","enum":["all","pending","paid","completed"],"description":"订单状态筛选，默认 all"}},"required":["userId"]}}}',
- '{"handlerClass":"com.wgh.rag.tool.demo.OrderQueryHandler","method":"query"}', 1, 1);
+ '{"handlerClass":"com.wgh.rag.tool.demo.OrderQueryHandler","method":"query"}', 1, 1)
+) AS v(name, tool_type, description, definition, executor_config, status, is_example)
+WHERE NOT EXISTS (
+    SELECT 1 FROM wgh_tool t
+    WHERE t.name = v.name AND t.tool_type = v.tool_type
+);
 
 -- ========================================================
 -- RBAC 种子数据（仅角色/权限结构，不含任何可登录账号）
