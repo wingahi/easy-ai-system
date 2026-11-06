@@ -18,6 +18,7 @@ CREATE TABLE wgh_knowledge_file (
     chunk_count INT DEFAULT 0,
     status VARCHAR(20),
     error_message TEXT,
+    content_hash VARCHAR(64),
     version INT DEFAULT 1,
     create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
