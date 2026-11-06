@@ -1,6 +1,6 @@
 -- ========================================================
 -- WGH RAG System 种子数据
--- 依赖：先执行 schema.sql 建表
+-- 依赖：先执行 schema/01-schema.sql 建表
 -- ========================================================
 
 -- ============ 初始化示例数据 ============
@@ -30,44 +30,11 @@ INSERT INTO wgh_tool (name, tool_type, description, definition, executor_config,
  '{"type":"function","function":{"name":"query_user_order","description":"查询指定用户的订单列表","parameters":{"type":"object","properties":{"userId":{"type":"string","description":"用户ID，如 U1001"},"status":{"type":"string","enum":["all","pending","paid","completed"],"description":"订单状态筛选，默认 all"}},"required":["userId"]}}}',
  '{"handlerClass":"com.wgh.rag.tool.demo.OrderQueryHandler","method":"query"}', 1, 1);
 
--- ============ 老库兼容修复：SKILL executor_config 格式升级 ============
--- 种子 INSERT 已是新格式（mode=inline + promptTemplate），新库跑时 WHERE 不命中，空跑
--- 老库如果存在 built-in 旧格式的 SKILL（无 promptTemplate 也无 skillPath），统一转为 inline 模式
--- 对应原 migration_20261027_tool_skill_executor_config.sql
-UPDATE wgh_tool
-SET executor_config = jsonb_build_object(
-        'mode', 'inline',
-        'promptTemplate',
-          '---SYSTEM---' || chr(10) ||
-          '你是「' || name || '」技能助手。' || COALESCE(NULLIF(description, ''), '') || chr(10) ||
-          '请根据用户提供的参数完成任务；参数不足时请说明缺少什么，不要编造参数之外的信息。',
-        'subModelDefault', TRUE
-    )::text,
-    update_time = CURRENT_TIMESTAMP
-WHERE tool_type = 'SKILL'
-  AND COALESCE(executor_config, '') NOT LIKE '%promptTemplate%'
-  AND COALESCE(executor_config, '') NOT LIKE '%skillPath%';
-
--- ============ 老库兼容修复：wgh_m_agent_step.run_id 类型修正 ============
--- 历史版本该列被错误建为 BIGINT，而 wgh_m_agent_run.run_id 为 VARCHAR(64)（'mag-...' 形式），
--- 导致步骤写入与 runs/{runId}/state、steps 查询全部失败。
--- 新库 schema.sql 已直接建为 VARCHAR(64)；本语句仅在老库列类型仍为 bigint 时执行，幂等可重复。
-DO $$
-BEGIN
-    IF EXISTS (
-        SELECT 1 FROM information_schema.columns
-        WHERE table_name = 'wgh_m_agent_step' AND column_name = 'run_id' AND data_type = 'bigint'
-    ) THEN
-        ALTER TABLE wgh_m_agent_step ALTER COLUMN run_id TYPE VARCHAR(64) USING run_id::text;
-    END IF;
-END $$;
-
 -- ========================================================
 -- RBAC 种子数据（仅角色/权限结构，不含任何可登录账号）
 -- 仓库内不再硬编码默认口令：初始管理员由启动参数 WGH_INIT_ADMIN_PASSWORD 注入，
 -- 由 InitialAdminAccountInitializer 在首次启动时创建（首登强制改密）。
 -- 全部语句幂等，可重复执行。
--- 存量库中已存在的 admin/editor/viewer 账号与口令保持不变（不覆盖，需运维按需改密或清理）。
 -- ========================================================
 INSERT INTO wgh_role (role_code, role_name, description) VALUES
 ('admin',  '管理员', '拥有全部模块权限'),

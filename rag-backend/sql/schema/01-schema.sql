@@ -1,8 +1,8 @@
 -- ========================================================
--- WGH RAG System 数据库结构定义
+-- WGH RAG System 数据库结构定义（新库基线）
 -- PostgreSQL 15+ with pgvector
--- 包含所有 migration 合入后的完整 DDL + 索引 + 全字段 COMMENT
--- 用法：psql -d wgh_rag -f schema.sql  （已切换到目标库）
+-- 包含完整 DDL + 索引 + 全字段 COMMENT，不依赖任何历史库状态
+-- 用法：psql -d wgh_rag -f rag-backend/sql/schema/01-schema.sql  （已切换到目标库）
 -- ========================================================
 
 CREATE EXTENSION IF NOT EXISTS vector;
@@ -22,6 +22,9 @@ CREATE TABLE IF NOT EXISTS wgh_llm_model (
   max_context_tokens INT DEFAULT 4096,
   temperature DOUBLE PRECISION DEFAULT 0.7,
   compression_model SMALLINT DEFAULT 0,
+  supports_vision SMALLINT DEFAULT 0,
+  route_group VARCHAR(50),
+  route_priority INT DEFAULT 0,
   status SMALLINT DEFAULT 1,
   remark VARCHAR(500),
   create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -30,17 +33,6 @@ CREATE TABLE IF NOT EXISTS wgh_llm_model (
   update_by VARCHAR(50) DEFAULT 'system',
   deleted SMALLINT DEFAULT 0
 );
--- 兼容修复：历史库中 compression_model 曾为 BOOLEAN，统一为 SMALLINT（幂等）
-DO $$
-BEGIN
-  IF EXISTS (SELECT 1 FROM information_schema.columns
-             WHERE table_name = 'wgh_llm_model' AND column_name = 'compression_model' AND data_type = 'boolean') THEN
-    ALTER TABLE wgh_llm_model ALTER COLUMN compression_model DROP DEFAULT;
-    ALTER TABLE wgh_llm_model ALTER COLUMN compression_model TYPE SMALLINT
-      USING CASE WHEN compression_model THEN 1 ELSE 0 END;
-    ALTER TABLE wgh_llm_model ALTER COLUMN compression_model SET DEFAULT 0;
-  END IF;
-END $$;
 COMMENT ON TABLE wgh_llm_model IS 'LLM 模型配置';
 COMMENT ON COLUMN wgh_llm_model.id IS '主键';
 COMMENT ON COLUMN wgh_llm_model.name IS '显示名称（如 通义 qwen-plus）';
@@ -77,8 +69,8 @@ CREATE TABLE IF NOT EXISTS wgh_embedding_model (
   update_by VARCHAR(50) DEFAULT 'system',
   deleted SMALLINT DEFAULT 0
 );
--- 仅允许一个默认嵌入模型；非默认模型可任意多个（部分唯一索引只约束 is_default = 1）
-CREATE UNIQUE INDEX IF NOT EXISTS uk_embedding_default ON wgh_embedding_model(is_default) WHERE is_default = 1;
+-- 仅允许一个未删除的默认嵌入模型；非默认模型可任意多个
+CREATE UNIQUE INDEX IF NOT EXISTS uk_embedding_default ON wgh_embedding_model(is_default) WHERE is_default = 1 AND deleted = 0;
 COMMENT ON TABLE wgh_embedding_model IS 'Embedding 嵌入模型配置';
 COMMENT ON COLUMN wgh_embedding_model.id IS '主键';
 COMMENT ON COLUMN wgh_embedding_model.name IS '显示名称';
@@ -149,6 +141,7 @@ CREATE TABLE IF NOT EXISTS wgh_knowledge_file (
   status VARCHAR(20) DEFAULT 'PENDING',
   error_message TEXT,
   content_hash VARCHAR(64),
+  version INT DEFAULT 1,
   create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   create_by VARCHAR(50) DEFAULT 'system',
@@ -232,19 +225,13 @@ CREATE TABLE IF NOT EXISTS wgh_chat_window (
   query_transform_mode VARCHAR(20) DEFAULT 'NONE',
   rewrite_model_id BIGINT,
   semantic_cache_enabled SMALLINT DEFAULT 0,
+  model_route_group VARCHAR(50),
   create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   create_by VARCHAR(50) DEFAULT 'system',
   update_by VARCHAR(50) DEFAULT 'system',
   deleted SMALLINT DEFAULT 0
 );
-ALTER TABLE wgh_chat_window ADD COLUMN IF NOT EXISTS workflow_id BIGINT;
-ALTER TABLE wgh_chat_window ADD COLUMN IF NOT EXISTS rerank_enabled SMALLINT DEFAULT 0;
-ALTER TABLE wgh_chat_window ADD COLUMN IF NOT EXISTS rerank_model_id BIGINT;
-ALTER TABLE wgh_chat_window ADD COLUMN IF NOT EXISTS hybrid_enabled SMALLINT DEFAULT 0;
-ALTER TABLE wgh_chat_window ADD COLUMN IF NOT EXISTS query_transform_mode VARCHAR(20) DEFAULT 'NONE';
-ALTER TABLE wgh_chat_window ADD COLUMN IF NOT EXISTS rewrite_model_id BIGINT;
-ALTER TABLE wgh_chat_window ADD COLUMN IF NOT EXISTS semantic_cache_enabled SMALLINT DEFAULT 0;
 CREATE INDEX IF NOT EXISTS idx_cw_workflow_id ON wgh_chat_window(workflow_id);
 CREATE INDEX IF NOT EXISTS idx_cw_share_token ON wgh_chat_window(share_token);
 CREATE INDEX IF NOT EXISTS idx_cw_share_enabled ON wgh_chat_window(share_enabled);
@@ -357,14 +344,17 @@ CREATE TABLE IF NOT EXISTS wgh_chat_message (
   answer_relevancy DOUBLE PRECISION,
   judge_agreement DOUBLE PRECISION,
   judge_details TEXT,
+  attachments TEXT,
+  feedback SMALLINT DEFAULT 0,
+  feedback_comment VARCHAR(500),
+  cost DOUBLE PRECISION,
+  model_name VARCHAR(100),
   create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   create_by VARCHAR(50) DEFAULT 'system',
   update_by VARCHAR(50) DEFAULT 'system',
   deleted SMALLINT DEFAULT 0
 );
-ALTER TABLE wgh_chat_message ADD COLUMN IF NOT EXISTS coverage_rate DOUBLE PRECISION;
-ALTER TABLE wgh_chat_message ADD COLUMN IF NOT EXISTS status VARCHAR(20);
 CREATE INDEX IF NOT EXISTS idx_cm_session_create ON wgh_chat_message(session_id, create_time);
 COMMENT ON TABLE wgh_chat_message IS '聊天消息';
 COMMENT ON COLUMN wgh_chat_message.id IS '主键';
@@ -533,8 +523,6 @@ CREATE TABLE IF NOT EXISTS wgh_workflow (
   update_by VARCHAR(50) DEFAULT 'system',
   deleted SMALLINT DEFAULT 0
 );
-ALTER TABLE wgh_workflow ADD COLUMN IF NOT EXISTS share_token VARCHAR(64);
-ALTER TABLE wgh_workflow ADD COLUMN IF NOT EXISTS share_enabled SMALLINT DEFAULT 0;
 CREATE INDEX IF NOT EXISTS idx_workflow_share_token ON wgh_workflow(share_token);
 CREATE INDEX IF NOT EXISTS idx_workflow_status_update ON wgh_workflow(status, update_time);
 COMMENT ON TABLE wgh_workflow IS '可视化工作流定义';
@@ -641,7 +629,6 @@ CREATE TABLE IF NOT EXISTS wgh_workflow_run (
   update_by VARCHAR(50) DEFAULT 'system',
   deleted SMALLINT DEFAULT 0
 );
-ALTER TABLE wgh_workflow_run ADD COLUMN IF NOT EXISTS session_id BIGINT;
 CREATE INDEX IF NOT EXISTS idx_wf_run_workflow_start ON wgh_workflow_run(workflow_id, start_time);
 CREATE INDEX IF NOT EXISTS idx_wf_run_session ON wgh_workflow_run(session_id, id);
 CREATE INDEX IF NOT EXISTS idx_wf_run_status ON wgh_workflow_run(status);
@@ -904,17 +891,13 @@ COMMENT ON COLUMN wgh_user_quota_config.chat_limit IS '请求数上限（<=0 不
 COMMENT ON COLUMN wgh_user_quota_config.token_limit IS 'token 上限（<=0 不限制）';
 COMMENT ON COLUMN wgh_user_quota_config.enabled IS '是否启用（0/1；禁用时回退全局默认）';
 COMMENT ON COLUMN wgh_user_quota_config.remark IS '备注';
--- date_key 兼容月周期键（yyyy-MM，7 字符，原 VARCHAR(10) 已足够，无需改列）
+-- date_key 为月周期键（yyyy-MM，7 字符）
 
 -- 聊天消息成本列（回复完成后按模型价格表回填，无价格配置时为 NULL）
-ALTER TABLE wgh_chat_message ADD COLUMN IF NOT EXISTS cost DOUBLE PRECISION;
-ALTER TABLE wgh_chat_message ADD COLUMN IF NOT EXISTS model_name VARCHAR(100);
 COMMENT ON COLUMN wgh_chat_message.cost IS '本条消息估算成本（元，按模型价格表回填；无价格配置为 NULL）';
 COMMENT ON COLUMN wgh_chat_message.model_name IS '生成本条消息的模型名（厂商侧 modelName，用于成本按模型聚合）';
 
 -- 聊天消息反馈列（仅 ASSISTANT 消息可反馈）
-ALTER TABLE wgh_chat_message ADD COLUMN IF NOT EXISTS feedback SMALLINT DEFAULT 0;
-ALTER TABLE wgh_chat_message ADD COLUMN IF NOT EXISTS feedback_comment VARCHAR(500);
 COMMENT ON COLUMN wgh_chat_message.feedback IS '用户反馈（0 无 / 1 赞 / -1 踩）';
 COMMENT ON COLUMN wgh_chat_message.feedback_comment IS '差评补充说明（截断 500 字）';
 CREATE INDEX IF NOT EXISTS idx_msg_feedback ON wgh_chat_message(feedback) WHERE feedback <> 0;
@@ -946,9 +929,7 @@ COMMENT ON COLUMN wgh_semantic_cache.hit_count IS '命中次数';
 
 -- ============ 多模态（图片问答） ============
 
-ALTER TABLE wgh_llm_model ADD COLUMN IF NOT EXISTS supports_vision SMALLINT DEFAULT 0;
 COMMENT ON COLUMN wgh_llm_model.supports_vision IS '是否支持图片输入（视觉模型，0 否 / 1 是）';
-ALTER TABLE wgh_chat_message ADD COLUMN IF NOT EXISTS attachments TEXT;
 COMMENT ON COLUMN wgh_chat_message.attachments IS '消息附件 JSON 数组（图片 data URL 或公网 URL）';
 
 -- ============ Prompt 模板中心 ============
@@ -1042,20 +1023,13 @@ CREATE TABLE IF NOT EXISTS wgh_file_tag_rel (
 CREATE INDEX IF NOT EXISTS idx_file_tag_rel_tag ON wgh_file_tag_rel(tag_id);
 COMMENT ON TABLE wgh_file_tag_rel IS '知识库文件-标签关系';
 
-ALTER TABLE wgh_knowledge_file ADD COLUMN IF NOT EXISTS version INT DEFAULT 1;
 COMMENT ON COLUMN wgh_knowledge_file.version IS '当前版本号（重切/重传时 +1）';
 
--- content_hash 去重：同一知识库内相同文件内容不重复入库（存量行留空，不回溯计算）
-ALTER TABLE wgh_knowledge_file ADD COLUMN IF NOT EXISTS content_hash VARCHAR(64);
+-- content_hash 去重：同一知识库内相同文件内容不重复入库
 COMMENT ON COLUMN wgh_knowledge_file.content_hash IS '文件内容 SHA-256（同知识库内重复内容去重）';
 CREATE INDEX IF NOT EXISTS idx_kfile_kb_content_hash ON wgh_knowledge_file(knowledge_base_id, content_hash);
 
 -- 重建状态机：换 embedding 模型只置 PENDING，实际重建由显式接口触发
-ALTER TABLE wgh_knowledge_base ADD COLUMN IF NOT EXISTS rebuild_status VARCHAR(20) DEFAULT '';
-ALTER TABLE wgh_knowledge_base ADD COLUMN IF NOT EXISTS rebuild_total INT DEFAULT 0;
-ALTER TABLE wgh_knowledge_base ADD COLUMN IF NOT EXISTS rebuild_processed INT DEFAULT 0;
-ALTER TABLE wgh_knowledge_base ADD COLUMN IF NOT EXISTS pending_collection VARCHAR(100);
-ALTER TABLE wgh_knowledge_base ADD COLUMN IF NOT EXISTS pending_embedding_model_id BIGINT;
 COMMENT ON COLUMN wgh_knowledge_base.rebuild_status IS '重建状态：空/PENDING/RUNNING/SUCCEEDED/FAILED';
 COMMENT ON COLUMN wgh_knowledge_base.rebuild_total IS '重建文件总数（进度分母）';
 COMMENT ON COLUMN wgh_knowledge_base.rebuild_processed IS '已重建文件数（进度分子）';
@@ -1079,11 +1053,8 @@ COMMENT ON COLUMN wgh_knowledge_file_version.remark IS '变更说明（如 手�
 
 -- ============ 模型路由与故障转移 ============
 
-ALTER TABLE wgh_llm_model ADD COLUMN IF NOT EXISTS route_group VARCHAR(50);
-ALTER TABLE wgh_llm_model ADD COLUMN IF NOT EXISTS route_priority INT DEFAULT 0;
 COMMENT ON COLUMN wgh_llm_model.route_group IS '路由组名（窗口 model_route_group 匹配；非空时可参与故障转移链路）';
 COMMENT ON COLUMN wgh_llm_model.route_priority IS '同组内优先级（升序：数字越小越优先）';
-ALTER TABLE wgh_chat_window ADD COLUMN IF NOT EXISTS model_route_group VARCHAR(50);
 COMMENT ON COLUMN wgh_chat_window.model_route_group IS '指定模型路由组（优先于 llm_model_id：非空则走 ModelRouter 选链路）';
 
 
@@ -1118,16 +1089,6 @@ COMMENT ON COLUMN wgh_user.expire_at IS '账号有效期，NULL 表示长期有�
 COMMENT ON COLUMN wgh_user.remark IS '备注';
 COMMENT ON COLUMN wgh_user.password_must_change IS '是否必须先改密：1=是（初始化创建/管理员重置口令），0=否';
 COMMENT ON COLUMN wgh_user.password_version IS '口令版本号：改密/重置/禁用时自增，用于失效已签发的本地会话凭证';
-
--- 存量库升级（幂等）
-ALTER TABLE wgh_user ADD COLUMN IF NOT EXISTS oidc_subject VARCHAR(256);
-ALTER TABLE wgh_user ADD COLUMN IF NOT EXISTS oidc_issuer VARCHAR(256);
-ALTER TABLE wgh_user ADD COLUMN IF NOT EXISTS source VARCHAR(16) NOT NULL DEFAULT 'local';
-ALTER TABLE wgh_user ADD COLUMN IF NOT EXISTS trial SMALLINT NOT NULL DEFAULT 0;
-ALTER TABLE wgh_user ADD COLUMN IF NOT EXISTS expire_at TIMESTAMP;
-ALTER TABLE wgh_user ADD COLUMN IF NOT EXISTS remark VARCHAR(500);
-ALTER TABLE wgh_user ADD COLUMN IF NOT EXISTS password_must_change SMALLINT NOT NULL DEFAULT 0;
-ALTER TABLE wgh_user ADD COLUMN IF NOT EXISTS password_version INT NOT NULL DEFAULT 1;
 
 CREATE TABLE IF NOT EXISTS wgh_role (
     id                  BIGSERIAL PRIMARY KEY,
@@ -1193,10 +1154,6 @@ COMMENT ON TABLE wgh_share_link IS '免登录分享链接（有效期/密码/范
 COMMENT ON COLUMN wgh_share_link.scope IS 'WINDOW=匿名问答 / SESSION=只读会话记录 / KB=只读知识库检索';
 COMMENT ON COLUMN wgh_share_link.target_id IS 'WINDOW: chat_window_id；SESSION: chat_session_id；KB: knowledge_base_id';
 COMMENT ON COLUMN wgh_share_link.max_uses IS '最大使用次数，0 表示不限';
--- 兼容已存在的库：新增 Widget 嵌入授权字段（幂等）
-ALTER TABLE wgh_share_link ADD COLUMN IF NOT EXISTS embed_enabled SMALLINT NOT NULL DEFAULT 0;
-ALTER TABLE wgh_share_link ADD COLUMN IF NOT EXISTS embed_origin_whitelist TEXT;
-ALTER TABLE wgh_share_link ADD COLUMN IF NOT EXISTS embed_ip_whitelist TEXT;
 COMMENT ON COLUMN wgh_share_link.embed_enabled IS '是否允许 Widget 嵌入，0=禁止，1=允许';
 COMMENT ON COLUMN wgh_share_link.embed_origin_whitelist IS '嵌入域名白名单，逗号分隔，支持 *.example.com';
 COMMENT ON COLUMN wgh_share_link.embed_ip_whitelist IS '嵌入 IP 白名单，逗号分隔 CIDR';
@@ -1222,8 +1179,6 @@ CREATE TABLE IF NOT EXISTS wgh_api_key (
 );
 COMMENT ON TABLE wgh_api_key IS '开放 API Key（仅存 SHA-256 哈希，明文创建时返回一次）';
 COMMENT ON COLUMN wgh_api_key.scopes IS '权限范围，逗号分隔：chat:write,kb:read,usage:read；* 表示全部';
--- 兼容已存在的库：新增 IP 白名单字段（幂等）
-ALTER TABLE wgh_api_key ADD COLUMN IF NOT EXISTS ip_whitelist TEXT;
 COMMENT ON COLUMN wgh_api_key.ip_whitelist IS '调用来源 IP 白名单，逗号分隔 CIDR；为空表示不限制';
 CREATE INDEX IF NOT EXISTS idx_api_key_hash ON wgh_api_key(key_hash);
 
@@ -1245,33 +1200,4 @@ CREATE TABLE IF NOT EXISTS wgh_api_call_log (
 );
 COMMENT ON TABLE wgh_api_call_log IS '开放 API 调用日志（谁、接口、状态码、耗时）';
 CREATE INDEX IF NOT EXISTS idx_api_call_log_key ON wgh_api_call_log(api_key_id, create_time);
-
--- ============ 向量表 HNSW 索引（pgvector >= 0.5.0） ============
--- 知识库向量表名为动态表（wgh_knowledge_base.collection_name，形如 wgh_kb_<毫秒>），
--- 表由 PgVectorEmbeddingStore 首次建表时创建，无法在上方静态 DDL 中声明索引。
--- 应用侧在知识库建表/入库时会幂等创建 HNSW 索引；本块用于在已有库上重跑 schema.sql 时一次性补齐，
--- 并覆盖自动建表的语义缓存向量表。索引名规则需与 VectorStoreService#hnswIndexName 保持一致（<表名>_hnsw_idx）。
-DO $$
-DECLARE
-  v_table TEXT;
-BEGIN
-  IF to_regclass('wgh_knowledge_base') IS NOT NULL THEN
-    FOR v_table IN
-      SELECT collection_name FROM wgh_knowledge_base
-      WHERE collection_name IS NOT NULL AND collection_name <> ''
-    LOOP
-      IF to_regclass(v_table) IS NOT NULL THEN
-        EXECUTE format(
-          'CREATE INDEX IF NOT EXISTS %I ON %I USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64)',
-          v_table || '_hnsw_idx', v_table);
-      END IF;
-    END LOOP;
-  END IF;
-
-  IF to_regclass('wgh_semantic_cache_vec') IS NOT NULL THEN
-    EXECUTE 'CREATE INDEX IF NOT EXISTS wgh_semantic_cache_vec_hnsw_idx'
-            || ' ON wgh_semantic_cache_vec USING hnsw (embedding vector_cosine_ops)'
-            || ' WITH (m = 16, ef_construction = 64)';
-  END IF;
-END $$;
 
