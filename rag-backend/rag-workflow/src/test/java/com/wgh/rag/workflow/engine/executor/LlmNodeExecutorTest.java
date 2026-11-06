@@ -1,6 +1,8 @@
 package com.wgh.rag.workflow.engine.executor;
 
+import com.wgh.rag.llm.entity.LlmModel;
 import com.wgh.rag.llm.factory.ModelCacheManager;
+import com.wgh.rag.llm.service.ModelFailoverService;
 import com.wgh.rag.workflow.dto.GraphNode;
 import com.wgh.rag.workflow.dto.NodeResult;
 import com.wgh.rag.workflow.dto.RunContext;
@@ -19,6 +21,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -36,11 +39,20 @@ class LlmNodeExecutorTest {
     private ModelCacheManager modelCacheManager;
     @Mock
     private ChatModel chatModel;
+    @Mock
+    private ModelFailoverService modelFailoverService;
 
     private final VariableResolver variableResolver = new VariableResolver();
 
     private LlmNodeExecutor executor() {
-        return new LlmNodeExecutor(variableResolver, modelCacheManager);
+        return new LlmNodeExecutor(variableResolver, modelCacheManager, modelFailoverService);
+    }
+
+    private LlmModel llmModel(Long id) {
+        LlmModel model = new LlmModel();
+        model.setId(id);
+        model.setModelName("test-model");
+        return model;
     }
 
     /** 缺少 modelId 时抛出"LLM 节点缺少 modelId"异常 */
@@ -56,6 +68,7 @@ class LlmNodeExecutorTest {
     /** 渲染系统与用户提示词，按系统/用户顺序组装消息并返回模型文本 */
     @Test
     void execute_rendersPromptsAndCallsModel() {
+        when(modelFailoverService.resolveChain(7L)).thenReturn(List.of(llmModel(7L)));
         when(modelCacheManager.getChatModel(7L)).thenReturn(chatModel);
         when(chatModel.chat(any(ChatRequest.class))).thenReturn(
                 ChatResponse.builder().aiMessage(AiMessage.from("模型回答")).build());
@@ -79,6 +92,7 @@ class LlmNodeExecutorTest {
     /** prompt 为空时回退使用 lastOutput 作为唯一的用户消息 */
     @Test
     void execute_blankPrompt_fallsBackToLastOutput() {
+        when(modelFailoverService.resolveChain(7L)).thenReturn(List.of(llmModel(7L)));
         when(modelCacheManager.getChatModel(7L)).thenReturn(chatModel);
         when(chatModel.chat(any(ChatRequest.class))).thenReturn(
                 ChatResponse.builder().aiMessage(AiMessage.from("答")).build());

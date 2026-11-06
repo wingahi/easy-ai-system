@@ -39,4 +39,6 @@ public final class AgentEvents {
     public static final String STEP_SKIPPED = "step_skipped";
     /** 步骤等待人工确认 */
     public static final String STEP_HITL_PENDING = "step_hitl_pending";
+    /** 模型故障转移切换（与普通 RAG 的 model_switch 协议一致） */
+    public static final String MODEL_SWITCH = "model_switch";
 }

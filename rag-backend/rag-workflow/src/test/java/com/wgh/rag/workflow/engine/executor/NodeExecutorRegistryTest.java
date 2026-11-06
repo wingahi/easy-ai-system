@@ -19,7 +19,7 @@ class NodeExecutorRegistryTest {
     private NodeExecutorRegistry newRegistry() {
         return new NodeExecutorRegistry(List.of(
                 new StartNodeExecutor(),
-                new LlmNodeExecutor(variableResolver, null),
+                new LlmNodeExecutor(variableResolver, null, null),
                 new RetrievalNodeExecutor(variableResolver, null),
                 new ToolNodeExecutor(variableResolver, null),
                 new WorkflowNodeExecutor(variableResolver, null, null, null),

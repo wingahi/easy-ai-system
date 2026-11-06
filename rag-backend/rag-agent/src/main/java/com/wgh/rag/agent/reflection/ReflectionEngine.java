@@ -1,7 +1,11 @@
 package com.wgh.rag.agent.reflection;
 
+import com.wgh.rag.llm.entity.LlmModel;
+import com.wgh.rag.llm.failover.BlockingModelFailover;
+import com.wgh.rag.llm.failover.FailoverAttempt;
+import com.wgh.rag.llm.failover.FailoverErrors;
 import com.wgh.rag.llm.factory.ModelCacheManager;
-import dev.langchain4j.model.chat.ChatModel;
+import com.wgh.rag.llm.service.ModelFailoverService;
 import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.data.message.UserMessage;
@@ -27,6 +31,7 @@ import java.util.regex.Pattern;
 public class ReflectionEngine {
 
     private final ModelCacheManager modelCacheManager;
+    private final ModelFailoverService modelFailoverService;
 
     /**
      * 对一个步骤的产出做 Reflection 评估。
@@ -39,6 +44,11 @@ public class ReflectionEngine {
     }
 
     public Map.Entry<Double, String> evaluate(String stepGoal, String stepOutput, Long criticModelId) {
+        return evaluate(stepGoal, stepOutput, criticModelId, null);
+    }
+
+    public Map.Entry<Double, String> evaluate(String stepGoal, String stepOutput, Long criticModelId,
+                                              List<LlmModel> criticChain) {
         // null criticModelId → 无法评估，降级为默认通过（而非假 8 分 + "评估异常"）
         if (criticModelId == null) {
             log.warn("Reflection criticModelId 未配置，跳过 stepId [{}] 的反思评估，默认通过",
@@ -46,10 +56,11 @@ public class ReflectionEngine {
             return Map.entry(7.0, "未配置评估模型（criticModelId 为空），默认通过");
         }
         try {
-            ChatModel model = modelCacheManager.getChatModel(criticModelId);
             if (stepOutput == null || stepOutput.isBlank()) {
                 return Map.entry(0.0, "步骤产出为空，完全没有完成任务");
             }
+            List<LlmModel> chain = criticChain != null && !criticChain.isEmpty()
+                    ? criticChain : modelFailoverService.resolveChain(criticModelId);
 
             String prompt = """
                     你是一个 AI Agent 自我反思组件。请评估一个 Agent 步骤的产出质量。
@@ -78,9 +89,30 @@ public class ReflectionEngine {
                             stepGoal.length() > 500 ? stepGoal.substring(0, 500) + "..." : stepGoal,
                             stepOutput.length() > 2000 ? stepOutput.substring(0, 2000) + "..." : stepOutput);
 
-            ChatResponse response = model.chat(ChatRequest.builder()
+            ChatRequest request = ChatRequest.builder()
                     .messages(List.of(UserMessage.from(prompt)))
-                    .build());
+                    .build();
+            ChatResponse response = BlockingModelFailover.call(chain, (attempt, model) -> {
+                ChatResponse r = modelCacheManager.getChatModel(model.getId()).chat(request);
+                attempt.markStarted();
+                return r;
+            }, new BlockingModelFailover.Listener() {
+                @Override
+                public void onAttemptStart(FailoverAttempt attempt) {
+                    if (attempt.index() > 0) {
+                        log.warn("[Failover] Reflection 切换模型: {}(id={})（尝试 {}/{}）",
+                                attempt.model().getModelName(), attempt.model().getId(),
+                                attempt.index() + 1, attempt.total());
+                    }
+                }
+
+                @Override
+                public void onPreContentFailure(FailoverAttempt attempt, Throwable error) {
+                    log.warn("[Failover] Reflection 模型 {}(id={}) 首内容前失败（尝试 {}/{}）：{}",
+                            attempt.model().getModelName(), attempt.model().getId(),
+                            attempt.index() + 1, attempt.total(), FailoverErrors.describe(error));
+                }
+            });
             String raw = response.aiMessage().text();
             Map.Entry<Double, String> parsed = parseScore(raw);
             log.info("Reflection: goal={}, score={}", stepGoal.substring(0, Math.min(40, stepGoal.length())), parsed.getKey());

@@ -30,6 +30,19 @@ public class AgentStepResult {
     private String errorMessage;
     /** Optional HITL expected input description. */
     private String hitlExpectedInput;
+    /** 本步骤发生的模型切换（用于向上层下发 model_switch 可观测事件） */
+    private List<ModelSwitchRecord> modelSwitches;
+
+    /** 一次模型故障转移切换记录 */
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class ModelSwitchRecord {
+        private String modelName;
+        private Long modelId;
+        private String reason;
+    }
 
     @Data
     @Builder

@@ -25,4 +25,6 @@ public final class WorkflowEvents {
     public static final String NODE_ERROR = "node_error";
     /** 节点等待人工确认 */
     public static final String NODE_HITL_PENDING = "node_hitl_pending";
+    /** 节点模型故障转移切换（与普通 RAG 的 model_switch 协议一致） */
+    public static final String MODEL_SWITCH = "model_switch";
 }

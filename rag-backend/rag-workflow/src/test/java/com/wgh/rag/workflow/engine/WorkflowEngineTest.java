@@ -2,7 +2,9 @@ package com.wgh.rag.workflow.engine;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wgh.rag.kb.service.RagRetrieveService;
+import com.wgh.rag.llm.entity.LlmModel;
 import com.wgh.rag.llm.factory.ModelCacheManager;
+import com.wgh.rag.llm.service.ModelFailoverService;
 import com.wgh.rag.workflow.dto.GraphEdge;
 import com.wgh.rag.workflow.dto.GraphNode;
 import com.wgh.rag.workflow.dto.RunContext;
@@ -50,6 +52,7 @@ import java.util.function.BiConsumer;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
@@ -79,6 +82,8 @@ class WorkflowEngineTest {
     private ToolNodeInvoker toolNodeInvoker;
     @Mock
     private ChatModel chatModel;
+    @Mock
+    private ModelFailoverService modelFailoverService;
 
     private final VariableResolver variableResolver = new VariableResolver();
     private final ConditionEvaluator conditionEvaluator = new ConditionEvaluator();
@@ -102,9 +107,15 @@ class WorkflowEngineTest {
                         return engine;
                     }
                 };
+        lenient().when(modelFailoverService.resolveChain(anyLong())).thenAnswer(inv -> {
+            LlmModel m = new LlmModel();
+            m.setId(inv.getArgument(0));
+            m.setModelName("test-model");
+            return List.of(m);
+        });
         NodeExecutorRegistry registry = new NodeExecutorRegistry(List.of(
                 new StartNodeExecutor(),
-                new LlmNodeExecutor(variableResolver, modelCacheManager),
+                new LlmNodeExecutor(variableResolver, modelCacheManager, modelFailoverService),
                 new RetrievalNodeExecutor(variableResolver, ragRetrieveService),
                 new ToolNodeExecutor(variableResolver, toolNodeInvoker),
                 new WorkflowNodeExecutor(variableResolver, workflowMapper, objectMapper, engineProvider),

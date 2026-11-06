@@ -270,7 +270,7 @@ public class WorkflowEngine {
             long t0 = System.currentTimeMillis();
             NodeResult result;
             try {
-                result = executeNode(node, ctx, run, nestingDepth);
+                result = executeNode(node, ctx, run, nestingDepth, sink);
             } catch (PauseSignal ps) {
                 // HITL 已在 returnFromHitl 内部处理并持久化，直接向上抛出给调度器
                 throw ps;
@@ -396,9 +396,10 @@ public class WorkflowEngine {
 
     // ==================== 节点执行 ====================
 
-    private NodeResult executeNode(GraphNode node, RunContext ctx, WorkflowRun run, int nestingDepth) throws Exception {
+    private NodeResult executeNode(GraphNode node, RunContext ctx, WorkflowRun run, int nestingDepth,
+                                   BiConsumer<String, Map<String, Object>> sink) throws Exception {
         return nodeExecutorRegistry.get(node.getType())
-                .execute(new NodeExecutionContext(node, ctx, run, nestingDepth));
+                .execute(new NodeExecutionContext(node, ctx, run, nestingDepth, sink));
     }
 
     // ==================== HITL ====================

@@ -28,6 +28,9 @@ import com.wgh.rag.kb.service.RetrievalQuality;
 import com.wgh.rag.kb.service.RetrieveResult;
 import com.wgh.rag.kb.service.SemanticCacheService;
 import com.wgh.rag.llm.entity.LlmModel;
+import com.wgh.rag.llm.failover.FailoverAttempt;
+import com.wgh.rag.llm.failover.FailoverErrors;
+import com.wgh.rag.llm.failover.StreamingModelFailover;
 import com.wgh.rag.llm.factory.ModelCacheManager;
 import com.wgh.rag.llm.service.LlmModelService;
 import com.wgh.rag.llm.service.ModelPriceService;
@@ -405,6 +408,10 @@ public class RagChatService {
                 // HITL 由窗口级开关控制（agent_hitl_enabled）
                 boolean hitlEnabled = Integer.valueOf(1).equals(window.getAgentHitlEnabled());
 
+                // 与普通 RAG 保持同一故障转移口径：优先窗口 route_group，否则模型自身路由组/单模型
+                List<LlmModel> executorChain = modelRouter.resolveChain(window.getModelRouteGroup(), executorModelId);
+                List<LlmModel> plannerChain = modelRouter.resolveChain(window.getModelRouteGroup(), plannerModelId);
+
                 com.wgh.rag.agent.dto.AgentStepResult agentResult = agentOrchestrator.orchestrate(
                         session.getId(),
                         window.getId(),
@@ -419,7 +426,9 @@ public class RagChatService {
                         reflectionThreshold,
                         reflectionMaxRetries,
                         hitlEnabled,
-                        sseEventSink);
+                        sseEventSink,
+                        executorChain,
+                        plannerChain);
 
                 // ===== Agent 执行完成：先落库，再尽力下发 SSE =====
                 // 关键点：用户刷新页面会导致 SSE 客户端断开，不能因为发送失败丢掉 Agent 结果
@@ -576,6 +585,8 @@ public class RagChatService {
         final ChatMetricContext metricCtx;
         /** 客户端断开/显式取消句柄 */
         final ChatStreamCancellation cancellation;
+        /** rag-llm 通用流式故障转移驱动器（懒初始化） */
+        StreamingModelFailover failover;
 
         FailoverContext(List<LlmModel> chain, ChatRequest request,
                         List<ToolSpecification> toolSpecs, List<ChatMessage> messages,
@@ -614,186 +625,115 @@ public class RagChatService {
     }
 
     /**
-     * 单次模型尝试的流状态。
-     * started=true 表示已经产出可见内容（或已完成一轮响应）：此后失败不再切链，
-     * 避免已输出内容被回滚重发、或工具调用被重复执行。
+     * 聊天链路故障转移监听器：把 rag-llm 的通用切链状态机接到聊天专属的
+     * SSE 下发、落库、指标与取消语义上。切链判定本身不再在聊天模块实现。
      */
-    private static final class StreamAttempt {
-        final int index;
-        final int total;
-        final LlmModel model;
-        /** 本次尝试的独立输出缓冲：切链时不会污染下一个模型的输出 */
-        final StringBuilder content = new StringBuilder();
-        private final AtomicBoolean started = new AtomicBoolean(false);
-        private final AtomicBoolean active = new AtomicBoolean(true);
+    private final class ChatFailoverListener implements StreamingModelFailover.Listener {
+        private final FailoverContext ctx;
 
-        StreamAttempt(int index, int total, LlmModel model) {
-            this.index = index;
-            this.total = total;
-            this.model = model;
+        ChatFailoverListener(FailoverContext ctx) {
+            this.ctx = ctx;
         }
 
-        /** 收到首个片段/完成一轮：返回 false 表示该尝试已失效，回调应被忽略 */
-        boolean markStarted() {
-            if (!active.get()) return false;
-            started.set(true);
-            return true;
+        @Override
+        public void onAttemptCreated(FailoverAttempt attempt) {
+            // 取消终态：把已生成的部分内容落库并结算 token（仅首个终态生效）
+            ctx.cancellation.onCancel(() -> persistStopped(ctx, attempt));
+            ctx.toolRoundCount[0] = 0;
         }
 
-        boolean isStarted() {
-            return started.get();
-        }
-
-        boolean isActive() {
-            return active.get();
-        }
-
-        void deactivate() {
-            active.set(false);
-        }
-
-        /** 追加流式片段（与取消快照互斥，避免停顿时读到半截文本） */
-        void appendPartial(String text) {
-            synchronized (content) {
-                content.append(text);
-            }
-        }
-
-        /** 取消时的内容快照 */
-        String snapshotContent() {
-            synchronized (content) {
-                return content.toString();
-            }
-        }
-
-        /** 抢占首 token 前失败的切链权，避免 onError 重复回调触发多次切链 */
-        boolean claimPreTokenFailure() {
-            return active.compareAndSet(true, false);
-        }
-    }
-
-    /**
-     * 故障转移入口：按链顺序启动第 index 个模型。
-     * streamingModel.chat() 为异步调用，首 token 前的失败经 onError 回调回到本链路，
-     * 因此不能用 try/catch 判定异步失败（同步异常仍在此兜底）。
-     */
-    void startAttempt(FailoverContext ctx, int index) {
-        LlmModel candidate = ctx.chain.get(index);
-        StreamAttempt attempt = new StreamAttempt(index, ctx.chain.size(), candidate);
-        ctx.toolRoundCount[0] = 0;
-        // 取消终态：把已生成的部分内容落库并结算 token（仅首个终态生效）
-        ctx.cancellation.onCancel(() -> persistStopped(ctx, attempt));
-        if (ctx.cancellation.isCancelled()) {
-            // 已断开：不再发起模型调用，直接完成停止落库
-            attempt.deactivate();
-            return;
-        }
-        try {
-            StreamingChatModel model = modelCacheManager.getStreamingChatModel(candidate.getId());
-            if (index > 0) {
+        @Override
+        public void onAttemptStart(FailoverAttempt attempt) {
+            LlmModel candidate = attempt.model();
+            if (attempt.index() > 0) {
                 ctx.onModelSwitch.accept(candidate, "上一个模型首token前失败，切换备用模型");
             } else {
                 ctx.actualModel.set(candidate);
             }
             log.info("[Failover] 开始尝试 {}/{}：模型 {} (id={})",
-                    index + 1, ctx.chain.size(), candidate.getModelName(), candidate.getId());
-            streamChatWithTools(model, ctx.request, ctx, attempt);
-        } catch (Throwable t) {
-            // 同步异常（模型构建失败、请求构建失败等）：等价于首 token 前失败
-            handleAttemptFailure(ctx, attempt, t);
+                    attempt.index() + 1, attempt.total(), candidate.getModelName(), candidate.getId());
         }
-    }
 
-    /**
-     * 统一失败入口：区分「首 token 前」与「已产出内容」两种语义。
-     */
-    private void handleAttemptFailure(FailoverContext ctx, StreamAttempt attempt, Throwable error) {
-        if (!attempt.isActive()) {
-            log.debug("忽略已失效模型尝试的失败回调: attempt={}/{}", attempt.index + 1, attempt.total);
-            return;
+        @Override
+        public void onPreContentFailure(FailoverAttempt attempt, Throwable error) {
+            metrics.recordChatError("llm");
+            log.warn("[Failover] 模型 {} (id={}) 首token前失败（尝试 {}/{}）：{}",
+                    attempt.model().getModelName(), attempt.model().getId(),
+                    attempt.index() + 1, attempt.total(), FailoverErrors.describe(error));
+            ctx.toolRoundCount[0] = 0;
         }
-        // 客户端主动断开：取消路径已落库，不切链、不下发错误事件
-        if (ctx.cancellation.isCancelled()) {
-            log.info("客户端已断开，忽略模型失败回调: attempt={}/{}", attempt.index + 1, attempt.total);
-            attempt.deactivate();
-            return;
-        }
-        if (attempt.isStarted()) {
-            // 已产出部分内容：不切换、不回滚、不重发，如实报错并结束
-            attempt.deactivate();
+
+        @Override
+        public void onPostContentFailure(FailoverAttempt attempt, Throwable error) {
             metrics.recordChatError("llm");
             log.error("LLM流式响应错误（已产出内容，不切换模型）: 模型={}(id={}), 尝试={}/{}, 错误={}",
-                    attempt.model.getModelName(), attempt.model.getId(),
-                    attempt.index + 1, attempt.total, describeError(error));
+                    attempt.model().getModelName(), attempt.model().getId(),
+                    attempt.index() + 1, attempt.total(), FailoverErrors.describe(error));
             persistFailed(ctx, attempt);
-            safeSend(ctx.emitter, ChatEvents.ERROR, Map.of("text", userFacingError(error)));
+            safeSend(ctx.emitter, ChatEvents.ERROR, Map.of("text", FailoverErrors.userFacing(error)));
             try {
                 ctx.emitter.completeWithError(error);
             } catch (Exception e) {
                 log.warn("SSE 关闭失败: {}", e.getMessage());
             }
-            return;
         }
-        // 首 token 前失败：抢占切链权，防止重复回调造成重复切换
-        if (!attempt.claimPreTokenFailure()) {
-            log.debug("忽略重复的首token前失败回调: attempt={}/{}", attempt.index + 1, attempt.total);
-            return;
-        }
-        metrics.recordChatError("llm");
-        log.warn("[Failover] 模型 {} (id={}) 首token前失败（尝试 {}/{}）：{}",
-                attempt.model.getModelName(), attempt.model.getId(),
-                attempt.index + 1, attempt.total, describeError(error));
-        ctx.toolRoundCount[0] = 0;
 
-        int nextIndex = attempt.index + 1;
-        if (nextIndex < ctx.chain.size()) {
-            startAttempt(ctx, nextIndex);
-            return;
+        @Override
+        public void onAllAttemptsFailed(List<LlmModel> chain, Throwable lastError) {
+            String message = FailoverErrors.allModelsFailed(chain.size(), lastError);
+            log.error("[Failover] {}", message);
+            // 抢占终态，避免后续 onCompletion 误落库为「已停止」
+            ctx.cancellation.markFinalized();
+            safeSend(ctx.emitter, ChatEvents.ERROR, Map.of("text", message));
+            safeComplete(ctx.emitter);
         }
-        // 全部候选模型失败：给出明确业务错误，避免空响应或挂起
-        String message = "所有候选模型均调用失败（共 " + ctx.chain.size() + " 个，最后错误: "
-                + userFacingError(error) + "）";
-        log.error("[Failover] {}", message);
-        // 抢占终态，避免后续 onCompletion 误落库为「已停止」
-        ctx.cancellation.markFinalized();
-        safeSend(ctx.emitter, ChatEvents.ERROR, Map.of("text", message));
-        safeComplete(ctx.emitter);
+
+        @Override
+        public boolean isCancelled() {
+            return ctx.cancellation.isCancelled();
+        }
     }
 
-    /** 日志用错误描述：只保留异常类型与脱敏后的消息，避免把 API Key 写进日志 */
-    private String describeError(Throwable error) {
-        if (error == null) return "未知错误";
-        String msg = error.getMessage();
-        return error.getClass().getSimpleName() + (msg != null && !msg.isBlank() ? ": " + redact(msg) : "");
+    /** 复用 rag-llm 的通用流式故障转移驱动器（懒初始化，请求线程与回调线程共享） */
+    private StreamingModelFailover failoverOf(FailoverContext ctx) {
+        synchronized (ctx) {
+            if (ctx.failover == null) {
+                ctx.failover = new StreamingModelFailover(ctx.chain, new ChatFailoverListener(ctx),
+                        (attempt, model) -> streamChatWithTools(
+                                modelCacheManager.getStreamingChatModel(model.getId()),
+                                ctx.request, ctx, attempt));
+            }
+            return ctx.failover;
+        }
     }
 
-    /** 前端可见的错误消息：同样做脱敏 */
-    private String userFacingError(Throwable error) {
-        if (error == null) return "未知错误";
-        String msg = error.getMessage();
-        return msg != null && !msg.isBlank() ? redact(msg) : error.getClass().getSimpleName();
+    /**
+     * 故障转移入口：按链顺序启动第 index 个模型（实现已抽取到 rag-llm，此处仅适配聊天上下文）。
+     */
+    void startAttempt(FailoverContext ctx, int index) {
+        failoverOf(ctx).start(index);
     }
 
-    private String redact(String text) {
-        return text.replaceAll("(?i)(sk-[A-Za-z0-9_-]{6,}|api[_-]?key[=: ]+[^ ,;]+|bearer +[A-Za-z0-9._-]+)", "***");
+    private void handleAttemptFailure(FailoverContext ctx, FailoverAttempt attempt, Throwable error) {
+        failoverOf(ctx).handleFailure(attempt, error);
     }
 
     /**
      * 带工具调用循环的流式聊天 —— 递归处理 tool calls，直到 LLM 返回最终文本回答
      */
     private void streamChatWithTools(StreamingChatModel streamingModel, ChatRequest request,
-                                      FailoverContext ctx, StreamAttempt attempt) {
+                                      FailoverContext ctx, FailoverAttempt attempt) {
 
         streamingModel.chat(request, new StreamingChatResponseHandler() {
             @Override
             public void onPartialResponse(String partialResponse) {
                 if (ctx.cancellation.isCancelled()) {
-                    log.debug("生成已取消，忽略后续 token: attempt={}/{}", attempt.index + 1, attempt.total);
+                    log.debug("生成已取消，忽略后续 token: attempt={}/{}", attempt.index() + 1, attempt.total());
                     attempt.deactivate();
                     return;
                 }
                 if (!attempt.markStarted()) {
-                    log.debug("忽略已失效模型尝试的流式片段: attempt={}/{}", attempt.index + 1, attempt.total);
+                    log.debug("忽略已失效模型尝试的流式片段: attempt={}/{}", attempt.index() + 1, attempt.total());
                     return;
                 }
                 // 首个流式片段：记录首 token 延迟（仅一次，重试时按首次成功片段计）
@@ -814,11 +754,11 @@ public class RagChatService {
             @Override
             public void onCompleteResponse(ChatResponse completeResponse) {
                 if (!attempt.isActive()) {
-                    log.debug("忽略已失效模型尝试的完成回调: attempt={}/{}", attempt.index + 1, attempt.total);
+                    log.debug("忽略已失效模型尝试的完成回调: attempt={}/{}", attempt.index() + 1, attempt.total());
                     return;
                 }
                 if (ctx.cancellation.isCancelled()) {
-                    log.info("客户端已断开，跳过完成事件下发: attempt={}/{}", attempt.index + 1, attempt.total);
+                    log.info("客户端已断开，跳过完成事件下发: attempt={}/{}", attempt.index() + 1, attempt.total());
                     attempt.deactivate();
                     return;
                 }
@@ -933,7 +873,7 @@ public class RagChatService {
             @Override
             public void onError(Throwable error) {
                 if (!attempt.isActive()) {
-                    log.debug("忽略已失效模型尝试的错误回调: attempt={}/{}", attempt.index + 1, attempt.total);
+                    log.debug("忽略已失效模型尝试的错误回调: attempt={}/{}", attempt.index() + 1, attempt.total());
                     return;
                 }
                 handleAttemptFailure(ctx, attempt, error);
@@ -1013,7 +953,7 @@ public class RagChatService {
      * 用户停止/客户端断连的终态落库：保留已生成内容，状态标记 STOPPED，
      * 并按实际产出估算 token 照常计入配额（不回滚为 0）。
      */
-    private void persistStopped(FailoverContext ctx, StreamAttempt attempt) {
+    private void persistStopped(FailoverContext ctx, FailoverAttempt attempt) {
         attempt.deactivate();
         String partial = attempt.snapshotContent();
         log.info("生成已停止：保留 {} 字符，session={}", partial.length(), ctx.session != null ? ctx.session.getId() : null);
@@ -1028,7 +968,7 @@ public class RagChatService {
     /**
      * 生成失败（已产出部分内容）的终态落库：状态标记 FAILED，token 按实际产出计数。
      */
-    private void persistFailed(FailoverContext ctx, StreamAttempt attempt) {
+    private void persistFailed(FailoverContext ctx, FailoverAttempt attempt) {
         String partial = attempt.snapshotContent();
         if (partial.isBlank()) {
             // 无内容可保留，前端仅展示错误提示，不写入空消息

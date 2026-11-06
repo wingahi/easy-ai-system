@@ -13,6 +13,7 @@ import com.wgh.rag.agent.entity.AgentStep;
 import com.wgh.rag.agent.exception.AgentException;
 import com.wgh.rag.agent.planner.Planner;
 import com.wgh.rag.agent.reflection.ReflectionEngine;
+import com.wgh.rag.llm.entity.LlmModel;
 import com.wgh.rag.tool.entity.ToolConfig;
 import dev.langchain4j.agent.tool.ToolSpecification;
 import lombok.RequiredArgsConstructor;
@@ -64,6 +65,25 @@ public class AgentOrchestrator {
             boolean hasKb, List<Long> kbIds,
             double reflectionThreshold, int reflectionMaxRetries, boolean hitlEnabled,
             BiConsumer<String, Map<String, Object>> sse) {
+        return orchestrate(sessionId, windowId, windowModelId, plannerModelId,
+                userGoal, toolNames, toolSpecs, toolRegistry, hasKb, kbIds,
+                reflectionThreshold, reflectionMaxRetries, hitlEnabled, sse, null, null);
+    }
+
+    /**
+     * 首次进入 Agent 编排（显式传入故障转移链路）。
+     *
+     * @param executorChain 执行模型链路（按聊天窗口 route_group 解析，可为 null 表示按模型自身路由组）
+     * @param plannerChain  Planner 模型链路（同上）
+     */
+    public AgentStepResult orchestrate(
+            Long sessionId, Long windowId, Long windowModelId, Long plannerModelId,
+            String userGoal, List<String> toolNames,
+            List<ToolSpecification> toolSpecs, Map<String, ToolConfig> toolRegistry,
+            boolean hasKb, List<Long> kbIds,
+            double reflectionThreshold, int reflectionMaxRetries, boolean hitlEnabled,
+            BiConsumer<String, Map<String, Object>> sse,
+            List<LlmModel> executorChain, List<LlmModel> plannerChain) {
 
         int maxSteps = agentProperties.getMaxSteps();
 
@@ -71,7 +91,9 @@ public class AgentOrchestrator {
         log.info("AgentOrchestrator 开始规划: window={}, session={}", windowId, sessionId);
         PlanDTO planDTO;
         try {
-            planDTO = planner.generate(plannerModelId, userGoal, toolNames, hasKb, maxSteps);
+            planDTO = plannerChain != null
+                    ? planner.generate(plannerChain, plannerModelId, userGoal, toolNames, hasKb, maxSteps)
+                    : planner.generate(plannerModelId, userGoal, toolNames, hasKb, maxSteps);
         } catch (AgentException e) {
             eventPublisher.emit(sse, AgentEvents.PLAN_CREATE_FAILED, Map.of("reason", e.getMessage()));
             throw e;
@@ -96,7 +118,8 @@ public class AgentOrchestrator {
 
         // 4. 逐步执行
         return executeSteps(plan, orderedSteps, windowModelId, toolSpecs, toolRegistry,
-                hasKb, kbIds, userGoal, reflectionThreshold, reflectionMaxRetries, hitlEnabled, sse);
+                hasKb, kbIds, userGoal, reflectionThreshold, reflectionMaxRetries, hitlEnabled, sse,
+                new StringBuilder(), executorChain, plannerChain);
     }
 
     // ==================== 恢复入口：HITL 确认后继续 ====================
@@ -149,7 +172,7 @@ public class AgentOrchestrator {
         // 继续执行剩余步骤
         return executeSteps(plan, remainingStepDTOs, plan.getLlmModelId(),
                 null, null, false, List.of(), plan.getUserGoal(),
-                reflectionThreshold, reflectionMaxRetries, true, sse, contextBuilder);
+                reflectionThreshold, reflectionMaxRetries, true, sse, contextBuilder, null, null);
     }
 
     // ==================== 执行控制 API ====================
@@ -195,7 +218,7 @@ public class AgentOrchestrator {
 
         return executeSteps(plan, List.of(dto), plan.getLlmModelId(),
                 null, null, false, List.of(), plan.getUserGoal(),
-                reflectionThreshold, reflectionMaxRetries, true, sse, ctx);
+                reflectionThreshold, reflectionMaxRetries, true, sse, ctx, null, null);
     }
 
     /** 跳过单个 FAILED / PENDING 步骤。 */
@@ -223,7 +246,7 @@ public class AgentOrchestrator {
                                           BiConsumer<String, Map<String, Object>> sse) {
         return executeSteps(plan, stepDTOs, executorModelId, toolSpecs, toolRegistry,
                 hasKb, kbIds, userGoal, reflectionThreshold, reflectionMaxRetries, hitlEnabled, sse,
-                new StringBuilder());
+                new StringBuilder(), null, null);
     }
 
     private AgentStepResult executeSteps(AgentPlan plan, List<StepDTO> stepDTOs,
@@ -233,7 +256,9 @@ public class AgentOrchestrator {
                                           double reflectionThreshold, int reflectionMaxRetries,
                                           boolean hitlEnabled,
                                           BiConsumer<String, Map<String, Object>> sse,
-                                          StringBuilder contextBuilder) {
+                                          StringBuilder contextBuilder,
+                                          List<LlmModel> executorChain,
+                                          List<LlmModel> plannerChain) {
         AgentStepResult lastResult = null;
 
         for (StepDTO stepDTO : stepDTOs) {
@@ -282,22 +307,34 @@ public class AgentOrchestrator {
                 }
 
                 long stepStartMs = System.currentTimeMillis();
-                result = stepExecutor.execute(
-                        executorModelId != null ? executorModelId : plan.getLlmModelId(),
-                        stepPrompt, stepToolSpecs, stepRegistry, plan.getLlmModelId(),
-                        agentProperties.getMaxToolRoundsPerStep(),
-                        Boolean.TRUE.equals(stepDTO.getRequiresRAG()),
-                        stepDTO.getDescription() != null ? stepDTO.getDescription() : userGoal,
-                        kbIds);
+                Long effectiveExecutorModelId = executorModelId != null ? executorModelId : plan.getLlmModelId();
+                result = executorChain != null
+                        ? stepExecutor.executeWithChain(executorChain,
+                                stepPrompt, stepToolSpecs, stepRegistry, plan.getLlmModelId(),
+                                agentProperties.getMaxToolRoundsPerStep(),
+                                Boolean.TRUE.equals(stepDTO.getRequiresRAG()),
+                                stepDTO.getDescription() != null ? stepDTO.getDescription() : userGoal,
+                                kbIds)
+                        : stepExecutor.execute(effectiveExecutorModelId,
+                                stepPrompt, stepToolSpecs, stepRegistry, plan.getLlmModelId(),
+                                agentProperties.getMaxToolRoundsPerStep(),
+                                Boolean.TRUE.equals(stepDTO.getRequiresRAG()),
+                                stepDTO.getDescription() != null ? stepDTO.getDescription() : userGoal,
+                                kbIds);
                 stepLatencyMs = System.currentTimeMillis() - stepStartMs;
+                emitModelSwitches(result, sse);
 
                 // Reflection 评估（仅对 SUCCESS 状态的结果做质量检查）
                 if (AgentConstants.STATUS_SUCCESS.equals(result.getStatus()) && reflectionEngine != null) {
                     // 优先用窗口配置的 executorModelId，否则 fallback 到 plan 的 llmModelId（Planner 用的模型）
-                    Long criticModelId = executorModelId != null ? executorModelId : plan.getLlmModelId();
-                    var reflection = reflectionEngine.evaluate(
-                            stepDTO.getTitle() + ": " + stepDTO.getDescription(),
-                            result.getFinalText(), criticModelId);
+                    Long criticModelId = effectiveExecutorModelId;
+                    var reflection = executorChain != null
+                            ? reflectionEngine.evaluate(
+                                    stepDTO.getTitle() + ": " + stepDTO.getDescription(),
+                                    result.getFinalText(), criticModelId, executorChain)
+                            : reflectionEngine.evaluate(
+                                    stepDTO.getTitle() + ": " + stepDTO.getDescription(),
+                                    result.getFinalText(), criticModelId);
                     double score = reflection.getKey();
                     String feedback = reflection.getValue();
                     log.info("Reflection: stepId={}, score={}, feedback={}", stepDTO.getStepId(), score, feedback);
@@ -359,12 +396,18 @@ public class AgentOrchestrator {
                         String finishedSummary = contextBuilder.toString();
                         String failureHint = "步骤 " + stepDTO.getStepId() + "（" + stepDTO.getTitle() + "）失败: "
                                 + result.getErrorMessage() + "。请重新规划剩余任务。";
-                        PlanDTO replanned = planner.replan(
-                                plan.getLlmModelId(), userGoal,
-                                planLifecycleService.parsePlanJsonOrEmpty(plan),
-                                toolSpecs.stream().map(ToolSpecification::name).toList(),
-                                hasKb, agentProperties.getMaxSteps(),
-                                finishedSummary, failureHint);
+                        PlanDTO replanned = plannerChain != null
+                                ? planner.replan(plannerChain, plan.getLlmModelId(), userGoal,
+                                        planLifecycleService.parsePlanJsonOrEmpty(plan),
+                                        toolSpecs.stream().map(ToolSpecification::name).toList(),
+                                        hasKb, agentProperties.getMaxSteps(),
+                                        finishedSummary, failureHint)
+                                : planner.replan(
+                                        plan.getLlmModelId(), userGoal,
+                                        planLifecycleService.parsePlanJsonOrEmpty(plan),
+                                        toolSpecs.stream().map(ToolSpecification::name).toList(),
+                                        hasKb, agentProperties.getMaxSteps(),
+                                        finishedSummary, failureHint);
 
                         // 持久化新的 step
                         planLifecycleService.insertReplannedSteps(plan.getId(), replanned.getSteps(), dbStep.getStepIndex() + 1);
@@ -413,6 +456,17 @@ public class AgentOrchestrator {
     }
 
     // ==================== prompt 构建 + 工具过滤 ====================
+
+    /** 把步骤内的模型切换（故障转移）下发为 model_switch 事件，与普通 RAG 口径一致 */
+    private void emitModelSwitches(AgentStepResult result, BiConsumer<String, Map<String, Object>> sse) {
+        if (result == null || result.getModelSwitches() == null) return;
+        for (AgentStepResult.ModelSwitchRecord sw : result.getModelSwitches()) {
+            eventPublisher.emit(sse, AgentEvents.MODEL_SWITCH, Map.of(
+                    "modelName", sw.getModelName() != null ? sw.getModelName() : "",
+                    "modelId", sw.getModelId() != null ? sw.getModelId() : 0L,
+                    "reason", sw.getReason() != null ? sw.getReason() : ""));
+        }
+    }
 
     private String buildStepContext(StringBuilder contextBuilder) {
         String ctx = contextBuilder.toString();

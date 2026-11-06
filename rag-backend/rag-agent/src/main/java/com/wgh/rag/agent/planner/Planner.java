@@ -4,9 +4,13 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wgh.rag.agent.dto.PlanDTO;
 import com.wgh.rag.agent.exception.AgentException;
 import com.wgh.rag.config.property.RagProperties;
+import com.wgh.rag.llm.entity.LlmModel;
+import com.wgh.rag.llm.failover.BlockingModelFailover;
+import com.wgh.rag.llm.failover.FailoverAttempt;
+import com.wgh.rag.llm.failover.FailoverErrors;
 import com.wgh.rag.llm.factory.ModelCacheManager;
+import com.wgh.rag.llm.service.ModelFailoverService;
 import dev.langchain4j.data.message.UserMessage;
-import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.response.ChatResponse;
 import lombok.RequiredArgsConstructor;
@@ -26,6 +30,7 @@ import java.util.List;
 public class Planner {
 
     private final ModelCacheManager modelCacheManager;
+    private final ModelFailoverService modelFailoverService;
     private final RagProperties ragProperties;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -40,8 +45,14 @@ public class Planner {
      */
     public PlanDTO generate(Long plannerModelId, String userGoal,
                             List<String> toolNames, boolean hasKb, int maxSteps) {
+        return generate(null, plannerModelId, userGoal, toolNames, hasKb, maxSteps);
+    }
 
-        ChatModel model = modelCacheManager.getChatModel(plannerModelId);
+    /**
+     * 生成计划（显式指定故障转移链路，供聊天窗口按窗口 route_group 解析后传入）。
+     */
+    public PlanDTO generate(List<LlmModel> chain, Long plannerModelId, String userGoal,
+                            List<String> toolNames, boolean hasKb, int maxSteps) {
 
         String prompt = buildPrompt(userGoal, toolNames, hasKb, maxSteps);
 
@@ -49,7 +60,7 @@ public class Planner {
             ChatRequest request = ChatRequest.builder()
                     .messages(List.of(UserMessage.from(prompt)))
                     .build();
-            ChatResponse response = model.chat(request);
+            ChatResponse response = chat(resolveChain(chain, plannerModelId), request, "Planner");
             String raw = response.aiMessage().text();
             log.info("Planner 原始输出（{} chars）: {}", raw.length(), raw.length() < 500 ? raw : raw.substring(0, 500) + "...");
 
@@ -79,14 +90,20 @@ public class Planner {
     public PlanDTO replan(Long plannerModelId, String userGoal, PlanDTO existingPlan,
                            List<String> toolNames, boolean hasKb, int maxSteps,
                            String remainingStepsHint, String failureContext) {
-        ChatModel model = modelCacheManager.getChatModel(plannerModelId);
+        return replan(null, plannerModelId, userGoal, existingPlan, toolNames, hasKb,
+                maxSteps, remainingStepsHint, failureContext);
+    }
+
+    public PlanDTO replan(List<LlmModel> chain, Long plannerModelId, String userGoal,
+                           PlanDTO existingPlan, List<String> toolNames, boolean hasKb,
+                           int maxSteps, String remainingStepsHint, String failureContext) {
         String prompt = buildReplanPrompt(userGoal, existingPlan, remainingStepsHint,
                 failureContext, toolNames, hasKb, maxSteps);
         try {
             ChatRequest request = ChatRequest.builder()
                     .messages(List.of(UserMessage.from(prompt)))
                     .build();
-            ChatResponse response = model.chat(request);
+            ChatResponse response = chat(resolveChain(chain, plannerModelId), request, "Planner-replan");
             String raw = response.aiMessage().text();
             PlanDTO plan = objectMapper.readValue(extractJson(raw), PlanDTO.class);
             if (plan.getSteps() == null || plan.getSteps().isEmpty()) {
@@ -100,6 +117,35 @@ public class Planner {
             log.error("Planner re-plan 异常", e);
             throw AgentException.planParseFailed(e.getMessage());
         }
+    }
+
+    private List<LlmModel> resolveChain(List<LlmModel> chain, Long modelId) {
+        return chain != null && !chain.isEmpty() ? chain : modelFailoverService.resolveChain(modelId);
+    }
+
+    /** 同步调用模型并应用故障转移：首个响应前失败切下一个，已产出内容后不切链 */
+    private ChatResponse chat(List<LlmModel> chain, ChatRequest request, String scene) {
+        return BlockingModelFailover.call(chain, (attempt, model) -> {
+            ChatResponse response = modelCacheManager.getChatModel(model.getId()).chat(request);
+            attempt.markStarted();
+            return response;
+        }, new BlockingModelFailover.Listener() {
+            @Override
+            public void onAttemptStart(FailoverAttempt attempt) {
+                if (attempt.index() > 0) {
+                    log.warn("[Failover] {} 切换模型: {}(id={})（尝试 {}/{}）", scene,
+                            attempt.model().getModelName(), attempt.model().getId(),
+                            attempt.index() + 1, attempt.total());
+                }
+            }
+
+            @Override
+            public void onPreContentFailure(FailoverAttempt attempt, Throwable error) {
+                log.warn("[Failover] {} 模型 {}(id={}) 首内容前失败（尝试 {}/{}）：{}", scene,
+                        attempt.model().getModelName(), attempt.model().getId(),
+                        attempt.index() + 1, attempt.total(), FailoverErrors.describe(error));
+            }
+        });
     }
 
     private String buildPrompt(String userGoal, List<String> toolNames, boolean hasKb, int maxSteps) {
