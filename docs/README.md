@@ -20,6 +20,7 @@
 | 文档 | 一句话定位 | 更新时间 |
 |---|---|---|
 | [architecture-review-2026-11-04.md](review/architecture-review-2026-11-04.md) | 架构审视报告：25 条发现、风险分级与优化清单 | 2026-11-04 |
+| [rag-capability-assessment-2026-11-05.md](review/rag-capability-assessment-2026-11-05.md) | RAG 全流程能力评估：对照五个难点的现状、缺口与改进建议 | 2026-11-05 |
 
 ## testing/ — 测试用例与报告
 
@@ -29,6 +30,7 @@
 | [unit-test-report.md](testing/unit-test-report.md) | 单元测试执行结果与覆盖说明 | 2026-11-04 |
 | [browser-test-report-2026-11-03.md](testing/browser-test-report-2026-11-03.md) | 2026-11-03 浏览器回归报告 | 2026-11-04 |
 | [browser-test-report-2026-11-04.md](testing/browser-test-report-2026-11-04.md) | 2026-11-04 浏览器全量回归与重启后复验报告 | 2026-11-04 |
+| [browser-e2e-report-2026-11-06.md](testing/browser-e2e-report-2026-11-06.md) | 2026-11-06 页面端到端测试报告：用例分布、缺陷修复复验与 BLOCKED 解除记录 | 2026-11-06 |
 
 所有浏览器截图及证据位于 [testing/evidence/](testing/evidence/)，文件名保持与报告引用一致。
 
