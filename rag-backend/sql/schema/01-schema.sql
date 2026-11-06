@@ -75,9 +75,10 @@ CREATE TABLE IF NOT EXISTS wgh_embedding_model (
   update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   create_by VARCHAR(50) DEFAULT 'system',
   update_by VARCHAR(50) DEFAULT 'system',
-  deleted SMALLINT DEFAULT 0,
-  CONSTRAINT uk_embedding_default UNIQUE NULLS NOT DISTINCT (is_default)
+  deleted SMALLINT DEFAULT 0
 );
+-- 仅允许一个默认嵌入模型；非默认模型可任意多个（部分唯一索引只约束 is_default = 1）
+CREATE UNIQUE INDEX IF NOT EXISTS uk_embedding_default ON wgh_embedding_model(is_default) WHERE is_default = 1;
 COMMENT ON TABLE wgh_embedding_model IS 'Embedding 嵌入模型配置';
 COMMENT ON COLUMN wgh_embedding_model.id IS '主键';
 COMMENT ON COLUMN wgh_embedding_model.name IS '显示名称';
