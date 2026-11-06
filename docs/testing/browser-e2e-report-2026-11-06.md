@@ -2,17 +2,18 @@
 
 ## 1. 结论摘要
 
-- 执行用例 **93 条**：初测 **PASS 76 / FAIL 5 / BLOCKED 12**；修复后在部署实例上复验，5 条 FAIL 全部转 PASS、KB-05 通过 mock 知识库换方法复验，最终 **PASS 82 / FAIL 0 / BLOCKED 11**。
-- **计数口径**：复验不新增用例，按同一用例 ID 替换状态；修复 commit `e74f0c2`，部署实例 PID **24167**。初测与复验的详细证据见 §5、§6。
+- 执行用例 **93 条**：初测 **PASS 76 / FAIL 5 / BLOCKED 12**；修复后在部署实例上复验，5 条 FAIL 全部转 PASS、KB-05 通过 mock 知识库换方法复验；第三轮按授权解除剩余 11 条 BLOCKED（10 条换 mock 复跑、1 条新增检索评测页），最终 **PASS 93 / FAIL 0 / BLOCKED 0**。
+- **计数口径**：复验不新增用例，按同一用例 ID 替换状态；修复 commit `e74f0c2`，部署实例 PID **24167**；BLOCKED 解除轮见 §6。初测与复验的详细证据见 §5、§6。
 - 5 条 FAIL 均已修复并复验：AUTH-05b、KB-06、KB-12、CHAT-02、WF-04（§5.1—§5.5）。
-- 11 条 BLOCKED 为真实模型 Key 占位符（KB-02 + KB-03×9，共 10 条）与前端无检索评测页面（SEARCH-06，1 条）；逐条原因与可替代途径见 §6。
+- 11 条 BLOCKED 已全部解除：KB-02 + KB-03×9 换 mock 重新走页面上传并逐格式记录 `SUCCESS/chunkCount`；SEARCH-06 新增最小检索评测页（`/kb/:id/evaluation`）并跑通一次评测。
+- **范围声明**：真实模型的语义质量/解析质量无法用 mock 代表，属外部凭证缺失，单列为范围声明，不计入 BLOCKED。
 
 ## 2. 环境信息
 
 | 项 | 值 |
 |---|---|
-| 测试时间 | 初测 2026-11-06 17:23 — 18:13；修后复验 2026-11-06 18:20 — 19:10（CST） |
-| 被测前端 | Vite dev，`http://localhost:5173`，PID **5102**（启动于 2026-11-05 14:21:21，复验期未重启） |
+| 测试时间 | 初测 2026-11-06 17:23 — 18:13；修后复验 18:20 — 19:10；BLOCKED 解除轮 19:10 — 19:45（CST） |
+| 被测前端 | Vite dev，`http://localhost:5173`，PID **5102**（启动于 2026-11-05 14:21:21，全程未重启） |
 | 被测后端（初测） | `rag-app-1.0.0-SNAPSHOT.jar`（11-05 14:16 构建），8080 / 9090，PID **16978** |
 | 被测后端（复验） | 重新 `package` 的 `rag-app-1.0.0-SNAPSHOT.jar`（**11-06 18:36**，含 `307508e` 与 `e74f0c2`），8080 / 9090，PID **24167** |
 | 健康检查 | 9090 `/actuator/health` = **200**（db/redis 均 UP）；8080 `/actuator` = **404**（管理端口分离生效） |
@@ -20,8 +21,9 @@
 | 登录口令 | admin 复验期口令 `Verify123456`；进程 `WGH_INIT_ADMIN_PASSWORD=Verify12345` 仅用于首次初始化 |
 | 驱动方式 | Playwright（Chrome channel，headless），Node v24.6.0，脚本位于 `/tmp/wgh-e2e/` |
 | 模型替代 | 真实模型 Key 为占位符，另经**模型管理页面/接口**注册本地 OpenAI 兼容 mock（`127.0.0.1:9101`，E2E-Mock-Embedding / E2E-Mock-Chat）跑通链路 |
-| 知识库 | 初测：E2E云岚知识库（真实模型，id=1）、E2E云岚知识库-Mock（mock，id=2，测试后软删）；复验：E2E-Verify-KB（mock，id=3） |
-| 证据截图 | `docs/testing/evidence/20261106-*.png`（初测 100+ 张，修后复验另增 10 张） |
+| 知识库 | 初测：E2E云岚知识库（真实模型，id=1）、E2E云岚知识库-Mock（mock，id=2，测试后软删）；复验：E2E-Verify-KB（mock，id=3）；BLOCKED 解除轮：E2E-Blk-知识库（mock，id=4） |
+| 模型 | 复验期 E2E-Mock-Embedding / E2E-Mock-Chat；BLOCKED 解除轮 E2E-Blk-Embedding / E2E-Blk-Chat（均为本地 OpenAI 兼容 mock） |
+| 证据截图 | `docs/testing/evidence/20261106-*.png`（初测 100+ 张，修后复验另增 10 张，BLOCKED 解除轮新增 5 张） |
 
 > 纪律：初测阶段未重编译、未重启、未改业务代码、未直接写 SQL；修后复验阶段按授权重新 `package` 并重启实例，未触碰旧库 `wgh_rag`。
 
@@ -30,18 +32,18 @@
 | 模块 | 用例数 | PASS | FAIL | BLOCKED |
 |---|---:|---:|---:|---:|
 | 登录 / 账号 / 改密 / 登出 | 9 | 9 | 0 | 0 |
-| 知识库（新建/标签/9 格式/解析/预览/版本/重切） | 31 | 21 | 0 | 10 |
+| 知识库（新建/标签/9 格式/解析/预览/版本/重切） | 31 | 31 | 0 | 0 |
 | 聊天（问答/流式/停止/引用/持久化） | 9 | 9 | 0 | 0 |
-| 检索（混合/向量/重排/评测） | 6 | 5 | 0 | 1 |
+| 检索（混合/向量/重排/评测） | 6 | 6 | 0 | 0 |
 | Agent（单 Agent 规划） | 3 | 3 | 0 | 0 |
 | 多 Agent Crew | 3 | 3 | 0 | 0 |
 | 工作流 | 6 | 6 | 0 | 0 |
 | 管理端（模型/角色/用户/配额/Prompt） | 12 | 12 | 0 | 0 |
 | 分享 / Widget / 开放 API | 10 | 10 | 0 | 0 |
 | 权限 / 安全 | 4 | 4 | 0 | 0 |
-| **合计** | **93** | **82** | **0** | **11** |
+| **合计** | **93** | **93** | **0** | **0** |
 
-> 修复复验不新增用例：AUTH-05b、KB-06、KB-12、CHAT-02、WF-04 替换原 FAIL 状态；KB-05 原 BLOCKED 改用 mock 知识库复验成功后替换为 PASS。故总数仍为 93。
+> 修复复验不新增用例：AUTH-05b、KB-06、KB-12、CHAT-02、WF-04 替换原 FAIL 状态；KB-05 与 11 条 BLOCKED 在后续复验/解除轮中替换为 PASS。故总数仍为 93。
 
 ## 4. 用例明细
 
@@ -66,8 +68,16 @@
 |---|---|---|---|
 | KB-01 | 新建知识库 | PASS | toast“创建成功”；`20261106-01-kb-01-create-dialog.png` |
 | KB-01b | 知识库出现在列表接口 | PASS | id=1；`20261106-02-kb-02-create-success.png` |
-| KB-02 | 上传 9 种格式并完成解析（真实模型） | **BLOCKED** | 9/9 FAILED，embedding 401（Key 为 `YOUR_DASHSCOPE_API_KEY` 占位符）；见 6.1 |
-| KB-03-TXT/MD/PDF/DOCX/XLSX/PPTX/HTML/JSON/EML | 各格式解析成功且段落数 > 0（真实模型） | **BLOCKED ×9** | 同 KB-02；`20261106-05-kb-05-upload-all.png` |
+| KB-02 | 上传 9 种格式并完成解析（mock 链路） | **PASS（换 mock 复跑）** | 页面新建 `E2E-Blk-知识库`（id=4，mock embedding），9/9 `SUCCESS`、合计 12 chunks；`20261106-02-blk-a-02-9-formats-success.png`；见 6.1 |
+| KB-03-TXT | `yunlan-manual.txt` 解析成功且段落数 > 0 | **PASS（mock）** | `status=SUCCESS`、`chunkCount=1`、`strategy=AUTO` |
+| KB-03-MD | `yunlan-deploy.md` 解析成功且段落数 > 0 | **PASS（mock）** | `status=SUCCESS`、`chunkCount=4`、`strategy=AUTO` |
+| KB-03-PDF | `yunlan-contract.pdf` 解析成功且段落数 > 0 | **PASS（mock，重点）** | `status=SUCCESS`、`chunkCount=1`；Chunk 预览可展开；`20261106-01-blk-a-03-preview-pdf.png` |
+| KB-03-DOCX | `yunlan-method.docx` 解析成功且段落数 > 0 | **PASS（mock，重点）** | `status=SUCCESS`、`chunkCount=1`；Chunk 预览可展开；`20261106-02-blk-a-03-preview-docx.png` |
+| KB-03-XLSX | `yunlan-pricing.xlsx` 解析成功且段落数 > 0 | **PASS（mock）** | `status=SUCCESS`、`chunkCount=1`、`strategy=AUTO` |
+| KB-03-PPTX | `yunlan-intro.pptx` 解析成功且段落数 > 0 | **PASS（mock）** | `status=SUCCESS`、`chunkCount=1`、`strategy=AUTO` |
+| KB-03-HTML | `yunlan-faq.html` 解析成功且段落数 > 0 | **PASS（mock）** | `status=SUCCESS`、`chunkCount=1`、`strategy=AUTO` |
+| KB-03-JSON | `yunlan-product.json` 解析成功且段落数 > 0 | **PASS（mock）** | `status=SUCCESS`、`chunkCount=1`、`strategy=AUTO` |
+| KB-03-EML | `yunlan-quote.eml` 解析成功且段落数 > 0 | **PASS（mock）** | `status=SUCCESS`、`chunkCount=1`、`strategy=AUTO` |
 | TAG-01 | 创建标签 E2E-产品 / E2E-合同 | PASS | 接口返回 200 |
 | TAG-02 | 页面为知识库绑定标签 | PASS | 标签已保存；`20261106-03-kb-03-kb-tags.png` |
 | TAG-03 | 页面为文件绑定标签 | PASS | `20261106-17-kb-09-file-tags.png` |
@@ -111,7 +121,7 @@
 | SEARCH-03 | 关闭混合检索后纯向量可用 | PASS | 余弦相似度打分；`20261106-02-search-03-vector-only.png` |
 | SEARCH-04 | 多路召回生效（混合 vs 纯向量有差异） | PASS | 两轮结果/排序不同；`20261106-03-search-04-api-hybrid-compare.png` |
 | SEARCH-05 | 重排开关可用 | PASS（降级） | 开关可操作，但无 RERANK 模型，页面显示“未启用/已降级”；`20261106-04-search-05-rerank-empty.png` |
-| SEARCH-06 | 检索评测页面可用 | **BLOCKED** | 前端路由无评测页（仅后端 `RetrievalEvaluationController`）；见 6.2 |
+| SEARCH-06 | 检索评测页面可用 | **PASS（新增最小评测页）** | 文件页「检索评测」→ `/kb/4/evaluation`；新增标注（查询 + 相关 Chunk）→ 运行评测，表格显示查询数 1、TopK 5、Recall@K 100%、Precision@K 20%、命中率 100%、覆盖率 100%、平均耗时 63ms；`20261106-03-blk-b-03-evaluate-result.png`；见 6.2 |
 
 ### 4.5 Agent / 多 Agent
 
@@ -232,38 +242,62 @@
 - **复验（PID 24167）**：调色板可见 AGENT → 加入画布 → 配置模型/知识库 → 与 START/END 连线（2 条边）→ 校验通过 → 保存成功 → 运行轨迹 AGENT SUCCESS；`a48f11d` 的保存去重与只读校验未改动。
 - 修后证据：`20261106-01-wf-04-agent-node-added-fix.png`、`20261106-02-wf-04-agent-connected-fix.png`、`20261106-03-wf-04-agent-saved-fix.png`、`20261106-04-wf-04-agent-run-fix.png`。
 
-## 6. BLOCKED 说明（原 12 条逐条；KB-05 已解除，现 11 条）
+## 6. BLOCKED 解除记录（11 → 0）
 
-### 6.1 逐条原因与可替代性
+### 6.1 A 类：KB-02 + KB-03×9（换 mock 复跑，10 条）
 
-真实模型 Key 为占位符（`YOUR_DASHSCOPE_API_KEY` / `YOUR_DEEPSEEK_API_KEY`），上传后 embedding 返回 **401**；已在页面注册本地 OpenAI 兼容 mock（`127.0.0.1:9101`）用于链路验证。
+- 背景：初测连的是真实模型记录，Key 是占位符（`YOUR_DASHSCOPE_API_KEY` / `YOUR_DEEPSEEK_API_KEY`），embedding 返回 401，9 个文件全部 FAILED。
+- 操作（全部走页面）：模型管理页注册本地 OpenAI 兼容 mock（`127.0.0.1:9101`）`E2E-Blk-Embedding` / `E2E-Blk-Chat` → 知识库页新建 `E2E-Blk-知识库`（id=4）→ 文件页逐格式上传 9 个 fixtures → 等待解析完成。
+- 结果：
 
-| ID | 具体阻塞原因 | 是否可通过换方法解除 | 结论 |
-|---|---|---|---|
-| KB-02 | 真实模型 embedding 401，9 个文件全部 FAILED | **部分可换方法**：mock 下 9/9 SUCCESS、合计 12 chunks，证明解析入库链路可用；真实模型语义质量需要有效 Key | 保持 BLOCKED（真实模型维度） |
-| KB-03-TXT | 同上；`yunlan-manual.txt` 真实模型 401 | 可换 mock：SUCCESS，chunks=1 | 保持 BLOCKED（真实模型维度） |
-| KB-03-MD | 同上；`yunlan-deploy.md` 真实模型 401 | 可换 mock：SUCCESS，chunks=4 | 保持 BLOCKED（真实模型维度） |
-| KB-03-PDF | 同上；`yunlan-contract.pdf` 真实模型 401 | 可换 mock：SUCCESS，chunks=1 | 保持 BLOCKED（真实模型维度） |
-| KB-03-DOCX | 同上；`yunlan-method.docx` 真实模型 401 | 可换 mock：SUCCESS，chunks=1 | 保持 BLOCKED（真实模型维度） |
-| KB-03-XLSX | 同上；`yunlan-pricing.xlsx` 真实模型 401 | 可换 mock：SUCCESS，chunks=1 | 保持 BLOCKED（真实模型维度） |
-| KB-03-PPTX | 同上；`yunlan-intro.pptx` 真实模型 401 | 可换 mock：SUCCESS，chunks=1 | 保持 BLOCKED（真实模型维度） |
-| KB-03-HTML | 同上；`yunlan-faq.html` 真实模型 401 | 可换 mock：SUCCESS，chunks=1 | 保持 BLOCKED（真实模型维度） |
-| KB-03-JSON | 同上；`yunlan-product.json` 真实模型 401 | 可换 mock：SUCCESS，chunks=1 | 保持 BLOCKED（真实模型维度） |
-| KB-03-EML | 同上；`yunlan-quote.eml` 真实模型 401 | 可换 mock：SUCCESS，chunks=1 | 保持 BLOCKED（真实模型维度） |
-| KB-05 | 真实模型知识库重切触发 401，mock 未复测 | **可换方法**：已在 mock `E2E-Verify-KB` 完成 PARAGRAPH→RECURSIVE 重切，v2 SUCCESS、`chunkCount=1` | **已解除，转 PASS**（见 6.4） |
-| SEARCH-06 | 前端路由没有检索评测页面，仅后端 `RetrievalEvaluationController` | 只能直接调后端 API；用例要求“页面可用”，不换方法解除 | 不可解除（除非新增前端评测页，超出本轮测试范围） |
+| 文件 | status | chunkCount | splitStrategy |
+|---|---|---:|---|
+| yunlan-manual.txt | SUCCESS | 1 | AUTO |
+| yunlan-deploy.md | SUCCESS | 4 | AUTO |
+| yunlan-contract.pdf | SUCCESS | 1 | AUTO |
+| yunlan-method.docx | SUCCESS | 1 | AUTO |
+| yunlan-pricing.xlsx | SUCCESS | 1 | AUTO |
+| yunlan-intro.pptx | SUCCESS | 1 | AUTO |
+| yunlan-faq.html | SUCCESS | 1 | AUTO |
+| yunlan-product.json | SUCCESS | 1 | AUTO |
+| yunlan-quote.eml | SUCCESS | 1 | AUTO |
 
-### 6.2 真实模型 401 的不可解除性
-- 401 源于占位符 Key，属于外部凭证缺失，不是代码缺陷；换 mock 只能验证链路结构与入库结果，不能验证真实模型的解析质量/语义效果。
-- 因此 KB-02 与 KB-03×9 保留 BLOCKED，但链路等价性已由 KB-08（mock 下 9/9 SUCCESS）覆盖。
+- 合计 9/9 `SUCCESS`、12 chunks；PDF、DOCX 的 Chunk 预览可正常展开。
+- 证据：`20261106-02-blk-a-02-9-formats-success.png`、`20261106-01-blk-a-03-preview-pdf.png`、`20261106-02-blk-a-03-preview-docx.png`。
+- 结论：KB-02 与 KB-03×9 **转 PASS（mock 链路）**。
 
-### 6.3 KB-12 修复验证（已解除）
-- 初测因运行实例为旧构建无法验证；已重新 `package`（jar 18:36）并重启，复验通过，详见 §5.3。此处不再计为 BLOCKED。
+### 6.2 B 类：SEARCH-06 新增最小检索评测页（1 条）
 
-### 6.4 KB-05 换方法复验
+**页面做了什么**
+
+- 路由：`/kb/:id/evaluation`（`KBEvaluation.vue`）。
+- 入口：知识库文件页头部新增「检索评测」按钮，跳转当前知识库的评测页。
+- 参数：TopK（1—20）、混合检索开关；点击「运行评测」调用 `POST /api/kb/{id}/evaluate`。
+- 标注管理：表格展示已有 ground truth（查询文本、相关 Chunk、创建时间），支持新增/删除；新增弹窗选择查询 + 相关 Chunk（下拉来自 `GET /api/kb/{id}/chunks`）。
+- 结果展示：指标表格（查询数、TopK、Recall@K、Precision@K、查询命中率、覆盖率、平均耗时）+ 逐查询明细表（相关数/召回数/命中数/Recall/Precision/耗时）。
+- 边界遵守：仅 1 个 Vue 视图 + 1 条路由 + 1 个入口按钮 + 5 个 API 封装（`kbGroundTruthList/Create/Delete`、`kbListChunks`、`kbEvaluate`）；**未改后端、未加依赖、未做导入/批量评估/导出/历史/图表**。
+
+**复验**
+
+- 从文件页点「检索评测」进入 `/kb/4/evaluation`；新增标注：查询「云岚科技专业版年费是多少」+ 相关 Chunk `yunlan-pricing.xlsx #0`。
+- 运行评测（TopK=5、混合检索开）结果：查询数 1、Recall@K 100%、Precision@K 20%、查询命中率 100%、覆盖率 100%、平均耗时 63ms；明细表 1 行。
+- 证据：`20261106-01-blk-b-01-evaluation-page.png`、`20261106-02-blk-b-02-groundtruth-added.png`、`20261106-03-blk-b-03-evaluate-result.png`。
+- 构建/测试：`npm run build` PASS；`mvn -pl rag-kb -am test` **154 tests / 0 failures / 0 errors / 1 skipped**。
+- 结论：SEARCH-06 **转 PASS**。
+
+### 6.3 范围声明（真实模型）
+
+真实模型的**语义质量与解析质量**无法用 mock 代表，属于外部凭证缺失（有效 API Key）；本次仅验证功能链路与格式覆盖，该维度单列为范围声明，**不计入 BLOCKED**。
+
+### 6.4 KB-05 换方法复验（已解除）
+
 - 在 `E2E-Verify-KB`（mock embedding）上传 `yunlan-deploy.md`（PARAGRAPH，v1 SUCCESS/1 段），随后 `POST /api/kb/files/{id}/resplit?splitStrategy=RECURSIVE`。
-- 结果：文件 `version=2`、`status=SUCCESS`、`chunkCount=1`；版本历史保留 v1 并新增 v2；证明重切链路可用。真实模型 KB 仍因 401 不可用。
+- 结果：文件 `version=2`、`status=SUCCESS`、`chunkCount=1`；版本历史保留 v1 并新增 v2；证明重切链路可用。
 - 证据：`20261106-01-kb-06-version-history-fix.png`。
+
+### 6.5 KB-12 修复验证（已解除）
+
+- 初测因运行实例为旧构建无法验证；已重新 `package`（jar 18:36）并重启，复验通过，详见 §5.3。此处不再计为 BLOCKED。
 
 ## 7. 缺陷清单（BUG-01~05 已修复，BUG-06 仅记录）
 
@@ -306,7 +340,18 @@
 
 > 说明：会话 10/11/12 的 `status` 仍为 `ACTIVE`、`message_count` 仍为 2，但 `deleted=1`；逻辑删除不回写业务字段，接口查询按 `deleted=0` 过滤后已不可见。此处不是删除未生效。
 
-### 8.3 无法彻底清除的残留（软删除 / 仅支持吊销）
+### 8.3 BLOCKED 解除轮（19:10—19:45，E2E-Blk 新增数据）
+
+| 数据 | 接口 | 结果 |
+|---|---|---|
+| 知识库 id=4（E2E-Blk-知识库） | `DELETE /api/kb/4` | HTTP 200；`deleted=1`，9 个文件随库逻辑删除，动态向量表已 DROP |
+| 嵌入模型 id=4（E2E-Blk-Embedding） | `DELETE /api/models/embedding/4` | HTTP 200；`deleted=1` |
+| ChatModel id=6（E2E-Blk-Chat） | `DELETE /api/models/chat/6` | HTTP 200；`deleted=1` |
+| 评测标注 id=1（云岚科技专业版年费是多少） | `DELETE /api/kb/4/ground-truth/1` | HTTP 200；`deleted=1` |
+
+> 说明：知识库删除不级联评测标注，需单独调用 ground-truth 删除接口；已清理完毕。
+
+### 8.4 无法彻底清除的残留（软删除 / 仅支持吊销）
 
 | 残留 | 位置 | 说明 |
 |---|---|---|
@@ -315,11 +360,12 @@
 | 开放 API Key `E2E集成Key`（id=1） | `wgh_api_key`（`revoked=1`、`deleted=0`） | 仅支持吊销 |
 | 聊天会话 id=1—9 / 消息 32 条 | `wgh_chat_session` / `wgh_chat_message`（`deleted=0`） | 初测删窗口未级联清理会话与消息，接口无单独清理入口 |
 | 运行记录：工作流运行 1—5、Agent 计划 1、Crew 运行 1 | `wgh_workflow_run` / `wgh_agent_plan` / `wgh_m_agent_run` | 历史运行记录，接口不提供删除；其中工作流运行 5 属于已删的 E2E-Verify 工作流 5 |
-| 逻辑删除行 | `wgh_knowledge_base` 3 行、`wgh_knowledge_file` 29 行、ChatModel 3 行（id=3/4/5）、嵌入模型 2 行（id=2/3）、聊天窗口 4 行、工作流 5 行、Crew 1 行、会话 3 行、消息 6 条 | `deleted=1`，数据库内仍占位 |
+| 逻辑删除行 | `wgh_knowledge_base` 4 行、`wgh_knowledge_file` 38 行、ChatModel 4 行（id=3/4/5/6）、嵌入模型 3 行（id=2/3/4）、聊天窗口 4 行、工作流 5 行、Crew 1 行、会话 3 行、消息 6 条、评测标注 1 行 | `deleted=1`，数据库内仍占位 |
 
 ## 9. 范围与声明
 
-- 本报告为**页面端到端**验证；真实大模型语义质量、真实 PDF 版面还原度未验证（Key 为占位符）。
-- 流式、检索、Agent、工作流等链路使用本地 mock 模型验证，结论仅代表**功能链路正确性**，不代表模型效果。
+- 本报告为**页面端到端**验证；**真实大模型的语义质量、真实 PDF 版面的解析/还原质量无法用 mock 代表，属于外部凭证缺失（有效 API Key），单列为范围声明，不计入 BLOCKED**。
+- 流式、检索、Agent、工作流、9 格式解析与检索评测等链路使用本地 mock 模型验证，结论仅代表**功能链路正确性**，不代表模型效果。
+- SEARCH-06 为按授权新增的最小评测页（1 视图 + 1 路由 + 1 入口 + 5 个 API 封装），未引入依赖、未改后端、未扩展导入/批量/导出/历史/图表。
 - 全部证据截图位于 `docs/testing/evidence/20261106-*.png`，测试脚本位于 `/tmp/wgh-e2e/`（未纳入代码库）。
 - 初测阶段未执行重编译、后端重启或业务代码修改；修后复验阶段按授权重新 `package` 并重启实例（PID 24167）。全程未触碰旧库 `wgh_rag`。

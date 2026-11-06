@@ -5,14 +5,17 @@
         <el-button :icon="ArrowLeft" circle @click="$router.back()" />
         <h2>{{ kb?.name }} - 文件管理</h2>
       </div>
-      <el-upload
-        :show-file-list="false"
-        :before-upload="beforeUpload"
-        :http-request="doUpload"
-        accept=".pdf,.docx,.doc,.txt,.md,.csv,.xlsx,.xls,.pptx,.html,.htm,.json,.eml"
-      >
-        <el-button type="primary" :icon="Upload">上传文件</el-button>
-      </el-upload>
+      <div style="display:flex;gap:8px;align-items:center">
+        <el-button :icon="DataAnalysis" @click="$router.push(`/kb/${kbId}/evaluation`)">检索评测</el-button>
+        <el-upload
+          :show-file-list="false"
+          :before-upload="beforeUpload"
+          :http-request="doUpload"
+          accept=".pdf,.docx,.doc,.txt,.md,.csv,.xlsx,.xls,.pptx,.html,.htm,.json,.eml"
+        >
+          <el-button type="primary" :icon="Upload">上传文件</el-button>
+        </el-upload>
+      </div>
     </div>
 
     <div class="card">
@@ -161,7 +164,7 @@
 import { ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowLeft, Upload } from '@element-plus/icons-vue'
+import { ArrowLeft, Upload, DataAnalysis } from '@element-plus/icons-vue'
 import {
   kbGet, kbListFiles, kbUploadFile, kbDeleteFile, kbResplitFile, kbPreviewSplit,
   tagList, kbFileTags, kbFileSetTags, kbFileVersions, kbFileRollback

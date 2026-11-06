@@ -32,6 +32,13 @@ export const kbResplitFile = (fileId, splitStrategy, splitConfig) => {
 export const kbPreviewSplit = (fileId) => request.get(`/kb/files/${fileId}/preview`)
 export const kbSearch = (kbId, query, rerankModelId, hybrid, queryTransformMode, rewriteModelId) => request.get(`/kb/${kbId}/search`, { params: { query, rerankModelId: rerankModelId || undefined, hybrid: hybrid || undefined, queryTransformMode: queryTransformMode && queryTransformMode !== 'NONE' ? queryTransformMode : undefined, rewriteModelId: rewriteModelId || undefined } })
 
+// 检索评测（ground truth 标注 + Recall@K）
+export const kbGroundTruthList = (kbId) => request.get(`/kb/${kbId}/ground-truth`)
+export const kbGroundTruthCreate = (kbId, data) => request.post(`/kb/${kbId}/ground-truth`, data)
+export const kbGroundTruthDelete = (kbId, id) => request.delete(`/kb/${kbId}/ground-truth/${id}`)
+export const kbListChunks = (kbId, params) => request.get(`/kb/${kbId}/chunks`, { params })
+export const kbEvaluate = (kbId, params) => request.post(`/kb/${kbId}/evaluate`, null, { params })
+
 // 模型
 export const chatModelPage = (params) => request.get('/models/chat', { params })
 export const chatModelList = () => request.get('/models/chat/list')
