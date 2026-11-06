@@ -30,11 +30,11 @@ const props = defineProps({
 })
 
 const ICONS = {
-  START: '▶', END: '■', LLM: '✨', RETRIEVAL: '🔍',
+  START: '▶', END: '■', LLM: '✨', RETRIEVAL: '🔍', AGENT: '🤖',
   TOOL: '🔧', CONDITION: '◆', LOOP: '↻', HITL: '👤', VARIABLE: '𝑥'
 }
 const LABELS = {
-  START: '开始', END: '结束', LLM: '大模型', RETRIEVAL: '知识库检索',
+  START: '开始', END: '结束', LLM: '大模型', RETRIEVAL: '知识库检索', AGENT: 'Agent 规划',
   TOOL: '工具调用', CONDITION: '条件分支', LOOP: '循环', HITL: '人工确认', VARIABLE: '变量赋值'
 }
 const STATUS = {
@@ -99,6 +99,7 @@ const sourceHandles = computed(() => {
   &.t-end .wf-node-head { background: #909399; }
   &.t-llm .wf-node-head { background: #409eff; }
   &.t-retrieval .wf-node-head { background: #e6a23c; }
+  &.t-agent .wf-node-head { background: #722ed1; }
   &.t-tool .wf-node-head { background: #8e44ad; }
   &.t-condition .wf-node-head { background: #f56c6c; }
   &.t-loop .wf-node-head { background: #16a085; }

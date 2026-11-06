@@ -31,9 +31,8 @@
 import { reactive, ref, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { changePassword, getMe } from '../../api'
+import { changePassword } from '../../api'
 import { useUserStore } from '../../stores/user'
-import { STORAGE_KEYS } from '../../utils/constants'
 
 const router = useRouter()
 const route = useRoute()
@@ -75,14 +74,16 @@ const submit = async () => {
   loading.value = true
   try {
     await changePassword({ oldPassword: form.oldPassword, newPassword: form.newPassword })
-    ElMessage.success('密码修改成功')
-    userStore.passwordMustChange = false
-    localStorage.setItem(STORAGE_KEYS.PWD_MUST_CHANGE, '0')
-    // 重新拉取用户信息，确保权限/标记与后端一致
-    const res = await getMe()
-    userStore.hydrate(res.data)
+    // pv 机制会让改密前的旧 token 立即失效（安全设计，不绕过）。
+    // 因此不能再用当前会话请求 /auth/me：那必然 401，被拦截器静默清凭证，用户无感知被踢出。
+    // 主动清理本地会话，明确提示并用新口令重新登录。
+    userStore.logout()
+    ElMessage.success('口令已更新，请用新口令重新登录')
     const redirect = route.query.redirect
-    router.push(typeof redirect === 'string' && redirect.startsWith('/') ? redirect : '/')
+    router.replace({
+      path: '/login',
+      query: typeof redirect === 'string' && redirect.startsWith('/') ? { redirect } : {}
+    })
   } catch (e) {
     // 错误提示由 request.js 统一处理
   } finally {

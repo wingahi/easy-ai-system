@@ -265,7 +265,7 @@
 </template>
 
 <script setup>
-import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
+import { reactive, ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft, Link, Promotion, VideoPause, Plus, Document, Loading, Tools, Delete, Connection } from '@element-plus/icons-vue'
@@ -680,7 +680,9 @@ const send = async () => {
   messages.value.push({ role: 'USER', content: text || '[图片]', images: imageUrls })
 
   // 添加空 AI 消息（等待流式填充）
-  const aiMsg = { role: 'ASSISTANT', content: '', streaming: true, metrics: null, sources: [], tools: [] }
+  // 必须用 reactive 包装：流式回调只持有该对象引用，普通对象不经过 Vue 代理，
+  // 直接累加 content 不会触发重渲染（表现为流结束才一次性显示全文）
+  const aiMsg = reactive({ role: 'ASSISTANT', content: '', streaming: true, metrics: null, sources: [], tools: [] })
   messages.value.push(aiMsg)
 
   await scrollToBottom()
@@ -1256,7 +1258,7 @@ const onWorkflowConfirm = async (userInput) => {
   workflowConfirming.value = true
   workflowPrompt.value = ''
 
-  const aiMsg = { role: 'ASSISTANT', content: '', streaming: true, metrics: null, sources: [], tools: [] }
+  const aiMsg = reactive({ role: 'ASSISTANT', content: '', streaming: true, metrics: null, sources: [], tools: [] })
   messages.value.push(aiMsg)
   streaming.value = true
   await scrollToBottom()

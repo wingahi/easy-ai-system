@@ -110,6 +110,32 @@
                 </div>
               </template>
 
+              <!-- AGENT -->
+              <template v-else-if="selectedNode.data.nodeType === 'AGENT'">
+                <div class="field">
+                  <label>Agent 目标</label>
+                  <el-input v-model="cfg.goal" type="textarea" :rows="4"
+                            placeholder="支持变量：{{input}}、{{n_rag_1.text}}" />
+                </div>
+                <div class="field">
+                  <label>执行模型</label>
+                  <el-select v-model="cfg.modelId" size="small" style="width:100%" placeholder="默认模型" clearable>
+                    <el-option v-for="m in chatModels" :key="m.id" :label="`${m.name} (${m.modelName})`" :value="m.id" />
+                  </el-select>
+                </div>
+                <div class="field">
+                  <label>知识库</label>
+                  <el-select v-model="cfg.kbIds" multiple size="small" style="width:100%" placeholder="可选">
+                    <el-option v-for="kb in kbOptions" :key="kb.id" :label="kb.name" :value="kb.id" />
+                  </el-select>
+                </div>
+                <div class="field">
+                  <label>最大计划步数</label>
+                  <el-input-number v-model="cfg.maxSteps" :min="1" :max="20" size="small" style="width:120px" />
+                </div>
+                <div class="empty-hint">Planner 自动拆解目标并逐步执行，最后一步的输出写入 lastOutput，可供下游节点引用。</div>
+              </template>
+
               <!-- TOOL -->
               <template v-else-if="selectedNode.data.nodeType === 'TOOL'">
                 <div class="field">
@@ -277,6 +303,7 @@ const palette = [
   { type: 'START', label: '开始', icon: '▶', color: '#67c23a' },
   { type: 'LLM', label: '大模型', icon: '✨', color: '#409eff' },
   { type: 'RETRIEVAL', label: '知识库检索', icon: '🔍', color: '#e6a23c' },
+  { type: 'AGENT', label: 'Agent 规划', icon: '🤖', color: '#722ed1' },
   { type: 'TOOL', label: '工具调用', icon: '🔧', color: '#8e44ad' },
   { type: 'CONDITION', label: '条件分支', icon: '◆', color: '#f56c6c' },
   { type: 'LOOP', label: '循环', icon: '↻', color: '#16a085' },
@@ -462,6 +489,7 @@ const addNode = (type) => {
 
 const defaultConfig = (type) => {
   if (type === 'RETRIEVAL') return { kbIds: [], query: '', topK: 5 }
+  if (type === 'AGENT') return { goal: '{{input}}', modelId: null, kbIds: [], maxSteps: 5 }
   if (type === 'CONDITION') return { expression: '' }
   if (type === 'LOOP') return { maxIterations: 3, breakCondition: '' }
   if (type === 'VARIABLE') return { assignments: [] }

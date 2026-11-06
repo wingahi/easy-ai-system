@@ -112,7 +112,7 @@
 </template>
 
 <script setup>
-import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
+import { reactive, ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Promotion, VideoPause, Plus, Delete, Loading } from '@element-plus/icons-vue'
@@ -705,7 +705,7 @@ const onWorkflowConfirm = async (userInput) => {
   workflowConfirming.value = true
   workflowPrompt.value = ''
 
-  const aiMsg = { role: 'ASSISTANT', content: '', streaming: true, sources: [] }
+  const aiMsg = reactive({ role: 'ASSISTANT', content: '', streaming: true, sources: [] })
   messages.value.push(aiMsg)
   streaming.value = true
   await scroll()
@@ -770,7 +770,7 @@ const send = async () => {
   workflowPrompt.value = ''
   
   messages.value.push({ role: 'USER', content: text })
-  const aiMsg = { role: 'ASSISTANT', content: '', streaming: true, sources: [] }
+  const aiMsg = reactive({ role: 'ASSISTANT', content: '', streaming: true, sources: [] })
   messages.value.push(aiMsg)
   await scroll()
   streaming.value = true

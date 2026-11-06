@@ -158,15 +158,9 @@ public class KnowledgeFileService {
         semanticCacheService.invalidateByKbId(file.getKnowledgeBaseId());
 
         // 升级版本号 + 记录旧版本快照（回滚时按此版本的策略重切）
+        // 快照必须反映旧版本的真实状态与 chunk 数，不能固定写成 SUCCESS
         Integer oldVersion = file.getVersion() == null ? 1 : file.getVersion();
-        KnowledgeFileVersion snapshot = new KnowledgeFileVersion();
-        snapshot.setFileId(fileId);
-        snapshot.setVersion(oldVersion);
-        snapshot.setChunkCount(file.getChunkCount());
-        snapshot.setSplitStrategy(file.getSplitStrategy());
-        snapshot.setSplitConfig(file.getSplitConfig());
-        snapshot.setStatus("SUCCESS");
-        versionMapper.insert(snapshot);
+        upsertVersionSnapshot(file, file.getStatus() == null ? "SUCCESS" : file.getStatus());
 
         file.setVersion(oldVersion + 1);
         file.setSplitStrategy(splitStrategy);
@@ -370,6 +364,35 @@ public class KnowledgeFileService {
     }
 
     /**
+     * 记录或刷新指定版本的快照。
+     * 上传/重切/重建都会走 processFile，解析完成（成功或失败）后以其真实 chunk 数与状态回填，
+     * 避免版本历史出现「状态 SUCCESS、段落数 0」或当前版本在历史中缺失。
+     */
+    private void upsertVersionSnapshot(KnowledgeFile file, String status) {
+        Integer version = file.getVersion() == null ? 1 : file.getVersion();
+        KnowledgeFileVersion existing = versionMapper.selectOne(
+                new LambdaQueryWrapper<KnowledgeFileVersion>()
+                        .eq(KnowledgeFileVersion::getFileId, file.getId())
+                        .eq(KnowledgeFileVersion::getVersion, version)
+                        .last("LIMIT 1"));
+        boolean create = existing == null;
+        KnowledgeFileVersion snapshot = create ? new KnowledgeFileVersion() : existing;
+        if (create) {
+            snapshot.setFileId(file.getId());
+            snapshot.setVersion(version);
+        }
+        snapshot.setChunkCount(file.getChunkCount() == null ? 0 : file.getChunkCount());
+        snapshot.setSplitStrategy(file.getSplitStrategy());
+        snapshot.setSplitConfig(file.getSplitConfig());
+        snapshot.setStatus(status);
+        if (create) {
+            versionMapper.insert(snapshot);
+        } else {
+            versionMapper.updateById(snapshot);
+        }
+    }
+
+    /**
      * 同步处理单个文件（上传/重切/重建共用），失败时标记 FAILED 并抛出，交由调用方决定整体语义。
      */
     private void processFile(KnowledgeFile file, KnowledgeBase kb, String collection,
@@ -411,6 +434,8 @@ public class KnowledgeFileService {
             file.setChunkCount(toInsert.size());
             file.setStatus("SUCCESS");
             fileMapper.updateById(file);
+            // 解析完成后回填当前版本的快照，版本历史的段落数才与文件实际 chunk 数一致
+            upsertVersionSnapshot(file, "SUCCESS");
 
             kbService.updateCounts(kb.getId());
             log.info("文件处理完成: {} -> {} chunks（去重跳过 {}）", file.getFileName(), toInsert.size(), skipped);
@@ -420,6 +445,7 @@ public class KnowledgeFileService {
             file.setStatus("FAILED");
             file.setErrorMessage(e.getMessage());
             fileMapper.updateById(file);
+            upsertVersionSnapshot(file, "FAILED");
             throw e;
         } finally {
             deleteTempQuietly(parsedFile);
