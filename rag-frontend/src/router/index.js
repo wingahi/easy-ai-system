@@ -8,6 +8,9 @@ const routes = [
   // 工作流分享运行页（需登录；分享态运行启用 safeMode 只读工具白名单）
   { path: '/share/workflow/:token', name: 'ShareWorkflow', component: () => import('../views/workflow/ShareWorkflow.vue'), meta: { title: '分享工作流', requiresAuth: true } },
 
+  // 登录态分享聊天页（需登录；走 JWT 受保护接口，会话按登录用户名归属）
+  { path: '/share/chat/:token', name: 'LoginShareChat', component: () => import('../views/chat/ShareChat.vue'), meta: { title: '分享对话（登录态）', requiresAuth: true } },
+
   // 免登录分享页（token 范围/有效期/密码由后端校验）
   { path: '/share/:token', name: 'ShareChat', component: () => import('../views/chat/PublicShareChat.vue'), meta: { title: '分享对话', requiresAuth: false } },
   

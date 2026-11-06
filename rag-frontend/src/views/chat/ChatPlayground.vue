@@ -15,6 +15,7 @@
       <div style="display:flex;gap:8px">
         <el-button :icon="Connection" @click="openMultiAgent">多 Agent 协作</el-button>
         <el-button v-if="window?.shareToken" :icon="Link" @click="copyShareLink">复制分享链接</el-button>
+        <el-button v-if="window?.shareToken" :icon="User" @click="openLoginShare">登录态分享</el-button>
       </div>
     </div>
 
@@ -268,7 +269,7 @@
 import { reactive, ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowLeft, Link, Promotion, VideoPause, Plus, Document, Loading, Tools, Delete, Connection } from '@element-plus/icons-vue'
+import { ArrowLeft, Link, Promotion, VideoPause, Plus, Document, Loading, Tools, Delete, Connection, User } from '@element-plus/icons-vue'
 import { renderMarkdown } from '../../utils/markdown'
 import { stopGeneration } from '../../utils/chatStream'
 import { windowGet, streamChatApi, windowMessages, windowSessions, windowCreateSession, windowDeleteSession,
@@ -1002,6 +1003,12 @@ const copyShareLink = async () => {
   const ok = await copyText(url)
   if (ok) ElMessage.success('已复制分享链接')
   else ElMessage.warning('复制失败，请手动复制: ' + url)
+}
+
+// 登录态分享页：走 JWT 受保护接口（公开链接 /share/:token 保持免登录不变）
+const openLoginShare = () => {
+  if (!window.value?.shareToken) return
+  router.push(`/share/chat/${window.value.shareToken}`)
 }
 
 // ============ AgentPlanTree 事件处理 ============
