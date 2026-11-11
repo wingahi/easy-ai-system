@@ -9,7 +9,9 @@
       <el-table :data="list" v-loading="loading" stripe>
         <el-table-column prop="id" label="ID" width="70" />
         <el-table-column prop="name" label="名称" />
-        <el-table-column prop="provider" label="提供商" width="120" />
+        <el-table-column prop="provider" label="提供商" width="150">
+          <template #default="{ row }">{{ providerLabel(row.provider) }}</template>
+        </el-table-column>
         <el-table-column prop="modelName" label="模型名" />
         <el-table-column prop="baseUrl" label="Base URL" show-overflow-tooltip />
         <el-table-column prop="maxContextTokens" label="上下文" width="100" />
@@ -58,17 +60,21 @@
       <el-form :model="form" :rules="rules" ref="formRef" label-width="110px">
         <el-form-item prop="name" label="业务名称"><el-input v-model="form.name" /></el-form-item>
         <el-form-item prop="provider" label="提供商">
-          <el-select v-model="form.provider" style="width:100%">
-            <el-option label="OpenAI 兼容" value="OPENAI" />
-            <el-option label="通义 DashScope" value="DASHSCOPE" />
-            <el-option label="DeepSeek" value="DEEPSEEK" />
-            <el-option label="自定义" value="CUSTOM" />
+          <el-select v-model="form.provider" style="width:100%" @change="onProviderChange">
+            <el-option v-for="p in chatProviders" :key="p.value" :label="p.label" :value="p.value" />
           </el-select>
+          <div v-if="currentProvider" style="margin-top:6px;color:#909399;font-size:12px">
+            {{ currentProvider.hint }}
+          </div>
         </el-form-item>
-        <el-form-item prop="modelName" label="厂商模型名"><el-input v-model="form.modelName" placeholder="如 gpt-4o-mini / qwen-plus" /></el-form-item>
-        <el-form-item prop="baseUrl" label="Base URL"><el-input v-model="form.baseUrl" placeholder="如 https://api.deepseek.com/v1" /></el-form-item>
+        <el-form-item prop="modelName" label="厂商模型名">
+          <el-input v-model="form.modelName" :placeholder="form.provider === 'AZURE_OPENAI' ? '填 Azure 部署名，如 gpt-4o' : '如 gpt-4o-mini / qwen-plus / llama3.1'" />
+        </el-form-item>
+        <el-form-item prop="baseUrl" label="Base URL"><el-input v-model="form.baseUrl" placeholder="如 https://api.deepseek.com/v1（Ollama 可留空）" /></el-form-item>
         <el-form-item prop="apiKey" label="API Key">
-          <el-input v-model="form.apiKey" show-password placeholder="sk-xxx..." />
+          <el-input v-model="form.apiKey" show-password
+            :disabled="form.provider === 'OLLAMA'"
+            :placeholder="form.provider === 'OLLAMA' ? '本地部署无需 Key' : 'sk-xxx...'" />
         </el-form-item>
         <el-form-item prop="maxContextTokens" label="上下文 Token">
           <el-input-number v-model="form.maxContextTokens" :min="512" :max="200000" :step="512" />
@@ -105,10 +111,25 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
-import { chatModelPage, chatModelCreate, chatModelUpdate, chatModelDelete } from '../../api'
+import { chatModelPage, chatModelCreate, chatModelUpdate, chatModelDelete, CHAT_MODEL_PROVIDERS } from '../../api'
+
+const chatProviders = CHAT_MODEL_PROVIDERS
+const providerLabel = (value) => {
+  const key = String(value || '').toUpperCase()
+  const legacy = { CUSTOM: '自定义 OpenAI 兼容', AZURE: 'Azure OpenAI', GLM: '智谱 GLM' }
+  return chatProviders.find((p) => p.value === key)?.label || legacy[key] || value || '-'
+}
+const onProviderChange = (value) => {
+  if (editing.value) return
+  const provider = chatProviders.find((p) => p.value === value)
+  if (!provider) return
+  form.baseUrl = provider.defaultBaseUrl || ''
+  form.maxContextTokens = provider.defaultMaxContextTokens || form.maxContextTokens
+  if (value === 'OLLAMA') form.apiKey = ''
+}
 
 const loading = ref(false)
 const submitting = ref(false)
@@ -126,6 +147,7 @@ const form = reactive({
   routeGroup: '', routePriority: 0,
   status: 1, modelType: 'CHAT'
 })
+const currentProvider = computed(() => chatProviders.find((p) => p.value === form.provider))
 const rules = {
   name: [{ required: true, message: '请输入名称' }],
   provider: [{ required: true }],

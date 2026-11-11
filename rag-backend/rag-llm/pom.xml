@@ -30,6 +30,10 @@
             <groupId>dev.langchain4j</groupId>
             <artifactId>langchain4j-open-ai</artifactId>
         </dependency>
+        <!--
+          Azure OpenAI / Ollama / 智谱 GLM 均复用上面的 OpenAI 兼容协议实现，
+          通过 baseUrl + 自定义请求头适配，无需额外 provider SDK 依赖。
+        -->
         <dependency>
             <groupId>dev.langchain4j</groupId>
             <artifactId>langchain4j-reactor</artifactId>

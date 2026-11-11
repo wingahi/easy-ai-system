@@ -1,5 +1,6 @@
 package com.wgh.rag.llm.factory;
 
+import com.wgh.rag.common.exception.BusinessException;
 import com.wgh.rag.llm.entity.EmbeddingModelConfig;
 import com.wgh.rag.llm.entity.LlmModel;
 import com.wgh.rag.llm.mapper.EmbeddingModelMapper;
@@ -7,6 +8,7 @@ import com.wgh.rag.llm.mapper.LlmModelMapper;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.model.embedding.EmbeddingModel;
+import dev.langchain4j.model.openai.OpenAiChatModel;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -148,5 +150,76 @@ class ModelCacheManagerTest {
         assertThatThrownBy(() -> cacheManager.getEmbeddingModel(98L))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("嵌入模型不存在: 98");
+    }
+
+    // ==================== 新增提供商与能力校验 ====================
+
+    /** 新增 OLLAMA provider 经缓存管理器正常构建。 */
+    @Test
+    @DisplayName("getChatModel - OLLAMA 构建 OpenAiChatModel 并缓存")
+    void getChatModel_ollama() {
+        LlmModel config = chatConfig(5L);
+        config.setProvider("OLLAMA");
+        config.setBaseUrl(null);
+        config.setApiKey(null);
+        when(llmModelMapper.selectById(5L)).thenReturn(config);
+
+        ChatModel first = cacheManager.getChatModel(5L);
+        ChatModel second = cacheManager.getChatModel(5L);
+
+        assertThat(first).isInstanceOf(OpenAiChatModel.class);
+        assertThat(first).isSameAs(second);
+        verify(llmModelMapper, times(1)).selectById(5L);
+    }
+
+    /** 历史别名 CUSTOM 归一化为 CUSTOM_OPENAI 后可正常构建。 */
+    @Test
+    @DisplayName("getChatModel - 历史别名 CUSTOM 归一化为 CUSTOM_OPENAI")
+    void getChatModel_legacyCustomAlias() {
+        LlmModel config = chatConfig(6L);
+        config.setProvider("CUSTOM");
+        when(llmModelMapper.selectById(6L)).thenReturn(config);
+
+        assertThat(cacheManager.getChatModel(6L)).isInstanceOf(OpenAiChatModel.class);
+    }
+
+    /** 需要 Key 的提供商缺 Key 时抛明确业务异常（可被故障转移捕获）。 */
+    @Test
+    @DisplayName("getChatModel - 缺 API Key 抛 BusinessException")
+    void getChatModel_missingApiKey() {
+        LlmModel config = chatConfig(7L);
+        config.setProvider("ZHIPU");
+        config.setApiKey("");
+        when(llmModelMapper.selectById(7L)).thenReturn(config);
+
+        assertThatThrownBy(() -> cacheManager.getChatModel(7L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("缺少 API Key");
+    }
+
+    /** 仅支持对话的 provider 取嵌入模型时抛嵌入专用异常。 */
+    @Test
+    @DisplayName("getEmbeddingModel - DEEPSEEK 不支持嵌入抛 BusinessException")
+    void getEmbeddingModel_unsupportedProviderCapability() {
+        EmbeddingModelConfig config = embeddingConfig(8L);
+        config.setProvider("DEEPSEEK");
+        when(embeddingModelMapper.selectById(8L)).thenReturn(config);
+
+        assertThatThrownBy(() -> cacheManager.getEmbeddingModel(8L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("不支持的嵌入模型提供商: DEEPSEEK");
+    }
+
+    /** 未知 provider 在构建前被拦截，错误文案与工厂注册表一致。 */
+    @Test
+    @DisplayName("getChatModel - 未知 provider 抛 BusinessException")
+    void getChatModel_unknownProvider() {
+        LlmModel config = chatConfig(9L);
+        config.setProvider("GOOGLE");
+        when(llmModelMapper.selectById(9L)).thenReturn(config);
+
+        assertThatThrownBy(() -> cacheManager.getChatModel(9L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("不支持的LLM提供商: GOOGLE");
     }
 }

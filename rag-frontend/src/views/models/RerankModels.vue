@@ -9,7 +9,9 @@
       <el-table :data="list" v-loading="loading" stripe>
         <el-table-column prop="id" label="ID" width="70" />
         <el-table-column prop="name" label="名称" />
-        <el-table-column prop="provider" label="提供商" width="140" />
+        <el-table-column prop="provider" label="提供商" width="190">
+          <template #default="{ row }">{{ providerLabel(row.provider) }}</template>
+        </el-table-column>
         <el-table-column prop="modelName" label="模型名" />
         <el-table-column prop="baseUrl" label="Base URL" show-overflow-tooltip />
         <el-table-column label="状态" width="80">
@@ -38,9 +40,11 @@
         <el-form-item prop="name" label="业务名称"><el-input v-model="form.name" /></el-form-item>
         <el-form-item prop="provider" label="提供商">
           <el-select v-model="form.provider" style="width:100%">
-            <el-option label="通义 DashScope" value="DASHSCOPE" />
-            <el-option label="通用 /rerank（Jina / SiliconFlow）" value="CUSTOM_RERANK" />
+            <el-option v-for="p in rerankProviders" :key="p.value" :label="p.label" :value="p.value" />
           </el-select>
+          <div style="margin-top:6px;color:#909399;font-size:12px">
+            重排序仅支持 DashScope 原生接口与通用 /rerank 端点；对话 / 嵌入类提供商不在此页配置。
+          </div>
         </el-form-item>
         <el-form-item prop="modelName" label="厂商模型名">
           <el-input v-model="form.modelName" placeholder="如 gte-rerank-v2 / bge-reranker-v2-m3" />
@@ -68,7 +72,13 @@
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
-import { rerankModelPage, rerankModelCreate, rerankModelUpdate, rerankModelDelete } from '../../api'
+import { rerankModelPage, rerankModelCreate, rerankModelUpdate, rerankModelDelete, RERANK_MODEL_PROVIDERS } from '../../api'
+
+const rerankProviders = RERANK_MODEL_PROVIDERS
+const providerLabel = (value) => {
+  const key = String(value || '').toUpperCase()
+  return rerankProviders.find((p) => p.value === key)?.label || value || '-'
+}
 
 const loading = ref(false)
 const submitting = ref(false)

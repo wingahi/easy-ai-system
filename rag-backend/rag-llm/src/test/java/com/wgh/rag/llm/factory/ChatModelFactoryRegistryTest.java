@@ -22,7 +22,10 @@ class ChatModelFactoryRegistryTest {
                 new DeepSeekModelFactory(),
                 new CustomOpenAiModelFactory(),
                 new DashScopeModelFactory(),
-                new QwenModelFactory()));
+                new QwenModelFactory(),
+                new AzureOpenAiModelFactory(),
+                new OllamaModelFactory(),
+                new ZhipuModelFactory()));
     }
 
     private final ChatModelFactoryRegistry registry = defaultRegistry();

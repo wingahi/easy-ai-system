@@ -47,6 +47,23 @@ export const chatModelCreate = (data) => request.post('/models/chat', data)
 export const chatModelUpdate = (data) => request.put('/models/chat', data)
 export const chatModelDelete = (id) => request.delete(`/models/chat/${id}`)
 
+// 模型提供商目录（与后端 ProviderCatalog 对齐：能力决定下拉分组与默认值）
+export const MODEL_PROVIDER_CATALOG = [
+  { value: 'OPENAI', label: 'OpenAI', hint: 'OpenAI 官方接口，支持对话 / 流式 / 嵌入', chat: true, embedding: true, defaultBaseUrl: 'https://api.openai.com/v1', defaultMaxContextTokens: 128000 },
+  { value: 'DASHSCOPE', label: '通义 DashScope', hint: '通义原生端点，支持对话 / 流式 / 嵌入 / 重排序', chat: true, embedding: true, defaultBaseUrl: '', defaultMaxContextTokens: 131072 },
+  { value: 'DEEPSEEK', label: 'DeepSeek', hint: 'OpenAI 兼容协议，仅支持对话 / 流式，无嵌入能力', chat: true, embedding: false, defaultBaseUrl: 'https://api.deepseek.com/v1', defaultMaxContextTokens: 65536 },
+  { value: 'AZURE_OPENAI', label: 'Azure OpenAI', hint: '需填写 v1 端点（https://<resource>.openai.azure.com/openai/v1），模型名填部署名', chat: true, embedding: true, defaultBaseUrl: '', defaultMaxContextTokens: 128000 },
+  { value: 'OLLAMA', label: 'Ollama 本地部署', hint: '本地 / 内网部署，默认 http://localhost:11434/v1，无需 API Key', chat: true, embedding: true, defaultBaseUrl: 'http://localhost:11434/v1', defaultMaxContextTokens: 32768 },
+  { value: 'ZHIPU', label: '智谱 GLM', hint: 'OpenAI 兼容端点，默认 https://open.bigmodel.cn/api/paas/v4', chat: true, embedding: true, defaultBaseUrl: 'https://open.bigmodel.cn/api/paas/v4', defaultMaxContextTokens: 128000 },
+  { value: 'CUSTOM_OPENAI', label: '自定义 OpenAI 兼容', hint: '任意 OpenAI 兼容端点（vLLM / LM Studio / OneAPI），Key 可留空', chat: true, embedding: true, defaultBaseUrl: '', defaultMaxContextTokens: 8192 }
+]
+export const CHAT_MODEL_PROVIDERS = MODEL_PROVIDER_CATALOG.filter((p) => p.chat)
+export const EMBEDDING_MODEL_PROVIDERS = MODEL_PROVIDER_CATALOG.filter((p) => p.embedding)
+export const RERANK_MODEL_PROVIDERS = [
+  { value: 'DASHSCOPE', label: '通义 DashScope', hint: 'DashScope gte-rerank 原生接口，Base URL 可留空' },
+  { value: 'CUSTOM_RERANK', label: '通用 /rerank（Jina / SiliconFlow）', hint: '需提供支持 /rerank 的兼容端点' }
+]
+
 export const embeddingModelPage = (params) => request.get('/models/embedding', { params })
 export const embeddingModelList = () => request.get('/models/embedding/list')
 export const embeddingModelCreate = (data) => request.post('/models/embedding', data)

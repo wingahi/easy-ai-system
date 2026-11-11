@@ -1,5 +1,6 @@
 package com.wgh.rag.llm.factory;
 
+import com.wgh.rag.llm.constant.ProviderCatalog;
 import com.wgh.rag.llm.entity.EmbeddingModelConfig;
 import com.wgh.rag.llm.entity.LlmModel;
 import com.wgh.rag.llm.mapper.EmbeddingModelMapper;
@@ -15,7 +16,11 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * LLM 模型缓存管理 - 避免每次请求都重新创建模型实例
+ * LLM 模型缓存管理 - 避免每次请求都重新创建模型实例。
+ * <p>
+ * 构建前统一做 provider 归一化与能力校验（见 {@link ProviderCatalog}）：
+ * 未知 provider、缺失 API Key、对不支持嵌入的 provider 取嵌入模型，都会抛出明确异常，
+ * 由上层故障转移组件捕获并切换备用模型。
  */
 @Slf4j
 @Component
@@ -43,8 +48,10 @@ public class ModelCacheManager {
             if (config == null) {
                 throw new IllegalArgumentException("LLM模型不存在: " + id);
             }
-            log.info("创建 ChatModel: {} ({})", config.getName(), config.getModelName());
-            return modelFactoryRegistry.get(config.getProvider()).build(config);
+            String provider = ProviderCatalog.normalize(config.getProvider());
+            ProviderCatalog.requireChat(provider);
+            log.info("创建 ChatModel: {} ({}, provider={})", config.getName(), config.getModelName(), provider);
+            return modelFactoryRegistry.get(provider).build(config);
         });
     }
 
@@ -52,13 +59,18 @@ public class ModelCacheManager {
      * 获取或创建 StreamingChatModel
      */
     public StreamingChatModel getStreamingChatModel(Long modelId) {
+        if (modelId == null) {
+            throw new IllegalArgumentException("modelId 不能为 null — 调用方需要指定一个有效的 LLM 模型 ID");
+        }
         return streamingChatModelCache.computeIfAbsent(modelId, id -> {
             LlmModel config = llmModelMapper.selectById(id);
             if (config == null) {
                 throw new IllegalArgumentException("LLM模型不存在: " + id);
             }
-            log.info("创建 StreamingChatModel: {} ({})", config.getName(), config.getModelName());
-            return modelFactoryRegistry.get(config.getProvider()).buildStreaming(config);
+            String provider = ProviderCatalog.normalize(config.getProvider());
+            ProviderCatalog.requireStreaming(provider);
+            log.info("创建 StreamingChatModel: {} ({}, provider={})", config.getName(), config.getModelName(), provider);
+            return modelFactoryRegistry.get(provider).buildStreaming(config);
         });
     }
 
@@ -66,13 +78,18 @@ public class ModelCacheManager {
      * 获取或创建 EmbeddingModel
      */
     public EmbeddingModel getEmbeddingModel(Long embeddingModelId) {
+        if (embeddingModelId == null) {
+            throw new IllegalArgumentException("modelId 不能为 null — 调用方需要指定一个有效的嵌入模型 ID");
+        }
         return embeddingModelCache.computeIfAbsent(embeddingModelId, id -> {
             EmbeddingModelConfig config = embeddingModelMapper.selectById(id);
             if (config == null) {
                 throw new IllegalArgumentException("嵌入模型不存在: " + id);
             }
-            log.info("创建 EmbeddingModel: {} ({})", config.getName(), config.getModelName());
-            return modelFactoryRegistry.getEmbeddingFactory(config.getProvider()).buildEmbedding(config);
+            String provider = ProviderCatalog.normalize(config.getProvider());
+            ProviderCatalog.requireEmbedding(provider);
+            log.info("创建 EmbeddingModel: {} ({}, provider={})", config.getName(), config.getModelName(), provider);
+            return modelFactoryRegistry.getEmbeddingFactory(provider).buildEmbedding(config);
         });
     }
 

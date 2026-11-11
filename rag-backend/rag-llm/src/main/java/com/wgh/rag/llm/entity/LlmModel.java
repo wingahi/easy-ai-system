@@ -27,7 +27,11 @@ public class LlmModel extends BaseEntity {
     private String modelType;
 
     /**
-     * 提供商：OPENAI / DASHSCOPE / DEEPSEEK / ANTHROPIC / CUSTOM
+     * 提供商（区分大小写不敏感，运行时统一转大写）。
+     * <p>
+     * 取值集中维护在 {@code LlmConstants}：OPENAI / DASHSCOPE / QWEN / DEEPSEEK /
+     * AZURE_OPENAI / OLLAMA / ZHIPU / CUSTOM_OPENAI / CUSTOM_RERANK。
+     * 新增提供商无需变更表结构；能力差异见 {@code ProviderCatalog}。
      */
     private String provider;
 
