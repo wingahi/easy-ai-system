@@ -70,11 +70,22 @@ class QueryTransformServiceTest {
     }
 
     @Test
-    void hyde_returns_hypothetical_answer() {
+    void hyde_keeps_original_query_and_hypothetical_answer() {
         when(chatModel.chat(anyString())).thenReturn("这是一段假设性答案。");
         var r = service.transform("q", "HYDE", 5L);
         assertThat(r.applied()).isTrue();
-        assertThat(r.vectorQueries()).containsExactly("这是一段假设性答案。");
+        // 双路召回：原查询必须保留，假设答案作为扩展路
+        assertThat(r.vectorQueries()).containsExactly("q", "这是一段假设性答案。");
+        assertThat(r.transformedQueries()).containsExactly("这是一段假设性答案。");
+    }
+
+    @Test
+    void hyde_deduplicates_when_answer_equals_query() {
+        when(chatModel.chat(anyString())).thenReturn("q");
+        var r = service.transform("q", "HYDE", 5L);
+        assertThat(r.applied()).isTrue();
+        assertThat(r.vectorQueries()).containsExactly("q");
+        assertThat(r.transformedQueries()).containsExactly("q");
     }
 
     @Test

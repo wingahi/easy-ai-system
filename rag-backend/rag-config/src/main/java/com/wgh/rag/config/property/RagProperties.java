@@ -36,8 +36,13 @@ public class RagProperties {
     public static class Retrieve {
         /** 检索返回 topK */
         private Integer topK = 5;
-        /** 相似度阈值（0-1） */
-        private Double minScore = 0.3;
+        /**
+         * 相似度阈值（0-1，cosine）。
+         * <p>
+         * 默认 0.55：实测查询「邮件」的相关 chunk 余弦为 0.588/0.600/0.601，0.3 会显著低于相关带、
+         * 引入大量弱相关噪声；0.55 既保留实测最低相关命中，也与文档契约及下游代码兜底值一致。
+         */
+        private Double minScore = 0.55;
         /** 是否开启重排（全局默认，窗口级 rerankEnabled 优先） */
         private Boolean enableRerank = false;
         /** 全局默认 Rerank 模型 ID（窗口未配置 rerankModelId 时回退） */

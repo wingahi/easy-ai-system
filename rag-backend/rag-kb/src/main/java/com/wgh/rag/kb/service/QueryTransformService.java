@@ -122,8 +122,13 @@ public class QueryTransformService {
                 case "MULTI_QUERY" -> parseMultiQuery(query, output, latency);
                 case "HYDE" -> {
                     String answer = output.trim();
-                    log.info("HyDE 假设答案生成完成: {} 字, 耗时={}ms", answer.length(), latency);
-                    yield new TransformResult(List.of(answer), List.of(answer), true, latency);
+                    // 双路召回：原查询一路 + 假设答案一路，避免扩展跑偏时丢失原意图
+                    LinkedHashSet<String> vectorQueries = new LinkedHashSet<>();
+                    vectorQueries.add(query);
+                    vectorQueries.add(answer);
+                    log.info("HyDE 假设答案生成完成: {} 字, 双路召回（原查询 + 假设答案）, 耗时={}ms",
+                            answer.length(), latency);
+                    yield new TransformResult(new ArrayList<>(vectorQueries), List.of(answer), true, latency);
                 }
                 default -> TransformResult.original(query);
             };

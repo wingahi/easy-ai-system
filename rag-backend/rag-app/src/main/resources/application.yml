@@ -142,8 +142,13 @@ wgh:
       password: ${WGH_REDIS_PASSWORD:}
     retrieve:
       top-k: 5
-      min-score: 0.3
+      # cosine 阈值：实测相关命中位于 0.588~0.601，0.3 会放入大量弱相关噪声；默认 0.55 与文档契约一致
+      min-score: ${WGH_RAG_MIN_SCORE:0.55}
       enable-rerank: false
+      # 混合检索全局默认（窗口级开启优先）；保持默认关闭，避免改变现有行为
+      enable-hybrid: ${WGH_RAG_ENABLE_HYBRID:false}
+      # 混合检索关键词路召回条数
+      keyword-top-n: ${WGH_RAG_KEYWORD_TOP_N:10}
     split:
       max-length: 512
       overlap-length: 64
