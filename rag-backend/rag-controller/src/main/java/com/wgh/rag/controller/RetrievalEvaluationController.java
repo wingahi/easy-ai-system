@@ -77,7 +77,7 @@ public class RetrievalEvaluationController {
         return Result.success(evaluationService.listChunks(kbId, fileId, page, size));
     }
 
-    @Operation(summary = "运行召回评测（真实 Recall@K = 命中标注数 / 标注总数）")
+    @Operation(summary = "运行召回评测（Recall@K / Precision@K / MRR@K / NDCG@K，分母为标注相关集合）")
     @PostMapping("/{kbId}/evaluate")
     public Result<Map<String, Object>> evaluate(
             @PathVariable Long kbId,

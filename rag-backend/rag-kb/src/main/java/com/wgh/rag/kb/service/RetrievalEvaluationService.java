@@ -5,6 +5,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wgh.rag.common.exception.BusinessException;
 import com.wgh.rag.common.result.ResultCode;
+import com.wgh.rag.config.property.RagEvaluationProperties;
 import com.wgh.rag.kb.entity.KbGroundTruth;
 import com.wgh.rag.kb.entity.KnowledgeBase;
 import com.wgh.rag.kb.mapper.KbGroundTruthMapper;
@@ -43,12 +44,15 @@ public class RetrievalEvaluationService {
     /** 向量表名白名单：仅允许字母数字下划线（表名由系统生成，杜绝注入） */
     private static final Pattern TABLE_NAME_PATTERN = Pattern.compile("^[a-zA-Z0-9_]+$");
     private static final int MAX_PAGE_SIZE = 500;
+    /** 兜底上限：未注入配置时单次评测最多处理的标注查询数 */
+    private static final int DEFAULT_MAX_EVAL_QUERIES = 200;
 
     private final KbGroundTruthMapper groundTruthMapper;
     private final KnowledgeBaseMapper knowledgeBaseMapper;
     private final RagRetrieveService retrieveService;
     private final DataSource dataSource;
     private final ObjectMapper objectMapper;
+    private final RagEvaluationProperties evaluationProperties;
 
     /** 标注请求：查询 + 相关 chunk 键（"fileId:chunkIndex"） */
     public record GroundTruthPayload(String queryText, List<String> relevantChunks) {
@@ -107,8 +111,17 @@ public class RetrievalEvaluationService {
     }
 
     /**
-     * 逐条评测标注查询，返回聚合 Recall@K / Precision@K / 查询命中率与明细。
-     * K 由 options.topK() 指定（null 用全局配置）。
+     * 逐条评测标注查询，返回聚合 Recall@K / Precision@K / 查询命中率 / MRR@K / NDCG@K 与明细。
+     *
+     * <p>指标口径：
+     * <ul>
+     *   <li>Recall@K = 命中标注数 / 标注相关集合大小（分母不是 topK）</li>
+     *   <li>Precision@K = 命中标注数 / 实际返回条数</li>
+     *   <li>MRR@K = 第一个相关结果排名倒数；有标未命中记 0</li>
+     *   <li>NDCG@K = DCG@K / IDCG@K，二值相关（gain=1），折损因子 log2(rank+1)</li>
+     * </ul>
+     * 聚合均为「可计算查询」的算术平均；无标注相关集合的查询会被跳过，不会以 0 分参与平均。
+     * K 由 options.topK() 指定（null 用全局配置），单次评测查询数有上限保护。
      */
     public Map<String, Object> evaluate(Long kbId, RetrievalOptions options) {
         List<KbGroundTruth> truths = list(kbId);
@@ -116,16 +129,24 @@ public class RetrievalEvaluationService {
             throw new BusinessException(ResultCode.PARAM_ERROR, "该知识库暂无标注数据，无法计算 Recall@K");
         }
 
+        int maxQueries = maxEvalQueries();
         List<Map<String, Object>> details = new ArrayList<>();
         double recallSum = 0.0;
         double precisionSum = 0.0;
         double coverageSum = 0.0;
+        double mrrSum = 0.0;
+        double ndcgSum = 0.0;
         int recallCount = 0;
+        int mrrCount = 0;
+        int ndcgCount = 0;
         int hitQueries = 0;
         int effectiveTopK = 0;
         long latencySum = 0;
 
         for (KbGroundTruth gt : truths) {
+            if (details.size() >= maxQueries) {
+                break;
+            }
             Set<String> relevant = parseKeys(gt.getRelevantChunks());
             if (relevant.isEmpty()) {
                 continue;
@@ -135,21 +156,36 @@ public class RetrievalEvaluationService {
                     List.of(kbId), gt.getQueryText(), options);
             long latency = System.currentTimeMillis() - start;
 
+            // 保留检索返回顺序（排名 1..n），重复键只保留首次出现，避免 NDCG 重复计增益
             Set<String> retrieved = new LinkedHashSet<>();
+            List<String> ranked = new ArrayList<>();
             for (EmbeddingMatch<TextSegment> match : result.matches()) {
                 String key = chunkKey(match);
-                if (key != null) retrieved.add(key);
+                if (key != null && retrieved.add(key)) {
+                    ranked.add(key);
+                }
             }
             long hits = relevant.stream().filter(retrieved::contains).count();
             Double recall = RetrievalQuality.recallAtK(relevant, retrieved);
             double precision = RetrievalQuality.hitRate((int) hits, retrieved.size());
             int topK = options != null && options.topK() != null && options.topK() > 0
-                    ? options.topK() : retrieved.size();
+                    ? options.topK() : ranked.size();
             effectiveTopK = Math.max(effectiveTopK, topK);
+            List<String> rankedAtK = ranked.size() > topK ? ranked.subList(0, topK) : ranked;
+            Double mrr = RetrievalQuality.mrrAtK(relevant, rankedAtK);
+            Double ndcg = RetrievalQuality.ndcgAtK(relevant, rankedAtK, topK);
 
             if (recall != null) {
                 recallSum += recall;
                 recallCount++;
+            }
+            if (mrr != null) {
+                mrrSum += mrr;
+                mrrCount++;
+            }
+            if (ndcg != null) {
+                ndcgSum += ndcg;
+                ndcgCount++;
             }
             precisionSum += precision;
             coverageSum += RetrievalQuality.coverage(retrieved.size(), topK);
@@ -164,6 +200,8 @@ public class RetrievalEvaluationService {
             item.put("hitCount", hits);
             item.put("recall", recall != null ? round4(recall) : null);
             item.put("precision", round4(precision));
+            item.put("mrr", mrr != null ? round4(mrr) : null);
+            item.put("ndcg", ndcg != null ? round4(ndcg) : null);
             item.put("hit", hit);
             item.put("latencyMs", latency);
             item.put("retrievedKeys", retrieved);
@@ -178,8 +216,12 @@ public class RetrievalEvaluationService {
         resp.put("kbId", kbId);
         resp.put("topK", effectiveTopK);
         resp.put("queryCount", details.size());
-        resp.put("recallAtK", round4(recallSum / recallCount));
+        resp.put("totalGroundTruthCount", truths.size());
+        resp.put("truncated", truths.size() > details.size() && details.size() >= maxQueries);
+        resp.put("recallAtK", recallCount > 0 ? round4(recallSum / recallCount) : null);
         resp.put("precisionAtK", round4(precisionSum / details.size()));
+        resp.put("mrr", mrrCount > 0 ? round4(mrrSum / mrrCount) : null);
+        resp.put("ndcg", ndcgCount > 0 ? round4(ndcgSum / ndcgCount) : null);
         resp.put("queryHitRate", round4(hitQueries / (double) details.size()));
         resp.put("coverageRate", round4(coverageSum / details.size()));
         resp.put("avgLatencyMs", latencySum / details.size());
@@ -248,6 +290,13 @@ public class RetrievalEvaluationService {
     }
 
     // ============ 私有方法 ============
+
+    /** 单次评测的查询数上限：优先取配置，非法值回落到兜底值 */
+    private int maxEvalQueries() {
+        Integer configured = evaluationProperties != null
+                ? evaluationProperties.getMaxQueriesPerEvaluation() : null;
+        return configured != null && configured > 0 ? configured : DEFAULT_MAX_EVAL_QUERIES;
+    }
 
     /** chunk 键：fileId:chunkIndex，与标注格式一致 */
     static String chunkKey(EmbeddingMatch<TextSegment> match) {
