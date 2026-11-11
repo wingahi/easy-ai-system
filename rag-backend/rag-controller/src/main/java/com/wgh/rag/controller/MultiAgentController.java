@@ -15,6 +15,7 @@ import com.wgh.rag.agentmulti.service.MultiAgentService;
 import com.wgh.rag.auth.constant.AuthConstants;
 import com.wgh.rag.common.result.Result;
 import com.wgh.rag.common.security.RequiresPermission;
+import com.wgh.rag.log.annotation.Audit;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
@@ -42,6 +43,7 @@ public class MultiAgentController {
     /** 创建多 Agent 运行并返回 runId（SSE 需另开 /runs/{runId}/stream 或由前端自行订阅） */
     @PostMapping("/runs")
     @RequiresPermission(AuthConstants.PERM_AGENT_USE)
+    @Audit(action = "MULTI_AGENT_RUN_CREATE", resourceType = "MULTI_AGENT_RUN")
     public Result<Map<String, Object>> createRun(@RequestBody Map<String, Object> body) {
         // Controller 只做参数解析，装配逻辑在 MultiAgentService.createRun
         RunCreateRequest req = new RunCreateRequest();
@@ -109,6 +111,7 @@ public class MultiAgentController {
     /** HITL 恢复（SSE） */
     @PostMapping("/runs/{runId}/hitl-confirm")
     @RequiresPermission(AuthConstants.PERM_AGENT_USE)
+    @Audit(action = "MULTI_AGENT_RUN_HITL_CONFIRM", resourceType = "MULTI_AGENT_RUN")
     public SseEmitter hitlConfirm(@PathVariable String runId,
                                    @RequestBody(required = false) Map<String, Object> body) {
         String userInput = body != null && body.get("userInput") != null
@@ -133,6 +136,7 @@ public class MultiAgentController {
     /** 取消 Run */
     @PostMapping("/runs/{runId}/cancel")
     @RequiresPermission(AuthConstants.PERM_AGENT_USE)
+    @Audit(action = "MULTI_AGENT_RUN_CANCEL", resourceType = "MULTI_AGENT_RUN")
     public Result<Void> cancelRun(@PathVariable String runId) {
         runtime.cancelRun(runId);
         return Result.success(null);
@@ -168,6 +172,7 @@ public class MultiAgentController {
 
     @PostMapping("/crews")
     @RequiresPermission(AuthConstants.PERM_AGENT_MANAGE)
+    @Audit(action = "MULTI_AGENT_CREW_CREATE", resourceType = "MULTI_AGENT_CREW")
     public Result<MultiAgentCrew> createCrew(@RequestBody MultiAgentCrew crew) {
         crew.setStatus(crew.getStatus() != null ? crew.getStatus() : 1);
         crewMapper.insert(crew);
@@ -176,6 +181,7 @@ public class MultiAgentController {
 
     @PutMapping("/crews/{id}")
     @RequiresPermission(AuthConstants.PERM_AGENT_MANAGE)
+    @Audit(action = "MULTI_AGENT_CREW_UPDATE", resourceType = "MULTI_AGENT_CREW")
     public Result<MultiAgentCrew> updateCrew(@PathVariable Long id, @RequestBody MultiAgentCrew crew) {
         crew.setId(id);
         crewMapper.updateById(crew);
@@ -184,6 +190,7 @@ public class MultiAgentController {
 
     @DeleteMapping("/crews/{id}")
     @RequiresPermission(AuthConstants.PERM_AGENT_MANAGE)
+    @Audit(action = "MULTI_AGENT_CREW_DELETE", resourceType = "MULTI_AGENT_CREW")
     public Result<Void> deleteCrew(@PathVariable Long id) {
         crewMapper.deleteById(id);
         return Result.success(null);

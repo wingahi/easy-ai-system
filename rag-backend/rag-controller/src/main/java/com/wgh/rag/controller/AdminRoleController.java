@@ -14,6 +14,7 @@ import com.wgh.rag.common.result.Result;
 import com.wgh.rag.common.result.ResultCode;
 import com.wgh.rag.controller.dto.RolePermissionRequest;
 import com.wgh.rag.controller.dto.RoleRequest;
+import com.wgh.rag.log.annotation.Audit;
 import com.wgh.rag.quota.service.QuotaAdminGuard;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -103,6 +104,7 @@ public class AdminRoleController {
 
     @Operation(summary = "创建角色（role_code 唯一）")
     @PostMapping("/roles")
+    @Audit(action = "ROLE_CREATE", resourceType = "ROLE")
     @Transactional(rollbackFor = Exception.class)
     public Result<Map<String, Object>> createRole(@RequestBody RoleRequest request) {
         quotaAdminGuard.requireAdmin();
@@ -129,6 +131,7 @@ public class AdminRoleController {
 
     @Operation(summary = "修改角色名称/描述（内置 admin 不可修改）")
     @PutMapping("/roles/{roleCode}")
+    @Audit(action = "ROLE_UPDATE", resourceType = "ROLE")
     @Transactional(rollbackFor = Exception.class)
     public Result<Map<String, Object>> updateRole(@PathVariable String roleCode,
                                                   @RequestBody RoleRequest request) {
@@ -148,6 +151,7 @@ public class AdminRoleController {
 
     @Operation(summary = "删除角色（内置 admin 不可删除；仍有用户绑定时返回 409）")
     @DeleteMapping("/roles/{roleCode}")
+    @Audit(action = "ROLE_DELETE", resourceType = "ROLE")
     @Transactional(rollbackFor = Exception.class)
     public ResponseEntity<Result<Void>> deleteRole(@PathVariable String roleCode) {
         quotaAdminGuard.requireAdmin();
@@ -202,6 +206,7 @@ public class AdminRoleController {
 
     @Operation(summary = "整体覆盖角色权限（幂等；内置 admin 只允许提交全量权限）")
     @PutMapping("/roles/{roleCode}/permissions")
+    @Audit(action = "ROLE_PERMISSION_UPDATE", resourceType = "ROLE")
     @Transactional(rollbackFor = Exception.class)
     public Result<Map<String, Object>> updateRolePermissions(@PathVariable String roleCode,
                                                              @RequestBody RolePermissionRequest request) {

@@ -2,6 +2,7 @@ package com.wgh.rag.controller;
 
 import com.wgh.rag.common.result.PageResult;
 import com.wgh.rag.common.result.Result;
+import com.wgh.rag.log.annotation.Audit;
 import com.wgh.rag.quota.entity.QuotaUsage;
 import com.wgh.rag.quota.entity.UserQuotaConfig;
 import com.wgh.rag.quota.service.EffectiveQuota;
@@ -82,6 +83,7 @@ public class QuotaAdminController {
 
     @Operation(summary = "修改/创建某用户配额配置")
     @PutMapping("/users/{username}")
+    @Audit(action = "QUOTA_CONFIG_SAVE", resourceType = "QUOTA")
     public Result<Map<String, Object>> saveUser(@PathVariable String username,
                                                 @RequestBody UserQuotaConfig body) {
         quotaAdminGuard.requireAdmin();
@@ -93,6 +95,7 @@ public class QuotaAdminController {
 
     @Operation(summary = "重置某用户当期用量（清零计数，不修改配置）")
     @PostMapping("/users/{username}/reset-usage")
+    @Audit(action = "QUOTA_USAGE_RESET", resourceType = "QUOTA")
     public Result<Map<String, Object>> resetUsage(@PathVariable String username) {
         quotaAdminGuard.requireAdmin();
         boolean reset = quotaService.resetUsage(username);
@@ -103,6 +106,7 @@ public class QuotaAdminController {
 
     @Operation(summary = "恢复某用户配额为全局默认（逻辑删除自定义配置）")
     @DeleteMapping("/users/{username}")
+    @Audit(action = "QUOTA_CONFIG_RESET", resourceType = "QUOTA")
     public Result<Map<String, Object>> resetUser(@PathVariable String username) {
         quotaAdminGuard.requireAdmin();
         boolean removed = quotaService.resetUserConfig(username);

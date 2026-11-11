@@ -20,6 +20,7 @@ import com.wgh.rag.common.result.ResultCode;
 import com.wgh.rag.common.security.LoginUser;
 import com.wgh.rag.common.security.RequiresPermission;
 import com.wgh.rag.common.security.SecurityUtils;
+import com.wgh.rag.log.annotation.Audit;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
@@ -93,6 +94,7 @@ public class AgentController {
 
     /** HITL 步骤用户确认后继续执行。 */
     @PostMapping("/steps/{stepId}/hitl-confirm")
+    @Audit(action = "AGENT_STEP_HITL_CONFIRM", resourceType = "AGENT_STEP")
     public Result<Map<String, Object>> hitlConfirm(
             @PathVariable Long stepId,
             @RequestBody(required = false) Map<String, String> body) {
@@ -132,6 +134,7 @@ public class AgentController {
 
     /** 取消整个计划。 */
     @PostMapping("/plans/{planId}/cancel")
+    @Audit(action = "AGENT_PLAN_CANCEL", resourceType = "AGENT_PLAN")
     public Result<Map<String, Object>> cancel(@PathVariable Long planId) {
         AgentPlan plan = planMapper.selectById(planId);
         assertPlanAccessible(plan);
@@ -144,6 +147,7 @@ public class AgentController {
 
     /** 重试单个步骤（仅 FAILED / SKIPPED 状态可用）。 */
     @PostMapping("/steps/{stepId}/retry")
+    @Audit(action = "AGENT_STEP_RETRY", resourceType = "AGENT_STEP")
     public Result<Map<String, Object>> retryStep(@PathVariable Long stepId) {
         AgentStep step = stepMapper.selectById(stepId);
         if (step == null) return Result.fail("Step 不存在");
@@ -167,6 +171,7 @@ public class AgentController {
 
     /** 跳过单个步骤。 */
     @PostMapping("/steps/{stepId}/skip")
+    @Audit(action = "AGENT_STEP_SKIP", resourceType = "AGENT_STEP")
     public Result<Map<String, Object>> skipStep(@PathVariable Long stepId) {
         AgentStep step = stepMapper.selectById(stepId);
         if (step == null) return Result.fail("Step 不存在");
