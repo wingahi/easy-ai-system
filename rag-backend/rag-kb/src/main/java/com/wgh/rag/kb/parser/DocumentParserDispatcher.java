@@ -1,6 +1,7 @@
 package com.wgh.rag.kb.parser;
 
 import com.wgh.rag.common.exception.BusinessException;
+import com.wgh.rag.kb.parser.normalize.DocumentNormalizer;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -12,7 +13,8 @@ import java.util.List;
 /**
  * 文档解析分发器：遍历注入的 {@link DocumentParser} 列表，找到支持该扩展名的实现。
  * <p>
- * 统一在分发层做安全检查（存在性 / 空文件 / 大小上限）与友好错误包装（损坏文件 / 依赖缺失）。
+ * 统一在分发层做安全检查（存在性 / 空文件 / 大小上限）、解析结果规范化与友好错误包装
+ * （损坏文件 / 依赖缺失）。
  */
 @Slf4j
 @Component
@@ -20,6 +22,9 @@ import java.util.List;
 public class DocumentParserDispatcher {
 
     private final List<DocumentParser> parsers;
+
+    /** 解析结果统一清洗（空白/全半角/页眉页脚/重复段）。 */
+    private DocumentNormalizer normalizer = new DocumentNormalizer();
 
     /** 单文件解析大小上限（MB），与上传上限保持一致 */
     @Value("${wgh.file.max-single-file-mb:50}")
@@ -42,7 +47,7 @@ public class DocumentParserDispatcher {
                 // 先确认格式受支持，再做文件安全检查，避免未注册格式被误报为文件问题
                 validateFile(file, fileType);
                 try {
-                    return parser.parseDetailed(file);
+                    return normalize(parser.parseDetailed(file));
                 } catch (BusinessException e) {
                     throw e;
                 } catch (NoClassDefFoundError e) {
@@ -58,6 +63,17 @@ public class DocumentParserDispatcher {
             }
         }
         throw new BusinessException("不支持的文件格式: " + fileType);
+    }
+
+    /** 统一规范化解析结果，刷新字符数；标题缺失时重新推断。 */
+    private ParsedDocument normalize(ParsedDocument document) {
+        List<String> paragraphs = normalizer.normalize(document.paragraphs());
+        String title = document.title();
+        if (title == null || title.isBlank()) {
+            title = DocumentMetadataSupport.inferTitle(paragraphs);
+        }
+        return new ParsedDocument(paragraphs, title, document.pageCount(),
+                document.sheetCount(), document.encoding(), DocumentMetadataSupport.countChars(paragraphs));
     }
 
     /** 文件存在性 / 空文件 / 大小上限校验。 */
