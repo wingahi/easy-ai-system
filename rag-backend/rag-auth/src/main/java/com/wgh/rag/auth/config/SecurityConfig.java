@@ -70,6 +70,9 @@ public class SecurityConfig {
                                 "/api/auth/login",
                                 "/api/auth/logout",
                                 "/api/workflows/webhook/**",
+                                // OpenAI 兼容入口：正常由 @Order(1) 的 API Key 过滤链接管并校验
+                                // Authorization: Bearer <key> + scope，这里仅补充兜底放行，不放宽其它路径
+                                "/v1/**",
                                 "/doc.html",
                                 "/webjars/**",
                                 "/v3/api-docs/**",

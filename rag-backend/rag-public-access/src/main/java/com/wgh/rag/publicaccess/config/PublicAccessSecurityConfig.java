@@ -22,8 +22,9 @@ import jakarta.servlet.DispatcherType;
  * 免登录分享 / 开放 API 专用安全过滤链。
  * <p>
  * 说明：
- * 1) 以 @Order(1) + securityMatcher 只接管 /api/public/** 与 /api/open/**，
- *    其余路径仍走主过滤链（外部 OIDC token 强制校验）。
+ * 1) 以 @Order(1) + securityMatcher 只接管 /api/public/**、/api/open/** 与 OpenAI 兼容入口 /v1/**，
+ *    其余路径仍走主过滤链（外部 OIDC token 强制校验）。/v1/** 的实际鉴权由
+ *    {@link ApiKeyAuthenticationFilter} 完成（API Key + scope），不放宽其它路径。
  * 2) OidcAuthenticationFilter 是 @Component，Spring Boot 会把它自动注册为全局 Servlet Filter；
  *    该过滤器对无 Bearer 的请求直接返回 401，会导致免登录入口不可用。这里通过
  *    FilterRegistrationBean#setEnabled(false) 关闭它的 Servlet 自动注册，只保留其在原
@@ -42,7 +43,7 @@ public class PublicAccessSecurityConfig {
     @Order(1)
     public SecurityFilterChain publicAccessSecurityFilterChain(HttpSecurity http) throws Exception {
         http
-                .securityMatcher("/api/public/**", "/api/open/**")
+                .securityMatcher("/api/public/**", "/api/open/**", "/v1/**")
                 .csrf(AbstractHttpConfigurer::disable)
                 .cors(cors -> cors.configurationSource(corsConfigurationSource))
                 .sessionManagement(session ->
