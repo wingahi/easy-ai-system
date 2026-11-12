@@ -32,7 +32,7 @@ wgh:
   rag:
     retrieve:
       top-k: 5
-      min-score: 0.3
+      min-score: 0.55
 
 logging:
   level:

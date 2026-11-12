@@ -52,7 +52,7 @@ wgh:
   rag:
     retrieve:
       top-k: 5
-      min-score: 0.35
+      min-score: 0.55
       enable-rerank: true
     split:
       max-length: 512
