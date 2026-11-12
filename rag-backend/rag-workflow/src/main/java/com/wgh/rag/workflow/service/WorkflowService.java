@@ -2,6 +2,7 @@ package com.wgh.rag.workflow.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wgh.rag.common.event.DomainEventPublisher;
@@ -9,6 +10,9 @@ import com.wgh.rag.common.exception.BusinessException;
 import com.wgh.rag.common.result.PageResult;
 import com.wgh.rag.common.result.ResultCode;
 import com.wgh.rag.common.security.SecurityUtils;
+import com.wgh.rag.data.scope.DataScopeContext;
+import com.wgh.rag.data.scope.DataScopeGuard;
+import com.wgh.rag.data.scope.ResourceVisibility;
 import com.wgh.rag.workflow.constant.WorkflowConstants;
 import com.wgh.rag.workflow.constant.WorkflowEvents;
 import com.wgh.rag.workflow.dto.RunContext;
@@ -78,25 +82,34 @@ public class WorkflowService {
     // ==================== CRUD ====================
 
     public PageResult<Workflow> page(Long page, Long size, String keyword, Integer status) {
-        LambdaQueryWrapper<Workflow> wrapper = new LambdaQueryWrapper<>();
-        if (keyword != null && !keyword.isBlank()) {
-            wrapper.like(Workflow::getName, keyword).or().like(Workflow::getDescription, keyword);
-        }
-        if (status != null) wrapper.eq(Workflow::getStatus, status);
-        wrapper.orderByDesc(Workflow::getUpdateTime);
-        Page<Workflow> result = workflowMapper.selectPage(Page.of(page, size), wrapper);
-        return new PageResult<>(result.getTotal(), result.getCurrent(), result.getSize(), result.getRecords());
+        return DataScopeContext.runWithScope(() -> {
+            LambdaQueryWrapper<Workflow> wrapper = new LambdaQueryWrapper<>();
+            if (keyword != null && !keyword.isBlank()) {
+                wrapper.like(Workflow::getName, keyword).or().like(Workflow::getDescription, keyword);
+            }
+            if (status != null) wrapper.eq(Workflow::getStatus, status);
+            wrapper.orderByDesc(Workflow::getUpdateTime);
+            Page<Workflow> result = workflowMapper.selectPage(Page.of(page, size), wrapper);
+            return new PageResult<>(result.getTotal(), result.getCurrent(), result.getSize(), result.getRecords());
+        });
     }
 
     public List<Workflow> listEnabled() {
-        return workflowMapper.selectList(new LambdaQueryWrapper<Workflow>()
+        return DataScopeContext.runWithScope(() -> workflowMapper.selectList(new LambdaQueryWrapper<Workflow>()
                 .eq(Workflow::getStatus, 1)
-                .orderByDesc(Workflow::getUpdateTime));
+                .orderByDesc(Workflow::getUpdateTime)));
     }
 
     public Workflow getById(Long id) {
         Workflow wf = workflowMapper.selectById(id);
         if (wf == null) throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "工作流不存在");
+        return wf;
+    }
+
+    /** 详情可见性校验：PRIVATE 他人工作流按不存在处理 */
+    public Workflow getVisible(Long id) {
+        Workflow wf = getById(id);
+        DataScopeGuard.assertReadable(wf.getCreateBy(), wf.getVisibility(), "工作流");
         return wf;
     }
 
@@ -109,6 +122,7 @@ public class WorkflowService {
         assertValid(graph);
 
         workflow.setStatus(workflow.getStatus() != null ? workflow.getStatus() : 1);
+        workflow.setVisibility(ResourceVisibility.normalize(workflow.getVisibility()));
         workflow.setVersion(1);
         workflow.setGraphJson(toJson(graph));
         workflowMapper.insert(workflow);
@@ -119,6 +133,7 @@ public class WorkflowService {
     @Transactional
     public Workflow update(Long id, Workflow payload) {
         Workflow existing = getById(id);
+        DataScopeGuard.assertWritable(existing.getCreateBy(), existing.getVisibility(), "工作流");
         WorkflowGraph graph = parseGraph(payload.getGraphJson());
         assertValid(graph);
 
@@ -146,12 +161,18 @@ public class WorkflowService {
 
     @Transactional
     public void delete(Long id) {
+        Workflow existing = workflowMapper.selectById(id);
+        if (existing == null) {
+            return;
+        }
+        DataScopeGuard.assertWritable(existing.getCreateBy(), existing.getVisibility(), "工作流");
         workflowMapper.deleteById(id);
     }
 
     @Transactional
     public void setStatus(Long id, int status) {
         Workflow wf = getById(id);
+        DataScopeGuard.assertWritable(wf.getCreateBy(), wf.getVisibility(), "工作流");
         wf.setStatus(status);
         wf.setUpdateTime(LocalDateTime.now());
         workflowMapper.updateById(wf);
@@ -163,6 +184,7 @@ public class WorkflowService {
     @Transactional
     public Workflow enableShare(Long id) {
         Workflow wf = getById(id);
+        DataScopeGuard.assertWritable(wf.getCreateBy(), wf.getVisibility(), "工作流");
         if (wf.getStatus() != null && wf.getStatus() == 0) {
             throw new BusinessException("工作流已停用，无法开启分享");
         }
@@ -179,6 +201,7 @@ public class WorkflowService {
     @Transactional
     public Workflow disableShare(Long id) {
         Workflow wf = getById(id);
+        DataScopeGuard.assertWritable(wf.getCreateBy(), wf.getVisibility(), "工作流");
         wf.setShareEnabled(false);
         wf.setUpdateTime(LocalDateTime.now());
         workflowMapper.updateById(wf);
@@ -189,6 +212,7 @@ public class WorkflowService {
     @Transactional
     public Workflow regenerateShareToken(Long id) {
         Workflow wf = getById(id);
+        DataScopeGuard.assertWritable(wf.getCreateBy(), wf.getVisibility(), "工作流");
         if (!Boolean.TRUE.equals(wf.getShareEnabled())) {
             throw new BusinessException(ResultCode.OPERATION_NOT_ALLOWED, "工作流未开启分享，无法重新生成链接");
         }
@@ -214,6 +238,19 @@ public class WorkflowService {
         if (run == null || !workflowId.equals(run.getWorkflowId())) {
             throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "运行记录不存在");
         }
+    }
+
+    /** 修改可见性：仅所有者/ADMIN，PRIVATE / TEAM / PUBLIC */
+    @Transactional
+    public Workflow updateVisibility(Long id, String visibility) {
+        Workflow wf = getById(id);
+        DataScopeGuard.assertWritable(wf.getCreateBy(), wf.getVisibility(), "工作流");
+        String normalized = ResourceVisibility.normalize(visibility);
+        workflowMapper.update(null, new UpdateWrapper<Workflow>()
+                .eq("id", id)
+                .set("visibility", normalized));
+        wf.setVisibility(normalized);
+        return wf;
     }
 
     // ==================== 版本管理 ====================
@@ -250,6 +287,7 @@ public class WorkflowService {
     @Transactional
     public Workflow rollback(Long workflowId, Integer version) {
         Workflow existing = getById(workflowId);
+        DataScopeGuard.assertWritable(existing.getCreateBy(), existing.getVisibility(), "工作流");
         WorkflowVersion snapshot = getVersion(workflowId, version);
 
         existing.setName(snapshot.getName());

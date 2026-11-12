@@ -100,6 +100,7 @@ CREATE TABLE IF NOT EXISTS wgh_knowledge_base (
   file_count INT DEFAULT 0,
   chunk_count INT DEFAULT 0,
   status SMALLINT DEFAULT 1,
+  visibility VARCHAR(16) NOT NULL DEFAULT 'PRIVATE',
   rebuild_status VARCHAR(20) DEFAULT '',
   rebuild_total INT DEFAULT 0,
   rebuild_processed INT DEFAULT 0,
@@ -112,6 +113,7 @@ CREATE TABLE IF NOT EXISTS wgh_knowledge_base (
   deleted SMALLINT DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_kb_status_create ON wgh_knowledge_base(status, create_time);
+CREATE INDEX IF NOT EXISTS idx_kb_owner_visibility ON wgh_knowledge_base(create_by, visibility);
 COMMENT ON TABLE wgh_knowledge_base IS '知识库';
 COMMENT ON COLUMN wgh_knowledge_base.id IS '主键';
 COMMENT ON COLUMN wgh_knowledge_base.name IS '知识库名称';
@@ -122,6 +124,7 @@ COMMENT ON COLUMN wgh_knowledge_base.collection_name IS 'pgvector 向量表名�
 COMMENT ON COLUMN wgh_knowledge_base.file_count IS '文件总数';
 COMMENT ON COLUMN wgh_knowledge_base.chunk_count IS '向量 chunk 总数';
 COMMENT ON COLUMN wgh_knowledge_base.status IS '状态（1 启用 / 0 禁用）';
+COMMENT ON COLUMN wgh_knowledge_base.visibility IS '可见性：PRIVATE 仅自己 / TEAM 团队可读 / PUBLIC 公开可读';
 COMMENT ON COLUMN wgh_knowledge_base.create_time IS '创建时间';
 COMMENT ON COLUMN wgh_knowledge_base.update_time IS '更新时间';
 COMMENT ON COLUMN wgh_knowledge_base.create_by IS '创建人';
@@ -206,6 +209,7 @@ CREATE TABLE IF NOT EXISTS wgh_chat_window (
   share_token VARCHAR(100),
   share_enabled SMALLINT DEFAULT 0,
   status SMALLINT DEFAULT 1,
+  visibility VARCHAR(16) NOT NULL DEFAULT 'PRIVATE',
   tool_ids VARCHAR(500),
   max_history_messages INT DEFAULT 20,
   temperature DOUBLE PRECISION DEFAULT 0.7,
@@ -236,6 +240,7 @@ CREATE INDEX IF NOT EXISTS idx_cw_workflow_id ON wgh_chat_window(workflow_id);
 CREATE INDEX IF NOT EXISTS idx_cw_share_token ON wgh_chat_window(share_token);
 CREATE INDEX IF NOT EXISTS idx_cw_share_enabled ON wgh_chat_window(share_enabled);
 CREATE INDEX IF NOT EXISTS idx_cw_status_create ON wgh_chat_window(status, create_time);
+CREATE INDEX IF NOT EXISTS idx_cw_owner_visibility ON wgh_chat_window(create_by, visibility);
 COMMENT ON TABLE wgh_chat_window IS '聊天窗口（对话配置模板）';
 COMMENT ON COLUMN wgh_chat_window.id IS '主键';
 COMMENT ON COLUMN wgh_chat_window.name IS '窗口名称';
@@ -246,6 +251,7 @@ COMMENT ON COLUMN wgh_chat_window.system_prompt IS '系统提示词';
 COMMENT ON COLUMN wgh_chat_window.share_token IS '分享链接 token';
 COMMENT ON COLUMN wgh_chat_window.share_enabled IS '是否开启分享（0 否 / 1 是）';
 COMMENT ON COLUMN wgh_chat_window.status IS '状态（1 启用 / 0 禁用）';
+COMMENT ON COLUMN wgh_chat_window.visibility IS '可见性：PRIVATE 仅自己 / TEAM 团队可读 / PUBLIC 公开可读';
 COMMENT ON COLUMN wgh_chat_window.tool_ids IS '关联的工具 ID 列表（逗号分隔）';
 COMMENT ON COLUMN wgh_chat_window.max_history_messages IS '历史消息阈值（超过触发分层压缩）';
 COMMENT ON COLUMN wgh_chat_window.temperature IS '生成温度 0-2';
@@ -392,6 +398,7 @@ CREATE TABLE IF NOT EXISTS wgh_tool (
   executor_config TEXT,
   status SMALLINT DEFAULT 1,
   is_example SMALLINT DEFAULT 0,
+  visibility VARCHAR(16) NOT NULL DEFAULT 'PRIVATE',
   create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   create_by VARCHAR(50) DEFAULT 'system',
@@ -401,6 +408,7 @@ CREATE TABLE IF NOT EXISTS wgh_tool (
 CREATE INDEX IF NOT EXISTS idx_tool_name ON wgh_tool(name);
 CREATE INDEX IF NOT EXISTS idx_tool_status ON wgh_tool(status);
 CREATE INDEX IF NOT EXISTS idx_tool_type_status ON wgh_tool(tool_type, status);
+CREATE INDEX IF NOT EXISTS idx_tool_owner_visibility ON wgh_tool(create_by, visibility);
 COMMENT ON TABLE wgh_tool IS '工具配置';
 COMMENT ON COLUMN wgh_tool.id IS '主键';
 COMMENT ON COLUMN wgh_tool.name IS '工具名称';
@@ -410,6 +418,7 @@ COMMENT ON COLUMN wgh_tool.definition IS '工具定义 JSON（function schema / 
 COMMENT ON COLUMN wgh_tool.executor_config IS '执行器配置 JSON（endpoint / handler class / timeout 等）';
 COMMENT ON COLUMN wgh_tool.status IS '状态（1 启用 / 0 禁用）';
 COMMENT ON COLUMN wgh_tool.is_example IS '是否示例数据（0 否 / 1 是）';
+COMMENT ON COLUMN wgh_tool.visibility IS '可见性：PRIVATE 仅自己 / TEAM 团队可读 / PUBLIC 公开可读';
 COMMENT ON COLUMN wgh_tool.create_time IS '创建时间';
 COMMENT ON COLUMN wgh_tool.update_time IS '更新时间';
 COMMENT ON COLUMN wgh_tool.create_by IS '创建人';
@@ -513,6 +522,7 @@ CREATE TABLE IF NOT EXISTS wgh_workflow (
   name VARCHAR(100) NOT NULL,
   description VARCHAR(500),
   status SMALLINT DEFAULT 1,
+  visibility VARCHAR(16) NOT NULL DEFAULT 'PRIVATE',
   version INT DEFAULT 1,
   graph_json JSONB NOT NULL,
   share_token VARCHAR(64),
@@ -525,11 +535,13 @@ CREATE TABLE IF NOT EXISTS wgh_workflow (
 );
 CREATE INDEX IF NOT EXISTS idx_workflow_share_token ON wgh_workflow(share_token);
 CREATE INDEX IF NOT EXISTS idx_workflow_status_update ON wgh_workflow(status, update_time);
+CREATE INDEX IF NOT EXISTS idx_workflow_owner_visibility ON wgh_workflow(create_by, visibility);
 COMMENT ON TABLE wgh_workflow IS '可视化工作流定义';
 COMMENT ON COLUMN wgh_workflow.id IS '主键';
 COMMENT ON COLUMN wgh_workflow.name IS '工作流名称';
 COMMENT ON COLUMN wgh_workflow.description IS '描述';
 COMMENT ON COLUMN wgh_workflow.status IS '状态（1 启用 / 0 停用）';
+COMMENT ON COLUMN wgh_workflow.visibility IS '可见性：PRIVATE 仅自己 / TEAM 团队可读 / PUBLIC 公开可读';
 COMMENT ON COLUMN wgh_workflow.version IS '版本号，每次保存 +1';
 COMMENT ON COLUMN wgh_workflow.graph_json IS '图定义 JSON：{ nodes: [...], edges: [...] }';
 COMMENT ON COLUMN wgh_workflow.share_token IS '分享访问令牌（UUID 无横线），为空表示未生成';
@@ -943,12 +955,14 @@ CREATE TABLE IF NOT EXISTS wgh_prompt_template (
   version INT DEFAULT 1,
   builtin SMALLINT DEFAULT 0,
   remark VARCHAR(500),
+  visibility VARCHAR(16) NOT NULL DEFAULT 'PRIVATE',
   create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   create_by VARCHAR(50) DEFAULT 'system',
   update_by VARCHAR(50) DEFAULT 'system',
   deleted SMALLINT DEFAULT 0
 );
+CREATE INDEX IF NOT EXISTS idx_prompt_template_owner_visibility ON wgh_prompt_template(create_by, visibility);
 COMMENT ON TABLE wgh_prompt_template IS 'Prompt 模板中心（{{var}} 占位符；聊天窗口 system_prompt 支持 template:模板名 引用）';
 COMMENT ON COLUMN wgh_prompt_template.name IS '模板名（唯一，template: 引用键）';
 COMMENT ON COLUMN wgh_prompt_template.category IS '分类（RAG / 客服 / 总结 等）';
@@ -957,33 +971,34 @@ COMMENT ON COLUMN wgh_prompt_template.variables IS '变量名 JSON 数组（保�
 COMMENT ON COLUMN wgh_prompt_template.version IS '版本号（内容变更自动 +1）';
 COMMENT ON COLUMN wgh_prompt_template.builtin IS '是否内置模板（1 内置不可删除/改名，0 自定义）';
 COMMENT ON COLUMN wgh_prompt_template.remark IS '备注';
+COMMENT ON COLUMN wgh_prompt_template.visibility IS '可见性：PRIVATE 仅自己 / TEAM 团队可读 / PUBLIC 公开可读；内置模板固定 PUBLIC';
 
 -- 内置种子模板（幂等）
-INSERT INTO wgh_prompt_template (name, category, content, variables, builtin, remark)
+INSERT INTO wgh_prompt_template (name, category, content, variables, builtin, remark, visibility)
 SELECT 'RAG问答助手', 'RAG', '你是知识库「{{kbName}}」的智能问答助手。
 要求：
 1. 仅依据检索到的知识库内容回答，不编造信息；
 2. 回答标注来源（知识库名 + 文件名）；
 3. 知识库内容不足时明确告知用户；
-4. 回答结构化、条理清晰，使用中文。', '["kbName"]', 1, '内置模板'
+4. 回答结构化、条理清晰，使用中文。', '["kbName"]', 1, '内置模板', 'PUBLIC'
 WHERE NOT EXISTS (SELECT 1 FROM wgh_prompt_template WHERE name = 'RAG问答助手');
 
-INSERT INTO wgh_prompt_template (name, category, content, variables, builtin, remark)
+INSERT INTO wgh_prompt_template (name, category, content, variables, builtin, remark, visibility)
 SELECT '客服专员', '客服', '你是「{{kbName}}」的客服专员{{userName}}。
 要求：
 1. 语气友好专业，先共情再解决问题；
 2. 严格依据知识库内容作答，不确定的问题引导用户联系人工客服；
 3. 不承诺知识库之外的补偿、退款等事项；
-4. 每次回答控制在 300 字以内。', '["kbName","userName"]', 1, '内置模板'
+4. 每次回答控制在 300 字以内。', '["kbName","userName"]', 1, '内置模板', 'PUBLIC'
 WHERE NOT EXISTS (SELECT 1 FROM wgh_prompt_template WHERE name = '客服专员');
 
-INSERT INTO wgh_prompt_template (name, category, content, variables, builtin, remark)
+INSERT INTO wgh_prompt_template (name, category, content, variables, builtin, remark, visibility)
 SELECT '内容总结专家', '总结', '你是内容总结专家。
 要求：
 1. 将检索到的内容浓缩为要点列表（3-7 条）；
 2. 保留关键数据、结论与来源；
 3. 去除重复与口水内容；
-4. 输出格式：先一句话总述，再分条列出要点。', '[]', 1, '内置模板'
+4. 输出格式：先一句话总述，再分条列出要点。', '[]', 1, '内置模板', 'PUBLIC'
 WHERE NOT EXISTS (SELECT 1 FROM wgh_prompt_template WHERE name = '内容总结专家');
 
 -- ============ 知识库标签 / 文档版本 ============

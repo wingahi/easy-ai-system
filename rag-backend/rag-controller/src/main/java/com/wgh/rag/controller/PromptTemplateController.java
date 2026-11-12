@@ -55,7 +55,16 @@ public class PromptTemplateController {
     @Operation(summary = "模板详情")
     @GetMapping("/{id}")
     public Result<PromptTemplate> get(@PathVariable Long id) {
-        return Result.success(templateService.getById(id));
+        return Result.success(templateService.getVisible(id));
+    }
+
+    @Operation(summary = "修改模板可见性（内置模板固定公开）")
+    @PatchMapping("/{id}/visibility")
+    @Audit(action = "PROMPT_TEMPLATE_VISIBILITY_UPDATE", resourceType = "PROMPT_TEMPLATE")
+    @RequiresPermission(AuthConstants.PERM_PROMPT_EDIT)
+    public Result<PromptTemplate> updateVisibility(@PathVariable Long id,
+                                                   @RequestBody Map<String, String> body) {
+        return Result.success(templateService.updateVisibility(id, body.get("visibility")));
     }
 
     @Operation(summary = "创建模板")

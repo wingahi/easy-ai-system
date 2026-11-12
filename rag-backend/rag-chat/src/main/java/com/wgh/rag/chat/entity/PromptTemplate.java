@@ -50,4 +50,9 @@ public class PromptTemplate extends BaseEntity {
      * 备注
      */
     private String remark;
+
+    /**
+     * 可见性：PRIVATE（仅自己）/ TEAM（团队内可读）/ PUBLIC（公开可读）；内置模板固定 PUBLIC
+     */
+    private String visibility;
 }

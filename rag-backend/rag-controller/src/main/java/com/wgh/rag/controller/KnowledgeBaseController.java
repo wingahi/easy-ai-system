@@ -53,7 +53,15 @@ public class KnowledgeBaseController {
     @GetMapping("/{id}")
     @RequiresPermission(AuthConstants.PERM_KB_READ)
     public Result<KnowledgeBase> getById(@PathVariable Long id) {
-        return Result.success(kbService.getById(id));
+        return Result.success(kbService.getVisible(id));
+    }
+
+    @Operation(summary = "修改知识库可见性")
+    @PatchMapping("/{id}/visibility")
+    @Audit(action = "KB_VISIBILITY_UPDATE", resourceType = "KNOWLEDGE_BASE")
+    @RequiresPermission(AuthConstants.PERM_KB_WRITE)
+    public Result<KnowledgeBase> updateVisibility(@PathVariable Long id, @RequestBody Map<String, String> body) {
+        return Result.success(kbService.updateVisibility(id, body.get("visibility")));
     }
 
     @Operation(summary = "新增知识库")

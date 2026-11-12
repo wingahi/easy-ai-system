@@ -54,6 +54,11 @@ public class KnowledgeBase extends BaseEntity {
     private Integer status;
 
     /**
+     * 可见性：PRIVATE（仅自己）/ TEAM（团队内可读）/ PUBLIC（公开可读）
+     */
+    private String visibility;
+
+    /**
      * 重建状态：''-无 / PENDING-待重建 / RUNNING-重建中 / SUCCEEDED-成功 / FAILED-失败
      */
     private String rebuildStatus;

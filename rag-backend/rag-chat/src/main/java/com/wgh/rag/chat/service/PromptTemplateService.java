@@ -1,6 +1,7 @@
 package com.wgh.rag.chat.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -11,6 +12,9 @@ import com.wgh.rag.common.exception.BusinessException;
 import com.wgh.rag.common.result.PageResult;
 import com.wgh.rag.common.result.ResultCode;
 import com.wgh.rag.common.template.TemplateRenderer;
+import com.wgh.rag.data.scope.DataScopeContext;
+import com.wgh.rag.data.scope.DataScopeGuard;
+import com.wgh.rag.data.scope.ResourceVisibility;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -46,21 +50,23 @@ public class PromptTemplateService {
     private final ObjectMapper objectMapper;
 
     public PageResult<PromptTemplate> page(Long page, Long size, String keyword, String category) {
-        LambdaQueryWrapper<PromptTemplate> qw = new LambdaQueryWrapper<PromptTemplate>()
-                .and(keyword != null && !keyword.isBlank(), w -> w
-                        .like(PromptTemplate::getName, keyword)
-                        .or().like(PromptTemplate::getContent, keyword))
-                .eq(category != null && !category.isBlank(), PromptTemplate::getCategory, category)
-                .orderByDesc(PromptTemplate::getBuiltin)
-                .orderByDesc(PromptTemplate::getUpdateTime);
-        Page<PromptTemplate> result = mapper.selectPage(Page.of(page, size), qw);
-        return new PageResult<>(result.getTotal(), result.getCurrent(), result.getSize(), result.getRecords());
+        return DataScopeContext.runWithScope(() -> {
+            LambdaQueryWrapper<PromptTemplate> qw = new LambdaQueryWrapper<PromptTemplate>()
+                    .and(keyword != null && !keyword.isBlank(), w -> w
+                            .like(PromptTemplate::getName, keyword)
+                            .or().like(PromptTemplate::getContent, keyword))
+                    .eq(category != null && !category.isBlank(), PromptTemplate::getCategory, category)
+                    .orderByDesc(PromptTemplate::getBuiltin)
+                    .orderByDesc(PromptTemplate::getUpdateTime);
+            Page<PromptTemplate> result = mapper.selectPage(Page.of(page, size), qw);
+            return new PageResult<>(result.getTotal(), result.getCurrent(), result.getSize(), result.getRecords());
+        });
     }
 
     public List<PromptTemplate> listAll() {
-        return mapper.selectList(new LambdaQueryWrapper<PromptTemplate>()
+        return DataScopeContext.runWithScope(() -> mapper.selectList(new LambdaQueryWrapper<PromptTemplate>()
                 .orderByDesc(PromptTemplate::getBuiltin)
-                .orderByAsc(PromptTemplate::getName));
+                .orderByAsc(PromptTemplate::getName)));
     }
 
     /**
@@ -71,6 +77,10 @@ public class PromptTemplateService {
      * - limit 归一化到 [1, {@link #SUGGEST_MAX_LIMIT}]，为空取 {@link #SUGGEST_DEFAULT_LIMIT}
      */
     public List<PromptTemplateSuggestion> suggest(String query, Integer limit) {
+        return DataScopeContext.runWithScope(() -> doSuggest(query, limit));
+    }
+
+    private List<PromptTemplateSuggestion> doSuggest(String query, Integer limit) {
         int size = normalizeSuggestLimit(limit);
         String keyword = query == null ? "" : query.trim();
         LambdaQueryWrapper<PromptTemplate> qw = new LambdaQueryWrapper<>();
@@ -124,6 +134,13 @@ public class PromptTemplateService {
         return t;
     }
 
+    /** 详情可见性校验：PRIVATE 他人模板按不存在处理 */
+    public PromptTemplate getVisible(Long id) {
+        PromptTemplate t = getById(id);
+        DataScopeGuard.assertReadable(t.getCreateBy(), t.getVisibility(), "模板");
+        return t;
+    }
+
     @Transactional
     public PromptTemplate create(PromptTemplate t) {
         validate(t);
@@ -133,6 +150,7 @@ public class PromptTemplateService {
         t.setId(null);
         t.setVersion(1);
         t.setBuiltin(false);
+        t.setVisibility(ResourceVisibility.normalize(t.getVisibility()));
         t.setVariables(variablesJson(t.getContent()));
         mapper.insert(t);
         return t;
@@ -144,9 +162,18 @@ public class PromptTemplateService {
             throw new BusinessException(ResultCode.PARAM_ERROR, "缺少模板 ID");
         }
         PromptTemplate existing = getById(t.getId());
-        // 内置模板锁定名字（防止 template: 引用断裂）
-        if (Boolean.TRUE.equals(existing.getBuiltin()) && !existing.getName().equals(t.getName())) {
-            throw new BusinessException("内置模板不可改名");
+        DataScopeGuard.assertWritable(existing.getCreateBy(), existing.getVisibility(), "模板");
+        // 内置模板固定 PUBLIC 且不可改名（防止 template: 引用断裂）
+        if (Boolean.TRUE.equals(existing.getBuiltin())) {
+            if (!existing.getName().equals(t.getName())) {
+                throw new BusinessException("内置模板不可改名");
+            }
+            existing.setVisibility(ResourceVisibility.PUBLIC.name());
+        } else {
+            String visibility = ResourceVisibility.normalizeOptional(t.getVisibility());
+            if (visibility != null) {
+                existing.setVisibility(visibility);
+            }
         }
         validate(t);
         PromptTemplate dup = findByName(t.getName());
@@ -172,7 +199,26 @@ public class PromptTemplateService {
         if (Boolean.TRUE.equals(existing.getBuiltin())) {
             throw new BusinessException("内置模板不可删除");
         }
+        DataScopeGuard.assertWritable(existing.getCreateBy(), existing.getVisibility(), "模板");
         mapper.deleteById(id);
+    }
+
+    /**
+     * 修改模板可见性：内置模板固定 PUBLIC，不可修改；其余仅所有者/ADMIN
+     */
+    @Transactional
+    public PromptTemplate updateVisibility(Long id, String visibility) {
+        PromptTemplate existing = getById(id);
+        if (Boolean.TRUE.equals(existing.getBuiltin())) {
+            throw new BusinessException(ResultCode.OPERATION_NOT_ALLOWED, "内置模板固定公开，不可修改可见性");
+        }
+        DataScopeGuard.assertWritable(existing.getCreateBy(), existing.getVisibility(), "模板");
+        String normalized = ResourceVisibility.normalize(visibility);
+        mapper.update(null, new UpdateWrapper<PromptTemplate>()
+                .eq("id", id)
+                .set("visibility", normalized));
+        existing.setVisibility(normalized);
+        return existing;
     }
 
     /**

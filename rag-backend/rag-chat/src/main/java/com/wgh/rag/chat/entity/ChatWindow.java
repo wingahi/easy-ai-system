@@ -63,6 +63,11 @@ public class ChatWindow extends BaseEntity {
     private Integer status;
 
     /**
+     * 可见性：PRIVATE（仅自己）/ TEAM（团队内可读）/ PUBLIC（公开可读）
+     */
+    private String visibility;
+
+    /**
      * 关联的工具配置 ID（JSON 数组）
      */
     private String toolIds;

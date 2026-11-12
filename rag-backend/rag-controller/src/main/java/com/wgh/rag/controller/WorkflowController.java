@@ -65,7 +65,15 @@ public class WorkflowController {
     @GetMapping("/{id}")
     @RequiresPermission(AuthConstants.PERM_WORKFLOW_USE)
     public Result<Workflow> get(@PathVariable Long id) {
-        return Result.success(workflowService.getById(id));
+        return Result.success(workflowService.getVisible(id));
+    }
+
+    @Operation(summary = "修改工作流可见性")
+    @PatchMapping("/{id}/visibility")
+    @RequiresPermission(AuthConstants.PERM_WORKFLOW_EDIT)
+    public Result<Workflow> updateVisibility(@PathVariable Long id,
+                                             @RequestBody Map<String, String> body) {
+        return Result.success(workflowService.updateVisibility(id, body.get("visibility")));
     }
 
     @Operation(summary = "新建工作流")

@@ -18,8 +18,6 @@ import com.wgh.rag.tool.service.ToolConfigService;
 import com.wgh.rag.log.annotation.Audit;
 import com.wgh.rag.common.result.PageResult;
 import com.wgh.rag.common.result.Result;
-import com.wgh.rag.common.result.ResultCode;
-import com.wgh.rag.common.exception.BusinessException;
 import com.wgh.rag.common.security.LoginUser;
 import com.wgh.rag.common.security.RequiresPermission;
 import com.wgh.rag.workflow.service.WorkflowService;
@@ -74,7 +72,16 @@ public class ChatController {
     @Operation(summary = "获取窗口详情")
     @GetMapping("/windows/{id}")
     public Result<ChatWindow> getWindow(@PathVariable Long id) {
-        return Result.success(windowService.getById(id));
+        return Result.success(windowService.getVisible(id));
+    }
+
+    @Operation(summary = "修改聊天窗口可见性")
+    @PatchMapping("/windows/{id}/visibility")
+    @Audit(action = "WINDOW_VISIBILITY_UPDATE", resourceType = "CHAT_WINDOW")
+    @RequiresPermission(AuthConstants.PERM_CHAT_MANAGE)
+    public Result<ChatWindow> updateWindowVisibility(@PathVariable Long id,
+                                                     @RequestBody Map<String, String> body) {
+        return Result.success(windowService.updateVisibility(id, body.get("visibility")));
     }
 
     @Operation(summary = "创建聊天窗口")
@@ -407,8 +414,7 @@ public class ChatController {
     public Result<Map<String, Object>> debugTool(
             @PathVariable Long id,
             @RequestBody(required = false) Map<String, Object> body) {
-        ToolConfig tool = toolConfigService.getById(id);
-        if (tool == null) throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "工具不存在");
+        ToolConfig tool = toolConfigService.getVisible(id);
         Map<String, Object> args = body != null && body.get("arguments") instanceof Map
                 ? (Map<String, Object>) body.get("arguments")
                 : Map.of();
@@ -459,6 +465,15 @@ public class ChatController {
     @RequiresPermission(AuthConstants.PERM_CHAT_MANAGE)
     public Result<ToolConfig> updateTool(@Valid @RequestBody ToolConfig tool) {
         return Result.success(toolConfigService.update(tool));
+    }
+
+    @Operation(summary = "修改工具可见性")
+    @PatchMapping("/tools/{id}/visibility")
+    @Audit(action = "TOOL_VISIBILITY_UPDATE", resourceType = "TOOL")
+    @RequiresPermission(AuthConstants.PERM_CHAT_MANAGE)
+    public Result<ToolConfig> updateToolVisibility(@PathVariable Long id,
+                                                   @RequestBody Map<String, String> body) {
+        return Result.success(toolConfigService.updateVisibility(id, body.get("visibility")));
     }
 
     @Operation(summary = "删除工具")

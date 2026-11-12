@@ -2,6 +2,7 @@ package com.wgh.rag.chat.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.wgh.rag.chat.constant.ChatConstants;
 import com.wgh.rag.chat.entity.ChatMessage;
@@ -13,6 +14,9 @@ import com.wgh.rag.chat.mapper.ChatWindowMapper;
 import com.wgh.rag.common.exception.BusinessException;
 import com.wgh.rag.common.result.PageResult;
 import com.wgh.rag.common.result.ResultCode;
+import com.wgh.rag.data.scope.DataScopeContext;
+import com.wgh.rag.data.scope.DataScopeGuard;
+import com.wgh.rag.data.scope.ResourceVisibility;
 import com.wgh.rag.workflow.entity.Workflow;
 import com.wgh.rag.workflow.service.WorkflowService;
 import lombok.RequiredArgsConstructor;
@@ -37,19 +41,28 @@ public class ChatWindowService {
     private final WorkflowService workflowService;
 
     public PageResult<ChatWindow> page(Long page, Long size, String keyword) {
-        LambdaQueryWrapper<ChatWindow> wrapper = new LambdaQueryWrapper<>();
-        if (keyword != null && !keyword.isBlank()) {
-            wrapper.like(ChatWindow::getName, keyword)
-                    .or().like(ChatWindow::getDescription, keyword);
-        }
-        wrapper.orderByDesc(ChatWindow::getCreateTime);
-        Page<ChatWindow> result = windowMapper.selectPage(Page.of(page, size), wrapper);
-        return new PageResult<>(result.getTotal(), result.getCurrent(), result.getSize(), result.getRecords());
+        return DataScopeContext.runWithScope(() -> {
+            LambdaQueryWrapper<ChatWindow> wrapper = new LambdaQueryWrapper<>();
+            if (keyword != null && !keyword.isBlank()) {
+                wrapper.like(ChatWindow::getName, keyword)
+                        .or().like(ChatWindow::getDescription, keyword);
+            }
+            wrapper.orderByDesc(ChatWindow::getCreateTime);
+            Page<ChatWindow> result = windowMapper.selectPage(Page.of(page, size), wrapper);
+            return new PageResult<>(result.getTotal(), result.getCurrent(), result.getSize(), result.getRecords());
+        });
     }
 
     public ChatWindow getById(Long id) {
         ChatWindow window = windowMapper.selectById(id);
         if (window == null) throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "聊天窗口不存在");
+        return window;
+    }
+
+    /** 详情可见性校验：PRIVATE 他人窗口按不存在处理 */
+    public ChatWindow getVisible(Long id) {
+        ChatWindow window = getById(id);
+        DataScopeGuard.assertReadable(window.getCreateBy(), window.getVisibility(), "聊天窗口");
         return window;
     }
 
@@ -69,6 +82,7 @@ public class ChatWindowService {
         window.setShareToken(UUID.randomUUID().toString().replace("-", ""));
         window.setShareEnabled(false);
         window.setStatus(window.getStatus() != null ? window.getStatus() : ChatConstants.DEFAULT_STATUS_ENABLED);
+        window.setVisibility(ResourceVisibility.normalize(window.getVisibility()));
 
         if (window.getMaxHistoryMessages() == null) window.setMaxHistoryMessages(ChatConstants.DEFAULT_MAX_HISTORY_MESSAGES);
         if (window.getTemperature() == null) window.setTemperature(ChatConstants.DEFAULT_TEMPERATURE);
@@ -84,6 +98,11 @@ public class ChatWindowService {
     public ChatWindow update(ChatWindow window) {
         ChatWindow existing = windowMapper.selectById(window.getId());
         if (existing == null) throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "聊天窗口不存在");
+        DataScopeGuard.assertWritable(existing.getCreateBy(), existing.getVisibility(), "聊天窗口");
+        String visibility = ResourceVisibility.normalizeOptional(window.getVisibility());
+        if (visibility != null) {
+            window.setVisibility(visibility);
+        }
 
         validateWorkflow(window);
         windowMapper.updateById(window);
@@ -129,6 +148,7 @@ public class ChatWindowService {
     public void delete(Long id) {
         ChatWindow window = windowMapper.selectById(id);
         if (window == null) throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "聊天窗口不存在");
+        DataScopeGuard.assertWritable(window.getCreateBy(), window.getVisibility(), "聊天窗口");
         // 删除时强制关闭分享
         window.setShareEnabled(false);
         windowMapper.updateById(window);
@@ -142,6 +162,7 @@ public class ChatWindowService {
     public void disable(Long id) {
         ChatWindow window = windowMapper.selectById(id);
         if (window == null) throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "聊天窗口不存在");
+        DataScopeGuard.assertWritable(window.getCreateBy(), window.getVisibility(), "聊天窗口");
         window.setStatus(0);
         window.setShareEnabled(false);
         windowMapper.updateById(window);
@@ -154,6 +175,7 @@ public class ChatWindowService {
     public void enable(Long id) {
         ChatWindow window = windowMapper.selectById(id);
         if (window == null) throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "聊天窗口不存在");
+        DataScopeGuard.assertWritable(window.getCreateBy(), window.getVisibility(), "聊天窗口");
         window.setStatus(1);
         windowMapper.updateById(window);
     }
@@ -165,6 +187,7 @@ public class ChatWindowService {
     public ChatWindow enableShare(Long id) {
         ChatWindow window = windowMapper.selectById(id);
         if (window == null) throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "聊天窗口不存在");
+        DataScopeGuard.assertWritable(window.getCreateBy(), window.getVisibility(), "聊天窗口");
         if (window.getStatus() == 0) throw new BusinessException("窗口已停用，无法启用分享");
 
         window.setShareEnabled(true);
@@ -182,6 +205,7 @@ public class ChatWindowService {
     public ChatWindow disableShare(Long id) {
         ChatWindow window = windowMapper.selectById(id);
         if (window == null) throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "聊天窗口不存在");
+        DataScopeGuard.assertWritable(window.getCreateBy(), window.getVisibility(), "聊天窗口");
         window.setShareEnabled(false);
         windowMapper.updateById(window);
         return window;
@@ -195,6 +219,7 @@ public class ChatWindowService {
     public ChatWindow regenerateShareToken(Long id) {
         ChatWindow window = windowMapper.selectById(id);
         if (window == null) throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "聊天窗口不存在");
+        DataScopeGuard.assertWritable(window.getCreateBy(), window.getVisibility(), "聊天窗口");
         if (!Boolean.TRUE.equals(window.getShareEnabled())) {
             throw new BusinessException(ResultCode.OPERATION_NOT_ALLOWED, "窗口未开启分享，无法重新生成链接");
         }
@@ -205,6 +230,7 @@ public class ChatWindowService {
 
     /**
      * 根据 shareToken 查找（分享页面用）
+     * <p>分享链接按 token 访问，不受 visibility 影响。</p>
      */
     public ChatWindow getByShareToken(String shareToken) {
         ChatWindow w = windowMapper.selectOne(new LambdaQueryWrapper<ChatWindow>()
@@ -213,6 +239,22 @@ public class ChatWindowService {
                 .eq(ChatWindow::getStatus, 1));
         if (w == null) throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "分享链接已失效或窗口已关闭分享");
         return w;
+    }
+
+    /**
+     * 修改窗口可见性：仅所有者/ADMIN，PRIVATE / TEAM / PUBLIC
+     */
+    @Transactional
+    public ChatWindow updateVisibility(Long id, String visibility) {
+        ChatWindow window = windowMapper.selectById(id);
+        if (window == null) throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "聊天窗口不存在");
+        DataScopeGuard.assertWritable(window.getCreateBy(), window.getVisibility(), "聊天窗口");
+        String normalized = ResourceVisibility.normalize(visibility);
+        windowMapper.update(null, new UpdateWrapper<ChatWindow>()
+                .eq("id", id)
+                .set("visibility", normalized));
+        window.setVisibility(normalized);
+        return window;
     }
 
     /**

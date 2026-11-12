@@ -50,4 +50,9 @@ public class ToolConfig extends BaseEntity {
      */
     @TableField(typeHandler = BooleanToSmallintTypeHandler.class)
     private Boolean isExample;
+
+    /**
+     * 可见性：PRIVATE（仅自己）/ TEAM（团队内可读）/ PUBLIC（公开可读）
+     */
+    private String visibility;
 }

@@ -2,10 +2,14 @@ package com.wgh.rag.kb.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.wgh.rag.common.exception.BusinessException;
 import com.wgh.rag.common.result.PageResult;
 import com.wgh.rag.common.result.ResultCode;
+import com.wgh.rag.data.scope.DataScopeContext;
+import com.wgh.rag.data.scope.DataScopeGuard;
+import com.wgh.rag.data.scope.ResourceVisibility;
 import com.wgh.rag.llm.entity.EmbeddingModelConfig;
 import com.wgh.rag.llm.service.LlmModelService;
 import com.wgh.rag.kb.entity.KnowledgeBase;
@@ -36,15 +40,17 @@ public class KnowledgeBaseService {
     private final SemanticCacheService semanticCacheService;
 
     public PageResult<KnowledgeBase> page(Long page, Long size, String keyword) {
-        LambdaQueryWrapper<KnowledgeBase> wrapper = new LambdaQueryWrapper<>();
-        if (keyword != null && !keyword.isBlank()) {
-            wrapper.like(KnowledgeBase::getName, keyword)
-                    .or().like(KnowledgeBase::getDescription, keyword);
-        }
-        wrapper.orderByDesc(KnowledgeBase::getCreateTime);
-        
-        Page<KnowledgeBase> result = kbMapper.selectPage(Page.of(page, size), wrapper);
-        return new PageResult<>(result.getTotal(), result.getCurrent(), result.getSize(), result.getRecords());
+        return DataScopeContext.runWithScope(() -> {
+            LambdaQueryWrapper<KnowledgeBase> wrapper = new LambdaQueryWrapper<>();
+            if (keyword != null && !keyword.isBlank()) {
+                wrapper.like(KnowledgeBase::getName, keyword)
+                        .or().like(KnowledgeBase::getDescription, keyword);
+            }
+            wrapper.orderByDesc(KnowledgeBase::getCreateTime);
+
+            Page<KnowledgeBase> result = kbMapper.selectPage(Page.of(page, size), wrapper);
+            return new PageResult<>(result.getTotal(), result.getCurrent(), result.getSize(), result.getRecords());
+        });
     }
 
     public KnowledgeBase getById(Long id) {
@@ -52,6 +58,13 @@ public class KnowledgeBaseService {
         if (kb == null) {
             throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "知识库不存在");
         }
+        return kb;
+    }
+
+    /** 详情可见性校验：PRIVATE 他人资源按不存在处理 */
+    public KnowledgeBase getVisible(Long id) {
+        KnowledgeBase kb = getById(id);
+        DataScopeGuard.assertReadable(kb.getCreateBy(), kb.getVisibility(), "知识库");
         return kb;
     }
 
@@ -65,6 +78,7 @@ public class KnowledgeBaseService {
         kb.setFileCount(0);
         kb.setChunkCount(0);
         kb.setStatus(kb.getStatus() != null ? kb.getStatus() : 1);
+        kb.setVisibility(ResourceVisibility.normalize(kb.getVisibility()));
         
         kbMapper.insert(kb);
         
@@ -86,6 +100,11 @@ public class KnowledgeBaseService {
         KnowledgeBase existing = kbMapper.selectById(kb.getId());
         if (existing == null) {
             throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "知识库不存在");
+        }
+        DataScopeGuard.assertWritable(existing.getCreateBy(), existing.getVisibility(), "知识库");
+        String visibility = ResourceVisibility.normalizeOptional(kb.getVisibility());
+        if (visibility != null) {
+            kb.setVisibility(visibility);
         }
 
         Long newModelId = kb.getEmbeddingModelId();
@@ -228,6 +247,7 @@ public class KnowledgeBaseService {
         if (kb == null) {
             throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "知识库不存在");
         }
+        DataScopeGuard.assertWritable(kb.getCreateBy(), kb.getVisibility(), "知识库");
         
         // 删除 pgvector 向量表
         try {
@@ -248,9 +268,25 @@ public class KnowledgeBaseService {
     }
 
     public List<KnowledgeBase> listAll() {
-        return kbMapper.selectList(new LambdaQueryWrapper<KnowledgeBase>()
+        return DataScopeContext.runWithScope(() -> kbMapper.selectList(new LambdaQueryWrapper<KnowledgeBase>()
                 .eq(KnowledgeBase::getStatus, 1)
-                .orderByDesc(KnowledgeBase::getCreateTime));
+                .orderByDesc(KnowledgeBase::getCreateTime)));
+    }
+
+    /** 修改可见性：仅所有者/ADMIN，PRIVATE / TEAM / PUBLIC */
+    @Transactional
+    public KnowledgeBase updateVisibility(Long id, String visibility) {
+        KnowledgeBase kb = kbMapper.selectById(id);
+        if (kb == null) {
+            throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "知识库不存在");
+        }
+        DataScopeGuard.assertWritable(kb.getCreateBy(), kb.getVisibility(), "知识库");
+        String normalized = ResourceVisibility.normalize(visibility);
+        kbMapper.update(null, new UpdateWrapper<KnowledgeBase>()
+                .eq("id", id)
+                .set("visibility", normalized));
+        kb.setVisibility(normalized);
+        return kb;
     }
 
     /**

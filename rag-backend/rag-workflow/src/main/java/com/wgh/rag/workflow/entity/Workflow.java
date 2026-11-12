@@ -24,6 +24,9 @@ public class Workflow extends BaseEntity {
     /** 状态：1 启用 / 0 停用 */
     private Integer status;
 
+    /** 可见性：PRIVATE（仅自己）/ TEAM（团队内可读）/ PUBLIC（公开可读） */
+    private String visibility;
+
     /** 版本号，每次保存 +1 */
     private Integer version;
 
