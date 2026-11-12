@@ -1,6 +1,7 @@
 # 架构对照审视报告（2026-11-04）
 
-> **性质**：只读审视。未修改任何业务代码，未执行 `mvn` / `npm`，未提交 commit。
+> **版本**：v1.1（2026-11-09 复核）｜初版 v1.0：2026-11-04；修订记录见 §8。
+> **性质**：只读审视。未修改任何业务代码，未执行 `mvn` / `npm`，未提交 commit。2026-11-09 复核同为静态核查。
 > **范围**：后端 17 个模块 + `rag-frontend`。
 > **方法**：先做全量结构扫描（模块、类规模、注解覆盖、SQL 索引），再对关键链路逐文件读代码取证。每条发现均给出文件路径与行号，**凡未读到代码的推断一律不写入**。
 > **证据口径**：`文件路径:行号`；所述"主流做法"指 Spring Boot / LangChain4j / pgvector 生态的通用工程实践，不代表唯一正确解。
@@ -18,6 +19,8 @@
 | 5 | **Agent / Workflow 运行态接口无归属校验** | **P1** | 拿到 `planId` / `runId` 即可查看他人计划、确认他人 HITL 步骤、取消他人运行。分享链路有校验，登录链路没有。 |
 | 6 | **pgvector 未启用 ANN 索引（`use-index: false`）** | **P1** | 向量检索退化为全表扫描，数据量上万后 P95 延迟线性上升。配置 + 建索引即可，代价很低。 |
 
+> **2026-11-09 复核**：#1、#3、#4、#5 已修复；#2 部分修复（`apiKey` 已隐藏，`shareToken` / `executorConfig` 仍直出）；#6 已补 HNSW（默认开启）与 store 缓存，仅 `ef_search` 未调。逐条状态见 §3 各 F-xx 下的复核行。
+
 ---
 
 ## 2. 总体评级
@@ -25,18 +28,18 @@
 | 领域 | 现状水平 | 主要风险 | 结论 |
 |---|---|---|---|
 | 认证（本地 HS256 + OIDC 双轨） | 中上 | 无明显漏洞 | 实现质量优于多数同类项目，**不建议动** |
-| 授权（角色/权限） | **偏低** | 越权 | 机制存在但落地不完整，是本次最高优先项 |
+| 授权（角色/权限） | 中上（2026-11-09 复核） | 前端门控仍不全 | 后端 13 个 Controller 共 104 处 `@RequiresPermission`，管理类接口已全覆盖；前端仍只有 3 个 admin 页面做门控 |
 | 配额 | 中上 | 无明显漏洞 | 原子 upsert + 唯一约束，**符合主流** |
 | 公开访问（分享/Widget/API Key/限流） | 中上 | 多实例限流放大、Key 生命周期 | 设计完整，细节可优化 |
 | 文件存储 | 中上 | 无明显漏洞 | 路径穿越有防护，**符合主流** |
 | 文档解析 | 中上 | 无明显漏洞 | SPI 分发 + 大小校验，**符合主流** |
-| RAG 检索与重排 | 中 | 索引缺失、重复 embedding | 链路设计完整（RRF/rerank/降级），运行时参数需调优 |
-| 对话与 SSE | 中 | 裸线程、历史无界、断连不取消 | 功能完整，资源模型需要收敛 |
+| RAG 检索与重排 | 中 | 重复 embedding、`ef_search` 未调 | 链路设计完整（RRF/rerank/降级）；2026-11-09 复核：HNSW 已默认开启、store 有 LRU 复用，剩余问题是重复 embedding 与 ANN 参数未调优 |
+| 对话与 SSE | 中 | 裸线程、历史无界 | 功能完整；断连取消已补（`ChatStreamCancellation`），线程模型与历史加载仍需收敛 |
 | Agent 编排 | 中 | 状态机不可中断、双引擎重复 | 主链路可运行，工程化不足 |
 | 工作流引擎与图校验 | 中上 | 每运行建线程池、跨存储一致性 | 拓扑/并行/环路校验到位，运行期资源模型可优化 |
 | 可观测性 | 中上 | 无显著问题 | MDC requestId + Micrometer + 滚动日志，**符合主流** |
-| 错误码体系 | 中（但与主流偏离） | 监控语义丢失 | 业务异常统一 HTTP 200，**建议保持现状** |
-| 审计日志 | 中 | 覆盖不全 | AOP + 异步落库可用，覆盖面需补 |
+| 错误码体系 | 中（但与主流偏离） | 监控语义丢失 | 业务异常仍统一 HTTP 200；2026-11-09 复核：AccessDenied 403、唯一键 409、参数类型 400、404/500 已按 HTTP 语义返回 |
+| 审计日志 | 中 | 覆盖不全 | AOP + 异步落库可用；聊天窗口/工具已补 `@Audit`，工作流/Agent 仍缺 |
 
 ---
 
@@ -45,6 +48,8 @@
 ### 3.1 安全与健壮性
 
 #### F-01（P0）会话身份硬编码，跨用户会话可见 / 可删 / 可续聊
+
+> **2026-11-09 复核：已修复。** `RagChatService` 改用 `SecurityUtils.currentUsername()`，`ensureSession` 校验会话归属（[RagChatService.java:1496-L1498](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-chat/src/main/java/com/wgh/rag/chat/service/RagChatService.java#L1496-L1498)）；`ChatController` 不再接收外部 `userIdentifier`。
 
 - **现状**
   - `rag-backend/rag-chat/src/main/java/com/wgh/rag/chat/service/RagChatService.java:1361`：`ensureSession(...)` 内部 `String userIdentifier = "default_user";` —— 新会话一律落到固定桶。
@@ -59,6 +64,8 @@
 
 #### F-02（P0）模型配置实体直出，`apiKey` 明文泄露
 
+> **2026-11-09 复核：部分修复。** `LlmModel.apiKey` 已改为 `@JsonProperty(access = WRITE_ONLY)`，不会被序列化返回；但 `Workflow.shareToken`、`ToolConfig.executorConfig` 仍无 `@JsonIgnore`/`WRITE_ONLY`，仍随实体直出（[Workflow.java](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-workflow/src/main/java/com/wgh/rag/workflow/entity/Workflow.java)、[ToolConfig.java](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-tool/src/main/java/com/wgh/rag/tool/entity/ToolConfig.java)）。
+
 - **现状**
   - `rag-backend/rag-llm/src/main/java/com/wgh/rag/llm/entity/LlmModel.java:46`：`private String apiKey;`，类上为 `@Data`，**无 `@JsonIgnore`**（全模块检索无 `JsonIgnore`）。
   - `rag-backend/rag-controller/src/main/java/com/wgh/rag/controller/LlmModelController.java:31-37,39-43,70-74`：三个 GET 接口直接 `Result<LlmModel>` / `Result<List<LlmModel>>`，且**均未加 `@RequiresPermission`**，只要登录即可读。
@@ -70,6 +77,8 @@
 - **风险**：若前端表单依赖 `apiKey` 回填编辑，掩码后编辑保存会把掩码写回库；需要在保存时识别掩码值或改为"不修改则留空"。同类问题还有：`Workflow.shareToken`（`rag-workflow/.../entity/Workflow.java:34`，经 `WorkflowController.java:44-60` 的 `Result<Workflow>` 直出，可导致他人无需授权进入分享运行页）与 `ToolConfig.executorConfig`（`rag-tool/.../entity/ToolConfig.java:41`，经 `ChatController.java:366-460` 直出，可能含 HTTP 鉴权 Header）。建议一并做字段级排除。
 
 #### F-03（P0）授权落地不完整：10 个 Controller 仅"登录即可"
+
+> **2026-11-09 复核：基本修复。** 13 个 Controller 共 104 处 `@RequiresPermission`，覆盖聊天、工作流、Agent、多 Agent、Prompt 模板、API Key、分享链接、模型价格、检索评测等；`AdminUser/AdminRole/Quota` 仍为手工 `requireAdmin`（可接受）；前端仍只有 3 个 admin 页面做门控，属剩余缺口。
 
 - **现状**（自动统计，`rag-backend/rag-controller/src/main/java/com/wgh/rag/controller/`）
   - 使用 `@RequiresPermission`：`KnowledgeBaseController`、`LlmModelController`、`TagController`、`AdminStatsController`（共 4 个）。
@@ -86,17 +95,21 @@
 
 #### F-04（P1）前端 Markdown 渲染存在 XSS
 
+> **2026-11-09 复核：已修复。** 新增 `utils/markdown.js`，统一用 DOMPurify 清洗后再 `v-html`；聊天、分享聊天、公开分享、多 Agent、工作流分享等页面均改为调用 `renderMarkdown`。
+
 - **现状**
   - `rag-frontend/src/views/chat/ChatPlayground.vue:953` `renderMarkdown` 用 `marked.parse` 直接返回 HTML，模板 `:72` 用 `v-html` 渲染。
-  - 同样的写法至少还有 5 处：`rag-frontend/src/views/chat/PublicShareChat.vue:324`（`:77`）、`rag-frontend/src/views/multi-agent/MultiAgentPlayground.vue:311`（`:77`）、`rag-frontend/src/views/workflow/ShareWorkflow.vue:90`（`:21`），以及已废弃的 `rag-frontend/src/views/chat/ShareChat.vue:797`。
-  - 全仓库无 DOMPurify / sanitize-html（检索无命中）。
+  - 同样的写法至少还有 5 处：`rag-frontend/src/views/chat/PublicShareChat.vue:324`（`:77`）、`rag-frontend/src/views/multi-agent/MultiAgentPlayground.vue:311`（`:77`）、`rag-frontend/src/views/workflow/ShareWorkflow.vue:90`（`:21`），以及登录态分享路由使用的 `rag-frontend/src/views/chat/ShareChat.vue:797`。
+  - 初版记录：全仓库无 DOMPurify / sanitize-html（检索无命中）。**2026-11-09 复核：已引入 DOMPurify 并统一到 `utils/markdown.js`。**
 - **主流做法**：`marked` + `DOMPurify.sanitize`（或改用 `marked` 的 sanitize 扩展）；Chat 类应用必须假设模型输出不可信。
-- **差距**：无任何输出消毒。
+- **差距（初版）**：无任何输出消毒。**2026-11-09 复核：已由 DOMPurify 关闭该差距。**
 - **影响**：**安全**。模型可被提示词注入产出 `<img src=x onerror=...>`；知识库文档亦可携带 payload；`localStorage.wgh_token` 可被读取，等价账号接管。分享页对匿名访客同样成立。
-- **改动范围与代价**：新增 `dompurify` 依赖，把 5 处 `renderMarkdown` 抽到 `utils/markdown.js` 并统一消毒。**0.5 人日**。
+- **改动范围与代价**：新增 `dompurify` 依赖，把 5 处 `renderMarkdown` 抽到 `utils/markdown.js` 并统一消毒。**0.5 人日（已完成）。**
 - **风险**：消毒后部分 HTML（如自定义样式表格）可能被裁剪；需回归引用角标/代码块渲染。
 
 #### F-05（P1）Agent / Workflow 运行态接口缺少归属校验
+
+> **2026-11-09 复核：已修复。** Agent 计划通过 `assertPlanAccessible` 校验归属，工作流运行实例通过 `RunAccessGuard` 校验；跨用户访问返回拒绝。
 
 - **现状**
   - `rag-backend/rag-controller/src/main/java/com/wgh/rag/controller/AgentController.java:37-46`（按 `planId` 查状态）、`:84-99`（按 `stepId` 做 HITL 确认），均未见归属校验。
@@ -109,6 +122,8 @@
 
 #### F-06（P1）HTTP 工具与工作流 HTTP 节点无 SSRF 防护
 
+> **2026-11-09 复核：已修复。** 新增 `SsrfGuard`，对初始 URL 与重定向目标做协议/私网/回环校验，并限制响应体大小；`HttpToolExecutor` 已接入，工作流 HTTP 节点复用同一执行器。
+
 - **现状**：`rag-backend/rag-tool/src/main/java/com/wgh/rag/tool/executor/HttpToolExecutor.java:60-98`，按工具配置的 `url/method/headers` 直接 `httpClient.send`，**无协议/主机/IP 白名单，无内网段拦截**；工具创建与 `/tools/{id}/debug` 位于 `ChatController:366-521`，同样无权限注解。
 - **主流做法**：出站请求统一走受控客户端：协议仅 http/https、解析后 IP 拒绝环回/链路本地/私有网段（可配置白名单）、限制重定向与响应大小。
 - **影响**：**安全（内网探测、云元数据端点访问、任意出站写请求）**。分享链路已有 `safeMode` 限制（仅 GET/HEAD、禁 MCP），但登录链路无同等约束。
@@ -116,6 +131,8 @@
 - **风险**：合法的内网集成（如企业内 API）会被误杀，需提供配置化白名单；DNS 重绑定需在连接层校验而非仅解析层。
 
 #### F-07（P2）CORS 允许任意来源 + 携带凭证
+
+> **2026-11-09 复核：已修复。** CORS 来源改为配置项驱动，`allow-credentials` 默认 false；仅公开访问路径按需放开通配来源，不再默认 `*` + 凭证。
 
 - **现状**：`rag-backend/rag-auth/src/main/java/com/wgh/rag/auth/config/SecurityConfig.java:81-84`，`allowedOriginPatterns("*")` + `allowCredentials(true)`。
 - **主流做法**：来源白名单来自配置（dev/prod 分离），`allowCredentials` 仅在确有 Cookie 鉴权时开启。
@@ -125,6 +142,8 @@
 
 #### F-08（P2）客户端断开后不取消生成
 
+> **2026-11-09 复核：已修复。** 新增 `ChatStreamCancellation`，在 SSE emitter 的 `onTimeout` / `onError` / `onCompletion` 回调中设置取消标记，生成循环检测后停止继续调用模型并落库。
+
 - **现状**：`RagChatService.java:153-155` 的 `onTimeout/onError/onCompletion` 只打日志；`doRagStreamChat` 在子线程继续跑完，未对模型流做 cancel。
 - **主流做法**：断连时置取消标记并 `StreamingChatResponseHandler` 侧中断，避免为无人接收的答案继续计费。
 - **影响**：**性能/成本**（长回答在用户关页后仍消耗 token 与线程）。
@@ -132,6 +151,8 @@
 - **风险**：需区分"客户端主动中断"与"真实异常"，避免误发错误事件（项目已有此约定）。
 
 #### F-09（P2）API Key 每次调用都写 `lastUsedTime`
+
+> **2026-11-09 复核：已修复。** `lastUsedTime` 更新增加进程内 60 秒节流，避免每次校验都产生一次 UPDATE。
 
 - **现状**：`rag-public-access/.../ApiKeyService.java` 的 `verify()` 在校验成功后更新 `lastUsedTime`（每请求一次写）。
 - **主流做法**：内存节流（如每分钟最多落库一次）或异步批量更新。
@@ -141,7 +162,9 @@
 
 #### F-10（P2）审计覆盖不全
 
-- **现状**：`@Audit` 主要覆盖模型、知识库、API Key、分享链接等（`LlmModelController:47,55,63`）；聊天窗口/工具/技能/工作流的增删改没有审计注解。
+> **2026-11-09 复核：部分修复。** 聊天窗口创建/更新/删除与工具管理已补 `@Audit`；`WorkflowController`、`AgentController` 仍未加审计注解，覆盖缺口仍在。
+
+- **现状（初版记录）**：`@Audit` 主要覆盖模型、知识库、API Key、分享链接等（`LlmModelController:47,55,63`）；当时聊天窗口/工具/技能/工作流的增删改没有审计注解。**2026-11-09 复核：聊天窗口与工具已补，工作流/Agent 仍缺。**
 - **主流做法**：所有状态变更类接口记录"谁、何时、对什么、结果如何"，与权限变更同等重要。
 - **影响**：**合规/可维护性**（出了越权事件无法回溯）。
 - **改动范围与代价**：补注解 + 在 `AuditAspect` 采集 `requestId`。**0.5 人日**。
@@ -152,6 +175,8 @@
 ### 3.2 性能
 
 #### F-11（P1）pgvector 未启用 ANN 索引，且每次检索重建 store
+
+> **2026-11-09 复核：基本修复。** `use-hnsw-index` 默认 true（`application.yml:98-L112`），HNSW 索引按表幂等创建（`vector_cosine_ops`），EmbeddingStore 使用 LRU 缓存（`store-cache-max-size:64`），重复 `selectById` 已合并为单次。剩余：`hnsw.ef_search` 仍未设置，查询召回/延迟未调优。
 
 - **现状**
   - `rag-backend/rag-app/src/main/resources/application.yml:86-95`：`wgh.rag.pgvector.use-index: false`。
@@ -166,6 +191,8 @@
 
 #### F-12（P1）LLM 上下文历史全量加载，压缩同步阻塞首 token
 
+> **2026-11-09 复核：未修复。** `buildMessageHistory` 仍对会话历史做全量 `selectList`，未加"最近 N 条"窗口；分层压缩已存在，但不改变数据库侧全量读取。
+
 - **现状**：`RagChatService.java:1101-1109` 用 `selectList` 拉取**该会话全部消息**再在内存中交给 `ContextCompressionService` 处理；压缩在流式子线程内、首 token 之前同步执行。
 - **主流做法**：按 `(session_id, create_time)` 倒序取最近 N 条（N 由 token 预算推导），更早的内容依赖已持久化的中期摘要/远期事实，不再回表全量。
 - **影响**：**性能**。会话越长，每次问答的 DB 传输、内存占用与首 token 延迟线性增长；压缩 LLM 调用的耗时直接叠加在用户可感知的等待上（且压缩失败才降级）。
@@ -173,6 +200,8 @@
 - **风险**：窗口过小会丢上下文，需要按模型上下文长度计算预算；与"摘要复用"逻辑（prompt 版本匹配）耦合，需回归压缩链路。
 
 #### F-13（P1）流式链路线程模型：每请求裸线程，每次运行新建线程池
+
+> **2026-11-09 复核：未修复。** `RagChatService` 仍 `new Thread`，`QueryTransformService` 仍自建 cached pool，`WorkflowEngine` 每运行建池，`AgentNodeExecutor` 每节点建池，多 Agent 与上下文压缩也各自建线程；未收敛到统一 `ThreadPoolTaskExecutor`。
 
 - **现状**
   - `RagChatService.java:173-196`：`new Thread(...).start()`，**每聊天请求一个非守护裸线程**，无上限、无队列、无拒绝策略、无优雅停机。
@@ -187,6 +216,8 @@
 
 #### F-14（P2）管理端用户列表内存分页 + N+1
 
+> **2026-11-09 复核：未修复。** `AdminUserController` 仍 `selectList` 全量用户后内存分页，并对每个用户调用 `rolesOf` 查询角色（N+1）。
+
 - **现状**：`rag-controller/.../AdminUserController.java:85-105`：`selectList` 全量加载用户，内存过滤后手工分页，且每个用户单独查一次角色（N+1）。
 - **主流做法**：`selectPage` + 关联查询（或角色一次性 `IN` 批量查）。
 - **影响**：**性能**（用户上千后列表接口变慢、内存抖动）。
@@ -194,6 +225,8 @@
 - **风险**：低；注意与现有搜索条件语义保持一致。
 
 #### F-15（P2）语义缓存重复 embedding，失效扫描全窗口
+
+> **2026-11-09 复核：未修复。** `SemanticCacheService` 仍对 query 单独 `embed`，`RagRetrieveService` 随后再次 `embed`；未把 query 向量透传给缓存查询或检索复用。
 
 - **现状**
   - `rag-kb/.../SemanticCacheService.java:73` 先对 query 做一次 embedding 查缓存，未命中后 `RagRetrieveService.java:135` 再对同一 query 做第二次 embedding —— **每条消息两次 embedding 调用**。
@@ -205,6 +238,8 @@
 
 #### F-16（P2）知识库文件列表 / 会话列表无分页
 
+> **2026-11-09 复核：部分修复。** 会话列表已加 `LIMIT 50`（`ChatWindowService:270-L276`）；知识库文件列表 `listByKbId` 仍 `selectList` 全量返回，未分页。
+
 - **现状**：`rag-kb/.../KnowledgeFileService.java:236-241` `listByKbId` 直接 `selectList`；`rag-chat/.../ChatWindowService.java:262-265` `listSessions` 同样全量。
 - **主流做法**：列表接口默认分页（或明确"仅用于下拉、上限 N"）。
 - **影响**：**性能**（文件数上千时首屏加载慢、响应体过大）。
@@ -212,6 +247,8 @@
 - **风险**：前端调用需同步改；分享页会话下拉需保留全量语义时可显式传大 size。
 
 #### F-17（P2）向量批量写入未分批
+
+> **2026-11-09 复核：未修复。** 入库仍是一次 `embedAll` + 一次 `addAll` 提交整份文件的所有 chunk，无分批、无失败重试。
 
 - **现状**：`rag-kb/.../VectorStoreService.java:120-144`：`embedAll(segments)` 后 `store.addAll(...)` 一次性提交全部 chunk。
 - **主流做法**：按批（如 100-500 段/批）调用 embedding 与写入，避免单请求超限与长事务式占用。
@@ -225,6 +262,8 @@
 
 #### F-18（P1）跨存储一致性：数据库事务内执行向量表 DDL/DML
 
+> **2026-11-09 复核：未修复。** `KnowledgeBaseService.delete` 仍在 `@Transactional` 内 `dropCollection`，`KnowledgeFileService.reSplit/delete` 仍在事务内删除向量；向量操作走独立自动提交连接，业务回滚后向量已删除。
+
 - **现状**：`rag-kb/.../KnowledgeBaseService.java:85-100` 的删除流程在 `@Transactional` 方法内调用 `vectorStoreService.dropCollection(...)`；`KnowledgeFileService.java:129-138`（重切）与 `:168-179`（删除文件）在事务内 `deleteByFileId` 并失效语义缓存。
 - **主流做法**：DB 事务只覆盖关系数据；向量库操作放到事务提交后（`TransactionSynchronization.afterCommit`）或走补偿/对账，保证"先关系、后向量"或"先标记待删、异步清理"。
 - **差距**：两个存储没有共同事务，却按"同一事务"顺序执行。
@@ -234,6 +273,8 @@
 
 #### F-19（P2）前端 SSE 解析逻辑 5 份重复
 
+> **2026-11-09 复核：未修复。** `rag-frontend/src/api/index.js` 仍有 5 处 `getReader()` 流解析实现，未抽出公共 SSE 工厂。
+
 - **现状**：`rag-frontend/src/api/index.js:127-177`、`:207-246`、`:328-368`、`:474-514`、`:636` 附近存在 5 套 `fetch + ReadableStream + event/data` 解析；其中分享链路用 `data += line.substring(5).trim()` 拼接（`trim()` 会丢弃块首尾空白），与主链路 JSON 包装的处理方式不同。
 - **主流做法**：一个 `createSseStream({url, body, onEvent, signal})` 工厂，错误/中断/多行 data 统一处理。
 - **影响**：**可维护性**。历史经验显示 SSE 修复需要重复改多处，易出现"主链路已修、分享链路未修"的不一致。
@@ -242,15 +283,19 @@
 
 #### F-20（P2）前端死代码与超大组件
 
+> **2026-11-09 复核：部分修复。** `ShareChat.vue` 已不再是死代码，被登录态分享路由 `/share/chat/:token` 使用（`router/index.js`）；但组件体积未降：`ChatPlayground.vue` 1603 行、`ShareChat.vue` 1074 行、`WorkflowEditor.vue` 1025 行、`MultiAgentPlayground.vue` 1023 行。
+
 - **现状**
-  - `rag-frontend/src/views/chat/ShareChat.vue` 共 1066 行，**全仓库无任何 import 引用**（路由 `router/index.js:12` 用的是 `PublicShareChat.vue`）。
+  - 初版记录：`rag-frontend/src/views/chat/ShareChat.vue` 共 1066 行，当时全仓库无任何 import 引用（路由 `router/index.js:12` 用的是 `PublicShareChat.vue`）。**2026-11-09 复核：该文件已被登录态分享路由 `/share/chat/:token` 引用，不再是死代码。**
   - 超大组件：`ChatPlayground.vue` 1577 行、`MultiAgentPlayground.vue` 1027 行、`WorkflowEditor.vue` 997 行。
 - **主流做法**：页面只做编排，逻辑下沉到 composable/store；单文件 300-500 行为宜。
 - **影响**：**可维护性**（重复实现与死代码增加改动成本，新人上手困难）。
-- **改动范围与代价**：删除 `ShareChat.vue`（0 风险，需确认无动态引用）；大组件拆分可分期。**0.5 人日（删除）+ 2-3 人日（拆分）**。
+- **改动范围与代价**：~~删除 `ShareChat.vue`~~（2026-11-09 复核：已不是死代码，删除项作废）；大组件拆分可分期。**2-3 人日（拆分）**。
 - **风险**：拆分期间容易引入渲染回归，建议先补关键路径测试再动。
 
 #### F-21（P2）后端超大类与职责混杂
+
+> **2026-11-09 复核：未改善且更大。** `RagChatService` 1569 行、`ChatController` 633 行、`WorkflowService` 672 行、`AgentOrchestrator` 536 行，均未拆分。
 
 - **现状**：`RagChatService.java` 1425 行（会话创建、配额、检索、压缩、SSE、工具循环、故障转移、指标全在一处）；`ChatController.java` 594 行（窗口 CRUD + 工具 CRUD + 技能文件 + 调试）；`WorkflowService.java` 670 行；`AgentOrchestrator.java` 460 行。
 - **主流做法**：按用例拆分为 `ChatSessionService` / `RetrievalOrchestrator` / `StreamingResponder` / `ToolLoopService`，Controller 只做参数与协议适配。
@@ -260,6 +305,8 @@
 
 #### F-22（P2）Controller 直连 Mapper / Entity 直出
 
+> **2026-11-09 复核：未修复。** 仍有 10 个 Controller 直接注入 `*Mapper`（共 19 处），绕过 Service 层。
+
 - **现状**：`OpenApiController`、`AdminStatsController`、`PublicShareController`、`AgentController` 等直接注入 `*Mapper` 并做业务拼装；`ChatController`、`LlmModelController` 直接返回实体。
 - **主流做法**：Controller → Service → Mapper 单向依赖；对外用 DTO/VO。
 - **影响**：**可维护性**（SQL 与协议耦合，测试困难）；**安全**（F-02 的根因）。
@@ -267,6 +314,8 @@
 - **风险**：全局引入 DTO 层改动面大，不建议一次性铺开。
 
 #### F-23（P2）多 Agent 双引擎重复
+
+> **2026-11-09 复核：未修复。** `CrewCoordinator`（467 行）与 `GraphCoordinator`（423 行）仍并存，各自维护执行循环与事件发送。
 
 - **现状**：`rag-backend/rag-agent-multi/src/main/java/com/wgh/rag/agentmulti/crew/CrewCoordinator.java`（467 行，角色分层/顺序/并行）与 `.../graph/GraphCoordinator.java`（423 行，图驱动 + CONDITION/LOOP）各自实现拓扑调度、入度计数、事件推送与状态机。
 - **主流做法**：一个调度内核 + 可插拔的"编排策略"（Crew / Graph 只是不同的图构建器 + 路由策略）。
@@ -276,6 +325,8 @@
 
 #### F-24（P2）`@Transactional` 与子线程组合的语义陷阱
 
+> **2026-11-09 复核：未修复。** `streamChat` 仍标注 `@Transactional` 并在方法内 `new Thread` 启动生成，事务无法覆盖子线程、长事务占用连接的问题仍在。
+
 - **现状**：`RagChatService.java:101-119` 的 `streamChat` 标注 `@Transactional`，但 `:173` 立刻起子线程执行主体；事务在方法返回时提交，子线程在此期间可能读不到未提交的用户消息。
 - **主流做法**：流式入口不做事务；需要原子的短操作（写用户消息）单独用 `TransactionTemplate`，其余读写走独立事务。
 - **影响**：**可维护性/正确性**（当前依赖"子线程只读已提交数据"的巧合；一旦子线程需要读刚写入的消息就会出错）。
@@ -283,6 +334,8 @@
 - **风险**：需确认消息写入与标题更新是否需要原子性；若需要，抽到独立小事务方法。
 
 #### F-25（P2）业务异常统一返回 HTTP 200
+
+> **2026-11-09 复核：部分修复。** `GlobalExceptionHandler` 已对 AccessDenied 返回 403、唯一键冲突 409、参数类型错误 400、资源不存在 404、未知异常 500；但 `BusinessException` 与参数校验失败仍返回 HTTP 200 + 业务码，选型本身未变。
 
 - **现状**：`rag-common/.../GlobalExceptionHandler.java:27-33`（`BusinessException` → HTTP 200 + 业务码）、`:35-44`（参数校验同样 200）；`QuotaService.java:91-119` 注释称"超限抛 429"，实际对外的 HTTP 状态是 200。
 - **说明**：这是**一致的前后端契约**，不是随手写的 bug；前端已按 `code` 分支处理。
@@ -297,18 +350,18 @@
 | 模块 | 本项目实现 | 与主流对照 | 结论 |
 |---|---|---|---|
 | 认证 | 本地 HS256（`LocalTokenService.java:89-139`，`iss/aud/tokenType` 校验）与 OIDC 非对称验签（`OidcTokenVerifier.java:27-76`，算法白名单、`iss/aud`）；JWKS 有缓存与刷新限频（`JwksProvider`）；生产强制配置密钥（`LocalTokenService.java:55-75`） | 双轨隔离正确，避免 HS256 算法混淆 | **优于多数同类实现** |
-| 授权 | 自定义 `@RequiresPermission` + `AuthConstants` 权限码，AOP 校验；但仅 4/17 Controller 使用 | 主流为 `@PreAuthorize` + URL 级规则 + deny-by-default | **机制可用，覆盖不足**（F-03） |
+| 授权 | 自定义 `@RequiresPermission` + `AuthConstants` 权限码，AOP 校验；2026-11-09 复核：13 个 Controller 共 104 处注解，管理类加 3 个手工 `requireAdmin`，仅公开/自助类接口不设权限 | 主流为 `@PreAuthorize` + URL 级规则 + deny-by-default | **机制可用，覆盖已基本补齐**（F-03）；前端门控仍不全 |
 | 配额 | `QuotaService.java:91-119` 先查后 `upsertIncrement`，`schema.sql:854-888` 有唯一约束 | 原子累加 + 唯一键，标准做法 | **符合主流** |
 | 公开访问 | 分享链接（`ShareLinkService.java:119-177` 密码 BCrypt + 失败锁定、`:240-268` 条件更新消费次数）、Widget 嵌入（`EmbedAccessService.java:39-118` Origin/IP 白名单 + 短期 grant）、API Key（SHA-256 存储、明文仅返回一次）、限流（`DefaultPublicAccessStore.java:27-92` Redis Lua + 内存降级） | 覆盖完整，细节到位 | **中上**；Redis 不可用时降级为单机内存，多实例部署会使总额度按实例数放大，需在部署文档中说明 |
 | 文件存储 | `LocalFileStorageService` 抽象 + 大小限制 + 临时文件原子移动 + `base-dir` 越界校验（`:138-166`）；Skill 目录写入同样做归一化与 `startsWith` 校验 | 主流为对象存储抽象 + 签名 URL | **符合主流**（单机本地存储，扩展点已留） |
 | 文档解析 | 解析器 SPI（`DocumentParserDispatcher`，注册表 + 大小/类型校验，未知类型明确报错） | 主流为 Tika/POI 统一入口 | **符合主流** |
-| RAG 检索与重排 | 按 embedding 模型分组、RRF 融合、可选 rerank（失败降级原始序）、关键词混合检索、`minScore` 默认 0.55（`RagRetrieveService.java:86-249`） | 主流为混合检索 + cross-encoder 重排 | **链路完整**，索引与参数需调优（F-11） |
-| 对话与 SSE | JSON 包装 content 事件、`safelyComplete`、ThreadLocal 工具注册在 `finally` 清理（`RagChatService.java:118-198`） | 主流为 WebFlux/ResponseBodyEmitter + 有界 executor | **功能正确**，资源模型不足（F-08/F-13） |
+| RAG 检索与重排 | 按 embedding 模型分组、RRF 融合、可选 rerank（失败降级原始序）、关键词混合检索（`word_similarity` 阈值 0.5）、生效 `minScore` 0.3（代码兜底 0.55） | 主流为混合检索 + cross-encoder 重排 | **链路完整**；2026-11-09 复核：HNSW 已默认开启，`ef_search` 未调、重复 embedding 仍在（F-11/F-15） |
+| 对话与 SSE | JSON 包装 content 事件、`safelyComplete`、ThreadLocal 工具注册在 `finally` 清理；2026-11-09 复核已补断连取消（`ChatStreamCancellation`） | 主流为 WebFlux/ResponseBodyEmitter + 有界 executor | **功能正确**，线程模型仍未收敛（F-13） |
 | Agent 编排 | 计划持久化、`maxSteps` 上限、反思重试、HITL 暂停/恢复/取消、失败重规划（`AgentOrchestrator.java:68-158,239-399`） | 主流为状态机 + 持久化 checkpoint | **功能完整**，线程与越权为短板 |
 | 工作流引擎与图校验 | 入度驱动 + 并行 frontier + `CONDITION/LOOP` 有界、`GraphValidator` 校验 START/END 唯一性、环路（排除 LOOP 回边）、并行入度（`:27-170`） | 主流为 DAG 校验 + 拓扑调度 | **中上**，运行期资源与事务边界待改 |
 | 可观测性 | MDC requestId、Micrometer 指标（`RagMetrics`）、`SizeAndTimeBased` 日志滚动、actuator 独立端口与健康检查（含 pgvector 扩展校验） | 主流为 Micrometer + tracing | **符合主流** |
-| 错误码 | 统一 `Result` 包装 + `GlobalExceptionHandler`（含未映射 `/api/**` → 404/3001）+ 兜底 500 不暴露栈 | 主流按 HTTP 语义分层 | **契约一致但偏离 HTTP 语义**（F-25，不建议大改） |
-| 审计日志 | `@Audit` + AOP + 异步落库，失败不阻断（`AuditAspect.java:34-58`） | 主流为统一操作日志 | **可用，覆盖不全**（F-10） |
+| 错误码 | 统一 `Result` 包装 + `GlobalExceptionHandler`（含未映射 `/api/**` → 404/3001）+ 兜底 500 不暴露栈；AccessDenied 403、唯一键 409、类型错误 400 已按 HTTP 语义返回，业务异常仍 200 | 主流按 HTTP 语义分层 | **契约一致但部分偏离 HTTP 语义**（F-25，不建议大改） |
+| 审计日志 | `@Audit` + AOP + 异步落库，失败不阻断；2026-11-09 复核：聊天窗口/工具已补，工作流/Agent 仍缺 | 主流为统一操作日志 | **可用，覆盖仍不全**（F-10） |
 
 ---
 
@@ -332,10 +385,10 @@
 | 项 | 为什么不改 |
 |---|---|
 | 业务异常统一 HTTP 200 | 前后端契约已一致，改造波及全部错误分支与测试；收益仅在网关监控可读性，建议网关侧按业务码聚合即可。 |
-| 实体直出（非敏感字段） | 一次性引入 DTO 层改动面大、回归成本高。只修 `apiKey` / `shareToken` / `executorConfig` 这类敏感字段即可（F-02）。 |
+| 实体直出（非敏感字段） | 一次性引入 DTO 层改动面大、回归成本高。只修 `apiKey` / `shareToken` / `executorConfig` 这类敏感字段即可（F-02）。2026-11-09 复核：`apiKey` 已隐藏，`shareToken` / `executorConfig` 仍待处理。 |
 | 静态 `FILE_PROCESSOR` 线程池 | 有界队列 + `CallerRunsPolicy`，行为可控；替换为 Spring 管理只在"优雅停机 + 指标"上有收益，优先级低于 F-13。 |
 | 手写 OIDC 过滤器 | 质量高于多数现成方案，无漏洞证据；换成 `spring-boot-starter-oauth2-resource-server` 反而可能丢失现有角色映射逻辑。 |
-| 前端组件直接 `v-html` 渲染表格/引用样式 | 只要先做 DOMPurify（F-04），渲染方式本身无需改。 |
+| 前端组件直接 `v-html` 渲染表格/引用样式 | 只要先做 DOMPurify（F-04），渲染方式本身无需改。2026-11-09 复核：DOMPurify 已接入 `utils/markdown.js`，该项已满足前提。 |
 | 多 Agent 两套 Coordinator | 语义差异真实存在（角色上下文 vs 条件分支），强行合并收益不确定，先统一事件协议即可（F-23）。 |
 | 聊天窗口全局共享（无 owner 列） | 这可能是产品设计（窗口/知识库是平台资源，由管理员配置），不属于缺陷；只需配合授权（F-03）即可。 |
 
@@ -358,13 +411,23 @@
 | 9 | **F-06 SSRF 白名单** | P1 安全；改动集中在 HTTP 执行器，需配置化白名单避免误杀。 |
 | 10 | **F-07 CORS 收敛 + F-09 Key 写节流** | P2 但成本极低，属于"顺手清理"，可与 1-3 同批提交。 |
 
-> 未进前十但同样值得排期的：F-18（事务内操作向量库，正确性问题）、F-15（语义缓存重复 embedding，直接省钱）、F-14（管理端 N+1）。
+> **2026-11-09 复核落地情况**：第 1、2、3、4、5、9、10 名已落地；第 6 名基本落地（HNSW 已开、store 已缓存，`ef_search` 未调）；第 7、8 名（历史窗口化、线程模型收敛）仍未落地。未进前十的 F-18、F-15、F-14 也仍未处理。
 
 ---
 
 ## 7. 附注
 
-- **工作区状态**：`git status` 显示工作区无已跟踪文件改动，存在 1 个未跟踪文件 `docs/design-data-access-extensibility.md`（非本次产生，未处理、未修改）。
-- **未执行**：任何 `mvn` / `npm` 命令；未启动/停止 8080 上的进程（PID 41603）。
+- **初版工作区快照（2026-11-04，历史记录）**：`git status` 显示工作区无已跟踪文件改动，存在 1 个未跟踪文件 `docs/design-data-access-extensibility.md`（非本次产生，未处理、未修改）。
+- **初版未执行**：任何 `mvn` / `npm` 命令；未启动/停止 8080 上的进程（PID 41603，历史快照）。
+- **2026-11-09 复核边界**：仅静态读取源码、SQL 与前端路由，未执行 `mvn` / `npm`，未启动/停止任何服务，未操作数据库，未修改业务代码。
 - **未修改**：除本文件外无任何文件写入。
 - **证据局限**：本次为静态审读，未做运行时压测与并发验证；F-11 / F-12 / F-13 的量化影响建议在测试环境用真实数据量复测后再定优先级。
+
+---
+
+## 8. 修订记录
+
+| 版本 | 日期 | 修订人 / 触发原因 | 主要变更点 |
+|---|---|---|---|
+| v1.0 | 2026-11-04 | TraeCode；首次只读架构审视 | 提出 25 条发现（F-01\~F-25），给出模块评级、Top10 排序与"不建议现在动"清单 |
+| v1.1 | 2026-11-09 | TraeCode；2026-11-04 后代码迭代，需确认发现闭环情况 | ① 逐条复核 25 条发现并在每条下增加"2026-11-09 复核"状态；② 已修复：F-01、F-03、F-04、F-05、F-06、F-07、F-08、F-09；部分修复：F-02（`apiKey` 已隐藏）、F-10（工作流/Agent 仍缺审计）、F-16（会话已限 50 条）、F-20（`ShareChat.vue` 已被登录态分享路由使用）、F-25（框架异常已按 HTTP 语义返回）、F-11（HNSW 已开、`ef_search` 未调）；未修复：F-12、F-13、F-14、F-15、F-17、F-18、F-19、F-21、F-22、F-23、F-24；③ 同步更新 §1 结论、§2 模块评级、§3.4 对照表、§5 与 §6 落地情况、§7 核查边界；④ 保留初版历史判定，不删除原始证据 |

@@ -132,6 +132,8 @@
 | POST | `/api/open/v1/chat/stream` | `chat:write` | SSE 问答；`windowId` 必填，`sessionId` 缺省时自动创建 `api_<keyId>` 会话 |
 | GET | `/api/open/v1/kb/search` | `kb:read` | 知识库检索（`kbId` + `query` + `topK`） |
 | GET | `/api/open/v1/usage` | `usage:read` | 配额当日用量 + 调用总数 + 最近 20 条调用日志 |
+| GET | `/v1/models`（别名 `/api/open/v1/models`） | `model:read` | OpenAI 兼容模型列表，仅返回已启用聊天窗口（`wgh-window-<id>`） |
+| POST | `/v1/chat/completions`（别名 `/api/open/v1/chat/completions`） | `chat:write` | OpenAI 兼容对话，`stream=true` 时返回 SSE；`n>1`、`logprobs`、tools / function calling 未支持 |
 
 鉴权顺序（`ApiKeyAuthenticationFilter`）：
 
@@ -143,7 +145,7 @@
   → 业务接口内：api-key / api-ip 双维度限流
 ```
 
-路径 → scope 映射：`/v1/chat/→chat:write`、`/v1/kb/→kb:read`、`/v1/usage→usage:read`。
+路径 → scope 映射：`/v1/models→model:read`、`/v1/chat/→chat:write`、`/v1/kb/→kb:read`、`/v1/usage→usage:read`。`/v1/**` 与 `/api/open/**` 共用同一过滤器，`/v1/**` 鉴权失败返回 OpenAI 错误结构。
 
 ### 3.4 Widget
 

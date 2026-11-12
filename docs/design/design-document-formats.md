@@ -3,7 +3,7 @@
 对应 README §7.4 计划项 #5「更多文档格式」。目标是在不改变既有 PDF/DOC/DOCX/XLS/XLSX/CSV/TXT/MD 行为的前提下，补齐
 PPTX / HTML(HTM) / JSON / EML，并统一元数据抽取、错误提示与解析大小上限。
 
-> 实现状态：已完成（PPTX/HTML/JSON/EML 全部可用；图片 OCR 不在本次范围，见 §7 简化说明）。
+> 实现状态：已完成（PPTX/HTML/JSON/EML 全部可用）。图片 OCR 不在本文范围；扫描版 PDF 的按页 OCR 已由 T01 落地（commit `6ed9d10`），见 README §3.1。
 
 ---
 
@@ -140,7 +140,7 @@ GET /api/kb/files/{fileId}/preview
 
 ## 7. 简化实现与已知限制（显式标注）
 
-1. **无图片 OCR**：扫描版 PDF / 图片型 PPTX 仅能抽取文本层，图片内容不入库（图片 OCR 不在本次范围）。
+1. **独立图片 OCR 未支持**：扫描版 PDF 已由 T01 按页 OCR（`TessOcrService`，依赖本机 Tesseract 与 `chi_sim+eng` 语言包，缺失时降级）；图片型 PPTX 与独立图片文件仍只抽取文本层，图片内容不入库。
 2. **元数据不落库**：`documentMetadata` 仅在预览接口返回，列表页不展示页数/编码。
 3. **PPTX 仅文本层**：只抽取文本框与表格文本，不解析 SmartArt、图表、备注页（备注页可后续扩展）。
 4. **EML 跳过附件**：附件内容不解析，仅正文 `text/plain` / `text/html`。

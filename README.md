@@ -57,17 +57,19 @@
 | 能力 | 状态 | 说明 |
 |------|------|------|
 | 文档解析（12 种格式） | 已完成 | PDF / DOC / DOCX / XLS / XLSX / CSV / TXT / MD / PPTX / HTML / JSON / EML；统一由 `DocumentParserDispatcher` 分发并抽取元数据 |
+| PDF 版面分析与表格还原 | 已完成 | `PdfLayoutAnalyzer` 识别双栏阅读顺序，`TableExtractor` 将表格还原为 Markdown；栏检测优先于表格，纯两列表格可能按双栏处理 |
+| 扫描版 PDF OCR | 已完成 | `TessOcrService` 按页兜底，单页文字少于阈值（默认 20 字）触发；依赖本机 `tesseract` 与 `chi_sim+eng` 语言包，缺失或超时降级为文本抽取（`WGH_OCR_*`） |
 | 新增文档格式（PPTX / HTML / JSON / EML） | 已完成 | `PptxParser` / `HtmlParser` / `JsonParser` / `EmlParser` + 统一元数据与大小上限 |
 | 文本切分（9 种策略） | 已完成 | AUTO / RECURSIVE / CHAPTER / PARAGRAPH / FAQ / LENGTH / CUSTOM / STRUCTURED（标题感知）/ SEMANTIC（语义断句） |
 | 查询变换 / 混合检索 / RRF / Rerank | 已完成 | REWRITE / MULTI_QUERY / HYDE；向量余弦 + pg_trgm 关键词召回；RRF(k=60) 融合；可选 Rerank |
-| 检索指标与离线评测 | 已完成 | 覆盖率 / 命中率；ground truth 标注后计算 Recall@K / Precision@K / MRR / NDCG；`eval/eval_recall.py` 复用同一标注 |
+| 检索指标与离线评测 | 已完成 | 覆盖率 / 命中率；ground truth 标注后计算 Recall@K / Precision@K / MRR / NDCG；生成侧多 judge 评估 Faithfulness / Answer Relevancy / Context Precision / Context Recall（缺参考答案时显式标记不可计算）；`eval/eval_recall.py` 复用同一标注 |
 | 知识库标签 | 已完成 | `TagService` / `TagController`；知识库与文件多标签绑定及管理界面 |
 | 文档版本 | 已完成 | `FileVersionService` + 版本列表 / 回滚；回滚生成新版本，不覆盖旧版本 |
 | 可插拔文件存储（local / OSS） | 已完成 | 独立 `rag-storage` 模块，`FileStorageService` + 本地 / 阿里云 OSS 实现 |
 | 大文件分片上传 | **未实现** | OSS 仅单次流式 `putObject`，无 multipart / 断点续传；业务侧默认上限 50MB |
 | `local` ↔ `oss` 历史对象自动迁移 | **未实现** | 切换本身已支持，但旧对象仍留在原存储后端，需手工迁移或重新上传并重建向量 |
 | OSS 删除失败后的孤儿对象清理 | **未实现** | 删除失败仅记录 WARN，数据库仍完成逻辑删除，对象可能残留 |
-| 图片 OCR | **未实现** | 仅支持文本型 PDF / 文档；扫描件与图片型 PDF 无法直接提取文字 |
+| 独立图片 OCR | **未实现** | 扫描版 PDF 已按页 OCR；独立图片文件（PNG / JPG）仍不解析入库 |
 
 ### 3.2 对话与开放接入
 
@@ -79,6 +81,7 @@
 | 反馈闭环 | 已完成 | 消息点赞 / 点踩 + 备注，窗口满意度统计与差评运营列表 |
 | 反馈 A/B 与数据集版本管理 | **未实现** | 无实验对比与数据集版本管理能力 |
 | 免登录分享 / Widget 嵌入 / 开放 API | 已完成 | 分享链接（有效期、访问密码、只读范围、吊销）；`widget.js` iframe 注入；API Key 开放 API 与调用日志 |
+| OpenAI 兼容入口 + Python SDK | 已完成 | `/v1/models`、`/v1/chat/completions`（含 SSE 流式），复用 API Key + scope；附带 `sdk/python/wgh_rag_client.py`；仅支持基础对话参数，`n>1` / `logprobs` / tools 未支持 |
 | Prompt 模板中心与输入框前缀联想 | 已完成 | 模板 CRUD、变量提取、渲染预览；输入框前缀触发候选、模糊过滤、变量逐个填写；`GET /api/prompt-templates/suggest` |
 | 语义缓存 | 已完成 | 窗口级开关，相似度阈值命中后直接返回缓存答案，跳过检索与 LLM |
 
@@ -102,7 +105,7 @@
 | 角色与权限管理页面 | 已完成 | `AdminRoleController`（`/api/admin/roles`、`/api/admin/permissions`）+ `RoleManagement.vue`、`UserManagement.vue` |
 | 配额模块与前后端页面 | 已完成 | 独立 `rag-quota` 模块；全局默认 + 按用户日/月配置，超限 429；`QuotaManagement.vue` / `MyQuota.vue` |
 | Redis 8.10.1 接入 | 已完成 | 分布式限流、分享密码失败锁定（成功清零）、嵌入授权、API Key IP 白名单；不可用时降级为单机内存 |
-| 审计与成本统计 | 已完成 | `@Audit` 异步记录写操作；模型价格表 + 消息成本 / 模型名回填；管理端聚合统计 |
+| 审计与成本统计 | 已完成 | `@Audit` 异步记录写操作；角色 / Agent / 多 Agent / 配额等管理写操作已覆盖（资源标识落 `detail`）；模型价格表 + 消息成本 / 模型名回填；管理端聚合统计 |
 | 安全整改 | 已完成 | 首登强制改密（`password_must_change`）、审计日志敏感信息脱敏、409 映射、`WGH_INIT_ADMIN_PASSWORD` 注入 |
 | 可观测性（Prometheus + 独立 9090） | 已完成 | `RagMetrics` 业务指标 + `/actuator/prometheus`；管理端口默认 `9090`，业务端口不暴露 `/actuator` |
 | Compose 内置 PostgreSQL(pgvector) | 已完成 | `docker-compose.yml` 内置 `pgvector/pgvector:pg15`，空卷首启执行 `schema/01-schema.sql` / `seed/02-data.sql` |
@@ -111,7 +114,7 @@
 
 | 能力 | 状态 | 说明 |
 |------|------|------|
-| 模型管理 | 已完成 | DB 动态模型 + OpenAI / DASHSCOPE / DeepSeek / 自建 OpenAI 兼容端点；缓存热更新 |
+| 模型管理 | 已完成 | DB 动态模型 + OpenAI / DASHSCOPE / DeepSeek / Azure OpenAI / Ollama / 智谱 GLM / 自建 OpenAI 兼容端点，能力由 `ProviderCatalog` 统一描述；缓存热更新 |
 | 模型路由与故障转移 | 已完成 | `ModelRouter#resolveChain` + `rag-llm/failover` 通用组件：`StreamingModelFailover` 驱动普通 RAG 流式切链（首 token 前 `onError` 切下一候选，独立输出缓冲 + `active`/CAS 防重复切链），`BlockingModelFailover` 驱动 Agent 与工作流 LLM 节点（首响应前失败切链）；全部候选失败返回明确业务错误，已产出内容后失败不切链、不拼接两段输出；三类链路均下发 `model_switch` |
 | 多实例 JWKS 缓存共享 | **未实现** | `JwksProvider` 为进程内缓存，密钥轮换后各实例刷新时间不一致 |
 | `rag-public-access` 独立模块 + Enforcer 禁反向依赖 | 已完成 | 分享 / Widget / API Key 实现层独立；Controller 留在 `rag-controller`，依赖方向受 Enforcer 约束 |
@@ -348,6 +351,20 @@ OSS 配置不完整时不阻断启动，仅在真正调用存储操作时返回�
 > 限流覆盖、可信代理、配额、Agent 与上下文压缩等完整配置与设计说明见 `docs/design/design-*.md`；接口侧的限流与错误码行为见 [docs/api/api.md](docs/api/api.md)。
 > `wgh.public-access.trusted-proxies` 默认空，只信任 TCP 对端；部署在 Nginx / 网关后需显式配置可信 CIDR，**不要配置为 `0.0.0.0/0`**。
 
+### 6.5 检索与评测参数
+
+| 配置 | 默认 | 说明 |
+|------|------|------|
+| `wgh.rag.retrieve.min-score` | 0.55 | 向量召回最低余弦相似度；`0.3` 会引入大量弱相关噪声，dev / test / prod 三套 yml 已统一为 `0.55` |
+| `wgh.rag.retrieve.enable-hybrid` | `false` | 是否启用向量 + 关键词 RRF 混合检索（窗口级配置优先） |
+| `wgh.rag.retrieve.keyword-top-n` | 10 | 混合检索关键词路召回条数 |
+| `wgh.rag.evaluation.judge-timeout-seconds` | 30 | 单个 LLM judge 调用超时，超时按该 judge 失败处理，不影响主链路 |
+| `wgh.rag.evaluation.judge-concurrency` | 4 | 同时评估的 judge 数量上限 |
+| `wgh.rag.evaluation.repeat-count` | 1 | 每个 judge 的重复评估次数，最终取有效结果均值 |
+| `wgh.rag.evaluation.max-queries-per-evaluation` | 200 | 单次离线检索评测最多处理的标注查询数 |
+
+> OCR 相关配置通过环境变量注入：`WGH_OCR_ENABLED`、`WGH_OCR_LANG`（默认 `chi_sim+eng`）、`WGH_OCR_MIN_TEXT_CHARS`（默认 20）、`WGH_OCR_MAX_PAGES`（默认 50）、`WGH_OCR_TIMEOUT_SECONDS`（默认 60）；引擎缺失或超时时降级为纯文本抽取，不阻断入库。
+
 ---
 
 ## 7. 接口概览
@@ -370,6 +387,7 @@ OSS 配置不完整时不阻断启动，仅在真正调用存储操作时返回�
 | 管理端 | `/api/admin` | 审计日志、成本 / 配额统计、差评、用户配额、角色权限、分享链接、API Key |
 | 免登录分享 | `/api/public/share/{token}` | 信息 / 解锁 / 会话 / 消息 / SSE 问答 / 知识库检索 |
 | 开放 API | `/api/open/v1` | `/me`、`/chat/stream`、`/kb/search`、`/usage`（`X-API-Key`） |
+| OpenAI 兼容 | `/v1` | `/models`、`/chat/completions`（Bearer API Key，支持 SSE） |
 
 ---
 
@@ -385,8 +403,10 @@ OSS 配置不完整时不阻断启动，仅在真正调用存储操作时返回�
 | 分享密码 | 失败 5 次锁定 15 分钟（可配置），无验证码 | 换 IP 可继续尝试；强防护可叠加网关限流 / 验证码 |
 | API Key | 无自动轮换；已有可选 IP 白名单 | 泄露后需人工吊销；建议始终配置 IP 白名单 |
 | 真实 IP | 默认只信任 TCP 对端，XFF 仅在可信代理下生效 | 代理拓扑变化时需同步 `trusted-proxies`，配置过宽会引入伪造风险 |
-| 反馈与评测 | 无数据集版本管理、无 A/B 对比 | 离线评测只能脚本化执行 |
-| 多模态 | 仅视觉模型图片输入，无 OCR | 扫描件 / 图片型 PDF 无法直接提取文字 |
+| 反馈与评测 | 无数据集版本管理、无 A/B 对比；生成侧 Context Precision / Recall 依赖参考答案字段，当前标注表只有相关 chunk，缺参考答案时返回不可计算 | 离线评测只能脚本化执行；需先补参考答案字段才能端到端产出 CP / CR |
+| 多模态 | 视觉模型支持图片输入；扫描版 PDF 按页 OCR；独立图片文件不入库 | OCR 依赖本机 Tesseract 与 `chi_sim+eng` 语言包，纯图片知识库仍需先转 PDF |
+| OpenAI 兼容 | 仅 `/v1/models` 与 `/v1/chat/completions`，`n>1`、`logprobs`、function calling / tools 未支持；`model` 只能映射已启用聊天窗口 | 复杂参数与底层模型直连需走原生 `/api/chat` 接口 |
+| OCR | 依赖本机 `tesseract` 可执行文件与语言包；单页 20 字触发、文档最多 50 页、单页 60s 超时；栏检测优先于表格 | 引擎缺失时静默降级为文本抽取；纯两列表格可能按双栏处理 |
 | 检索 | 单库 PostgreSQL + pgvector，无独立向量库 / 搜索引擎 | 超大规模语料需评估性能上限 |
 | 模型故障转移 | 普通 RAG、Agent（Planner / Step / Reflection）与工作流 LLM 节点统一复用切链组件，覆盖首个 token / 首个响应前的失败切链；**已产生内容后失败不切链、不回滚、不重发、不拼接第二个模型输出**，直接 `error` 结束 | 已产出内容后的续接策略暂不提供；Agent 恢复 / 重试入口按计划绑定的窗口路由组解析链路 |
 | 存储切换 | `local` ↔ `oss` 切换不自动迁移历史对象 | 需手工迁移或重新上传并重建向量 |
@@ -412,6 +432,6 @@ OSS 配置不完整时不阻断启动，仅在真正调用存储操作时返回�
 | P2 | 分布式链路追踪 | 未实现 | 在现有 Prometheus + `X-Request-Id` 基础上接入 Tracing |
 | P2 | 数据源连接器与增量同步 | 未实现 | URL 抓取、第三方文档源同步、增量更新 |
 | P3 | 反馈 A/B 与数据集版本 | 未实现 | 版本化评测集、实验对比与效果回归 |
-| P3 | 图片 OCR | 未实现 | 扫描件 / 图片型 PDF 文本提取 |
+| P3 | 图片 OCR | 部分完成 | 扫描版 PDF 已按页 OCR（`TessOcrService`，commit `6ed9d10`）；独立图片文件（PNG / JPG）未接入 |
 
 暂不规划：多租户隔离、独立向量数据库 / 搜索引擎、Kubernetes 级编排。当前设计以单库 PostgreSQL + pgvector 与单实例部署为优先，降低私有化部署与运维成本。

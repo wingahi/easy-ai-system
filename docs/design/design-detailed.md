@@ -731,7 +731,7 @@ SSE：`multi_agent_start`、`agent_start`、`agent_rag`、`agent_tool_call_start
 | 配置 | 默认 |
 | --- | --- |
 | `wgh.rag.retrieve.top-k` | 5 |
-| `wgh.rag.retrieve.min-score` | 0.3（prod 0.35） |
+| `wgh.rag.retrieve.min-score` | 0.55（dev / test / prod 一致） |
 | `wgh.rag.retrieve.enable-rerank` | false（prod true） |
 | `wgh.rag.retrieve.enable-hybrid` | false |
 | `wgh.rag.retrieve.keyword-top-n` | 10 |

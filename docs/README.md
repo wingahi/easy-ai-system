@@ -21,6 +21,8 @@
 |---|---|---|
 | [architecture-review-2026-11-04.md](review/architecture-review-2026-11-04.md) | 架构审视报告：25 条发现、风险分级与优化清单 | 2026-11-04 |
 | [rag-capability-assessment-2026-11-05.md](review/rag-capability-assessment-2026-11-05.md) | RAG 全流程能力评估：对照五个难点的现状、缺口与改进建议 | 2026-11-05 |
+| [feature-comparison-2026-11-09.md](review/feature-comparison-2026-11-09.md) | 同类产品功能对照：能力矩阵与差距定位 | 2026-11-09 |
+| [gap-development-plan-2026-11-09.md](review/gap-development-plan-2026-11-09.md) | 差距补齐开发计划：T01–T13 拆分、批次、文件边界与验收 | 2026-11-11 |
 
 ## testing/ — 测试用例与报告
 
