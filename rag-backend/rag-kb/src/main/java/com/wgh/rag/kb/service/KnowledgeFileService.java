@@ -410,12 +410,23 @@ public class KnowledgeFileService {
                     new SplitContext(embeddingModelId));
 
             // 构造 TextSegment（附带 metadata 记录来源文件 + 切分属性如 headingPath/semanticBlockIndex）
+            // charStart/charEnd 为 chunk 在归一化全文中的字符区间，供前端原文定位；找不到时退化为游标位置
+            String documentText = String.join("\n", paragraphs);
+            int searchFrom = 0;
             List<TextSegment> segments = new ArrayList<>();
             for (int i = 0; i < chunks.size(); i++) {
-                Map<String, Object> meta = buildChunkMetadata(file, kb, i, chunks.get(i).attributes());
+                ChunkOutput chunk = chunks.get(i);
+                int charStart = documentText.indexOf(chunk.text(), searchFrom);
+                if (charStart < 0) {
+                    charStart = Math.min(searchFrom, documentText.length());
+                }
+                int charEnd = Math.min(charStart + chunk.text().length(), documentText.length());
+                Map<String, Object> meta = buildChunkMetadata(file, kb, i, chunk.attributes(),
+                        charStart, charEnd, chunk.text());
                 meta.put("contentHash", sha256Hex(chunks.get(i).text()));
                 Metadata metadata = Metadata.from(meta);
                 segments.add(TextSegment.from(chunks.get(i).text(), metadata));
+                searchFrom = charStart + 1;
             }
 
             // 同一知识库内相同内容的 chunk 不重复嵌入（目标表为新建表，重建时不会自排除）
@@ -453,19 +464,33 @@ public class KnowledgeFileService {
     }
 
     /**
-     * 构造 chunk 元数据：来源信息（fileId/fileName/kbId/kbName/chunkIndex）+ 切分属性。
-     * kbName 供检索侧直接标注来源，避免每次引用再去查库。
+     * 构造 chunk 元数据：来源信息（fileId/fileName/kbId/kbName/chunkIndex）+ 切分属性 + 原文定位。
+     * kbName 供检索侧直接标注来源，避免每次引用再去查库；charStart/charEnd/snippet 供前端展开原文。
+     * pageNo 仅在切分属性提供时写入（当前解析器不产出页级映射）。
      */
     Map<String, Object> buildChunkMetadata(KnowledgeFile file, KnowledgeBase kb, int chunkIndex,
-                                           Map<String, Object> attributes) {
+                                           Map<String, Object> attributes, int charStart, int charEnd,
+                                           String chunkText) {
         Map<String, Object> meta = new HashMap<>();
         meta.put("fileId", file.getId());
         meta.put("fileName", file.getFileName());
         meta.put("kbId", kb.getId());
         meta.put("kbName", kb.getName());
         meta.put("chunkIndex", chunkIndex);
+        meta.put("charStart", charStart);
+        meta.put("charEnd", charEnd);
+        meta.put("snippet", snippetOf(chunkText));
         if (attributes != null) meta.putAll(attributes);
         return meta;
+    }
+
+    /** chunk 文本前 120 字（压缩空白），用于引用卡片预览。 */
+    private String snippetOf(String chunkText) {
+        if (chunkText == null) {
+            return null;
+        }
+        String text = chunkText.replaceAll("\\s+", " ").trim();
+        return text.length() <= 120 ? text : text.substring(0, 120);
     }
 
     /**

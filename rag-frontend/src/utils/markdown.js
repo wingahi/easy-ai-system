@@ -55,3 +55,36 @@ export function renderMarkdown(text) {
   const html = marked.parse(text == null ? '' : String(text), { async: false })
   return DOMPurify.sanitize(html, SANITIZE_CONFIG)
 }
+
+/**
+ * 在安全 HTML 基础上把 [S1]/[S2] 包成可点击引用，用于跳转并高亮来源卡片。
+ * 只在文本节点内替换（跳过代码块、链接），替换后不再经过 v-html 之外的 HTML 拼接。
+ */
+export function renderMarkdownWithCitations(text) {
+  const container = document.createElement('div')
+  container.innerHTML = renderMarkdown(text)
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT)
+  const textNodes = []
+  while (walker.nextNode()) {
+    const node = walker.currentNode
+    if (node.parentElement && node.parentElement.closest('pre, code, a')) continue
+    if (/\[S\d+\]/.test(node.nodeValue)) textNodes.push(node)
+  }
+  for (const node of textNodes) {
+    const fragment = document.createDocumentFragment()
+    for (const part of node.nodeValue.split(/(\[S\d+\])/g)) {
+      const cited = /^\[S(\d+)\]$/.exec(part)
+      if (cited) {
+        const span = document.createElement('span')
+        span.className = 'citation-ref'
+        span.dataset.cite = cited[1]
+        span.textContent = part
+        fragment.appendChild(span)
+      } else if (part) {
+        fragment.appendChild(document.createTextNode(part))
+      }
+    }
+    node.parentNode.replaceChild(fragment, node)
+  }
+  return container.innerHTML
+}

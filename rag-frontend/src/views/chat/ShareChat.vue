@@ -45,7 +45,8 @@
                :class="['msg', msg.role === 'USER' ? 'user' : 'bot']">
             <div class="avatar">{{ msg.role === 'USER' ? '🙂' : '🤖' }}</div>
             <div class="bubble">
-              <div v-html="renderMarkdown(msg.content)"></div>
+              <div class="msg-content" v-html="renderMarkdownWithCitations(msg.content)"
+                   @click="onCitationClick"></div>
               <div v-if="msg.streaming" class="typing">
                 <span></span><span></span><span></span>
               </div>
@@ -53,9 +54,7 @@
                 <el-tag size="small" type="info">已停止生成</el-tag>
               </div>
               <div v-if="dedupSources(msg.sources).length" class="sources">
-                <span v-for="(s, i) in dedupSources(msg.sources)" :key="i" class="source-tag">
-                  📎 {{ s.kbName }}/{{ s.fileName }}
-                </span>
+                <SourcePanel v-for="(s, i) in dedupSources(msg.sources)" :key="i" :source="s" :index="i" />
               </div>
             </div>
           </div>
@@ -116,7 +115,8 @@ import { reactive, ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Promotion, VideoPause, Plus, Delete, Loading } from '@element-plus/icons-vue'
-import { renderMarkdown } from '../../utils/markdown'
+import { renderMarkdownWithCitations } from '../../utils/markdown'
+import SourcePanel from '../../components/SourcePanel.vue'
 import { stopGeneration } from '../../utils/chatStream'
 import AgentPlanTree from '../../components/AgentPlanTree.vue'
 import WorkflowRunPanel from '../../components/WorkflowRunPanel.vue'
@@ -807,6 +807,19 @@ const safeParseSources = (json) => {
   try { return JSON.parse(json) || [] } catch { return [] }
 }
 
+// 点击 [Sn] 定位并高亮同一条消息下的来源卡片
+const onCitationClick = (event) => {
+  const cite = event.target.closest('.citation-ref')
+  if (!cite) return
+  const idx = Number(cite.dataset.cite) - 1
+  const card = event.currentTarget.closest('.msg')
+    ?.querySelector(`.source-panel[data-index="${idx}"]`)
+  if (!card) return
+  card.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+  card.classList.add('cite-flash')
+  setTimeout(() => card.classList.remove('cite-flash'), 1200)
+}
+
 // 按 fileName 去重，保留 score 最高的一条
 const dedupSources = (list) => {
   if (!Array.isArray(list)) return []
@@ -1020,7 +1033,7 @@ onUnmounted(() => {
 }
 .sources {
   margin-top: 8px;
-  display: flex; flex-wrap: wrap; gap: 4px;
+  display: flex; flex-direction: column; gap: 6px;
   .source-tag {
     font-size: 11px; color: #909399;
     background: rgba(0,0,0,0.04); padding: 2px 6px; border-radius: 3px;

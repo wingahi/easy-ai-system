@@ -70,7 +70,8 @@
                 <img v-for="(img, i) in msg.images" :key="i" :src="img" class="msg-image"
                      @click="previewImage(img)" />
               </div>
-              <div class="msg-content" v-html="renderMarkdown(msg.content)"></div>
+              <div class="msg-content" v-html="renderMarkdownWithCitations(msg.content)"
+                   @click="onCitationClick"></div>
               <div v-if="msg.streaming" class="typing">
                 <span></span><span></span><span></span>
               </div>
@@ -147,12 +148,7 @@
               <!-- 来源引用 -->
               <div v-if="msg.role === 'ASSISTANT' && msg.sources?.length" class="msg-sources">
                 <div class="sources-title">📎 信息来源：</div>
-                <div v-for="(s, i) in msg.sources" :key="i" class="source-item">
-                  <el-icon><Document /></el-icon>
-                  <span>{{ s.kbName }}</span>
-                  <span style="color:#c0c4cc">· {{ s.fileName }}</span>
-                  <el-tag v-if="s.score" size="small" type="info">{{ (s.score * 100).toFixed(0) }}%</el-tag>
-                </div>
+                <SourcePanel v-for="(s, i) in msg.sources" :key="i" :source="s" :index="i" />
               </div>
 
               <!-- 反馈（👍/👎，仅已落库的助手消息） -->
@@ -270,7 +266,8 @@ import { reactive, ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft, Link, Promotion, VideoPause, Plus, Document, Loading, Tools, Delete, Connection, User } from '@element-plus/icons-vue'
-import { renderMarkdown } from '../../utils/markdown'
+import { renderMarkdownWithCitations } from '../../utils/markdown'
+import SourcePanel from '../../components/SourcePanel.vue'
 import { stopGeneration } from '../../utils/chatStream'
 import { windowGet, streamChatApi, windowMessages, windowSessions, windowCreateSession, windowDeleteSession,
   agentGetPlanState, agentCancelPlan, agentRetryStep, agentSkipStep, agentGetPlanBySession,
@@ -397,6 +394,19 @@ const dedupeSources = (sources) => {
     if (!prev || (s.score ?? 0) > (prev.score ?? 0)) byFile.set(key, s)
   }
   return Array.from(byFile.values())
+}
+
+// 点击 [Sn] 定位并高亮同一条消息下的来源卡片
+const onCitationClick = (event) => {
+  const cite = event.target.closest('.citation-ref')
+  if (!cite) return
+  const idx = Number(cite.dataset.cite) - 1
+  const card = event.currentTarget.closest('.message')
+    ?.querySelector(`.source-panel[data-index="${idx}"]`)
+  if (!card) return
+  card.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+  card.classList.add('cite-flash')
+  setTimeout(() => card.classList.remove('cite-flash'), 1200)
 }
 
 // 历史消息 → 视图消息（metrics 抽取）
@@ -1493,6 +1503,7 @@ onUnmounted(() => {
   border-top: 1px dashed #ebeef5;
   font-size: 12px;
   .sources-title { color: #909399; margin-bottom: 6px; }
+  .source-panel + .source-panel { margin-top: 6px; }
   .source-item {
     display: flex; align-items: center; gap: 4px;
     padding: 4px 0; color: #606266;
