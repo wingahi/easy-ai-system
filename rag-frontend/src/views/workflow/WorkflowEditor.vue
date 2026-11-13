@@ -4,6 +4,8 @@
       <el-button link :icon="ArrowLeft" @click="back">返回</el-button>
       <span class="wf-name">{{ workflow.name || '工作流' }}</span>
       <el-tag size="small" type="info">v{{ workflow.version || 1 }}</el-tag>
+      <VisibilityControl v-if="loaded" :visibility="workflow.visibility" :can-edit="canEditVisibility"
+                         :loading="visibilityLoading" @change="changeVisibility" />
       <el-tag v-if="running" size="small" type="warning">运行中</el-tag>
       <div class="spacer" />
       <el-button :icon="CircleCheck" @click="validateGraph">校验</el-button>
@@ -271,23 +273,30 @@ import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
 import WorkflowNodeCard from '../../components/WorkflowNodeCard.vue'
 import PromptTemplateInput from '../../components/PromptTemplateInput.vue'
+import VisibilityControl from '../../components/VisibilityControl.vue'
 import {
   chatModelList, kbList, toolList,
   workflowGet, workflowUpdate, workflowValidate, workflowPageRuns,
-  workflowRunState, workflowCancelRun, streamWorkflowRun, streamWorkflowResume
+  workflowRunState, workflowCancelRun, streamWorkflowRun, streamWorkflowResume,
+  workflowUpdateVisibility
 } from '../../api'
+import { canWriteResource } from '../../utils/visibility'
+import { useUserStore } from '../../stores/user'
 
 const route = useRoute()
 const router = useRouter()
 const workflowId = Number(route.params.id)
+const userStore = useUserStore()
 
 const nodeTypes = { wf: markRaw(WorkflowNodeCard) }
 const { screenToFlowCoordinate, getNodes, getEdges, fitView } = useVueFlow()
 
-const workflow = reactive({ id: workflowId, name: '', description: '', version: 1 })
+const workflow = reactive({ id: workflowId, name: '', description: '', version: 1, visibility: 'PRIVATE', createBy: '' })
 const nodes = ref([])
 const edges = ref([])
 const saving = ref(false)
+const loaded = ref(false)
+const visibilityLoading = ref(false)
 
 const canvasRef = ref(null)
 const chatModels = ref([])
@@ -382,14 +391,34 @@ const loadWorkflow = async () => {
   const res = await workflowGet(workflowId)
   const wf = res.data
   Object.assign(workflow, {
-    id: wf.id, name: wf.name, description: wf.description, version: wf.version
+    id: wf.id, name: wf.name, description: wf.description, version: wf.version,
+    visibility: wf.visibility || 'PRIVATE', createBy: wf.createBy
   })
   const graph = parseGraph(wf.graphJson)
   nodes.value = graph.nodes.map(toFlowNode)
   edges.value = graph.edges.map(toFlowEdge)
   nodeSeq = nodes.value.length + 1
   savedGraphKey = graphKey(buildGraph())
+  loaded.value = true
   setTimeout(() => { try { fitAll() } catch { /* 画布尚未初始化 */ } }, 100)
+}
+
+/** 仅创建者或管理员可写（与后端 DataScopeGuard 同口径） */
+const canEditVisibility = computed(() => canWriteResource(workflow, userStore))
+
+/** 详情页切换可见性：成功后回写，失败保持原值（错误提示由请求拦截器给出） */
+const changeVisibility = async (visibility) => {
+  if (!visibility || visibility === (workflow.visibility || 'PRIVATE')) return
+  visibilityLoading.value = true
+  try {
+    const res = await workflowUpdateVisibility(workflowId, visibility)
+    workflow.visibility = res.data?.visibility || visibility
+    ElMessage.success('可见性已更新')
+  } catch {
+    // 403 / 3003 等错误已由 request 拦截器统一提示
+  } finally {
+    visibilityLoading.value = false
+  }
 }
 
 const loadOptions = async () => {

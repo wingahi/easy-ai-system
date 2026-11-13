@@ -13,6 +13,8 @@ export const kbGet = (id) => request.get(`/kb/${id}`)
 export const kbCreate = (data) => request.post('/kb', data)
 export const kbUpdate = (data) => request.put('/kb', data)
 export const kbDelete = (id) => request.delete(`/kb/${id}`)
+// 修改知识库可见性（PRIVATE / TEAM / PUBLIC）
+export const kbUpdateVisibility = (id, visibility) => request.patch(`/kb/${id}/visibility`, { visibility })
 export const kbList = () => request.get('/kb/list')
 export const kbUploadFile = (kbId, file, splitStrategy, splitConfig) => {
   const formData = new FormData()
@@ -83,6 +85,8 @@ export const windowGet = (id) => request.get(`/chat/windows/${id}`)
 export const windowCreate = (data) => request.post('/chat/windows', data)
 export const windowUpdate = (data) => request.put('/chat/windows', data)
 export const windowDelete = (id) => request.delete(`/chat/windows/${id}`)
+// 修改聊天窗口可见性
+export const windowUpdateVisibility = (id, visibility) => request.patch(`/chat/windows/${id}/visibility`, { visibility })
 export const windowDisable = (id) => request.post(`/chat/windows/${id}/disable`)
 export const windowEnable = (id) => request.post(`/chat/windows/${id}/enable`)
 export const windowEnableShare = (id) => request.post(`/chat/windows/${id}/share/enable`)
@@ -116,6 +120,9 @@ export const promptTemplateGet = (id) => request.get(`/prompt-templates/${id}`)
 export const promptTemplateCreate = (data) => request.post('/prompt-templates', data)
 export const promptTemplateUpdate = (data) => request.put('/prompt-templates', data)
 export const promptTemplateDelete = (id) => request.delete(`/prompt-templates/${id}`)
+// 修改模板可见性（内置模板固定公开，后端会返回 3003）
+export const promptTemplateUpdateVisibility = (id, visibility) =>
+  request.patch(`/prompt-templates/${id}/visibility`, { visibility })
 export const promptTemplateRender = (id, vars) => request.post(`/prompt-templates/${id}/render`, { vars })
 // 输入框前缀联想的轻量候选查询（query 为空时返回最近更新的模板）
 export const promptTemplateSuggest = (params) => request.get('/prompt-templates/suggest', { params })
@@ -275,6 +282,8 @@ export const toolList = (toolType) => request.get('/chat/tools/list', { params: 
 export const toolCreate = (data) => request.post('/chat/tools', data)
 export const toolUpdate = (data) => request.put('/chat/tools', data)
 export const toolDelete = (id) => request.delete(`/chat/tools/${id}`)
+// 修改工具可见性
+export const toolUpdateVisibility = (id, visibility) => request.patch(`/chat/tools/${id}/visibility`, { visibility })
 export const toolDebug = (id, args) => request.post(`/chat/tools/${id}/debug`, { arguments: args })
 
 // Skill 目录管理
@@ -312,6 +321,9 @@ export const workflowGet = (id) => request.get(`/workflows/${id}`)
 export const workflowCreate = (data) => request.post('/workflows', data)
 export const workflowUpdate = (id, data) => request.put(`/workflows/${id}`, data)
 export const workflowDelete = (id) => request.delete(`/workflows/${id}`)
+// 修改工作流可见性
+export const workflowUpdateVisibility = (id, visibility) =>
+  request.patch(`/workflows/${id}/visibility`, { visibility })
 export const workflowValidate = (id, graphJson) => request.post(`/workflows/${id}/validate`, graphJson ? { graphJson } : {})
 export const workflowEnable = (id) => request.post(`/workflows/${id}/enable`)
 export const workflowDisable = (id) => request.post(`/workflows/${id}/disable`)

@@ -45,6 +45,13 @@
             <el-tag :type="row.status === 1 ? 'success' : 'danger'">{{ row.status === 1 ? '启用' : '禁用' }}</el-tag>
           </template>
         </el-table-column>
+        <el-table-column label="可见性" width="110">
+          <template #default="{ row }">
+            <VisibilityControl :visibility="row.visibility" :can-edit="canWrite(row)"
+                               :loading="visibilityLoadingId === row.id"
+                               @change="(v) => changeVisibility(row, v)" />
+          </template>
+        </el-table-column>
         <el-table-column prop="createTime" label="创建时间" width="170" />
         <el-table-column label="操作" width="310" fixed="right">
           <template #default="{ row }">
@@ -86,6 +93,18 @@
         <el-form-item label="状态">
           <el-switch v-model="form.status" :active-value="1" :inactive-value="0" />
         </el-form-item>
+        <el-form-item label="可见性">
+          <el-select v-model="form.visibility" style="width:100%"
+                     :disabled="!!editing && !canWrite(editing)">
+            <el-option v-for="o in VISIBILITY_OPTIONS" :key="o.value" :label="o.label" :value="o.value">
+              <span style="float:left">{{ o.label }}</span>
+              <span style="float:right;font-size:12px;color:#909399">{{ o.hint }}</span>
+            </el-option>
+          </el-select>
+          <div v-if="editing && !canWrite(editing)" style="font-size:12px;color:#909399;margin-top:4px">
+            仅创建者或管理员可修改可见性
+          </div>
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
@@ -122,9 +141,14 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Plus, Search } from '@element-plus/icons-vue'
 import { kbPage, kbCreate, kbUpdate, kbDelete, embeddingModelList,
-         tagList, kbTags, kbSetTags } from '../../api'
+         tagList, kbTags, kbSetTags, kbUpdateVisibility } from '../../api'
+import VisibilityControl from '../../components/VisibilityControl.vue'
+import { VISIBILITY_OPTIONS, canWriteResource } from '../../utils/visibility'
+import { useUserStore } from '../../stores/user'
 
 const router = useRouter()
+const userStore = useUserStore()
+const visibilityLoadingId = ref(null)
 const loading = ref(false)
 const submitting = ref(false)
 const list = ref([])
@@ -145,7 +169,7 @@ const tagSelectedIds = ref([])
 const tagSubmitting = ref(false)
 
 const form = reactive({
-  name: '', description: '', embeddingModelId: null, status: 1
+  name: '', description: '', embeddingModelId: null, status: 1, visibility: 'PRIVATE'
 })
 const rules = {
   name: [{ required: true, message: '请输入名称' }],
@@ -184,9 +208,28 @@ const openDialog = (row) => {
     name: row?.name || '',
     description: row?.description || '',
     embeddingModelId: row?.embeddingModelId || null,
-    status: row?.status ?? 1
+    status: row?.status ?? 1,
+    visibility: row?.visibility || 'PRIVATE'
   })
   dialogVisible.value = true
+}
+
+/** 仅创建者或管理员可写（与后端 DataScopeGuard 同口径） */
+const canWrite = (row) => canWriteResource(row, userStore)
+
+/** 列表内切换可见性：成功后回写当前行，失败保持原值（错误提示由请求拦截器给出） */
+const changeVisibility = async (row, visibility) => {
+  if (!visibility || visibility === (row.visibility || 'PRIVATE')) return
+  visibilityLoadingId.value = row.id
+  try {
+    const res = await kbUpdateVisibility(row.id, visibility)
+    row.visibility = res.data?.visibility || visibility
+    ElMessage.success('可见性已更新')
+  } catch {
+    // 403 / 3003 等错误已由 request 拦截器统一提示
+  } finally {
+    visibilityLoadingId.value = null
+  }
 }
 
 const submit = async () => {

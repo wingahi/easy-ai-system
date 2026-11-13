@@ -27,6 +27,13 @@
             </el-tag>
           </template>
         </el-table-column>
+        <el-table-column label="可见性" width="110">
+          <template #default="{ row }">
+            <VisibilityControl :visibility="row.visibility" :can-edit="canWrite(row)"
+                               :loading="visibilityLoadingId === row.id"
+                               @change="(v) => changeVisibility(row, v)" />
+          </template>
+        </el-table-column>
         <el-table-column label="分享" width="90">
           <template #default="{ row }">
             <el-tag v-if="row.shareEnabled" type="success" size="small">已开启</el-tag>
@@ -255,10 +262,15 @@ import {
   workflowPageRuns, workflowRunNodes, workflowVersions, workflowRollback,
   workflowTriggers, workflowTriggerCreate, workflowTriggerEnable, workflowTriggerDisable,
   workflowTriggerDelete, workflowTemplates, workflowInstantiate,
-  workflowShareEnable, workflowShareDisable, workflowShareRegenerate
+  workflowShareEnable, workflowShareDisable, workflowShareRegenerate, workflowUpdateVisibility
 } from '../../api'
+import VisibilityControl from '../../components/VisibilityControl.vue'
+import { canWriteResource } from '../../utils/visibility'
+import { useUserStore } from '../../stores/user'
 
 const router = useRouter()
+const userStore = useUserStore()
+const visibilityLoadingId = ref(null)
 
 const list = ref([])
 const loading = ref(false)
@@ -455,6 +467,24 @@ const create = async () => {
 }
 
 const openEditor = (row) => router.push(`/workflows/${row.id}/edit`)
+
+/** 仅创建者或管理员可写（与后端 DataScopeGuard 同口径） */
+const canWrite = (row) => canWriteResource(row, userStore)
+
+/** 列表内切换可见性：成功后回写当前行，失败保持原值（错误提示由请求拦截器给出） */
+const changeVisibility = async (row, visibility) => {
+  if (!visibility || visibility === (row.visibility || 'PRIVATE')) return
+  visibilityLoadingId.value = row.id
+  try {
+    const res = await workflowUpdateVisibility(row.id, visibility)
+    row.visibility = res.data?.visibility || visibility
+    ElMessage.success('可见性已更新')
+  } catch {
+    // 403 / 3003 等错误已由 request 拦截器统一提示
+  } finally {
+    visibilityLoadingId.value = null
+  }
+}
 
 const toggle = async (row, status) => {
   if (status === 1) await workflowEnable(row.id)

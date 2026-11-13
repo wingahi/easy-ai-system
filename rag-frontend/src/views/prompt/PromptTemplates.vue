@@ -45,6 +45,14 @@
         <el-table-column prop="version" label="版本" width="70">
           <template #default="{ row }">v{{ row.version }}</template>
         </el-table-column>
+        <el-table-column label="可见性" width="110">
+          <template #default="{ row }">
+            <VisibilityControl :visibility="row.visibility" :can-edit="canEditVisibility(row)"
+                               :readonly-reason="row.builtin ? '内置模板固定为公开，不可修改' : '仅创建者或管理员可修改可见性'"
+                               :loading="visibilityLoadingId === row.id"
+                               @change="(v) => changeVisibility(row, v)" />
+          </template>
+        </el-table-column>
         <el-table-column label="操作" width="170" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="openDialog(row)">编辑</el-button>
@@ -84,6 +92,21 @@
         <el-form-item label="备注">
           <el-input v-model="form.remark" />
         </el-form-item>
+        <el-form-item label="可见性">
+          <el-select v-model="form.visibility" style="width:220px"
+                     :disabled="!!editing?.builtin || (!!editing && !canWrite(editing))">
+            <el-option v-for="o in VISIBILITY_OPTIONS" :key="o.value" :label="o.label" :value="o.value">
+              <span style="float:left">{{ o.label }}</span>
+              <span style="float:right;font-size:12px;color:#909399">{{ o.hint }}</span>
+            </el-option>
+          </el-select>
+          <div v-if="editing?.builtin" style="font-size:12px;color:#909399;margin-top:4px">
+            内置模板固定为公开，不可修改可见性
+          </div>
+          <div v-else-if="editing && !canWrite(editing)" style="font-size:12px;color:#909399;margin-top:4px">
+            仅创建者或管理员可修改可见性
+          </div>
+        </el-form-item>
 
         <!-- 实时渲染预览 -->
         <template v-if="editing">
@@ -112,8 +135,14 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import { promptTemplatePage, promptTemplateCreate, promptTemplateUpdate, promptTemplateDelete,
-  promptTemplateRender } from '../../api'
+  promptTemplateRender, promptTemplateUpdateVisibility } from '../../api'
 import { loadPromptTriggerConfig, savePromptTriggerConfig } from '../../utils/promptTrigger'
+import VisibilityControl from '../../components/VisibilityControl.vue'
+import { VISIBILITY_OPTIONS, canWriteResource } from '../../utils/visibility'
+import { useUserStore } from '../../stores/user'
+
+const userStore = useUserStore()
+const visibilityLoadingId = ref(null)
 
 const loading = ref(false)
 const submitting = ref(false)
@@ -138,7 +167,7 @@ const saveTriggerCfg = () => {
   ElMessage.success(`已保存：${saved.enabled ? '启用' : '停用'}，前缀 ${saved.prefix}，最多 ${saved.maxCandidates} 个候选`)
 }
 
-const form = reactive({ name: '', category: '', content: '', remark: '' })
+const form = reactive({ name: '', category: '', content: '', remark: '', visibility: 'PRIVATE' })
 const rules = {
   name: [{ required: true, message: '请输入模板名' }],
   content: [{ required: true, message: '请输入模板内容' }]
@@ -178,12 +207,36 @@ const openDialog = (row) => {
   editing.value = row || null
   preview.value = ''
   if (row) {
-    Object.assign(form, { name: row.name, category: row.category, content: row.content, remark: row.remark })
+    Object.assign(form, {
+      name: row.name, category: row.category, content: row.content, remark: row.remark,
+      visibility: row.visibility || (row.builtin ? 'PUBLIC' : 'PRIVATE')
+    })
     previewVars.value = {}
   } else {
-    Object.assign(form, { name: '', category: '', content: '', remark: '' })
+    Object.assign(form, { name: '', category: '', content: '', remark: '', visibility: 'PRIVATE' })
   }
   dialogVisible.value = true
+}
+
+/** 仅创建者或管理员可写（与后端 DataScopeGuard 同口径） */
+const canWrite = (row) => canWriteResource(row, userStore)
+
+/** 内置模板固定公开，不提供切换入口 */
+const canEditVisibility = (row) => !row.builtin && canWrite(row)
+
+/** 列表内切换可见性：成功后回写当前行，失败保持原值（错误提示由请求拦截器给出） */
+const changeVisibility = async (row, visibility) => {
+  if (!visibility || visibility === (row.visibility || 'PRIVATE')) return
+  visibilityLoadingId.value = row.id
+  try {
+    const res = await promptTemplateUpdateVisibility(row.id, visibility)
+    row.visibility = res.data?.visibility || visibility
+    ElMessage.success('可见性已更新')
+  } catch {
+    // 403 / 3003（内置模板）等错误已由 request 拦截器统一提示
+  } finally {
+    visibilityLoadingId.value = null
+  }
 }
 
 const doPreview = async () => {
