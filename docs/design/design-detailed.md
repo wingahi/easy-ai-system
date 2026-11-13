@@ -468,6 +468,40 @@ flowchart TD
 6. 过滤 `minScore`（默认 0.3）、截断 `topK`（默认 5）；
 7. 返回 `RetrieveResult`：matches、多知识库命中、耗时、`coverageRate`、`hitRate`。
 
+#### 6.4.1 引用来源结构化与 [Sn] 溯源（2026-11-12）
+
+**`sources` 字段**（`RagChatService.buildSourcesList`，写入 `wgh_chat_message.sources` JSON 并随 `sources` 事件下发）：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `kbId` | Long | 知识库 ID |
+| `kbName` | String | 知识库名称（入库时写入 metadata，存量向量读取时兜底回查） |
+| `fileId` | Long | 知识库文件 ID |
+| `fileName` | String | 文件名 |
+| `chunkIndex` | Integer | 段序号（0 起，前端展示 +1） |
+| `pageNo` | Integer | 页码；**当前恒为空**（解析链路无页级映射） |
+| `charStart` / `charEnd` | Integer | chunk 在归一化全文中的字符区间，用于原文定位 |
+| `score` | Double | 相似度分数 |
+| `snippet` | String | 压缩连续空白后的前 120 字预览 |
+
+去重规则：按文件名归并（缺失时回退 `fileId`，再回退 `kbName`），同一文档只保留分数最高的条目；因此同名文件跨知识库会被合并为一张卡片。
+
+**`[Sn]` 编号规则**：
+
+1. 先做上下文 token 预算裁剪（`applyRagContextBudget`），再对裁剪后的列表分配编号，保证"点了编号一定有卡片"；
+2. `buildCitationNumbers` 按文档首次出现顺序分配 1 起编号，同一文件的多段共用同一编号（`sourceKey` 与来源去重口径一致）；
+3. `extractRagContext` 在每个 chunk 前拼 `[Sn]`，并在 `【来源: 知识库 - 文件名】` 后追加正文；system prompt 要求回答按编号引用；
+4. `buildSourcesList` 的输出顺序与编号顺序一致，前端第 n 张卡片即 `[Sn]`。
+
+**前端渲染**：
+
+- `utils/markdown.js#renderMarkdownWithCitations` 在 DOMPurify 清洗后的 HTML 上遍历文本节点，把 `[S\d+]` 包成 `.citation-ref`（跳过 `pre` / `code` / `a`，避免误伤代码与链接）；
+- `components/SourcePanel.vue` 展示编号、知识库、文件、段序号、分数，点击展开 `snippet` 与字符区间（`pageNo` 非空时显示页码）；
+- 点击 `[Sn]` 定位并高亮对应卡片（`.source-panel.cite-flash`）；
+- `ChatPlayground.vue`、`ShareChat.vue`、`PublicShareChat.vue` 三个聊天页统一接入同一渲染函数与组件。
+
+**已知限制**：`pageNo` 恒空；纯 Agent 分支上下文未注入 `[Sn]`；同名文件跨知识库合并为一张卡片。
+
 ### 6.5 上下文压缩
 
 | 项 | 值 / 行为 |
@@ -515,7 +549,7 @@ LLM-as-judge：
 | `start` | `messageId`、`sessionId`、`model` |
 | `retrieve` | `results`、`totalMatches`、`filteredMatches`、`coverageRate`、`hitRate` |
 | `content` | JSON 字符串 `{"text":"..."}`，避免换行丢失 |
-| `sources` | 去重后的文档引用（同文档保留最高分） |
+| `sources` | 去重后的文档引用（同文档保留最高分）；字段见 §6.4.1：`kbId` / `kbName` / `fileId` / `fileName` / `chunkIndex` / `pageNo` / `charStart` / `charEnd` / `score` / `snippet`；顺序与上下文 `[Sn]` 编号一致 |
 | `accuracy` | 在线正确率/覆盖率 |
 | `metrics` | 检索耗时、首 token、总耗时、token、成本 |
 | `model_switch` | `modelName`、`modelId`、`reason` |
@@ -670,6 +704,33 @@ SSE：`multi_agent_start`、`agent_start`、`agent_rag`、`agent_tool_call_start
 - `schema/01-schema.sql`：全部 DDL、索引、COMMENT，使用 `CREATE TABLE IF NOT EXISTS`、`CREATE INDEX IF NOT EXISTS`（结构幂等，可重复执行）；
 - `seed/02-data.sql`：种子数据（角色、权限、体验账号、内置模板等）与兼容修复，使用 `INSERT ... ON CONFLICT`；种子含示例数据，不建议对存量库重跑；
 - 两个脚本按 `01-schema.sql` → `02-data.sql` 顺序执行。
+
+### 8.6 数据归属与可见性（2026-11-12）
+
+**资源范围与字段**：知识库（`wgh_knowledge_base`）、聊天窗口（`wgh_chat_window`）、工作流（`wgh_workflow`）、Prompt 模板（`wgh_prompt_template`）、工具（`wgh_tool`）五张表新增 `visibility VARCHAR(16) NOT NULL DEFAULT 'PRIVATE'`，并建 `(create_by, visibility)` 索引。owner 直接复用已有 `create_by`，未引入 `creator_id` / `tenant_id`；`MetaObjectHandlerImpl` 写入真实登录用户，异步 / 内部线程无登录上下文时回落 `system`。
+
+**判定矩阵**（`DataScopeGuard`）：
+
+| 访问者 \ 资源可见性 | `PRIVATE` | `TEAM` | `PUBLIC` |
+| --- | --- | --- | --- |
+| 所有者 | 读 / 写 | 读 / 写 | 读 / 写 |
+| ADMIN | 读 / 写 | 读 / 写 | 读 / 写 |
+| 其他登录用户 | 读：404（按不存在处理）<br>写：404 | 读：允许<br>写：403（`1004`） | 读：允许<br>写：403（`1004`） |
+| 无登录上下文（内部调用 / 异步 / 单测） | 放行 | 放行 | 放行 |
+
+- 404 / 403 为**语义**：读不可见资源按"不存在"处理（业务码 `3001`），可见但不可写返回权限不足（业务码 `1004`）；两者当前均为 HTTP 200 + 业务码，前端按 `code` 分支处理。
+- `TEAM` 与 `PUBLIC` 在当前无租户 / 团队模型下判定等价，均为"非 owner 可读"。
+- 内置 Prompt 模板固定 `PUBLIC`，修改可见性返回 `3003`（`OPERATION_NOT_ALLOWED`），并禁止改名以避免 `template:` 引用断裂。
+
+**`DataScopeInterceptor` 改写范围**：
+
+- **显式开关**：仅通过 `DataScopeContext.runWithScope(...)` 激活；按 id 精确取数、Agent / 工作流运行、调度任务、分享链路（按 token 访问）默认不激活，不会被误伤。
+- 仅处理命中白名单表的**单表 `PlainSelect`**，追加 `(create_by = '当前用户' OR visibility <> 'PRIVATE')`；ADMIN 与无登录上下文不设置范围。
+- 白名单表：`wgh_knowledge_base`、`wgh_chat_window`、`wgh_workflow`、`wgh_tool`、`wgh_prompt_template`。
+- **失败关闭**：命中白名单表但带 `JOIN` 的查询直接抛 `SQLException`；无法安全改写的 `UNION` / CTE 若包含白名单表同样抛错，不静默放行。
+- 同一条 `BoundSql` 通过附加参数防止重复追加条件。
+
+**升级注意**：存量库需手工执行 10 条 ALTER（5 张表 `ADD COLUMN visibility` + 5 个 `(create_by, visibility)` 索引）；仓库当前未提供独立迁移脚本。历史 `create_by='system'` 的资源升级后默认仅管理员可见，需要时由管理员改归属或可见性。
 
 ---
 
@@ -881,6 +942,9 @@ sequenceDiagram
 | 5 | 模型故障转移边界 | 普通 RAG、Agent、工作流 LLM 节点统一复用 `failover` 包；已产出内容后失败不切链 / 不回滚 / 不重发；不支持续接或拼接第二个模型输出 |
 | 6 | Redis 降级单机 | `DefaultPublicAccessStore` 回退进程内 Map/Deque，多实例不一致 |
 | 7 | 本地 `resolveUrl` 非下载服务 | 仅返回 `url-prefix + key`；应用未挂载静态目录 |
+| 8 | 引用溯源字段不完整（2026-11-12） | `pageNo` 恒空（解析器不产出页级映射）；纯 Agent 分支上下文未加 `[Sn]`；同名文件跨知识库合并为一张卡片 |
+| 9 | 资源可见性无团队边界（2026-11-12） | 无 `tenant_id` / 团队成员模型，`TEAM` 与 `PUBLIC` 判定等价；只覆盖单表列表查询，`JOIN` / `UNION` / CTE 直接失败关闭 |
+| 10 | 存量库升级需手工 DDL（2026-11-12） | 5 张表需 `ADD COLUMN visibility` + 5 个索引，共 10 条 ALTER；仓库暂无独立迁移脚本，历史 `create_by='system'` 资源仅管理员可见 |
 
 ---
 
@@ -890,3 +954,4 @@ sequenceDiagram
 - 模块依赖以各 `pom.xml` 显式声明为准；
 - 文档中的默认值来自 `@ConfigurationProperties` 与 `application.yml`，环境变量可覆盖；
 - 若后续修改认证、配额、公开访问、存储、指标或表结构，请同步更新本文与 [design-overview.md](design-overview.md)。
+- 2026-11-12 补充批次 2 能力（引用溯源 `96dfc42`、资源可见性 `59c5eee` 及前端可见性交互），仅核对源码与 schema，未执行构建。

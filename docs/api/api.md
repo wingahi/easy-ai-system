@@ -18,6 +18,7 @@
 | GET | `/kb` | 知识库分页列表（`page` / `size` / `keyword`） |
 | GET | `/kb/list` | 全量知识库（下拉选择用） |
 | GET | `/kb/{id}` | 知识库详情 |
+| PATCH | `/kb/{id}/visibility` | 修改可见性（body：`{"visibility":"PRIVATE\|TEAM\|PUBLIC"}`，返回更新后的知识库） |
 | POST | `/kb` | 新建知识库 |
 | PUT | `/kb` | 更新知识库 |
 | DELETE | `/kb/{id}` | 逻辑删除知识库 |
@@ -50,6 +51,7 @@
 |------|------|------|
 | GET | `/chat/windows` | 窗口分页列表 |
 | GET | `/chat/windows/{id}` | 窗口详情（含 RAG / Agent / 评估 / 分享配置） |
+| PATCH | `/chat/windows/{id}/visibility` | 修改可见性（body：`{"visibility":"PRIVATE\|TEAM\|PUBLIC"}`） |
 | POST | `/chat/windows` | 新建窗口 |
 | PUT | `/chat/windows` | 更新窗口 |
 | DELETE | `/chat/windows/{id}` | 逻辑删除 |
@@ -80,6 +82,7 @@
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/chat/tools` | 工具分页列表（支持 `toolType` 过滤：`HTTP` / `MCP` / `SKILL` / `FUNCTION_CALLING`） |
+| PATCH | `/chat/tools/{id}/visibility` | 修改可见性（body：`{"visibility":"PRIVATE\|TEAM\|PUBLIC"}`） |
 | GET | `/chat/tools/list` | 启用工具全量列表 |
 | POST | `/chat/tools` | 新增工具 |
 | PUT | `/chat/tools` | 更新工具 |
@@ -110,6 +113,7 @@
 | GET | `/workflows` | 分页列表（`page` / `size` / `keyword` / `status`） |
 | GET | `/workflows/list` | 启用工作流全量列表 |
 | GET | `/workflows/{id}` | 详情（含 `graph_json`） |
+| PATCH | `/workflows/{id}/visibility` | 修改可见性（body：`{"visibility":"PRIVATE\|TEAM\|PUBLIC"}`） |
 | POST | `/workflows` | 新建（图校验 + v1 快照） |
 | PUT | `/workflows/{id}` | 保存（version+1，图校验 + 自动快照） |
 | POST | `/workflows/{id}/validate` | 仅校验图，返回错误列表 |
@@ -187,7 +191,7 @@
 | 事件 | 关键字段 |
 |------|---------|
 | `start` | `sessionId` |
-| `retrieve` / `sources` | `sources[]`（fileName / kbName / score / content） |
+| `retrieve` / `sources` | `sources[]`：`kbId` / `kbName` / `fileId` / `fileName` / `chunkIndex` / `pageNo` / `charStart` / `charEnd` / `score` / `snippet`；同文档保留最高分，顺序与回答中的 `[Sn]` 编号一致（`pageNo` 当前恒空） |
 | `content` | `content`（**JSON 包装，避免换行丢失**） |
 | `accuracy` | `recallRate` / `hitRate` / `accuracyRate` |
 | `tool_call_start` / `tool_call_result` | `toolName` / `arguments` / `success` / `durationMs` |
@@ -221,3 +225,56 @@ Agent 开启后额外事件：`plan_created`、`plan_updated`、`plan_paused`、
 | `agent_turn_start` / `agent_turn_end` | `round` / `output` |
 | `agent_message` | `fromAgentId` / `content` |
 | `agent_hitl_pending` | `agentId` 或 `nodeId` / `prompt` |
+
+## 11. Prompt 模板
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/prompt-templates` | 分页列表（`page` / `size` / `keyword` / `category`） |
+| GET | `/prompt-templates/list` | 全量列表（窗口表单下拉用） |
+| GET | `/prompt-templates/suggest` | 输入框前缀联想候选（`query` / `limit`，`limit` 上限 50） |
+| GET | `/prompt-templates/{id}` | 模板详情（他人 `PRIVATE` 模板按不存在处理） |
+| POST | `/prompt-templates` | 新建模板（默认 `PRIVATE`） |
+| PUT | `/prompt-templates` | 更新模板（内容变更自动升版本号） |
+| DELETE | `/prompt-templates/{id}` | 逻辑删除（内置模板不可删） |
+| POST | `/prompt-templates/{id}/render` | 渲染预览（body：`{"vars":{...}}`，替换 `{{var}}`） |
+| PATCH | `/prompt-templates/{id}/visibility` | 修改可见性；内置模板固定 `PUBLIC`，修改返回 `3003` |
+
+## 12. 资源可见性（2026-11-12）
+
+五类资源（知识库、聊天窗口、工作流、Prompt 模板、工具）支持 `visibility`：
+
+| 取值 | 含义 |
+|------|------|
+| `PRIVATE` | 仅所有者与 ADMIN 可见（默认） |
+| `TEAM` | 非所有者可读、不可写（当前无团队模型，判定上等同 `PUBLIC`） |
+| `PUBLIC` | 所有登录用户可读、不可写 |
+
+**五个修改入口**：
+
+| 资源 | 端点 |
+|------|------|
+| 知识库 | `PATCH /api/kb/{id}/visibility` |
+| 聊天窗口 | `PATCH /api/chat/windows/{id}/visibility` |
+| 工作流 | `PATCH /api/workflows/{id}/visibility` |
+| Prompt 模板 | `PATCH /api/prompt-templates/{id}/visibility` |
+| 工具 | `PATCH /api/chat/tools/{id}/visibility` |
+
+请求体：
+
+```json
+{ "visibility": "PRIVATE | TEAM | PUBLIC" }
+```
+
+响应：成功返回更新后的资源实体；非法取值返回 `2001`（参数错误）。
+
+**权限与错误码**：
+
+| 场景 | HTTP | 业务码 |
+|------|------|--------|
+| 读取他人 `PRIVATE` 资源（详情按不存在处理，列表不返回） | 200 | `3001` 资源不存在（语义等价 404，不泄露存在性） |
+| 写入他人 `TEAM` / `PUBLIC` 资源 | 200 | `1004` 权限不足（语义等价 403） |
+| 修改内置 Prompt 模板可见性 | 200 | `3003` 操作不允许 |
+| 非法 `visibility` 取值 | 200 | `2001` 参数错误 |
+
+分享链路（`/api/chat/share/{token}`、`/api/public/share/{token}`）按 token 访问，不参与可见性过滤；内部调度与异步任务无登录上下文时不做数据权限过滤。

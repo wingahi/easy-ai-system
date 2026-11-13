@@ -28,6 +28,9 @@
 | 换 embedding 模型不重建 | `KnowledgeBase` 已有 `pendingCollection` / `pendingEmbeddingModelId`，`KnowledgeBaseService` 置 `PENDING` 并显式重建（`KnowledgeBaseService.java:81`） | **已完成**，只需补“变更自动触发”策略 |
 | RAG 上下文无预算 | `rag-llm/.../util/RagContextBudgeter.java` 已存在并在聊天链路使用 | **已完成** |
 | 引用来源 kbName 为空 | 元数据已写 + 读取兜底 | **已完成** |
+| T03 chunk 级引用与原文定位 | `sources` 扩 10 字段、`[Sn]` 按文档编号、`SourcePanel.vue` + `renderMarkdownWithCitations` 三页接入（commit `96dfc42`） | **已完成**，见 T03 完成说明 |
+| T04a 资源归属与可见性（后端） | 五类资源 `visibility` + `DataScopeInterceptor` + 5 个 `PATCH .../visibility`（commit `59c5eee`） | **已完成**，迁移脚本待补 |
+| T04b 资源归属与可见性（前端） | 五个列表页可见性列 + `VisibilityControl.vue`，无写权限只读徽标（2026-11-12） | **已完成** |
 
 > 原“检索参数问题”已由 T02 处理（commit `874f43d`）：`min-score` 默认与各环境 yml 统一为 `0.55`，`enable-hybrid` / `keyword-top-n` 在 yml 暴露，HYDE 改为「原查询 + 假设答案」双路。低覆盖自动补偿仍未实现，见 T02 保留项。
 
@@ -43,9 +46,9 @@
 | T01 | 文档解析增强：OCR + 表格结构 + 清洗 | P0 | 中 | 1 | `rag-kb/.../parser/**`、`DocumentParserDispatcher`、新建 `ocr/**`、`rag-kb/pom.xml` | 无 | 已完成 `6ed9d10` |
 | T02 | 检索参数治理与自动补偿 | P0 | 小 | 1 | `RagProperties.java`、`application.yml`（retrieve 段）、`QueryTransformService.java`、`RagRetrieveService.java` | 无 | 部分完成 `874f43d`（参数与 HYDE 已完成，自动补偿未做） |
 | T02F | 窗口级检索参数 UI | P0 | 小 | 3 | `ChatWindows.vue`（只此一个页面） | T02、T04b | 未开始 |
-| T03 | chunk 级引用与原文定位 | P0 | 中 | 2 | `KnowledgeFileService.buildMetadata`、`VectorStoreService`（metadata 透传）、`RagChatService.buildSourcesList/extractRagContext`、三个聊天页 + 新建 `SourcePanel.vue` | T02（检索结果字段） | 未开始 |
-| T04a | 资源归属与可见性（后端） | P0 | 中 | 2 | `01-schema.sql` + 新迁移、KB/ChatWindow/Workflow/ToolConfig/PromptTemplate 的 entity/service/controller、`rag-data` 数据范围拦截器 | 无（建议先做“owner + visibility”MVP） | 未开始 |
-| T04b | 资源归属与可见性（前端） | P0 | 中 | 2（T04a 后） | `KnowledgeBase.vue`、`ChatWindows.vue`、`WorkflowList.vue`、`ToolManagement.vue`、`PromptTemplates.vue` | T04a | 未开始 |
+| T03 | chunk 级引用与原文定位 | P0 | 中 | 2 | `KnowledgeFileService.buildMetadata`、`VectorStoreService`（metadata 透传）、`RagChatService.buildSourcesList/extractRagContext`、三个聊天页 + 新建 `SourcePanel.vue` | T02（检索结果字段） | 已完成 `96dfc42`（`pageNo` 恒空，Agent 分支无 `[Sn]`） |
+| T04a | 资源归属与可见性（后端） | P0 | 中 | 2 | `01-schema.sql` + 新迁移、KB/ChatWindow/Workflow/ToolConfig/PromptTemplate 的 entity/service/controller、`rag-data` 数据范围拦截器 | 无（建议先做“owner + visibility”MVP） | 已完成 `59c5eee`（迁移脚本未入库） |
+| T04b | 资源归属与可见性（前端） | P0 | 中 | 2（T04a 后） | `KnowledgeBase.vue`、`ChatWindows.vue`、`WorkflowList.vue`、`ToolManagement.vue`、`PromptTemplates.vue` | T04a | 已完成（2026-11-12，未单独提交） |
 | T05 | OpenAI 兼容入口 + Python SDK | P1 | 中 | 1 | 新建 `OpenAiCompatController.java`、`ApiKeyAuthenticationFilter.java`、`SecurityConfig.java`、`ApiKeyService.java`、新建 `sdk/python/**`、`PublicAccess.vue` | 无 | 已完成 `a2d9046` |
 | T06a | 生成侧评测指标补齐（无表结构） | P1 | 中 | 1 | `LlmJudgeService.java`、`RetrievalEvaluationService.java`、`RetrievalEvaluationController.java` | 无 | 已完成 `e814bb5` |
 | T06b | 评测数据集版本化 + CI 门禁 | P1 | 中 | 3 | `01-schema.sql`（新表）、`eval/eval_recall.py`、`.github/workflows/ci.yml`、`KBEvaluation.vue` | T04a（schema）、T06a | 未开始 |
@@ -147,6 +150,8 @@
 
 **一句话目标**：每条引用都能落到“哪个知识库、哪个文件、第几段、原文哪一段”，前端可展开原文。
 
+> **完成情况（2026-11-12，commit `96dfc42`）**：`sources` 已扩展为 `kbId/kbName/fileId/fileName/chunkIndex/pageNo/charStart/charEnd/score/snippet`；`[Sn]` 按文档首次出现顺序分配（同文档多段共用），且在 token 预算裁剪后编号；`SourcePanel.vue` + `renderMarkdownWithCitations` 已接入三个聊天页。**与原计划的偏差**：`pageNo` 恒空（解析链路只做段落摊平，无页级映射）；纯 Agent 分支上下文未加 `[Sn]`；同名文件跨知识库合并为一张卡片。
+
 **涉及模块与文件**
 - `rag-kb/src/main/java/com/wgh/rag/kb/service/KnowledgeFileService.java`（只改 `buildMetadata` 与切分属性写入）
 - `rag-kb/src/main/java/com/wgh/rag/kb/service/VectorStoreService.java`（metadata 透传，不改表）
@@ -174,6 +179,8 @@
 ### T04a 资源归属与可见性（后端，P0 / 中 / 批次 2）
 
 **一句话目标**：让知识库、聊天窗口、工作流、工具、Prompt 模板有“所有者 + 可见性”，非所有者不可见、不可改。
+
+> **完成情况（2026-11-12，commit `59c5eee`）**：五类资源已加 `visibility`（`PRIVATE` 默认 / `TEAM` / `PUBLIC`），owner 复用 `create_by`；读他人 `PRIVATE` 按不存在处理（业务码 `3001`），写他人 `TEAM`/`PUBLIC` 返回权限不足（业务码 `1004`），均为 HTTP 200 + 业务码；内置 Prompt 模板固定 `PUBLIC`、改可见性返回 `3003`；`DataScopeInterceptor` 仅改写 `page/list` 单表查询，白名单表 JOIN / UNION / CTE 失败关闭。**与原计划的偏差**：`sql/migrations/20261109_resource_visibility.sql` 未入库（仓库已无 `sql/migrations/` 目录），存量库需手工执行 10 条 ALTER（5 `ADD COLUMN` + 5 索引）；`TEAM` 与 `PUBLIC` 当前判定等价。
 
 **建议先做 MVP**：不引入 `tenant_id`，用现有 `BaseEntity.createBy` 作为 owner，新增 `visibility`（PRIVATE/TEAM/PUBLIC）与查询过滤；等真有多租户诉求再加 `tenant_id`。这样改动集中、可回滚。
 
@@ -203,6 +210,8 @@
 ---
 
 ### T04b 资源归属与可见性（前端，P0 / 中 / 批次 2，T04a 后）
+
+> **完成情况（2026-11-12，未单独提交）**：五个列表页已加可见性列并接入 `VisibilityControl.vue`；五个 `PATCH .../visibility` 入口（`/api/kb/{id}`、`/api/chat/windows/{id}`、`/api/workflows/{id}`、`/api/prompt-templates/{id}`、`/api/chat/tools/{id}`）；无写权限时显示只读徽标 + tooltip，不提供可点按钮。原计划的“我的/共享/公开筛选与所有者列”未全部实现，当前以可见性徽标为主。
 
 **涉及页面**
 - `rag-frontend/src/views/kb/KnowledgeBase.vue`

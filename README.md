@@ -63,6 +63,7 @@
 | 文本切分（9 种策略） | 已完成 | AUTO / RECURSIVE / CHAPTER / PARAGRAPH / FAQ / LENGTH / CUSTOM / STRUCTURED（标题感知）/ SEMANTIC（语义断句） |
 | 查询变换 / 混合检索 / RRF / Rerank | 已完成 | REWRITE / MULTI_QUERY / HYDE；向量余弦 + pg_trgm 关键词召回；RRF(k=60) 融合；可选 Rerank |
 | 检索指标与离线评测 | 已完成 | 覆盖率 / 命中率；ground truth 标注后计算 Recall@K / Precision@K / MRR / NDCG；生成侧多 judge 评估 Faithfulness / Answer Relevancy / Context Precision / Context Recall（缺参考答案时显式标记不可计算）；`eval/eval_recall.py` 复用同一标注 |
+| 检索来源结构化与 [Sn] 引用溯源 | 已完成 | `sources` 扩展 `kbId` / `kbName` / `fileId` / `fileName` / `chunkIndex` / `pageNo` / `charStart` / `charEnd` / `score` / `snippet`（压缩空白后前 120 字），按文件名去重保留最高分；上下文按文档分配 `[Sn]` 编号（同文档多段共用），system prompt 要求按编号引用；前端 `SourcePanel.vue` 展开原文并高亮对应卡片（commit `96dfc42`） |
 | 知识库标签 | 已完成 | `TagService` / `TagController`；知识库与文件多标签绑定及管理界面 |
 | 文档版本 | 已完成 | `FileVersionService` + 版本列表 / 回滚；回滚生成新版本，不覆盖旧版本 |
 | 可插拔文件存储（local / OSS） | 已完成 | 独立 `rag-storage` 模块，`FileStorageService` + 本地 / 阿里云 OSS 实现 |
@@ -75,7 +76,7 @@
 
 | 能力 | 状态 | 说明 |
 |------|------|------|
-| 多会话与流式问答 | 已完成 | 多会话管理、首条消息自动生成标题、历史滑动加载；SSE 输出 Markdown、引用来源与检索指标 |
+| 多会话与流式问答 | 已完成 | 多会话管理、首条消息自动生成标题、历史滑动加载；SSE 输出 Markdown、引用来源与检索指标；回答中的 `[Sn]` 可点击定位来源卡片（2026-11-12） |
 | 三层上下文压缩 | 已完成 | 超过 `max-history-messages`（默认 20）触发：近期原文 / 中期摘要 / 远期关键事实；模型缺失或超时降级为截断 |
 | 多模态图片问答 | 已完成 | 视觉模型（`supports_vision`）支持图片 + 文本提问，附件地址落 `wgh_chat_message.attachments` |
 | 反馈闭环 | 已完成 | 消息点赞 / 点踩 + 备注，窗口满意度统计与差评运营列表 |
@@ -102,6 +103,7 @@
 | OIDC 资源服务器形态验签 | 已完成 | `OidcTokenVerifier` / `JwksProvider`；仅接受非对称签名，拒绝 HS256 与 `none`，校验 iss / aud / exp / nbf |
 | 本地 admin / 体验账号登录 + `password_version` | 已完成 | `LocalLoginService` / `LocalTokenService`；仅 `source=local` 的 admin / 体验账号可登录；`password_version` 校验会话失效 |
 | 多用户与权限体系 | 已完成 | OIDC + 本地账号双认证，RBAC（`@RequiresPermission` / `PermissionAspect`）；租户隔离与知识库/文档级全量权限不在范围内 |
+| 资源归属与可见性 | 已完成 | 知识库 / 聊天窗口 / 工作流 / Prompt 模板 / 工具五类资源新增 `visibility`（`PRIVATE` 默认 / `TEAM` / `PUBLIC`），owner 复用 `create_by`；读他人 `PRIVATE` 按不存在处理（业务码 `3001`），写他人 `TEAM`/`PUBLIC` 返回权限不足（业务码 `1004`），均为 HTTP 200 + 业务码；列表/分页由 `DataScopeInterceptor` 显式过滤，内置 Prompt 模板固定 `PUBLIC`（commit `59c5eee`） |
 | 角色与权限管理页面 | 已完成 | `AdminRoleController`（`/api/admin/roles`、`/api/admin/permissions`）+ `RoleManagement.vue`、`UserManagement.vue` |
 | 配额模块与前后端页面 | 已完成 | 独立 `rag-quota` 模块；全局默认 + 按用户日/月配置，超限 429；`QuotaManagement.vue` / `MyQuota.vue` |
 | Redis 8.10.1 接入 | 已完成 | 分布式限流、分享密码失败锁定（成功清零）、嵌入授权、API Key IP 白名单；不可用时降级为单机内存 |
@@ -395,7 +397,7 @@ OSS 配置不完整时不阻断启动，仅在真正调用存储操作时返回�
 
 | 类别 | 限制 | 影响 / 建议 |
 |------|------|-------------|
-| 权限体系 | 已提供角色 / 权限管理页面与接口；无租户隔离，资源级权限仅覆盖部分 Controller | 多团队共用需在网关或后续迭代补足 |
+| 权限体系 | 已提供角色 / 权限管理页面与接口；五类核心资源（知识库 / 聊天窗口 / 工作流 / Prompt 模板 / 工具）已支持 owner + 可见性；无租户隔离，文档级权限仍不在范围内 | 多团队共用与真正的团队边界需后续引入租户 / 成员模型 |
 | 可观测性 | 已提供 Prometheus 指标与管理端口（9090）、`X-Request-Id` 日志关联；未接入分布式链路追踪 | 跨服务调用链仍需日志 / 审计辅助 |
 | 部署编排 | 已提供前后端 Dockerfile 与全栈 docker-compose；无 Kubernetes 级编排 | 大规模水平扩展需自行补编排 |
 | 限流 | Redis Lua 分布式滑动窗口，故障时降级单机内存 | Redis 故障期间多实例计数不共享、重启清零；建议 Redis 高可用 |
@@ -415,6 +417,8 @@ OSS 配置不完整时不阻断启动，仅在真正调用存储操作时返回�
 | 多实例 JWKS | `JwksProvider` 缓存为进程内，多实例不共享 | 单实例部署假设；多实例需接受轮换后的刷新时间差 |
 | 移动端 / 国际化 | 仅桌面端布局，无 i18n | — |
 | 扩展性 | 无 URL 抓取与第三方数据源连接器，无增量同步 | 文档需手工上传或经 API 写入 |
+| 引用溯源（2026-11-12） | `pageNo` 目前恒为空（解析链路只做段落摊平，无页级映射）；纯 Agent 分支上下文未注入 `[Sn]`；同名文件跨知识库会合并为一张来源卡片 | Agent 回答中的编号可能无对应卡片；需要页码或 Agent 引用时需后续补页级映射与 Agent 上下文编号 |
+| 资源可见性（2026-11-12） | 无团队 / 租户模型，`TEAM` 与 `PUBLIC` 在判定上等价（均为"非 owner 可读"）；存量库需手工执行 10 条 ALTER（5 张表 `ADD COLUMN visibility` + 5 个 `(create_by, visibility)` 索引），仓库当前未提供独立迁移脚本；历史 `create_by='system'` 的资源升级后默认仅管理员可见 | 升级前需备份并按表执行 DDL；如需真正的团队边界，需后续引入 `tenant_id` / 团队成员模型 |
 
 ---
 
@@ -425,6 +429,8 @@ OSS 配置不完整时不阻断启动，仅在真正调用存储操作时返回�
 | 优先级 | 方向 | 当前状态 | 说明 |
 |--------|------|----------|------|
 | P0 | 模型故障转移补全 | 已完成（首 token 前切链） | 普通 RAG 首个 token 前的连接失败 / 超时 / 4xx / 5xx 已进入切链；部分输出后失败与全部候选失败均有明确错误收口（commit `e496f71`）；切链逻辑已抽成 `rag-llm` 的 `FailoverAttempt` / `StreamingModelFailover` / `BlockingModelFailover` / `ModelFailoverService`（commit `8e357bb`） |
+| P0 | 检索来源结构化与 [Sn] 引用溯源 | 已完成（2026-11-12） | `sources` 扩 10 个字段、按文档编号 `[Sn]`、预算裁剪后编号、`SourcePanel` 展开原文与高亮（commit `96dfc42`） |
+| P0 | 资源归属与可见性 | 已完成（2026-11-12） | 五类资源 `visibility` + `DataScopeInterceptor` + 5 个 `PATCH .../visibility`；存量库需 10 条 ALTER（commit `59c5eee`） |
 | P1 | Agent / 工作流接入故障转移 | 已完成 | Planner / StepExecutor / ReflectionEngine 与工作流 LLM 节点复用 `BlockingModelFailover`，首响应前失败切链、已产出内容后不切链，并下发 `model_switch`；Agent 恢复 / 重试入口回查窗口路由组（commit `8e357bb`） |
 | P1 | 大文件分片上传 / 断点续传 | 未实现 | OSS multipart 与失败续传；业务侧分片大小与并发控制 |
 | P1 | 存储迁移与孤儿对象清理 | 未实现 | `local` ↔ `oss` 历史对象迁移工具；按 `file_path` 比对清理 OSS 残留对象 |

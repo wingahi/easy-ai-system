@@ -6,13 +6,13 @@
 
 | 文档 | 一句话定位 | 更新时间 |
 |---|---|---|
-| [design-overview.md](design/design-overview.md) | 系统总体设计：模块边界、分层、关键流程与数据层 | 2026-11-06 |
-| [design-detailed.md](design/design-detailed.md) | 详细设计：模块/关键类、认证、配额、公开访问、存储、SSE | 2026-11-06 |
+| [design-overview.md](design/design-overview.md) | 系统总体设计：模块边界、分层、关键流程与数据层 | 2026-11-12 |
+| [design-detailed.md](design/design-detailed.md) | 详细设计：模块/关键类、认证、配额、公开访问、存储、SSE、引用溯源与资源可见性 | 2026-11-12 |
 | [design-phase5-platform-features.md](design/design-phase5-platform-features.md) | 阶段五平台化特性（工具、工作流、多 Agent 等）阶段记录 | 2026-11-06 |
 | [design-public-access.md](design/design-public-access.md) | 免登录分享、嵌入 Widget 与开放 API 设计 | 2026-11-04 |
 | [design-document-formats.md](design/design-document-formats.md) | 文档解析格式支持范围与解析链路 | 2026-11-02 |
 | [design-observability.md](design/design-observability.md) | 指标、日志、告警与 Prometheus 接入 | 2026-11-03 |
-| [design-data-access-extensibility.md](design/design-data-access-extensibility.md) | 数据接入层多数据库支持的评估与可扩展改造设计 | 2026-11-04 |
+| [design-data-access-extensibility.md](design/design-data-access-extensibility.md) | 数据接入层多数据库支持的评估与可扩展改造设计（含数据权限拦截器边界） | 2026-11-12 |
 | [quota-design.md](design/quota-design.md) | 配额模块：表结构、接口、配置与调用链 | 2026-11-04 |
 
 ## review/ — 架构审视
@@ -22,7 +22,7 @@
 | [architecture-review-2026-11-04.md](review/architecture-review-2026-11-04.md) | 架构审视报告：25 条发现、风险分级与优化清单 | 2026-11-04 |
 | [rag-capability-assessment-2026-11-05.md](review/rag-capability-assessment-2026-11-05.md) | RAG 全流程能力评估：对照五个难点的现状、缺口与改进建议 | 2026-11-05 |
 | [feature-comparison-2026-11-09.md](review/feature-comparison-2026-11-09.md) | 同类产品功能对照：能力矩阵与差距定位 | 2026-11-09 |
-| [gap-development-plan-2026-11-09.md](review/gap-development-plan-2026-11-09.md) | 差距补齐开发计划：T01–T13 拆分、批次、文件边界与验收 | 2026-11-11 |
+| [gap-development-plan-2026-11-09.md](review/gap-development-plan-2026-11-09.md) | 差距补齐开发计划：T01–T13 拆分、批次、文件边界与验收（批次 2 已回填完成状态） | 2026-11-12 |
 
 ## testing/ — 测试用例与报告
 
@@ -40,7 +40,7 @@
 
 | 文档 | 一句话定位 | 更新时间 |
 |---|---|---|
-| [api.md](api/api.md) | 对外接口清单、请求/响应示例与 SSE 事件协议 | 2026-10-29 |
+| [api.md](api/api.md) | 对外接口清单、请求/响应示例、SSE 事件协议与资源可见性端点 | 2026-11-12 |
 
 ## 根目录 — 历史专项设计
 

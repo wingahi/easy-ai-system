@@ -465,6 +465,29 @@ db/migration/mysql/V2__mysql_indexes.sql
 
 ---
 
+## 7. 数据权限拦截器与 SQL 改写边界（2026-11-12 补充）
+
+批次 2 在 `rag-data` 新增了 `DataScopeInterceptor`（MyBatis-Plus `InnerInterceptor`），用于资源可见性过滤。它属于"访问层公共能力"，不是方言适配的一部分，但会直接影响本文件讨论的 SQL 形态与换库成本。
+
+**表范围**：`wgh_knowledge_base`、`wgh_chat_window`、`wgh_workflow`、`wgh_tool`、`wgh_prompt_template`。
+
+**改写规则**：
+
+1. **显式激活**：只有 `DataScopeContext.runWithScope(...)` 包裹的查询才改写；按 id 取数、内部调度、异步线程、分享链路默认不激活，避免误伤。
+2. **只改单表**：命中白名单表的 `PlainSelect` 才追加 `(create_by = '当前用户' OR visibility <> 'PRIVATE')`；ADMIN 与无登录上下文直接跳过。
+3. **失败关闭**：白名单表带 `JOIN` 时抛 `SQLException`；`UNION` / CTE 等无法安全改写的形态若包含白名单表，同样抛错，不静默放行。这意味着新增带 JOIN 的列表查询必须拆成单表查询 + 应用层拼装，或显式退出数据权限范围。
+4. **幂等**：同一条 `BoundSql` 通过附加参数标记，防止重复追加条件。
+
+**对可扩展性的影响**：
+
+- 改写基于 JSqlParser 生成标准 SQL，不依赖 PostgreSQL 方言；换库时拦截器逻辑本身可复用。
+- 但它假设表上存在 `create_by` / `visibility` 两列，且表名固定。若未来引入 schema 前缀或多租户列，需要同步扩展 `DataScopeContext.SCOPED_TABLES` 与谓词构造，否则过滤会失效或误伤。
+- 失败关闭策略要求测试基座覆盖三类 SQL：单表列表、带 JOIN 的列表、含 CTE/UNION 的统计查询。H2 测试库只能验证"是否抛错"，不能验证 PostgreSQL 上的实际执行计划。
+
+**待补**：目前仓库未提供存量库迁移脚本，5 张表需手工执行 `ADD COLUMN visibility`（默认 `PRIVATE`）与 `(create_by, visibility)` 索引，共 10 条 ALTER。
+
+---
+
 ## 附录 A：本次盘点中发现的文档/实现不一致（建议顺手修正）
 
 - [quota-design.md#L12](quota-design.md#L12)、[#L44](quota-design.md#L44)、[#L114](quota-design.md#L114) 仍写"使用 `ON CONFLICT` 原子累加"，但实现已改为"H2/PG 可移植的 UPDATE-first + 唯一键回退"（[QuotaUsageMapper.java#L37-L55](../../rag-backend/rag-quota/src/main/java/com/wgh/rag/quota/mapper/QuotaUsageMapper.java#L37-L55)）。建议更新文档，否则后续读者会误判方言依赖。

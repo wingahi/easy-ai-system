@@ -61,6 +61,7 @@ WGH RAG System 是一套面向企业知识库的 RAG 应用平台，核心能力
 | --- | --- | --- |
 | v1.0 | 2026-10-28 | 首版反向工程文档（15 张表、仅外部 OIDC、无配额/公开访问/存储/可观测性章节） |
 | v2.0 | 2026-11-03 | 按当前代码重写：17 模块依赖、双认证、RBAC、密码体系、配额、公开访问、存储抽象、可观测性、37 张表、Docker Compose、已知限制 |
+| v2.1 | 2026-11-12 | 补充批次 2 能力：检索来源结构化与 `[Sn]` 引用溯源（`96dfc42`）、五类资源归属与可见性（`59c5eee`）及其限制 |
 
 ---
 
@@ -265,6 +266,8 @@ flowchart LR
 
 SSE 事件：`start`、`retrieve`、`content`、`sources`、`accuracy`、`metrics`、`model_switch`、`tool_call_start`、`tool_call_result`、`judge`、`done`、`error`。`content` 使用 JSON 包装文本，避免换行丢失。
 
+引用溯源（2026-11-12）：`sources` 携带 `kbId` / `kbName` / `fileId` / `fileName` / `chunkIndex` / `pageNo` / `charStart` / `charEnd` / `score` / `snippet`，按文档去重保留最高分；上下文按文档分配 `[Sn]`（预算裁剪后编号），回答中的编号与来源卡片顺序一致，前端可点击定位并展开原文。
+
 在线检索指标：下发 `coverageRate`（返回条数 / topK）与 `hitRate`（高分条数 / 返回条数），不把 `coverageRate` 当作 Recall；真实 `Recall@K` 依赖标注集，仅在离线/评测接口计算。
 
 ### 4.3 单 Agent
@@ -352,7 +355,8 @@ SSE 事件：`start`、`retrieve`、`content`、`sources`、`accuracy`、`metric
 - **逻辑删除**：MyBatis-Plus 全局 `deleted`（0/1），删除操作默认逻辑删除；
 - **布尔约定**：PostgreSQL 列使用 `SMALLINT`，实体 `Boolean` 字段配 `@TableField(typeHandler = BooleanToSmallintTypeHandler.class)`；`LambdaQueryWrapper` 比较使用字面量 `1/0`；
 - **向量**：`EmbeddingStore<TextSegment>` 抽象，默认 pgvector 表 `rag_vector_store`；按 embedding 模型 ID 分组，避免不同维度向量混用；重切/删除文件时同步清理旧向量；
-- **SQL 组织**：`schema/01-schema.sql`（DDL + 索引 + COMMENT，结构幂等）与 `seed/02-data.sql`（种子 + 兼容修复；含示例数据，不建议对存量库重跑），按顺序执行。
+- **SQL 组织**：`schema/01-schema.sql`（DDL + 索引 + COMMENT，结构幂等）与 `seed/02-data.sql`（种子 + 兼容修复；含示例数据，不建议对存量库重跑），按顺序执行；
+- **资源归属与可见性（2026-11-12）**：知识库 / 聊天窗口 / 工作流 / Prompt 模板 / 工具五张表使用 `create_by` 作为 owner，新增 `visibility`（`PRIVATE` / `TEAM` / `PUBLIC`）；列表查询由 `DataScopeInterceptor` 显式激活后追加归属过滤，详情/写操作由 `DataScopeGuard` 做 404 / 403 判定。
 
 ---
 
@@ -597,6 +601,8 @@ flowchart TD
 | 5 | 模型故障转移边界 | 普通 RAG、Agent（Planner / Step / Reflection）与工作流 LLM 节点已统一复用 `failover` 组件，首内容前失败切链并下发 `model_switch`；已产出内容后失败不切链 / 不回滚 / 不重发 | 设计边界（不支持续接或拼接第二个模型输出） |
 | 6 | 本地 `resolveUrl` 非可直接下载地址 | 应用未挂载 `base-dir` 静态服务，返回值仅表达逻辑前缀 | 需静态服务配合 |
 | 7 | Redis 降级为单机内存 | 多实例下限流/锁定/grant 不一致 | 单实例部署假设 |
+| 8 | 引用溯源字段不完整（2026-11-12） | `pageNo` 恒空；纯 Agent 分支无 `[Sn]`；同名文件跨知识库合并为一张卡片 | 已知限制 |
+| 9 | 资源可见性无团队边界（2026-11-12） | `TEAM` 与 `PUBLIC` 判定等价；只覆盖单表列表查询；存量库需 10 条手工 ALTER，历史 `create_by='system'` 资源仅管理员可见 | 已知限制 |
 
 ---
 
