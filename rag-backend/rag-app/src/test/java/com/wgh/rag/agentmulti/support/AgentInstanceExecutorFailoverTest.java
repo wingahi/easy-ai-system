@@ -62,7 +62,8 @@ class AgentInstanceExecutorFailoverTest {
                 .aiMessage(AiMessage.from("备用模型结果")).build());
 
         ModelFailoverService failoverService = Mockito.mock(ModelFailoverService.class);
-        Mockito.when(failoverService.resolveChain(1L)).thenReturn(List.of(primary, backup));
+        Mockito.when(failoverService.resolveChain(1L, null, false))
+                .thenReturn(List.of(primary, backup));
 
         ToolExecutionEngine engine = Mockito.mock(ToolExecutionEngine.class);
         AgentInstanceExecutor executor = new AgentInstanceExecutor(

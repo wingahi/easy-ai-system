@@ -156,7 +156,7 @@ public class AgentInstanceExecutor {
                         .toolSpecifications(toolSpecs)
                         .build();
 
-                ChatResponse response = chatWithFailover(agent.getChatModelId(), request);
+                ChatResponse response = chatWithFailover(agent.getChatModelId(), request, !toolSpecs.isEmpty());
                 AiMessage aiMessage = response.aiMessage();
                 if (aiMessage == null) {
                     finalText = "";
@@ -270,7 +270,7 @@ public class AgentInstanceExecutor {
                     ChatResponse retry = chatWithFailover(agent.getChatModelId(), ChatRequest.builder()
                             .messages(new ArrayList<>(messages))
                             .toolSpecifications(toolSpecs)
-                            .build());
+                            .build(), !toolSpecs.isEmpty());
                     if (retry.aiMessage() != null && retry.aiMessage().text() != null) {
                         finalText = retry.aiMessage().text();
                     }
@@ -323,8 +323,9 @@ public class AgentInstanceExecutor {
      * 按链顺序调用模型；切链只重试「本次模型调用」，已执行工具的结果已在 messages 中，
      * 不会因为换模型而重复执行（避免副作用放大）。
      */
-    private ChatResponse chatWithFailover(Long chatModelId, ChatRequest request) {
-        List<LlmModel> chain = modelFailoverService != null ? modelFailoverService.resolveChain(chatModelId) : List.of();
+    private ChatResponse chatWithFailover(Long chatModelId, ChatRequest request, boolean requireTools) {
+        List<LlmModel> chain = modelFailoverService != null
+                ? modelFailoverService.resolveChain(chatModelId, null, requireTools) : List.of();
         if (chain == null || chain.isEmpty()) {
             return modelCacheManager.getChatModel(chatModelId).chat(request);
         }

@@ -77,6 +77,17 @@ public class LlmModel extends BaseEntity {
     private Boolean supportsVision;
 
     /**
+     * 能力档位（1~5，越大越强）；故障转移只允许降级，不切换到更强模型
+     */
+    private Integer capabilityTier;
+
+    /**
+     * 是否支持 function calling
+     */
+    @TableField(typeHandler = BooleanToSmallintTypeHandler.class)
+    private Boolean supportsTools;
+
+    /**
      * 路由组名（参与故障转移链路）
      */
     private String routeGroup;

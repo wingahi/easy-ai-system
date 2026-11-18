@@ -23,6 +23,8 @@ CREATE TABLE IF NOT EXISTS wgh_llm_model (
   temperature DOUBLE PRECISION DEFAULT 0.7,
   compression_model SMALLINT DEFAULT 0,
   supports_vision SMALLINT DEFAULT 0,
+  capability_tier SMALLINT NOT NULL DEFAULT 3,
+  supports_tools SMALLINT NOT NULL DEFAULT 1,
   route_group VARCHAR(50),
   route_priority INT DEFAULT 0,
   status SMALLINT DEFAULT 1,
@@ -1040,6 +1042,11 @@ COMMENT ON COLUMN wgh_semantic_cache.hit_count IS '命中次数';
 -- ============ 多模态（图片问答） ============
 
 COMMENT ON COLUMN wgh_llm_model.supports_vision IS '是否支持图片输入（视觉模型，0 否 / 1 是）';
+COMMENT ON COLUMN wgh_llm_model.capability_tier IS '能力档位（1~5，越大越强；故障转移只允许降级不升级）';
+COMMENT ON COLUMN wgh_llm_model.supports_tools IS '是否支持 function calling（0 否 / 1 是）';
+CREATE INDEX IF NOT EXISTS idx_llm_model_route_capability
+  ON wgh_llm_model (route_group, route_priority, capability_tier)
+  WHERE deleted = 0 AND status = 1;
 COMMENT ON COLUMN wgh_chat_message.attachments IS '消息附件 JSON 数组（图片 data URL 或公网 URL）';
 
 -- ============ Prompt 模板中心 ============

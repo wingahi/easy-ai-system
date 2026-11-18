@@ -272,6 +272,8 @@ CREATE TABLE IF NOT EXISTS wgh_llm_model (
     temperature DOUBLE DEFAULT 0.7,
     compression_model BOOLEAN DEFAULT FALSE,
     supports_vision BOOLEAN DEFAULT FALSE,
+    capability_tier INT DEFAULT 3,
+    supports_tools BOOLEAN DEFAULT TRUE,
     route_group VARCHAR(100),
     route_priority INT DEFAULT 0,
     status INT DEFAULT 1,

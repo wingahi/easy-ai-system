@@ -48,6 +48,29 @@ public class ModelFailoverService {
 
     /** 仅按模型自身的 route_group 解析（无路由组时为单模型） */
     public List<LlmModel> resolveChain(Long modelId) {
-        return resolveChain(modelId, null);
+        return resolveChain(modelId, null, false);
+    }
+
+    /**
+     * @param requireTools 本次调用是否需要 function calling；为 true 时链路只保留支持工具的候选
+     */
+    public List<LlmModel> resolveChain(Long modelId, String routeGroup, boolean requireTools) {
+        if (routeGroup != null && !routeGroup.isBlank()) {
+            return modelRouter.resolveChain(routeGroup, modelId, requireTools);
+        }
+        if (modelId == null) {
+            throw new BusinessException("未指定可用的聊天模型（modelId 为空）");
+        }
+        LlmModel model = llmModelMapper.selectById(modelId);
+        if (model == null) {
+            throw new BusinessException("未找到可用的聊天模型（llmModelId=" + modelId + "）");
+        }
+        if (model.getRouteGroup() != null && !model.getRouteGroup().isBlank()) {
+            List<LlmModel> chain = modelRouter.resolveChain(model.getRouteGroup(), modelId, requireTools);
+            if (!chain.isEmpty()) {
+                return chain;
+            }
+        }
+        return List.of(model);
     }
 }
