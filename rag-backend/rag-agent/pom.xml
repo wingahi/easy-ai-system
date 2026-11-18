@@ -14,6 +14,10 @@
     <description>Agent 编排模块 - Plan-and-Execute + 反思循环 + 状态持久化</description>
 
     <dependencies>
+        <dependency>
+            <groupId>com.wgh</groupId>
+            <artifactId>rag-context</artifactId>
+        </dependency>
         <!-- rag-agent 是 rag-chat 的上游（Agent 编排器被 RagChatService 调用） -->
         <dependency>
             <groupId>com.wgh</groupId>

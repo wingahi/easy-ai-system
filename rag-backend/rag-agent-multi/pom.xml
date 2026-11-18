@@ -17,6 +17,10 @@
         <!-- 内部模块：全部复用 -->
         <dependency>
             <groupId>com.wgh</groupId>
+            <artifactId>rag-context</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.wgh</groupId>
             <artifactId>rag-agent</artifactId>
         </dependency>
         <dependency>

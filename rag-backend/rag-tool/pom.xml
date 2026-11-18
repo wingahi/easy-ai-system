@@ -16,6 +16,10 @@
     <dependencies>
         <dependency>
             <groupId>com.wgh</groupId>
+            <artifactId>rag-context</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.wgh</groupId>
             <artifactId>rag-data</artifactId>
         </dependency>
         <!-- rag-tool 提供 ToolConfig 实体和执行器，是 rag-chat 的上游 -->

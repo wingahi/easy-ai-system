@@ -44,6 +44,7 @@
         <module>rag-auth</module>
         <module>rag-quota</module>
         <module>rag-config</module>
+        <module>rag-context</module>
         <module>rag-storage</module>
         <module>rag-llm</module>
         <module>rag-kb</module>
@@ -106,6 +107,11 @@
             <dependency>
                 <groupId>com.wgh</groupId>
                 <artifactId>rag-config</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.wgh</groupId>
+                <artifactId>rag-context</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
