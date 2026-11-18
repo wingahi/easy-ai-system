@@ -36,6 +36,9 @@ public class AgentInstanceResult {
 
     private Long durationMs;
 
+    /** 结构化结果卡片（供汇总使用） */
+    private AgentResultCard card;
+
     @Data
     @Builder
     @NoArgsConstructor

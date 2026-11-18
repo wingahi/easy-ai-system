@@ -52,7 +52,8 @@ class CrewCoordinatorLinearFallbackTest {
     @BeforeEach
     void setUp() {
         coordinator = new CrewCoordinator(service, agentExecutor, sse,
-                new ObjectMapper(), conditionEvaluator, variableResolver);
+                new ObjectMapper(), conditionEvaluator, variableResolver,
+                new com.wgh.rag.agentmulti.config.MultiAgentContextProperties());
     }
 
     private MultiAgentRun newRun(String agentsJson) {

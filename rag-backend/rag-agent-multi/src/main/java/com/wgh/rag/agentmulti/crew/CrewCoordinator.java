@@ -5,10 +5,12 @@ import com.wgh.rag.workflow.constant.WorkflowConstants;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.wgh.rag.agentmulti.config.MultiAgentContextProperties;
 import com.wgh.rag.agentmulti.constant.MultiAgentEvents;
 import com.wgh.rag.agentmulti.context.MultiAgentContext;
 import com.wgh.rag.agentmulti.dto.AgentInstance;
 import com.wgh.rag.agentmulti.dto.AgentInstanceResult;
+import com.wgh.rag.agentmulti.dto.AgentResultCard;
 import com.wgh.rag.agentmulti.dto.DAGGraph;
 import com.wgh.rag.agentmulti.dto.GraphEdge;
 import com.wgh.rag.agentmulti.dto.GraphNode;
@@ -16,6 +18,7 @@ import com.wgh.rag.agentmulti.entity.MultiAgentRun;
 import com.wgh.rag.agentmulti.entity.MultiAgentStep;
 import com.wgh.rag.agentmulti.service.MultiAgentService;
 import com.wgh.rag.agentmulti.support.AgentInstanceExecutor;
+import com.wgh.rag.agentmulti.support.AgentResultCardBuilder;
 import com.wgh.rag.agentmulti.support.SseEventSender;
 import com.wgh.rag.workflow.engine.ConditionEvaluator;
 import com.wgh.rag.workflow.engine.VariableResolver;
@@ -52,6 +55,7 @@ public class CrewCoordinator {
     private final ObjectMapper objectMapper;
     private final ConditionEvaluator conditionEvaluator;
     private final VariableResolver variableResolver;
+    private final MultiAgentContextProperties contextProperties;
 
     public void execute(MultiAgentRun run, List<AgentInstance> agents,
                         MultiAgentContext ctx, SseEmitter emitter) {
@@ -182,6 +186,7 @@ public class CrewCoordinator {
                 .collect(Collectors.toList());
 
         AtomicInteger idx = new AtomicInteger(1);
+        List<AgentResultCard> workerCards = new ArrayList<>();
         for (AgentInstance worker : workers) {
             String input = """
                     协调者规划摘要：
@@ -191,6 +196,10 @@ public class CrewCoordinator {
                     """.formatted(truncate(managerResult.getOutput()), run.getUserGoal());
             AgentInstanceResult r = agentExecutor.execute(worker, input, ctx, emitter);
             ctx.put(worker.getAgentId() + ".text", r.getOutput());
+            if (r.getCard() != null) {
+                workerCards.add(r.getCard());
+                ctx.put(worker.getAgentId() + ".card", AgentResultCardBuilder.format(r.getCard()));
+            }
             persistStep(run, worker, null, r, idx.getAndIncrement());
         }
 
@@ -204,9 +213,7 @@ public class CrewCoordinator {
 
                 请综合以上信息，给出一份面向用户的最终答复（结构化、清晰、完整）。
                 """.formatted(truncate(managerResult.getOutput()),
-                workers.stream()
-                        .map(w -> "## " + w.getName() + "\n" + ctx.get(w.getAgentId() + ".text"))
-                        .collect(Collectors.joining("\n\n")));
+                AgentResultCardBuilder.merge(workerCards, contextProperties.getSummaryMaxTokens()));
 
         AgentInstanceResult finalResult = agentExecutor.execute(manager, summaryPrompt, ctx, emitter);
         ctx.put(manager.getAgentId() + ".summary", finalResult.getOutput());

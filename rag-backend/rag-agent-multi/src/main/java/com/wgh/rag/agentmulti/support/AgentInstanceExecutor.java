@@ -1,12 +1,18 @@
 package com.wgh.rag.agentmulti.support;
 
+import com.wgh.rag.agentmulti.config.MultiAgentContextProperties;
 import com.wgh.rag.agentmulti.constant.MultiAgentEvents;
 import com.wgh.rag.agentmulti.context.MultiAgentContext;
 import com.wgh.rag.agentmulti.dto.AgentInstance;
 import com.wgh.rag.agentmulti.dto.AgentInstanceResult;
+import com.wgh.rag.agentmulti.dto.AgentResultCard;
 import com.wgh.rag.kb.service.RagRetrieveService;
 import com.wgh.rag.config.property.RagProperties;
+import com.wgh.rag.llm.entity.LlmModel;
 import com.wgh.rag.llm.factory.ModelCacheManager;
+import com.wgh.rag.llm.failover.BlockingModelFailover;
+import com.wgh.rag.llm.failover.FailoverAttempt;
+import com.wgh.rag.llm.service.ModelFailoverService;
 import com.wgh.rag.llm.util.RagContextBudgeter;
 import com.wgh.rag.llm.util.TokenEstimator;
 import com.wgh.rag.llm.util.ToolResultBudgeter;
@@ -48,6 +54,8 @@ public class AgentInstanceExecutor {
     private final RagRetrieveService ragRetrieveService;
     private final SseEventSender sse;
     private final RagProperties ragProperties;
+    private final ModelFailoverService modelFailoverService;
+    private final MultiAgentContextProperties contextProperties;
 
     /**
      * 执行一次 Agent 调用（可能带 ReAct 循环），返回结构化结果。
@@ -130,14 +138,11 @@ public class AgentInstanceExecutor {
             if (!systemPrompt.isBlank()) {
                 messages.add(SystemMessage.from(systemPrompt));
             }
-            messages.add(UserMessage.from(enrichedInput));
-
-            // 可选：从 ctx 读取 agentId 历史（GroupChat 场景）
+            // 可选：按 agentId 注入最近 N 轮记忆（受 Token 约束）
             if (ctx != null && agent.isHasMemory()) {
-                List<Object> hist = ctx.getHistory(agentId);
-                // 历史会在后续循环中逐步追加，初始仅放 system+user
+                appendRecentMemory(messages, ctx.getHistory(agentId));
             }
-
+            messages.add(UserMessage.from(enrichedInput));
             ChatModel model = modelCacheManager.getChatModel(agent.getChatModelId());
             int toolRounds = 0;
             String finalText = null;
@@ -151,7 +156,7 @@ public class AgentInstanceExecutor {
                         .toolSpecifications(toolSpecs)
                         .build();
 
-                ChatResponse response = model.chat(request);
+                ChatResponse response = chatWithFailover(agent.getChatModelId(), request);
                 AiMessage aiMessage = response.aiMessage();
                 if (aiMessage == null) {
                     finalText = "";
@@ -262,7 +267,7 @@ public class AgentInstanceExecutor {
                     messages.add(UserMessage.from("上一次输出质量不合格，请根据以下反馈重新回答：\n"
                             + reflectionFeedback + "\n\n原始用户输入：\n" + input));
 
-                    ChatResponse retry = model.chat(ChatRequest.builder()
+                    ChatResponse retry = chatWithFailover(agent.getChatModelId(), ChatRequest.builder()
                             .messages(new ArrayList<>(messages))
                             .toolSpecifications(toolSpecs)
                             .build());
@@ -281,7 +286,9 @@ public class AgentInstanceExecutor {
                     .reflectionFeedback(reflectionFeedback)
                     .reflectionPass(reflectionPass)
                     .durationMs(duration)
+                    .card(buildCard(agentId, agent, finalText, ragSources, toolInvocations, reflectionScore))
                     .build();
+            recordMemory(ctx, agent, input, finalText);
 
             sse.send(emitter, MultiAgentEvents.AGENT_DONE,
                     "runId", runId, "agentId", agentId,
@@ -295,11 +302,13 @@ public class AgentInstanceExecutor {
         } catch (Exception e) {
             log.error("Agent {} 执行异常", agentId, e);
             long duration = System.currentTimeMillis() - t0;
+            String failedOutput = "执行失败：" + e.getMessage();
             AgentInstanceResult result = AgentInstanceResult.builder()
-                    .output("执行失败：" + e.getMessage())
+                    .output(failedOutput)
                     .toolInvocations(toolInvocations)
                     .ragSources(ragSources)
                     .durationMs(duration)
+                    .card(buildCard(agentId, agent, failedOutput, ragSources, toolInvocations, null))
                     .build();
             sse.send(emitter, MultiAgentEvents.AGENT_DONE,
                     "runId", runId, "agentId", agentId,
@@ -309,6 +318,86 @@ public class AgentInstanceExecutor {
     }
 
     // ==================== 工具方法 ====================
+
+    /**
+     * 按链顺序调用模型；切链只重试「本次模型调用」，已执行工具的结果已在 messages 中，
+     * 不会因为换模型而重复执行（避免副作用放大）。
+     */
+    private ChatResponse chatWithFailover(Long chatModelId, ChatRequest request) {
+        List<LlmModel> chain = modelFailoverService != null ? modelFailoverService.resolveChain(chatModelId) : List.of();
+        if (chain == null || chain.isEmpty()) {
+            return modelCacheManager.getChatModel(chatModelId).chat(request);
+        }
+        return BlockingModelFailover.call(chain, (attempt, candidate) ->
+                modelCacheManager.getChatModel(candidate.getId()).chat(request),
+                new BlockingModelFailover.Listener() {
+                    @Override
+                    public void onPreContentFailure(FailoverAttempt attempt, Throwable error) {
+                        log.warn("[MultiAgent] 模型 {} 失败，切换备用（{}/{}）：{}",
+                                attempt.model().getModelName(), attempt.index() + 1, attempt.total(),
+                                error.getMessage());
+                    }
+                });
+    }
+
+    private AgentResultCard buildCard(String agentId, AgentInstance agent, String output,
+                                      List<AgentInstanceResult.RagSource> ragSources,
+                                      List<AgentInstanceResult.ToolInvocation> toolInvocations,
+                                      Double reflectionScore) {
+        return AgentResultCardBuilder.build(agentId, agent != null ? agent.getName() : null, output,
+                ragSources, toolInvocations, reflectionScore,
+                contextProperties.getCardConclusionMaxTokens());
+    }
+
+    /** 注入最近 N 条记忆，超出 Token 预算时从最旧开始丢弃。 */
+    private void appendRecentMemory(List<ChatMessage> messages, List<Object> history) {
+        if (history == null || history.isEmpty()) {
+            return;
+        }
+        List<ChatMessage> recent = new ArrayList<>();
+        synchronized (history) {
+            int from = Math.max(history.size() - contextProperties.getMemoryMaxMessages(), 0);
+            for (int i = from; i < history.size(); i++) {
+                if (history.get(i) instanceof ChatMessage message) {
+                    recent.add(message);
+                }
+            }
+        }
+        int budget = Math.max(contextProperties.getMemoryMaxTokens(), 0);
+        int total = recent.stream().mapToInt(m -> TokenEstimator.estimate(messageText(m))).sum();
+        while (!recent.isEmpty() && total > budget) {
+            total -= TokenEstimator.estimate(messageText(recent.remove(0)));
+        }
+        messages.addAll(recent);
+    }
+
+    private String messageText(ChatMessage message) {
+        if (message instanceof UserMessage user) {
+            return user.singleText();
+        }
+        if (message instanceof AiMessage ai) {
+            return ai.text() == null ? "" : ai.text();
+        }
+        return "";
+    }
+
+    /** 成功轮次写回 agentId 历史，并保持条数上限。 */
+    private void recordMemory(MultiAgentContext ctx, AgentInstance agent, String input, String output) {
+        if (ctx == null || agent == null || !agent.isHasMemory() || input == null) {
+            return;
+        }
+        List<Object> history = ctx.getHistory(agent.getAgentId());
+        synchronized (history) {
+            history.add(UserMessage.from(input));
+            if (output != null) {
+                history.add(AiMessage.from(output));
+            }
+            int max = Math.max(contextProperties.getMemoryMaxMessages() * 2, 2);
+            while (history.size() > max) {
+                history.remove(0);
+            }
+        }
+    }
 
     /** 按配置对消息中的工具结果做「单条 + 累计」Token 裁剪，未超限时原样返回。 */
     private List<ChatMessage> applyToolResultBudget(List<ChatMessage> messages) {

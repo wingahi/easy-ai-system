@@ -57,7 +57,9 @@ class AgentInstanceExecutorFallbackTest {
                 Mockito.mock(ToolConfigService.class),
                 Mockito.mock(RagRetrieveService.class),
                 Mockito.mock(SseEventSender.class),
-                new RagProperties());
+                new RagProperties(),
+                Mockito.mock(com.wgh.rag.llm.service.ModelFailoverService.class),
+                new com.wgh.rag.agentmulti.config.MultiAgentContextProperties());
     }
 
     private AgentInstance agent() {
