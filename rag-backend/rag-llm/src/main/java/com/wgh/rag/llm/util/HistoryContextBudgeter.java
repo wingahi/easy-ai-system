@@ -29,7 +29,7 @@ public final class HistoryContextBudgeter {
     /** 历史消息 Token 上限默认值（与 wgh.rag.context.max-history-tokens 默认值一致） */
     public static final int DEFAULT_MAX_HISTORY_TOKENS = 4000;
 
-    /** 裁剪结果。 */
+    /** 裁剪结果；kept 为可变列表，调用方可能继续就地替换当前用户消息（RAG 上下文拼接）。 */
     public record Result(List<ChatMessage> kept, int originalTokens, int keptTokens, int droppedMessages) {
     }
 
@@ -95,7 +95,7 @@ public final class HistoryContextBudgeter {
                 dropped++;
             }
         }
-        return new Result(List.copyOf(kept), originalTokens, keptTokens, dropped);
+        return new Result(new ArrayList<>(kept), originalTokens, keptTokens, dropped);
     }
 
     /** 单条消息的 Token 估算（多模态用户消息只计文本部分）。 */
