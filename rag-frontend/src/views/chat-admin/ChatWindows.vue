@@ -23,6 +23,18 @@
             <el-tag v-else type="info" size="small">RAG</el-tag>
           </template>
         </el-table-column>
+        <el-table-column label="检索增强" width="150">
+          <template #default="{ row }">
+            <div style="display:flex;flex-wrap:wrap;gap:4px">
+              <el-tag size="small" :type="row.hybridEnabled === true ? 'success' : 'info'">
+                {{ row.hybridEnabled === true ? '混合检索开' : (row.hybridEnabled === false ? '混合检索关' : '混合未设置') }}
+              </el-tag>
+              <el-tag size="small" :type="row.queryTransformMode && row.queryTransformMode !== 'NONE' ? 'warning' : 'info'">
+                变换·{{ queryTransformLabel(row.queryTransformMode) }}
+              </el-tag>
+            </div>
+          </template>
+        </el-table-column>
         <el-table-column label="分享" width="100">
           <template #default="{ row }">
             <el-tag v-if="row.shareEnabled" type="success">已开启</el-tag>
@@ -160,8 +172,14 @@
         <!-- ============ 检索增强 ============ -->
         <el-divider content-position="left">🔍 检索增强</el-divider>
         <el-form-item label="混合检索">
-          <el-switch v-model="form.hybridEnabled" />
+          <el-select v-model="form.hybridEnabled" style="width:160px" placeholder="未设置（跟随全局）">
+            <el-option label="开启" :value="true" />
+            <el-option label="关闭" :value="false" />
+          </el-select>
           <span style="font-size:12px;color:#909399;margin-left:12px">向量 + 关键词（pg_trgm）双路召回，RRF 融合；提升专有名词/编号类查询召回</span>
+          <div v-if="form.hybridEnabled == null" style="font-size:12px;color:#e6a23c;margin-top:4px">
+            后端未设置该值：实际是否启用由全局配置 wgh.rag.retrieve.enable-hybrid 决定（全局开启时即使此处关闭也会生效）
+          </div>
         </el-form-item>
         <el-form-item label="语义缓存">
           <el-switch v-model="form.semanticCacheEnabled" />
@@ -180,13 +198,16 @@
           </div>
         </el-form-item>
         <el-form-item label="查询变换">
-          <el-select v-model="form.queryTransformMode" style="width:100%">
+          <el-select v-model="form.queryTransformMode" style="width:100%" placeholder="未设置（等同关闭）">
             <el-option label="关闭" value="NONE" />
             <el-option label="查询改写（REWRITE）" value="REWRITE" />
             <el-option label="多查询扩展（MULTI_QUERY）" value="MULTI_QUERY" />
             <el-option label="假设性答案（HYDE）" value="HYDE" />
           </el-select>
           <span style="font-size:12px;color:#909399;margin-top:4px">REWRITE 改写为规范查询；MULTI_QUERY 生成 3 个变体多路召回；HYDE 用假设答案的向量检索。失败/超时自动降级原查询</span>
+          <div v-if="!form.queryTransformMode" style="font-size:12px;color:#909399;margin-top:4px">
+            后端未设置该值，等同于「关闭」；选择任一模式后保存即生效
+          </div>
         </el-form-item>
         <el-form-item v-if="form.queryTransformMode && form.queryTransformMode !== 'NONE'" label="变换模型">
           <el-select v-model="form.rewriteModelId" clearable style="width:100%" placeholder="默认复用窗口聊天模型">
@@ -345,6 +366,10 @@ const parseKbs = (json) => {
   try { return JSON.parse(json || '[]') } catch { return [] }
 }
 
+// 查询变换模式展示文案；null 表示后端未设置（行为等同关闭，不可显示成 NONE）
+const QUERY_TRANSFORM_LABELS = { NONE: '关闭', REWRITE: '改写', MULTI_QUERY: '多查询', HYDE: 'HYDE' }
+const queryTransformLabel = (mode) => (mode ? (QUERY_TRANSFORM_LABELS[mode] || mode) : '未设置')
+
 // ============ 工具按类型分组（下拉里用 tag 区分类型） ============
 const TOOL_TYPE_ORDER = ['SKILL', 'MCP', 'HTTP', 'FUNCTION_CALLING']
 const toolTypeLabel = (t) => ({
@@ -371,7 +396,6 @@ const openDialog = (row) => {
   editing.value = row || null
   if (row) {
     Object.assign(form, row)
-    form.queryTransformMode = form.queryTransformMode || 'NONE'
     selectedKbs.value = parseKbs(row.knowledgeBaseIds)
     selectedTools.value = parseKbs(row.toolIds)
     selectedJudges.value = parseKbs(row.judgeModelIds)
