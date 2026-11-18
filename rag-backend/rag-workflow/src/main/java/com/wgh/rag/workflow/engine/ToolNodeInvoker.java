@@ -4,7 +4,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wgh.rag.tool.definition.ToolDefinitionParser;
 import com.wgh.rag.tool.entity.ToolConfig;
-import com.wgh.rag.tool.executor.ToolExecutionEngine;
+import com.wgh.rag.tool.fallback.ToolInvoker;
 import com.wgh.rag.tool.service.ToolConfigService;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.data.message.ToolExecutionResultMessage;
@@ -24,7 +24,7 @@ import java.util.Map;
 public class ToolNodeInvoker {
 
     private final ToolConfigService toolConfigService;
-    private final ToolExecutionEngine toolExecutionEngine;
+    private final ToolInvoker toolInvoker;
     private final ObjectMapper objectMapper;
 
     /**
@@ -69,8 +69,8 @@ public class ToolNodeInvoker {
                     .name(toolName)
                     .arguments(arguments)
                     .build();
-            ToolExecutionResultMessage result =
-                    toolExecutionEngine.execute(request, Map.of(toolName, tool), null);
+            ToolExecutionResultMessage result = toolInvoker.invoke(
+                    request, Map.of(toolName, tool), null, null).message();
             return result != null ? result.text() : "";
         } catch (Exception e) {
             log.error("工作流工具节点执行失败: toolId={}", toolId, e);

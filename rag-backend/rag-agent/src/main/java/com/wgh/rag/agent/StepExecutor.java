@@ -47,6 +47,7 @@ import java.util.*;
 public class StepExecutor {
 
     private final ToolExecutionEngine toolExecutionEngine;
+    private final com.wgh.rag.tool.fallback.ToolInvoker toolInvoker;
     private final ModelCacheManager modelCacheManager;
     private final RagRetrieveService ragRetrieveService;
     private final ModelFailoverService modelFailoverService;
@@ -203,6 +204,8 @@ public class StepExecutor {
 
         ChatModel model = modelCacheManager.getChatModel(llmModel.getId());
         int toolRounds = 0;
+        // 单个 Agent 步骤一份工具调用预算（请求数 + 总时长）
+        com.wgh.rag.tool.fallback.ToolTaskBudget toolBudget = toolInvoker.newTaskBudget();
 
         // 同步 ReAct tool-calling 循环
         while (true) {
@@ -235,22 +238,16 @@ public class StepExecutor {
                 // 执行工具调用
                 List<ToolExecutionResultMessage> toolResults = new ArrayList<>();
                 for (ToolExecutionRequest req : toolCalls) {
-                    long tStart = System.currentTimeMillis();
-                    ToolExecutionResultMessage result;
-                    try {
-                        result = toolExecutionEngine.execute(req, toolRegistry, windowModelId);
-                    } catch (Exception e) {
-                        log.error("工具执行异常: {}", req.name(), e);
-                        result = new ToolExecutionResultMessage(
-                                req.id(), req.name(), "Error: " + e.getMessage());
-                    }
-                    long tLatency = System.currentTimeMillis() - tStart;
+                    com.wgh.rag.tool.fallback.ToolInvocationOutcome outcome =
+                            toolInvoker.invoke(req, toolRegistry, windowModelId, toolBudget);
+                    ToolExecutionResultMessage result = outcome.message();
+                    long tLatency = outcome.latencyMs();
 
                     scratch.toolInvocations.add(ToolInvocationRecord.builder()
                             .toolName(req.name())
                             .arguments(req.arguments())
                             .result(result.text())
-                            .success(!result.text().startsWith("Error:"))
+                            .success(outcome.success())
                             .latencyMs(tLatency)
                             .build());
 

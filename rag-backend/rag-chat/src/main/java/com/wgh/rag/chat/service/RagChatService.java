@@ -43,6 +43,8 @@ import com.wgh.rag.llm.util.ToolResultBudgeter;
 import com.wgh.rag.tool.entity.ToolConfig;
 import com.wgh.rag.tool.constant.ToolConstants;
 import com.wgh.rag.tool.executor.ToolExecutionEngine;
+import com.wgh.rag.tool.fallback.ToolInvocationOutcome;
+import com.wgh.rag.tool.fallback.ToolInvoker;
 import com.wgh.rag.tool.service.ToolConfigService;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.agent.tool.ToolSpecification;
@@ -89,6 +91,7 @@ public class RagChatService {
     private final LlmJudgeService llmJudgeService;
     private final JudgeModelSelector judgeModelSelector;
     private final ToolExecutionEngine toolExecutionEngine;
+    private final com.wgh.rag.tool.fallback.ToolInvoker toolInvoker;
     private final ToolConfigService toolConfigService;
     private final AgentOrchestrator agentOrchestrator;
     private final com.wgh.rag.agent.config.AgentProperties agentProperties;
@@ -586,7 +589,7 @@ public class RagChatService {
                     modelChain, request, toolSpecs, messages, emitter, retrievedMatches, hitRate,
                     evaluationScheme, session, window, userMessage, toolRoundCount, MAX_TOOL_ROUNDS,
                     toolRegistry, windowModelId, tokenUsageAcc, quotaUsername, actualModel,
-                    onModelSwitch, metricCtx, cancellation);
+                    onModelSwitch, metricCtx, cancellation, toolInvoker.newTaskBudget());
             startAttempt(failoverCtx, 0);
 
         } catch (Exception e) {
@@ -627,6 +630,8 @@ public class RagChatService {
         final ChatMetricContext metricCtx;
         /** 客户端断开/显式取消句柄 */
         final ChatStreamCancellation cancellation;
+        /** Web 请求内复用同一份工具调用预算（请求数 + 总时长） */
+        final com.wgh.rag.tool.fallback.ToolTaskBudget toolBudget;
         /** rag-llm 通用流式故障转移驱动器（懒初始化） */
         StreamingModelFailover failover;
 
@@ -641,7 +646,8 @@ public class RagChatService {
                         AtomicReference<LlmModel> actualModel,
                         java.util.function.BiConsumer<LlmModel, String> onModelSwitch,
                         ChatMetricContext metricCtx,
-                        ChatStreamCancellation cancellation) {
+                        ChatStreamCancellation cancellation,
+                        com.wgh.rag.tool.fallback.ToolTaskBudget toolBudget) {
             this.chain = chain;
             this.request = request;
             this.toolSpecs = toolSpecs;
@@ -663,6 +669,7 @@ public class RagChatService {
             this.onModelSwitch = onModelSwitch;
             this.metricCtx = metricCtx;
             this.cancellation = cancellation;
+            this.toolBudget = toolBudget;
         }
     }
 
@@ -858,16 +865,17 @@ public class RagChatService {
                             attempt.deactivate();
                             return;
                         }
-                        long start = System.currentTimeMillis();
-                        ToolExecutionResultMessage result = toolExecutionEngine.execute(req, ctx.toolRegistry, ctx.windowModelId);
-                        long latency = System.currentTimeMillis() - start;
+                        ToolInvocationOutcome outcome = toolInvoker.invoke(
+                                req, ctx.toolRegistry, ctx.windowModelId, ctx.toolBudget);
+                        ToolExecutionResultMessage result = outcome.message();
+                        long latency = outcome.latencyMs();
                         toolResults.add(result);
 
                         // SSE 通知前端：工具调用完成
                         try {
                             ctx.emitter.send(SseEmitter.event().name(ChatEvents.TOOL_CALL_RESULT).data(Map.of(
                                     "tool", req.name(),
-                                    "success", !result.text().startsWith("Error:"),
+                                    "success", outcome.success(),
                                     "result", result.text(),
                                     "latencyMs", latency
                             )));

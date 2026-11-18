@@ -43,6 +43,7 @@ public class AgentInstanceExecutor {
 
     private final ModelCacheManager modelCacheManager;
     private final ToolExecutionEngine toolExecutionEngine;
+    private final com.wgh.rag.tool.fallback.ToolInvoker toolInvoker;
     private final ToolConfigService toolConfigService;
     private final RagRetrieveService ragRetrieveService;
     private final SseEventSender sse;
@@ -140,6 +141,8 @@ public class AgentInstanceExecutor {
             ChatModel model = modelCacheManager.getChatModel(agent.getChatModelId());
             int toolRounds = 0;
             String finalText = null;
+            // 单次 Agent 运行一份工具调用预算（请求数 + 总时长），跨轮共享
+            com.wgh.rag.tool.fallback.ToolTaskBudget toolBudget = toolInvoker.newTaskBudget();
 
             // ========== ReAct 循环 ==========
             while (toolRounds <= MAX_TOOL_ROUNDS) {
@@ -168,22 +171,16 @@ public class AgentInstanceExecutor {
                                 "runId", runId, "agentId", agentId,
                                 "toolName", req.name(), "arguments", req.arguments());
 
-                        long tStart = System.currentTimeMillis();
-                        ToolExecutionResultMessage result;
-                        try {
-                            result = toolExecutionEngine.execute(req, toolRegistry, agent.getChatModelId());
-                        } catch (Exception e) {
-                            log.error("工具执行异常 tool={}", req.name(), e);
-                            result = new ToolExecutionResultMessage(
-                                    req.id(), req.name(), "Error: " + e.getMessage());
-                        }
-                        long tLatency = System.currentTimeMillis() - tStart;
+                        com.wgh.rag.tool.fallback.ToolInvocationOutcome outcome =
+                                toolInvoker.invoke(req, toolRegistry, agent.getChatModelId(), toolBudget);
+                        ToolExecutionResultMessage result = outcome.message();
+                        long tLatency = outcome.latencyMs();
 
                         AgentInstanceResult.ToolInvocation inv = AgentInstanceResult.ToolInvocation.builder()
                                 .toolName(req.name())
                                 .arguments(req.arguments())
                                 .result(result.text())
-                                .success(!result.text().startsWith("Error:"))
+                                .success(outcome.success())
                                 .latencyMs(tLatency)
                                 .build();
                         toolInvocations.add(inv);
