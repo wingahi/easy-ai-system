@@ -35,6 +35,7 @@ import com.wgh.rag.llm.factory.ModelCacheManager;
 import com.wgh.rag.llm.service.LlmModelService;
 import com.wgh.rag.llm.service.ModelPriceService;
 import com.wgh.rag.llm.service.ModelRouter;
+import com.wgh.rag.llm.util.HistoryContextBudgeter;
 import com.wgh.rag.llm.util.RagContextBudgeter;
 import com.wgh.rag.llm.util.TokenEstimator;
 import com.wgh.rag.tool.entity.ToolConfig;
@@ -1194,8 +1195,19 @@ public class RagChatService {
             truncated.addAll(messages.subList(Math.max(1, keepFrom), messages.size()));
             messages = truncated;
         }
-        
-        return messages;
+
+        // 压缩只按条数/轮次控制，单条超长消息仍可能撑爆窗口：再按 Token 硬裁剪一次
+        int maxHistoryTokens = ctxProps.getMaxHistoryTokens() != null
+                ? ctxProps.getMaxHistoryTokens() : HistoryContextBudgeter.DEFAULT_MAX_HISTORY_TOKENS;
+        HistoryContextBudgeter.Result historyBudget = HistoryContextBudgeter.trim(messages, maxHistoryTokens);
+        if (historyBudget.droppedMessages() > 0) {
+            metrics.recordHistoryBudget(historyBudget.originalTokens(), historyBudget.keptTokens(),
+                    historyBudget.droppedMessages());
+            log.info("历史消息 Token 预算: 上限={}, 原始 {} tokens, 保留 {} tokens, 丢弃 {} 条",
+                    maxHistoryTokens, historyBudget.originalTokens(), historyBudget.keptTokens(),
+                    historyBudget.droppedMessages());
+        }
+        return historyBudget.kept();
     }
 
     /** 拼接上下文模板（"已知知识库内容：xxx 用户问题：xxx …"）的固定 Token 开销 */

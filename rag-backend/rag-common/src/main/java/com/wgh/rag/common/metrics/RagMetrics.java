@@ -126,6 +126,15 @@ public class RagMetrics {
         if (truncated) counter(RAG_CONTEXT_DROPPED, "kind", "truncated").increment();
     }
 
+    /**
+     * 历史消息 Token 预算裁剪：复用检索上下文指标，kind 追加 history_original / history_kept / history。
+     */
+    public void recordHistoryBudget(int originalTokens, int keptTokens, int droppedMessages) {
+        counter(RAG_CONTEXT_TOKENS, "kind", "history_original").increment(Math.max(originalTokens, 0));
+        counter(RAG_CONTEXT_TOKENS, "kind", "history_kept").increment(Math.max(keptTokens, 0));
+        if (droppedMessages > 0) counter(RAG_CONTEXT_DROPPED, "kind", "history").increment(droppedMessages);
+    }
+
     // ==================== LLM ====================
 
     public void recordLlmCall(String provider) {
