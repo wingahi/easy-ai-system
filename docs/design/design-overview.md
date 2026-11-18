@@ -43,17 +43,17 @@ WGH RAG System 是一套面向企业知识库的 RAG 应用平台，核心能力
 | --- | --- | --- |
 | [design-detailed.md](design-detailed.md) | 模块、关键类、认证、配额、公开访问、存储、数据、SSE 等详细设计 | 本文的展开 |
 | [api.md](../api/api.md) | 对外接口清单与示例 | 接口视图 |
-| [design-public-access.md](design-public-access.md) | 分享 / Widget / 开放 API | 专项设计 |
-| [quota-design.md](quota-design.md) | 配额模块 | 专项设计 |
-| [design-file-storage.md](../design-file-storage.md) | 本地 / 阿里云 OSS 存储抽象 | 专项设计 |
-| [design-observability.md](design-observability.md) | 指标、日志、告警 | 专项设计 |
-| [design-document-formats.md](design-document-formats.md) | 文档解析格式 | 专项设计 |
-| [agent-design.md](../agent-design.md) | 单 Agent | 专项设计 |
-| [workflow-design.md](../workflow-design.md) | 工作流 | 专项设计 |
-| [multi-agent-overall-design.md](../multi-agent-overall-design.md) / [multi-agent-detail-design.md](../multi-agent-detail-design.md) | 多 Agent | 专项设计 |
-| [design-rag-retrieval-enhancement.md](../design-rag-retrieval-enhancement.md) | 混合检索、重排、查询变换、语义缓存 | 专项设计 |
-| [design-phase5-platform-features.md](design-phase5-platform-features.md) | 平台化特性阶段记录 | 历史阶段 |
-| [design-pattern-refactoring.md](../design-pattern-refactoring.md) | 重构记录 | 历史阶段 |
+| [design-public-access.md](features/public-access/design-public-access.md) | 分享 / Widget / 开放 API | 专项设计 |
+| [quota-design.md](features/quota/quota-design.md) | 配额模块 | 专项设计 |
+| [design-file-storage.md](features/storage/design-file-storage.md) | 本地 / 阿里云 OSS 存储抽象 | 专项设计 |
+| [design-observability.md](features/observability/design-observability.md) | 指标、日志、告警 | 专项设计 |
+| [design-document-formats.md](features/knowledge-base/design-document-formats.md) | 文档解析格式 | 专项设计 |
+| [agent-design.md](features/agent/agent-design.md) | 单 Agent | 专项设计 |
+| [workflow-design.md](features/workflow/workflow-design.md) | 工作流 | 专项设计 |
+| [multi-agent-overall-design.md](features/agent/multi-agent-overall-design.md) / [multi-agent-detail-design.md](features/agent/multi-agent-detail-design.md) | 多 Agent | 专项设计 |
+| [design-rag-retrieval-enhancement.md](features/rag-retrieval/design-rag-retrieval-enhancement.md) | 混合检索、重排、查询变换、语义缓存 | 专项设计 |
+| [design-phase5-platform-features.md](features/platform/design-phase5-platform-features.md) | 平台化特性阶段记录 | 历史阶段 |
+| [design-pattern-refactoring.md](refactoring/design-pattern-refactoring.md) | 重构记录 | 历史阶段 |
 
 ### 1.4 版本记录
 

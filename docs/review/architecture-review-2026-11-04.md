@@ -417,7 +417,7 @@
 
 ## 7. 附注
 
-- **初版工作区快照（2026-11-04，历史记录）**：`git status` 显示工作区无已跟踪文件改动，存在 1 个未跟踪文件 `docs/design-data-access-extensibility.md`（非本次产生，未处理、未修改）。
+- **初版工作区快照（2026-11-04，历史记录）**：`git status` 显示工作区无已跟踪文件改动，存在 1 个未跟踪文件 `docs/design-data-access-extensibility.md`（现位于 `docs/design/features/data-access/design-data-access-extensibility.md`；非本次产生，未处理、未修改）。
 - **初版未执行**：任何 `mvn` / `npm` 命令；未启动/停止 8080 上的进程（PID 41603，历史快照）。
 - **2026-11-09 复核边界**：仅静态读取源码、SQL 与前端路由，未执行 `mvn` / `npm`，未启动/停止任何服务，未操作数据库，未修改业务代码。
 - **未修改**：除本文件外无任何文件写入。

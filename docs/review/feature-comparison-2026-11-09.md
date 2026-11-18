@@ -32,7 +32,7 @@
 | 权限码 | 18 个 `PERM_*` | `rag-auth/.../constant/AuthConstants.java` |
 | 后端测试类 | 118 个 | `rag-backend/**/src/test/**/*.java` |
 | 前端页面 | 22 个 `.vue` 页面 | `rag-frontend/src/views/**` |
-| E2E 用例 | 93 条，修复后全部 PASS | `docs/testing/browser-e2e-report-2026-11-06.md` |
+| E2E 用例 | 93 条，修复后全部 PASS | `docs/testing/reports/browser-e2e-report-2026-11-06.md` |
 
 **外部信息声明**：第 5 节对 Dify、RAGFlow、FastGPT、MaxKB、Coze Studio、Open WebUI 的描述，来自各产品官网/官方文档/公开对比资料（截至 2026-11），文中以 `†` 标注。这些产品迭代较快，具体功能以对应版本文档为准；本系统的描述则全部来自本仓库代码。
 
@@ -184,7 +184,7 @@
 | 离线脚本 | 指定知识库、K、混合模式、自定义查询集；与在线口径一致 | `rag-backend/eval/eval_recall.py` |
 | 生成侧评估 | LLM-as-judge：Faithfulness、Answer Relevancy；多 judge 重复评估并报告一致性；异步不阻塞 SSE | `rag-chat/.../evaluation/LlmJudgeService.java` |
 | 单测 | 118 个测试类，覆盖各模块 | `rag-backend/**/src/test/**` |
-| 页面 E2E | 93 条用例，含功能、边界、安全；报告与 105 张截图 | `docs/testing/browser-e2e-report-2026-11-06.md` |
+| 页面 E2E | 93 条用例，含功能、边界、安全；报告与 105 张截图 | `docs/testing/reports/browser-e2e-report-2026-11-06.md` |
 
 ### 2.7 前端页面与用户任务
 

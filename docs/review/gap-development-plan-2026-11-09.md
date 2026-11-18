@@ -45,17 +45,17 @@
 |---|---|---|---|---|---|---|---|
 | T01 | 文档解析增强：OCR + 表格结构 + 清洗 | P0 | 中 | 1 | `rag-kb/.../parser/**`、`DocumentParserDispatcher`、新建 `ocr/**`、`rag-kb/pom.xml` | 无 | 已完成 `6ed9d10` |
 | T02 | 检索参数治理与自动补偿 | P0 | 小 | 1 | `RagProperties.java`、`application.yml`（retrieve 段）、`QueryTransformService.java`、`RagRetrieveService.java` | 无 | 部分完成 `874f43d`（参数与 HYDE 已完成，自动补偿未做） |
-| T02F | 窗口级检索参数 UI | P0 | 小 | 3 | `ChatWindows.vue`（只此一个页面） | T02、T04b | 未开始 |
+| T02F | 窗口级检索参数 UI | P0 | 小 | 3 | `ChatWindows.vue`（只此一个页面） | T02、T04b | 已完成 `8b52b5f` |
 | T03 | chunk 级引用与原文定位 | P0 | 中 | 2 | `KnowledgeFileService.buildMetadata`、`VectorStoreService`（metadata 透传）、`RagChatService.buildSourcesList/extractRagContext`、三个聊天页 + 新建 `SourcePanel.vue` | T02（检索结果字段） | 已完成 `96dfc42`（`pageNo` 恒空，Agent 分支无 `[Sn]`） |
 | T04a | 资源归属与可见性（后端） | P0 | 中 | 2 | `01-schema.sql` + `sql/migrations/20261113/01_resource_visibility.sql`、KB/ChatWindow/Workflow/ToolConfig/PromptTemplate 的 entity/service/controller、`rag-data` 数据范围拦截器 | 无（建议先做“owner + visibility”MVP） | 已完成 `59c5eee`（迁移脚本已入库） |
 | T04b | 资源归属与可见性（前端） | P0 | 中 | 2（T04a 后） | `KnowledgeBase.vue`、`ChatWindows.vue`、`WorkflowList.vue`、`ToolManagement.vue`、`PromptTemplates.vue` | T04a | 已完成（2026-11-12，未单独提交） |
 | T05 | OpenAI 兼容入口 + Python SDK | P1 | 中 | 1 | 新建 `OpenAiCompatController.java`、`ApiKeyAuthenticationFilter.java`、`SecurityConfig.java`、`ApiKeyService.java`、新建 `sdk/python/**`、`PublicAccess.vue` | 无 | 已完成 `a2d9046` |
 | T06a | 生成侧评测指标补齐（无表结构） | P1 | 中 | 1 | `LlmJudgeService.java`、`RetrievalEvaluationService.java`、`RetrievalEvaluationController.java` | 无 | 已完成 `e814bb5` |
-| T06b | 评测数据集版本化 + CI 门禁 | P1 | 中 | 3 | `01-schema.sql`（新表）、`eval/eval_recall.py`、`.github/workflows/ci.yml`、`KBEvaluation.vue` | T04a（schema）、T06a | 未开始 |
-| T07 | 审计覆盖补齐 | P1 | 小 | 1 | `AdminUserController`、`AdminRoleController`、`QuotaAdminController`、`AgentController`、`MultiAgentController` | 无（避开 Chat/OpenApi/ApiKey） | 部分完成 `1307d27`（AdminUser 未覆盖） |
-| T08 | URL/HTTP 数据源增量同步（最小版） | P1 | 中 | 3 | 新建 `rag-kb/.../connector/**`、`KnowledgeFileService`（入库入口）、`01-schema.sql`（连接器表）、新建 `KBConnectors.vue` | T03（Metadata）、T04a（schema） | 未开始 |
-| T09 | 工作流表达式/代码节点 + 单步调试 | P2 | 中 | 3 | `WorkflowConstants.java`、新建 `ExpressionNodeExecutor.java`、`NodeExecutorRegistry.java`、`GraphValidator.java`、`WorkflowController.java`、`WorkflowEditor.vue`、`WorkflowNodeCard.vue` | T04a（WorkflowController） | 未开始 |
-| T10 | 大文件分片上传/断点续传 | P2 | 中 | 4 | `KnowledgeBaseController` 上传端点、`KnowledgeFileService`、`LocalFileStorageService`、`KBFiles.vue` | T08（入库链路） | 未开始 |
+| T06b | 评测数据集版本化 + CI 门禁 | P1 | 中 | 3 | `01-schema.sql`（新表）、`eval/eval_recall.py`、`.github/workflows/ci.yml`、`KBEvaluation.vue` | T04a（schema）、T06a | 已完成 `adbdafe`（迁移 `sql/migrations/20261118/01_eval_dataset_versioning.sql`） |
+| T07 | 审计覆盖补齐 | P1 | 小 | 1 | `AdminUserController`、`AdminRoleController`、`QuotaAdminController`、`AgentController`、`MultiAgentController` | 无（避开 Chat/OpenApi/ApiKey） | 部分完成 `1307d27`（AdminUser 走 `AccountAuditService` 显式审计，刻意不加 `@Audit`；资源 ID 仍只在 detail） |
+| T08 | URL/HTTP 数据源增量同步（最小版） | P1 | 中 | 3 | 新建 `rag-kb/.../connector/**`、`KnowledgeFileService`（入库入口）、`01-schema.sql`（连接器表）、新建 `KBConnectors.vue` | T03（Metadata）、T04a（schema） | 已完成 `855f61f`（迁移 `sql/migrations/20261118/02_kb_connector.sql`；robots.txt / 整站爬取未做） |
+| T09 | 工作流表达式/代码节点 + 单步调试 | P2 | 中 | 3 | `WorkflowConstants.java`、新建 `ExpressionNodeExecutor.java`、`NodeExecutorRegistry.java`、`GraphValidator.java`、`WorkflowController.java`、`WorkflowEditor.vue`、`WorkflowNodeCard.vue` | T04a（WorkflowController） | 已完成 `e27723f`（仅表达式节点，无任意脚本执行） |
+| T10 | 大文件分片上传/断点续传 | P2 | 中 | 4 | `KnowledgeBaseController` 上传端点、`KnowledgeFileService`、`LocalFileStorageService`、`KBFiles.vue` | T08（入库链路） | 已完成 `140375a`（`wgh_upload_session`；迁移 `sql/migrations/20261118/03_upload_session.sql`） |
 | T11 | 模型提供商扩展（Azure/Bedrock/Ollama） | P3 | 小 | 1 | `ModelCacheManager.java`、`LlmModel.java`、`rag-llm/pom.xml`、`ChatModels.vue`/`EmbeddingModels.vue`/`RerankModels.vue` | 无 | 已完成 `028f1bc`（Bedrock 未做） |
 | T12 | 多实例与可观测 | P2 | 大 | 4 | `rag-config/.../redis/**`、`DefaultPublicAccessStore`、`ChatStreamCancellation`、`application.yml`、`docker-compose.yml`、新建 k8s/备份脚本 | T02（yml）、T05（鉴权路径） | 未开始 |
 | T13 | Agent 长期记忆 / 代码沙箱 | P2（建议延后） | 大 | 5 | `rag-agent/**`、`rag-agent-multi/**`、新建 memory/sandbox 包 | T09（执行节点） | 未开始 |
@@ -65,6 +65,8 @@
 ---
 
 ## 3. 任务详情
+
+> **测试用例约定（2026-11-18）**：本节为 T01~T11 补测试用例，新增编号统一为 `TC-Txx-nn`。`docs/testing/test-cases.md` 已有同行为用例的，直接引用其编号（CIT / VIS / OAI / Eval / EVDS / CIG / CONN / WFX / WFDBG / LM / AUD），不重复造；只有尚未覆盖的行为才新增 `TC-` 用例。所有标注“需运行环境验证”的条目只代表待执行，不代表已通过。
 
 ### T01 文档解析增强：OCR + 表格结构 + 清洗（P0 / 中 / 批次 1）
 
@@ -96,6 +98,21 @@
 - 页面：在 `KBFiles.vue` 上传扫描 PDF，预览有正文、段落数 > 0（需服务可重启时验证；本轮只跑单测）。
 - 命令：`mvn -pl rag-kb -am -Dtest=OcrParserTest,TableExtractorTest,DocumentNormalizerTest test`（持锁执行）。
 
+**测试用例**
+
+| 编号 | 前置条件 | 操作步骤 | 预期结果 | 验证方式 |
+|---|---|---|---|---|
+| TC-T01-01 | 扫描版 PDF fixture（无文本层或页均字数低于阈值） | 解析并走入库链路 | `text` 非空、`chunkCount > 0`；触发 OCR 兜底；解析状态最终 `SUCCESS` | 自动化单测（`OcrParserTest`） |
+| TC-T01-02 | 本机已安装 `tesseract` 与 `chi_sim+eng` 语言包 | 上传扫描 PDF，观察 `processing_status` 与 chunk 内容 | 单页文字少于阈值（默认 20 字）触发 OCR；chunk 含识别文本；不产生空正文文件 | 需运行环境验证 |
+| TC-T01-03 | 引擎缺失、语言包缺失或 OCR 抛错 | 解析扫描 PDF | 记录 WARN 并回退纯文本抽取；文档不置 `FAILED`，不阻断其他文档/其他页 | 自动化单测（mock `OcrService` 抛错） |
+| TC-T01-04 | `WGH_OCR_ENABLED=false` | 上传扫描 PDF | 不调用 OCR；仅使用 `PDFTextStripper` 结果；行为与升级前一致 | 自动化单测 |
+| TC-T01-05 | 文档页数超过 50；或单页 OCR 超过 60s | 解析整份文档 | 只对前 50 页做 OCR；超时页降级为文本抽取；整份解析仍完成 | 自动化单测（mock 超时/页数） |
+| TC-T01-06 | 表格 fixture：多行、列边界对齐、单元格间距大于普通词距 | 解析 PDF | 输出 Markdown 表格行（含竖线与分隔行）；单元格不串列；表格块进入切分 | 自动化单测（`TableExtractorTest`） |
+| TC-T01-07 | 双栏 PDF fixture（中部存在纵向空白带） | 解析 PDF | 阅读顺序为先左栏、后右栏；段落顺序稳定，不出现左右交错 | 自动化单测（`PdfLayoutAnalyzerTest`） |
+| TC-T01-08 | 纯两列表格页面（列间距较大） | 解析 PDF | 单行切出 ≥3 个单元格时按表格处理；否则按双栏处理。纯两列表可能被判为双栏（已知取舍，不视为缺陷） | 自动化单测 |
+| TC-T01-09 | ①≥3 页且页眉/页脚/页码重复；②2 页文档 | 调用 `DocumentNormalizer.removeRepeatedHeaderFooter` | ≥3 页时删除首/尾各最多两行重复内容；<3 页不删除，避免误删正文 | 自动化单测（`DocumentNormalizerTest`） |
+| TC-T01-10 | 单页版面分析抛异常（mock） | 解析整份 PDF | 该页记录 WARN 并回退原始文本；其余页正常；整份文档成功返回 | 自动化单测 |
+
 ---
 
 ### T02 检索参数治理与自动补偿（P0 / 小 / 批次 1）
@@ -126,9 +143,26 @@
 - 接口：`GET /api/kb/{id}/search` 返回 `keywordHitCount > 0`（使用真实 chunk + 短 query 的集成测试；本轮不连库则用 mock）。
 - 页面：`ChatWindows.vue` 后续 T02F 展示 hybrid、minScore、queryTransform 三项。
 
+**测试用例**
+
+| 编号 | 前置条件 | 操作步骤 | 预期结果 | 验证方式 |
+|---|---|---|---|---|
+| TC-T02-01 | 默认配置 | 读取 `RagProperties.retrieve.minScore` 与 dev/test/prod 三套 yml | 默认值均为 `0.55`；代码与 yml 一致，无“注释 0.55、实际 0.3” | 自动化单测 + 配置断言 |
+| TC-T02-02 | 知识库有相关/不相关 chunk | 调用 `/api/kb/{id}/search` | 低于 0.55 的 chunk 被过滤；相关 chunk 正常返回 | 引用 **KB-24、KB-29**（不重复造） |
+| TC-T02-03 | 查询变换模式 HYDE，变换模型可用 | 触发检索并捕获 `transformedQueries` | 返回“原查询 + 假设答案”两条，原查询不被替换；重复项去重 | 自动化单测（`QueryTransformServiceTest`） |
+| TC-T02-04 | `enable-hybrid` 分别为 false / true | 触发检索，观察召回路数与 RRF | false 仅向量路；true 向量 + 关键词并做 RRF(k=60) | 引用 **WRP-02、WRP-03** |
+| TC-T02-05 | `keyword-top-n` 默认 10，分别配置 5 / 20 | 触发关键词检索 | 关键词路最多返回配置条数；默认 10；非法/缺省回落默认值 | 自动化单测（`KeywordSearchServiceTest`） |
+| TC-T02-06 | 窗口 `hybridEnabled=false`、全局 `enable-hybrid=true` | 发送提问 | 仍启用混合检索（OR 语义，窗口关闭不能覆盖全局） | 引用 **WRP-04** |
+| TC-T02-07 | 检索覆盖不足（mock `coverageRate < 0.4`） | 调用 `RagRetrieveService` | 当前实现只检索一次，不扩大 topK、不放宽 minScore（低覆盖补偿未实现，断言现状而非理想行为） | 自动化单测 |
+| TC-T02-08 | 变换模型被禁用或超时 | 发送提问 | 降级原查询，主链路正常返回；日志 WARN | 引用 **WRP-15** |
+
 ---
 
 ### T02F 窗口级检索参数 UI（P0 / 小 / 批次 3）
+
+**状态**：已完成（2026-11-18，commit `8b52b5f`）。  
+**已完成**：`ChatWindows.vue` 增加混合检索、查询变换模式、变换模型三项，列表回显三态标签。  
+**保留**：`minScore` 与低覆盖补偿开关未落到窗口表单（窗口实体无对应字段；低覆盖补偿本身未实现）；页面交互用例见 `test-cases.md` WRP-05、WRP-06、WRP-11、WRP-16。
 
 **一句话目标**：把 T02 的 hybrid、minScore、queryTransform、自动补偿开关暴露到聊天窗口管理页。
 
@@ -174,6 +208,23 @@
 - 单测：metadata 含 page/offset；`buildSourcesList` 去重规则与现有“同文档保留最高分”一致。
 - 页面：点击 `[S1]` 能定位到对应引用卡片并高亮。
 
+**测试用例**
+
+本节行为已由 `docs/testing/test-cases.md` §32 完整覆盖，不新增编号，按需求点直接引用：
+
+| 需求点 | 引用编号 | 说明 |
+|---|---|---|
+| `sources` 十个字段 | CIT-01 | 含 `pageNo` 为 `null` 的断言 |
+| 同文档多段合并、保留最高分 | CIT-02 | 卡片数、`score`、`chunkIndex` 一并校验 |
+| `[Sn]` 按文档分配、同文档共用 | CIT-05 | 上下文前缀与 `sources` 顺序一致 |
+| 预算裁剪后编号一致 | CIT-06、CIT-08 | 被裁 chunk 不占号，无空卡片 |
+| snippet 压缩空白 + 120 字截断 | CIT-09、CIT-10 | 短 chunk 不补全 |
+| 点击编号滚动并高亮、跳过代码/链接 | CIT-07、CIT-11、CIT-12 | 页面用例 |
+| 分享页只读态引用 | CIT-13、CIT-14 | 登录态 + 公开分享 |
+| `pageNo` 恒空 | CIT-16 | 已知限制，不写页码 |
+| 纯 Agent 分支无 `[Sn]` | CIT-17 | 已知限制，不出现无卡片编号 |
+| 同名文件跨知识库合并 | CIT-04 | 已知限制（按 `fileName` 归并） |
+
 ---
 
 ### T04a 资源归属与可见性（后端，P0 / 中 / 批次 2）
@@ -207,6 +258,27 @@
 - 迁移脚本幂等：同一脚本执行两次无 ERROR（静态审查；本轮不连库）。
 - 页面：T04b 完成后，用两个账号验证列表与详情。
 
+**测试用例**
+
+已由 `docs/testing/test-cases.md` §33 完整覆盖，不新增编号：
+
+| 需求点 | 引用编号 | 说明 |
+|---|---|---|
+| 五类资源默认 `PRIVATE`、owner 读写 | VIS-01、VIS-02 | 含 `createBy` 断言 |
+| ADMIN 越过可见性 | VIS-03 | 读 + 写 |
+| 他人 PRIVATE：详情/写按不存在（3001） | VIS-04 | 不泄露存在性；与“404 语义”对应 |
+| 他人 PRIVATE 不在列表 | VIS-05 | 分页总数同步减少 |
+| 他人 TEAM/PUBLIC 可读、不可写（1004） | VIS-06~VIS-09 | 404 与 403 的语义差异 |
+| TEAM 与 PUBLIC 判定等价 | VIS-11 | 已知限制 |
+| 拦截器只改写 page/list 单表查询 | VIS-12、VIS-13、VIS-17、VIS-18 | 含去重与按 id 不激活 |
+| JOIN / UNION / CTE 失败关闭 | VIS-14~VIS-16 | 抛 SQLException，不返回未过滤数据 |
+| 内置 Prompt 固定 PUBLIC | VIS-19、VIS-20 | 改可见性返回 `3003` |
+| 普通用户编辑内置模板被拦截 | VIS-21 | 403 / `1004` / 只读 |
+| 非法 visibility → `2001` | VIS-22 | 原值不变 |
+| 分享 token 不受可见性过滤 | VIS-23、VIS-24 | 匿名 + 只读 |
+| 存量库未迁移报错、`system` 资源仅管理员可见 | VIS-29、VIS-30 | 升级检查项 |
+| 迁移幂等与内置资源回填 | VIS-31、VIS-32 | 手工执行 |
+
 ---
 
 ### T04b 资源归属与可见性（前端，P0 / 中 / 批次 2，T04a 后）
@@ -227,6 +299,18 @@
 **依赖**：T04a 的接口契约。  
 **不能并行**：与 T02F 共用 `ChatWindows.vue`，T02F 必须等 T04b 完成。  
 **验收**：两个浏览器会话（A/B 账号）分别登录，列表与按钮表现符合预期；`npm run build` 通过。
+
+**测试用例**
+
+前端交互已由 §33.5 覆盖，不新增编号：
+
+| 需求点 | 引用编号 | 说明 |
+|---|---|---|
+| 五个列表页可见性列 | VIS-25 | 文案/颜色与 `VISIBILITY_OPTIONS` 一致 |
+| 无写权限只读徽标 + tooltip | VIS-26 | 不出现下拉菜单 |
+| 切换后即时更新、刷新保持 | VIS-27 | 失败回滚 |
+| 内置模板不可切换 | VIS-28 | 只读 `PUBLIC` |
+| 五个 `PATCH .../visibility` 入口 | VIS-02、VIS-08、VIS-22 | 接口契约与非法值校验 |
 
 ---
 
@@ -259,6 +343,24 @@
 - Python SDK 示例能跑通非流式与流式；无 scope 的 key 返回 403。
 - 单测覆盖错误 JSON 结构。
 
+**测试用例**
+
+已由 `docs/testing/test-cases.md` §34 覆盖，仅补一条未覆盖参数边界：
+
+| 编号 | 前置条件 | 操作步骤 | 预期结果 | 验证方式 |
+|---|---|---|---|---|
+| TC-T05-01 | 有效 Key（`chat:write`），窗口启用 | 请求体带 `n=2`、`logprobs`、`tools` / `tool_choice` | 这些参数被忽略（请求按单条 choice 处理）：返回 1 个 choice、无 `tool_calls`、不报 400；属当前已知限制 | 接口调用 |
+
+| 需求点 | 引用编号 | 说明 |
+|---|---|---|
+| `/v1/models` 仅启用窗口 | OAI-01、OAI-02 | 含 `model:read` 403 |
+| 非流式 / 流式结构 | OAI-03~OAI-05 | `chat.completion`、`chat.completion.chunk`、`[DONE]`、usage |
+| 多模态图片输入 | OAI-06 | 不支持视觉时返回可读错误 |
+| 401 / 403 / 404 / 429 / 400 错误体 | OAI-07~OAI-12 | OpenAI 错误结构 |
+| `session_id` 续聊与归属 | OAI-13~OAI-16 | 非数字、他人会话 |
+| `/api/open/v1` 别名 | OAI-17 | 与 `/v1` 一致 |
+| Python SDK | — | 单文件客户端；真实厂商连通性未验证，需运行环境 |
+
 ---
 
 ### T06a 生成侧评测指标补齐（P1 / 中 / 批次 1）
@@ -287,9 +389,31 @@
 - 单测：mock judge 返回固定 JSON → 指标计算正确；judge 超时 → 主链路不受影响。
 - 接口：`POST /api/kb/{id}/evaluation` 返回新增指标（需服务可重启时验证）。
 
+**测试用例**
+
+`Eval-01`~`Eval-09` 覆盖方案开关与 judge 选择；以下补指标口径与“不可计算”状态：
+
+| 编号 | 前置条件 | 操作步骤 | 预期结果 | 验证方式 |
+|---|---|---|---|---|
+| TC-T06a-01 | 标注相关集合含 1 条，检索结果第 3 位命中 | 调用 `RetrievalQuality.mrrAtK` | 返回 `1/3 ≈ 0.3333`；第 1 位命中时为 `1.0`；未命中为 `0` | 自动化单测（`RetrievalEvaluationServiceTest`） |
+| TC-T06a-02 | 相关性为二值，K=3，命中位置为第 2 位（`rel=[0,1,0]`） | 计算 NDCG@3 | `DCG=1/log2(3)≈0.6309`，`IDCG=1`，`NDCG≈0.6309`；与手算一致 | 自动化单测 |
+| TC-T06a-03 | 未提供标注相关集合 | 计算 Recall / MRR / NDCG | 三者均返回 `null`（不可计算），不以 0 冒充 | 自动化单测 |
+| TC-T06a-04 | 有标注但前 K 条均不相关 | 同上 | Recall=0、MRR=0、NDCG=0（有效结论，不是 `null`） | 自动化单测 |
+| TC-T06a-05 | judge 逐 chunk 判定 `rel=[1,0,1]`，K=3 | 计算 Context Precision@3 | `P@1=1`、`P@2=0.5`、`P@3=2/3`；`(1×1 + 0.5×0 + 0.6667×1)/2 ≈ 0.8333` | 自动化单测（`LlmJudgeServiceTest`） |
+| TC-T06a-06 | 参考答案拆出 3 条声明，上下文可支持其中 2 条 | 计算 Context Recall | 返回 `2/3 ≈ 0.6667` | 自动化单测 |
+| TC-T06a-07 | 未提供参考答案 | 执行 LLM_JUDGE 评估 | Context Precision / Recall 为 `null`，`contextMetricStatus=NOT_COMPUTABLE_NO_REFERENCE`；不写 0 分 | 自动化单测 |
+| TC-T06a-08 | 无检索上下文（0 个 chunk） | 执行评估 | 状态 `NOT_COMPUTABLE_NO_CONTEXT`；Faithfulness / Answer Relevancy 仍按可用输入计算 | 自动化单测 |
+| TC-T06a-09 | 有参考答案但 judge 未拆出任何原子声明 | 执行评估 | 状态 `NOT_COMPUTABLE_NO_CLAIMS`；指标为 `null` | 自动化单测 |
+| TC-T06a-10 | 全部 judge 调用/解析失败 | 执行评估 | 状态 `NOT_COMPUTABLE_JUDGE_FAILED`；主回答链路不受影响，`judgeDetails` 记录错误 | 自动化单测 |
+| TC-T06a-11 | judge 超时（mock 超时或禁用全部 judge） | 发送一次开启 LLM_JUDGE 的提问 | done 事件正常返回；评估异步失败只记 WARN/状态，不阻断回答（同 **Eval-08** 的异步语义） | 自动化单测 + 接口 |
+
 ---
 
 ### T06b 评测数据集版本化 + CI 门禁（P1 / 中 / 批次 3）
+
+**状态**：已完成（2026-11-18，commit `adbdafe`）。  
+**已完成**：`wgh_eval_dataset` / `wgh_eval_case` / `wgh_eval_result` 三表、写时复制版本、按版本归档、跨版本对比；`eval_recall.py` 增加 fixture 离线模式与五项阈值门禁；CI 增加 `retrieval-gate`。  
+**保留**：fixture 不验证真实检索链路；尚无 A/B 实验对比；迁移脚本为 `sql/migrations/20261118/01_eval_dataset_versioning.sql`。
 
 **涉及文件**
 - `01-schema.sql`（新表 `wgh_eval_dataset`、`wgh_eval_case`，或复用 `wgh_kb_ground_truth` 加 `dataset_version`）
@@ -308,6 +432,21 @@
 **不能并行**：`01-schema.sql`、`KBEvaluation.vue` 独享。  
 **验收**：`python3 rag-backend/eval/eval_recall.py --dataset fixture.jsonl --k 5` 输出与页面一致；CI 在 mock 模式通过；数据集版本切换后结果不串。
 
+**测试用例**
+
+已由 `docs/testing/test-cases.md` §36、§37 完整覆盖，不新增编号：
+
+| 需求点 | 引用编号 | 说明 |
+|---|---|---|
+| 数据集 / 用例 CRUD、归属校验 | EVDS-01~EVDS-06、EVDS-21、EVDS-22 | 名称/说明校验、跨知识库按 3001 |
+| 写时复制、版本推进、旧版本只读 | EVDS-07~EVDS-14 | 新增/修改/删除均生成新版本 |
+| 按版本评测归档 | EVDS-15~EVDS-18 | 指定旧版本不覆盖其他结果 |
+| 跨版本对比（指标差值 + 逐查询 Recall） | EVDS-19、EVDS-20 | 缺失侧为 `null` |
+| CI fixture 离线模式与五项阈值 | CIG-01~CIG-07 | 无 Key、无网络、无模型 |
+| 不达标退出码 1、fixture 错误退出码 2 | CIG-04、CIG-08 | 与“运行失败”区分 |
+| 脚本单测与 CI 作业隔离 | CIG-09、CIG-10 | `test_eval_recall.py`、独立 job |
+| 迁移脚本 | MIG3-01~MIG3-07 | `20261118/01_eval_dataset_versioning.sql` |
+
 ---
 
 ### T07 审计覆盖补齐（P1 / 小 / 批次 1）
@@ -316,7 +455,7 @@
 
 **状态**：部分完成（2026-11-11，commit `1307d27`）。  
 **已完成**：`AdminRoleController`、`AgentController`、`MultiAgentController`、`QuotaAdminController` 的写接口补 `@Audit`，并有 `AuditCoverageTest` 做覆盖校验。  
-**保留**：`AdminUserController` 本轮未加注解；审计的资源标识仍只拼在 `detail` 文本里（`类名#方法名`），未落独立的 resource id 列。
+**保留**：`AdminUserController` 刻意不加 `@Audit`，改走 `AccountAuditService` 显式审计（`detail` 为 `target=<username>`，不含口令明文）；审计的资源标识仍只拼在 `detail` 文本里，未落独立 resource id 列。
 
 **涉及文件**
 - `rag-controller/.../AdminUserController.java`、`AdminRoleController.java`、`QuotaAdminController.java`、`AgentController.java`、`MultiAgentController.java`
@@ -330,9 +469,26 @@
 **不能并行**：**不要动** `ChatController`、`KnowledgeBaseController`、`WorkflowController`（T04a 会改）；**不要动** `OpenApiController`、`ApiKeyAdminController`（T05 相关）。  
 **验收**：单测或代码审查确认每个写接口都有注解；服务可重启时调用一次接口后查审计表（本轮不连库）。
 
+**测试用例**
+
+| 编号 | 前置条件 | 操作步骤 | 预期结果 | 验证方式 |
+|---|---|---|---|---|
+| TC-T07-01 | `AdminRoleController` 已加载 | 反射检查 4 个写方法注解并触发切面 | `ROLE_CREATE/UPDATE/DELETE/PERMISSION_UPDATE` 均声明 `@Audit`；切面各写一条 SUCCESS 记录；`listRoles/listPermissions` 无注解 | 自动化单测（`AuditCoverageTest`） |
+| TC-T07-02 | `QuotaAdminController` | 同 TC-T07-01 | `QUOTA_CONFIG_SAVE`、`QUOTA_USAGE_RESET`、`QUOTA_CONFIG_RESET` 均声明；读接口无注解 | 自动化单测 |
+| TC-T07-03 | `AgentController` | 同 TC-T07-01 | HITL 确认、取消、重试、跳过 4 个写方法均声明 `@Audit`；查询接口无注解 | 自动化单测 |
+| TC-T07-04 | `MultiAgentController` | 同 TC-T07-01 | run 创建/HITL/取消、crew 创建/更新/删除 6 个写方法均声明；流式与查询接口无注解 | 自动化单测 |
+| TC-T07-05 | `AdminUserController#create`（ADMIN 登录） | 创建账号（口令 `secretPass123`）并捕获审计记录 | 走 `AccountAuditService` 显式审计，`action=CREATE`、`resourceType=ACCOUNT`、`resourceId=trial07`；`detail` 含 `target=trial07` 且**不含**口令明文 | 自动化单测 |
+| TC-T07-06 | `AdminUserController#create` / `#resetPassword` | 反射检查注解 | 两方法均**不得**声明 `@Audit`（入参 DTO `toString()` 含明文口令，切面会原样写 detail） | 自动化单测 |
+| TC-T07-07 | 审计落库抛异常（mock DB 失败） | 执行任一被 `@Audit` 的写操作 | 主流程正常返回；仅 WARN 日志，不把审计失败传播给调用方 | 引用 **AUD-03** |
+| TC-T07-08 | 未覆盖边界 | 检查 `KB/Chat/Tool/Prompt/Connector/Chunk complete` 等写接口 | 这些接口已有 `@Audit`，但资源标识仍拼在 `detail` 文本（`类名#方法名`），没有独立 resource id 列；`AdminUser` 同理——属当前已知边界 | 代码审查 + 引用 **AUD-01** |
+
 ---
 
 ### T08 URL/HTTP 数据源增量同步（最小版，P1 / 中 / 批次 3）
+
+**状态**：已完成（2026-11-18，commit `855f61f`）。  
+**已完成**：单页 URL 抓取 + Jsoup 正文抽取、`content_hash` 判重、内容变化生成新文件、404/410 清理、SSRF 逐跳校验、运行记录、可选定时同步（`WGH_CONNECTOR_SCHEDULER_ENABLED` 默认 false）。  
+**保留**：robots.txt 校验、整站爬取、非 HTML 数据源（PDF / RSS / 第三方 API）未实现；并发锁为进程内，多实例不互斥；迁移脚本为 `sql/migrations/20261118/02_kb_connector.sql`。
 
 **一句话目标**：支持“填 URL → 抓正文 → 入库”，并支持定时重抓、内容未变不重复入库。
 
@@ -355,9 +511,36 @@
 **不能并行**：`KnowledgeFileService` 与 T10 冲突；`01-schema.sql` 与 T06b 同批但不同表——**仍建议串行**，因为同一文件。  
 **验收**：配置一个本地 HTTP 页面 URL → 生成文件；第二次同步 contentHash 不变 → 不新增；源页面删除 → 文件逻辑删除；运行记录可查。
 
+**测试用例**
+
+已由 `docs/testing/test-cases.md` §40 完整覆盖，不新增编号：
+
+| 需求点 | 引用编号 | 说明 |
+|---|---|---|
+| 配置 CRUD、必填与默认值 | CONN-01、CONN-03 | `enabled=0`、间隔默认 60 |
+| 不可抓取 URL 拒绝 | CONN-02 | SSRF 前置校验 |
+| 列表按创建人过滤、归属校验 | CONN-04、CONN-05 | 他人连接器按 3001 |
+| 正文提取与噪声移除 | CONN-06 | `article/main/#content` 启发式 |
+| 首次同步成功、运行记录 | CONN-07、CONN-17 | 文件 + 哈希 + 状态 |
+| `UNCHANGED` 不重复入库 | CONN-08 | 复用既有 `fileId` |
+| 内容变化生成新版本、旧文件逻辑删除 | CONN-09 | 知识库只保留最新正文 |
+| 404/410 清理、其他失败保留 | CONN-10、CONN-11 | 仅 404/410 清空 |
+| 空正文失败 | CONN-12 | 不入库 |
+| SSRF 逐跳校验、重定向/响应上限 | CONN-13 | 拒绝内网/元数据地址 |
+| 并发锁、定时跳过 | CONN-14 | 进程内锁，多实例不互斥（已知限制） |
+| 定时默认关闭与到期判定 | CONN-15、CONN-16 | `WGH_CONNECTOR_SCHEDULER_ENABLED=true` 才启用 |
+| 管理页交互 | CONN-18 | 需运行环境验证 |
+| 迁移脚本 | MIG3-04~MIG3-07 | `20261118/02_kb_connector.sql`；robots.txt / 整站爬取未做（已知限制） |
+
+> 真实外网抓取（DNS、证书、30x 跨域、超时、站点反爬）未纳入自动化，需在具备出网条件的环境执行 CONN-06~CONN-13，并标注“需运行环境验证”。
+
 ---
 
 ### T09 工作流表达式/代码节点 + 单步调试（P2 / 中 / 批次 3）
+
+**状态**：已完成（2026-11-18，commit `e27723f`）。  
+**已完成**：`EXPRESSION` 受限 SpEL 表达式节点（拒绝 `T()` / `new` / `@bean` / 赋值 / 实例方法，长度上限 2000）；`POST /api/workflows/{id}/debug/step` 单步、输入快照、游标续跑、HITL 暂停。  
+**保留**：不做任意脚本执行（代码沙箱归 T13）；调试开关默认关闭；HITL 停在 `PAUSED` 后无法继续该调试会话。
 
 **一句话目标**：工作流能安全地做变量计算，并能单步查看每个节点的输入/输出。
 
@@ -383,9 +566,32 @@
 **不能并行**：与 T04b 不冲突（不同文件）；与 T08 可并行（不同目录）。  
 **验收**：表达式节点能计算并传递变量；非法表达式在校验阶段被拦截；单步调试能停在指定节点并展示上下文。
 
+**测试用例**
+
+已由 `docs/testing/test-cases.md` §38、§39 完整覆盖，不新增编号：
+
+| 需求点 | 引用编号 | 说明 |
+|---|---|---|
+| 合法表达式求值、`resultVar` 传变量 | WFX-01、WFX-02 | 下游 `{{vars.x}}` 可取值 |
+| 上下文字段与白名单函数 | WFX-03、WFX-04 | `#input/#last/#loop/#vars/#nodes/#fn` |
+| `T()` / `new` / `@bean` 被拒 | WFX-05~WFX-07 | 安全沙箱 |
+| 赋值、实例方法被拒 | WFX-08、WFX-09 | `SimpleEvaluationContext` 限制 |
+| 长度上限 2000 | WFX-10 | 超长直接拒绝 |
+| 必填与语法校验 | WFX-11、WFX-12 | 保存校验 + 运行时错误 |
+| 字符串字面量不误判 | WFX-13 | `'T(...)'`、`'a@b.com'` |
+| 调试开关默认关、行为不变 | WFDBG-01、WFDBG-14 | 普通运行链路不受影响 |
+| 逐节点输入快照与输出 | WFDBG-02~WFDBG-05 | 一次只推进预算内节点 |
+| 游标持久化、快照续跑 | WFDBG-08、WFDBG-11 | `context_json` 游标 |
+| HITL 停在 `PAUSED` | WFDBG-07 | 后续不能续跑（L-28，已知限制） |
+| 编辑器交互 | WFDBG-13 | 需运行环境验证 |
+
 ---
 
 ### T10 大文件分片上传/断点续传（P2 / 中 / 批次 4）
+
+**状态**：已完成（2026-11-18，commit `140375a`，迁移脚本 `9872d87`）。  
+**已完成**：`wgh_upload_session` 会话表、`/files/chunk/init|{sessionId}|complete` 端点、按序拼接 + SHA-256 复用入库、重复分片幂等、会话归属校验、过期 `UPLOADING` 会话清理。  
+**保留**：默认分片 5MB（1MB~64MB）、分片总数上限 2000；清理任务默认开启（24h / 60min / 200 条）；迁移脚本为 `sql/migrations/20261118/03_upload_session.sql`。
 
 **涉及文件**
 - `KnowledgeBaseController.java`（`/files/chunk/init|chunk|complete`）
@@ -397,6 +603,27 @@
 **依赖**：T08（入库链路稳定）。  
 **不能并行**：`KnowledgeFileService`、`KBFiles.vue` 与 T08 串行；`application.yml` 与 T12 串行。  
 **验收**：200MB 文件分片上传成功；中断后从已完成分片续传；合并后 contentHash 与单次上传一致。
+
+**测试用例**
+
+> 端点：`POST /api/kb/{kbId}/files/chunk/init`、`POST /api/kb/files/chunk/{sessionId}`（表单 `index` + `chunk`）、`GET /api/kb/files/chunk/{sessionId}`、`POST /api/kb/files/chunk/{sessionId}/complete`。会话表 `wgh_upload_session`，默认分片 5MB，范围 1MB~64MB，分片总数上限 2000。
+
+| 编号 | 前置条件 | 操作步骤 | 预期结果 | 验证方式 |
+|---|---|---|---|---|
+| TC-T10-01 | 已登录且具备 `kb:write`；知识库存在 | `POST .../chunk/init`，`fileSize=12MB`，不传 `chunkSize` | 返回 `chunkSize=5MB`、`totalChunks=3`、`uploadUuid`、`uploadedChunks=[]`；会话状态 `UPLOADING` | 自动化单测（`ChunkUploadServiceTest`） |
+| TC-T10-02 | 同上 | 分别传 `chunkSize=512KB`、`1MB`、`64MB`、`65MB` | 1MB/64MB 成功；512KB 与 65MB 返回 code `2001`“分片大小需在 1MB ~ 64MB 之间” | 自动化单测 |
+| TC-T10-03 | 文件极大或分片过小 | 构造 `ceil(fileSize/chunkSize) > 2000` | 返回 code `2001`“分片数量超过上限 2000，请增大分片大小”；不创建会话 | 自动化单测 |
+| TC-T10-04 | — | 分别提交空文件名、`fileSize=0`、负值 | code `2001`：“文件名不能为空”“文件大小必须大于 0”；不落库 | 自动化单测 |
+| TC-T10-05 | 会话 `totalChunks=3` | 上传 `index=-1`、`index=3` | code `2001`“分片序号越界：x，有效范围 0 ~ 2”；不写对象、不改进度 | 自动化单测 |
+| TC-T10-06 | 已上传 index=1 | 重复上传 index=1（不同内容） | 成功且幂等：对象被覆盖，`uploadedChunks` 集合仍只有 1 个元素；`uploadedCount` 不变 | 自动化单测 |
+| TC-T10-07 | `totalChunks=5`，只上传 0、2 | `POST .../complete` | code `2001`“分片未上传完整，缺少序号：[1, 3, 4]”；会话仍 `UPLOADING`，不创建文件 | 自动化单测 |
+| TC-T10-08 | 同一文件分别走单次上传与分片上传（3 片） | 比较两条文件记录的 `contentHash` | 两者 SHA-256 完全一致；分片顺序拼接正确，不因乱序上传错位 | 自动化单测 |
+| TC-T10-09 | 会话已 `COMPLETED` 且有 `fileId` | 再次 `POST .../complete` | 直接返回既有文件（同一 `fileId`）；不重复入库、不重复切分/嵌入 | 自动化单测 |
+| TC-T10-10 | 会话属于用户 A；B 为普通用户；C 未登录；D 为 ADMIN | 分别查询进度 / 上传分片 / 合并 | B 返回 code `3001`“上传会话不存在”（与不存在同文案，不泄露存在性）；C 经接口层 `@RequiresPermission` 返回 `1004`（未登录），Service 单测直调返回 `1001`；D 正常放行 | 自动化单测 + 接口 |
+| TC-T10-11 | 会话已 `COMPLETED` | 再上传任一分片 | code `2001`“上传会话已结束，无法继续上传分片” | 自动化单测 |
+| TC-T10-12 | 存在 `UPLOADING` 超 24h、`UPLOADING` 未超时、`COMPLETED` 三类会话 | 调用 `UploadSessionCleaner.cleanupExpired()` | 只删除超时 `UPLOADING` 会话及其分片对象；未超时与 `COMPLETED` 会话不动；单轮受 `batchSize`（默认 200）限制；单个失败不影响其他 | 自动化单测（`UploadSessionCleanerTest`） |
+| TC-T10-13 | `wgh.upload.cleanup.enabled=false` / 默认 true | 启动应用 | false 时不注册清理任务并打日志；true 时按最小 1 小时阈值、最小 5 分钟间隔调度 | 自动化单测 + 配置断言 |
+| TC-T10-14 | 前端运行、后端可用 | 选择大文件上传 → 中断 → 刷新后继续 → 完成 | 展示分片进度；刷新后按 `fileName+size` 复用会话续传；完成后文件出现在列表且可检索/预览 | 页面（需运行环境验证） |
 
 ---
 
@@ -421,6 +648,26 @@
 **依赖**：无。  
 **不能并行**：与 T01 仅构建锁竞争，文件不冲突。  
 **验收**：每种 provider 至少一个“测试连接”成功；模型列表可创建、可调用；密钥不出现在响应中。
+
+**测试用例**
+
+| 编号 | 前置条件 | 操作步骤 | 预期结果 | 验证方式 |
+|---|---|---|---|---|
+| TC-T11-01 | — | 调用 `ProviderCatalog.normalize`：`custom`、` CUSTOM `、`azure`、`glm`、`openai` | 分别归一为 `CUSTOM_OPENAI`、`CUSTOM_OPENAI`、`AZURE_OPENAI`、`ZHIPU`、`OPENAI`；大小写与空格不敏感 | 自动化单测（`ModelCacheManagerTest`） |
+| TC-T11-02 | — | 查询 `ProviderCatalog.all()` | 含 OPENAI / DASHSCOPE / QWEN / DEEPSEEK / AZURE_OPENAI / OLLAMA / ZHIPU / CUSTOM_OPENAI / CUSTOM_RERANK；DeepSeek `supportsEmbedding=false`，Ollama 与自定义默认端点正确 | 自动化单测 |
+| TC-T11-03 | 模型 provider=`FOO` | `GET` 聊天模型（触发 `getChatModel`） | 抛 `不支持的LLM提供商: FOO`；不创建缓存实例 | 自动化单测 |
+| TC-T11-04 | 嵌入模型 provider=`FOO` | `getEmbeddingModel` | 抛 `不支持的嵌入模型提供商: FOO` | 自动化单测 |
+| TC-T11-05 | 嵌入模型 provider=`DEEPSEEK` | `getEmbeddingModel` | 抛 `不支持的嵌入模型提供商: DEEPSEEK`（能力目录拒绝） | 自动化单测 |
+| TC-T11-06 | OPENAI 模型 `apiKey` 为空 | `getChatModel` | 抛 `模型提供商 OPENAI 缺少 API Key，请在模型管理中补充配置`；不发起外网调用 | 自动化单测 |
+| TC-T11-07 | OLLAMA 模型 `apiKey` 为空、`baseUrl` 为空 | `getChatModel` | 不报缺 Key；使用默认 `http://localhost:11434/v1`；构建成功 | 自动化单测 |
+| TC-T11-08 | AZURE_OPENAI 模型 `baseUrl` 为空 | 构建 | 抛“AZURE_OPENAI 需要配置 Base URL（形如 https://<resource>.openai.azure.com/openai/v1）” | 自动化单测 |
+| TC-T11-09 | AZURE_OPENAI `baseUrl` 含 `/openai/deployments/` | 构建 | 抛“不支持旧版 /openai/deployments 路径，请填写 v1 端点” | 自动化单测 |
+| TC-T11-10 | AZURE_OPENAI `baseUrl=https://res.openai.azure.com`（末尾带 `/`） | 构建 | 归一化为 `https://res.openai.azure.com/openai/v1`；使用 `api-key` 头而非 Bearer；模型名为部署名 | 自动化单测 |
+| TC-T11-11 | ZHIPU 模型 `apiKey` 有值、`baseUrl` 为空 | 构建 | 使用默认 `https://open.bigmodel.cn/api/paas/v4`；对话/嵌入工厂均可构建 | 自动化单测 |
+| TC-T11-12 | 历史 provider=`CUSTOM` | 构建对话/嵌入 | 归一为 `CUSTOM_OPENAI` 并复用自定义工厂；Key 可留空；不因旧值报“不支持” | 自动化单测 |
+| TC-T11-13 | 前端运行，打开三个模型页 | 切换供应商查看端点与必填项 | 下拉含 Azure / Ollama / 智谱；选择后预填默认端点与能力提示；保存后列表/详情一致；`npm run build` 通过 | 页面（需运行环境验证） |
+
+> 已知边界：AWS Bedrock 未实现；Azure / Ollama / 智谱的真实连通性未验证（仅覆盖工厂构建与注册，真实调用需运行环境 + 真实 Key/本地服务）；密钥不出现在响应中由现有模型 DTO 保证，未新增字段。
 
 ---
 

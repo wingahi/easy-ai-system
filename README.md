@@ -69,7 +69,7 @@
 | 文档版本 | 已完成 | `FileVersionService` + 版本列表 / 回滚；回滚生成新版本，不覆盖旧版本 |
 | URL 数据源连接器（单页抓取 + 增量同步） | 已完成 | `ConnectorController` / `ConnectorService` / `UrlConnector`；单个 http/https 页面抓取、Jsoup 正文抽取、SSRF 逐跳校验；按 `content_hash` 判重，内容未变返回 `UNCHANGED` 不重复入库，内容变化生成新文件并逻辑删除旧文件，404/410 清理旧文件；每次同步留运行记录；定时同步默认关闭，需显式 `WGH_CONNECTOR_SCHEDULER_ENABLED=true`（commit `855f61f`） |
 | 可插拔文件存储（local / OSS） | 已完成 | 独立 `rag-storage` 模块，`FileStorageService` + 本地 / 阿里云 OSS 实现 |
-| 大文件分片上传 | **未实现** | OSS 仅单次流式 `putObject`，无 multipart / 断点续传；业务侧默认上限 50MB |
+| 大文件分片上传与断点续传 | 已完成 | 三段式接口：`POST /api/kb/{kbId}/files/chunk/init` → `POST /api/kb/files/chunk/{sessionId}`（按序号上传分片）→ `POST .../complete`；合并后按整文件 `content_hash` 走原有判重与入库链路；页面内断线续传（进度来自会话表）；会话按创建者归属校验，他人会话按不存在处理（`3001`）；24 小时未完成会话自动清理，阈值可配（`WGH_UPLOAD_CLEANUP_*`，commit `140375a`） |
 | `local` ↔ `oss` 历史对象自动迁移 | **未实现** | 切换本身已支持，但旧对象仍留在原存储后端，需手工迁移或重新上传并重建向量 |
 | OSS 删除失败后的孤儿对象清理 | **未实现** | 删除失败仅记录 WARN，数据库仍完成逻辑删除，对象可能残留 |
 | 独立图片 OCR | **未实现** | 扫描版 PDF 已按页 OCR；独立图片文件（PNG / JPG）仍不解析入库 |
@@ -79,10 +79,11 @@
 | 能力 | 状态 | 说明 |
 |------|------|------|
 | 多会话与流式问答 | 已完成 | 多会话管理、首条消息自动生成标题、历史滑动加载；SSE 输出 Markdown、引用来源与检索指标；回答中的 `[Sn]` 可点击定位来源卡片（2026-11-12） |
-| 三层上下文压缩 | 已完成 | 超过 `max-history-messages`（默认 20）触发：近期原文 / 中期摘要 / 远期关键事实；模型缺失或超时降级为截断 |
+| 三层上下文压缩 | 已完成 | 超过 `max-history-messages`（默认 20）触发：近期原文 / 中期摘要 / 远期关键事实；模型缺失或超时降级为截断；压缩后再按 `max-history-tokens`（默认 4000）做 Token 级硬裁剪：System 全部保留、当前提问必留、其余从最近往前保留，放不下即丢弃（commit `0ed790c`） |
+| 检索指标 / 来源 / 上下文同源 | 已完成 | `coverageRate` / `hitRate` 改为基于预算裁剪后的同一份列表；`retrieveInfo` 新增 `contextKeptCount` / `contextBudgetTokens` / `contextTrimmed`，`retrievedCount` 保留“检索返回条数”原义；Agent 分支来源改为步骤内实际喂给模型的 chunk，计划不检索时为空（commit `27fce99`、`7a6070f`） |
 | 多模态图片问答 | 已完成 | 视觉模型（`supports_vision`）支持图片 + 文本提问，附件地址落 `wgh_chat_message.attachments` |
 | 反馈闭环 | 已完成 | 消息点赞 / 点踩 + 备注，窗口满意度统计与差评运营列表 |
-| 反馈 A/B 与数据集版本管理 | **未实现** | 无实验对比与数据集版本管理能力 |
+| 反馈 A/B 实验 | **未实现** | 评测数据集版本化已交付（写时复制、按版本归档与跨版本对比）；仍无实验分流、对照组与显著性分析 |
 | 免登录分享 / Widget 嵌入 / 开放 API | 已完成 | 分享链接（有效期、访问密码、只读范围、吊销）；`widget.js` iframe 注入；API Key 开放 API 与调用日志 |
 | OpenAI 兼容入口 + Python SDK | 已完成 | `/v1/models`、`/v1/chat/completions`（含 SSE 流式），复用 API Key + scope；附带 `sdk/python/wgh_rag_client.py`；仅支持基础对话参数，`n>1` / `logprobs` / tools 未支持 |
 | Prompt 模板中心与输入框前缀联想 | 已完成 | 模板 CRUD、变量提取、渲染预览；输入框前缀触发候选、模糊过滤、变量逐个填写；`GET /api/prompt-templates/suggest` |
@@ -128,7 +129,17 @@
 | `rag-agent-multi` Controller 迁入 `rag-controller` | 已完成 | `rag-agent-multi` 已无 Controller，`MultiAgentController` 位于 `rag-controller` |
 | 常量统一抽取 | 已完成 | 各模块 `constant` 包；权限码、角色码、状态值、SSE 事件名、存储 key 前缀等改引用常量 |
 | JDK 21 统一 | 已完成 | `maven.compiler.release=21` + Enforcer 强制 JDK 21，CI 与本地一致 |
-| 测试用例与设计文档补全 | 已完成 | JUnit 5 + Mockito；`scripts/` 提供 e2e / 冒烟 / 压测；`docs/testing/test-cases.md`、`docs/design/design-*.md` 已补齐 |
+| 测试用例与设计文档补全 | 已完成 | JUnit 5 + Mockito；`scripts/` 提供 e2e / 冒烟 / 压测；`docs/testing/test-cases.md`、`docs/design/**/*.md` 已补齐 |
+
+### 3.6 上下文与工具治理（2026-11-18）
+
+| 能力 | 状态 | 说明 |
+|------|------|------|
+| 历史消息 Token 级裁剪 | 已完成 | `HistoryContextBudgeter` 在分层压缩结果上再做一次硬裁剪：System 全保留、当前提问必留、其余从最近往前保留，放不下即停止；默认上限 4000 Tokens（commit `0ed790c`） |
+| 检索指标 / 来源 / 上下文同源 | 已完成 | 指标、来源卡片、模型上下文使用同一份裁剪后列表；`retrieveInfo` 追加 `contextKeptCount` / `contextBudgetTokens` / `contextTrimmed`（commit `27fce99`、`7a6070f`） |
+| 工具结果纳入上下文预算 | 已完成 | 单条工具结果上限 1200 Tokens、单任务累计 3000 Tokens，超出从最旧结果开始折叠；预算只作用于送入模型的副本，前端仍展示完整原文（commit `a458197`） |
+| 工具调用兜底链 | 已完成 | `ToolInvoker` 统一包一层：失败分类（网络 / 限流 / 5xx 可重试，SSRF / 401/403 / 400/422 / 404 不重试）、仅幂等调用重试（最多尝试 2 次含首次，300ms 退避 ±30% 抖动）、按 toolId 熔断（连续 5 次失败开 30s，半开只放行 1 个探针）、任务级预算（50 次 / 120s）（commit `3a52ab6`） |
+| 工作流 LLM 节点输入预算 | 已完成 | `WorkflowContextProperties` + `LlmNodeExecutor` 渲染后按模型窗口裁剪并告警（commit `f27704c`） |
 
 ---
 
@@ -344,7 +355,7 @@ docker compose ps
 | `WGH_OSS_SIGNED_URL_EXPIRE_MINUTES` | 60 | 签名 URL 有效期 |
 | `WGH_OSS_MAX_RETRIES` | 3 | 上传失败重试次数（含首次） |
 
-OSS 配置不完整时不阻断启动，仅在真正调用存储操作时返回明确错误。存储切换、迁移与孤儿对象限制见 §8；完整设计见 [docs/design-file-storage.md](docs/design-file-storage.md)。
+OSS 配置不完整时不阻断启动，仅在真正调用存储操作时返回明确错误。存储切换、迁移与孤儿对象限制见 §8；完整设计见 [docs/design/features/storage/design-file-storage.md](docs/design/features/storage/design-file-storage.md)。
 
 ### 6.4 数据库、Redis 与其他关键配置
 
@@ -363,7 +374,7 @@ OSS 配置不完整时不阻断启动，仅在真正调用存储操作时返回�
 | `wgh.rag.cache.similarity-threshold` | 0.95 | 语义缓存命中阈值 |
 | `wgh.file.max-single-file-mb` | 50 | 单文件上传 / 解析大小上限 |
 
-> 限流覆盖、可信代理、配额、Agent 与上下文压缩等完整配置与设计说明见 `docs/design/design-*.md`；接口侧的限流与错误码行为见 [docs/api/api.md](docs/api/api.md)。
+> 限流覆盖、可信代理、配额、Agent 与上下文压缩等完整配置与设计说明见 `docs/design/features/**/*.md`；接口侧的限流与错误码行为见 [docs/api/api.md](docs/api/api.md)。
 > `wgh.public-access.trusted-proxies` 默认空，只信任 TCP 对端；部署在 Nginx / 网关后需显式配置可信 CIDR，**不要配置为 `0.0.0.0/0`**。
 
 ### 6.5 检索与评测参数
@@ -396,6 +407,23 @@ OSS 配置不完整时不阻断启动，仅在真正调用存储操作时返回�
 
 > URL 抓取复用 `SsrfGuard`：仅允许 http/https，拒绝回环 / 内网 / 链路本地 / 云元数据地址，重定向逐跳校验（默认最多 3 跳），响应体默认上限 2MB；`wgh.tool.ssrf.allow-private-network` 默认 `false`。
 
+### 6.7 上下文预算、工具兜底与上传清理
+
+| 配置 | 默认 | 说明 |
+|------|------|------|
+| `wgh.rag.context.max-history-tokens` | 4000 | 历史消息 Token 上限；System 与当前提问必留，其余从最近往前保留 |
+| `wgh.rag.context.context-max-tokens` / `context-window-ratio` | 6000 / 0.6 | 检索上下文硬上限与输入侧窗口占比 |
+| `wgh.rag.context.tool-result-max-tokens` | 1200 | 单条工具结果进入 prompt 的 Token 上限，超出按句界裁剪并标注 |
+| `wgh.rag.context.tool-round-history-max-tokens` | 3000 | 多轮工具结果累计上限，超出从最旧开始折叠 |
+| `wgh.tool.fallback.enabled` | `true` | 工具兜底链总开关；关闭后退化为单次直调 |
+| `wgh.tool.fallback.max-attempts` / `backoff-ms` / `jitter-ratio` | 2 / 300 / 0.3 | 仅幂等调用重试；退避 ±30% 抖动 |
+| `wgh.tool.fallback.idempotent-only` | `true` | 仅 HTTP GET/HEAD 或显式 `idempotent=true` 的工具允许重试 |
+| `wgh.tool.fallback.failure-threshold` / `open-seconds` | 5 / 30 | 按 toolId 连续失败 5 次打开熔断 30s，半开只放行 1 个探针 |
+| `wgh.tool.fallback.task-max-requests` / `task-max-total-ms` | 50 / 120000 | 单任务工具调用次数与总时长预算 |
+| `WGH_UPLOAD_CLEANUP_ENABLED` | `true` | 分片上传会话清理开关 |
+| `WGH_UPLOAD_CLEANUP_STALE_HOURS` | 24 | 只清理超过该时长未更新的 `UPLOADING` 会话 |
+| `WGH_UPLOAD_CLEANUP_INTERVAL_MINUTES` / `BATCH_SIZE` | 60 / 200 | 清理轮询间隔（最小 5 分钟）与单轮上限 |
+
 ---
 
 ## 7. 接口概览
@@ -405,7 +433,7 @@ OSS 配置不完整时不阻断启动，仅在真正调用存储操作时返回�
 | 模块 | 前缀 | 说明 |
 |------|------|------|
 | 鉴权 / OIDC | `/api/auth` | 本地登录、当前用户、改密、OIDC 状态 |
-| 知识库 | `/api/kb` | 知识库 / 文件 CRUD、重切、检索测试、ground truth、召回评测 |
+| 知识库 | `/api/kb` | 知识库 / 文件 CRUD、分片上传（`files/chunk/init` → `chunk/{sessionId}` → `complete`）、重切、检索测试、ground truth、召回评测 |
 | 评测数据集 | `/api/kb/{kbId}/eval-datasets` | 数据集 / 用例 CRUD、版本列表、按版本评测归档、历史结果与跨版本对比 |
 | 数据源连接器 | `/api/kb/{kbId}/connectors` | URL 连接器 CRUD、立即同步、运行记录 |
 | 模型 | `/api/models` | Chat / Embedding / Rerank 模型 CRUD |
@@ -444,7 +472,7 @@ OSS 配置不完整时不阻断启动，仅在真正调用存储操作时返回�
 | 模型故障转移 | 普通 RAG、Agent（Planner / Step / Reflection）与工作流 LLM 节点统一复用切链组件，覆盖首个 token / 首个响应前的失败切链；**已产生内容后失败不切链、不回滚、不重发、不拼接第二个模型输出**，直接 `error` 结束 | 已产出内容后的续接策略暂不提供；Agent 恢复 / 重试入口按计划绑定的窗口路由组解析链路 |
 | 存储切换 | `local` ↔ `oss` 切换不自动迁移历史对象 | 需手工迁移或重新上传并重建向量 |
 | OSS 删除 | 删除失败仅 WARN，数据库仍逻辑删除，可能残留孤儿对象 | 需离线清理脚本 |
-| 大文件上传 | 未实现分片上传 / 断点续传，OSS 仅单次 `putObject`；默认上限 50MB | 超大文件与弱网场景需另行接入 |
+| 大文件上传（2026-11-18） | 已支持分片上传与页面内断线续传；不做跨页面刷新恢复（刷新后需重新选择文件，会话本身仍可复用）；OSS 未使用原生 multipart，分片先落对象存储、合并后仍走单次 `putObject`；单文件存储上限代码默认 200MB，但 `application.yml` 的 `wgh.storage.*.max-file-size-mb` 显式配 50（可用 `WGH_STORAGE_MAX_FILE_MB` 覆盖），单次直传仍受 servlet multipart 50MB 限制，解析侧 `wgh.file.max-single-file-mb` 仍默认 50MB | 传 200MB 文件需走分片并同时调大存储与解析两处上限 |
 | 多实例 JWKS | `JwksProvider` 缓存为进程内，多实例不共享 | 单实例部署假设；多实例需接受轮换后的刷新时间差 |
 | 移动端 / 国际化 | 仅桌面端布局，无 i18n | — |
 | 数据源连接器（2026-11-18） | 已支持单页 URL 抓取（Jsoup 正文抽取）、按 `content_hash` 判重不重复入库、内容变化生成新文件并逻辑删除旧文件、404/410 清理旧文件、按间隔增量同步与运行记录；仍未实现 robots.txt 校验、整站爬取、非 HTML 数据源（PDF / RSS / Sitemap / 第三方 API） | 仅适合“少量单页 + 定时重抓”；站点治理与批量抓取需另行接入爬虫或第三方数据源 |
@@ -453,29 +481,89 @@ OSS 配置不完整时不阻断启动，仅在真正调用存储操作时返回�
 | 评测门禁（2026-11-18） | CI 门禁使用固定 fixture（预置 `relevant` / `retrieved`），不验证真实检索链路，也不依赖 Key / 网络 / 模型 | fixture 只能防止指标口径与阈值回退；真实检索质量仍需在线评测或人工回归 |
 | 存量库批次 3 迁移（2026-11-18） | 存量库需按序执行 `sql/migrations/20261118/01_eval_dataset_versioning.sql`（3 表 + 3 索引）与 `02_kb_connector.sql`（2 表 + 3 索引），脚本均幂等；新库走 `01-schema.sql`，不要重复执行 | 未执行时评测数据集 / 连接器相关接口会因表不存在报错 |
 | 引用溯源（2026-11-12） | `pageNo` 目前恒为空（解析链路只做段落摊平，无页级映射）；纯 Agent 分支上下文未注入 `[Sn]`；同名文件跨知识库会合并为一张来源卡片 | Agent 回答中的编号可能无对应卡片；需要页码或 Agent 引用时需后续补页级映射与 Agent 上下文编号 |
+| 上下文与工具兜底（2026-11-18） | 工具熔断为单实例内存态，重启即清空，按 toolId 生效且不跨节点、不跨任务；历史 Token 裁剪按估算值而非精确 tokenizer；工具结果预算只作用于送入模型的副本，前端仍显示完整原文；`RagChatService` 的工具循环暂无集成测试覆盖 | 多实例部署各自持有熔断状态；估算误差会用少量真实窗口余量兜底 |
+| 多 Agent 故障转移（2026-11-18） | 单 Agent、工作流 LLM 节点与多 Agent（worker / manager，commit `2afd8ae`）均已接 `BlockingModelFailover`；已产出内容后失败仍不切链 | 已产出内容后的续接策略暂不提供 |
+| 工作流上下文（2026-11-18） | 工作流 LLM 节点输入预算已交付（commit `f27704c`）；节点输出与 `context_json` 已加落库上限并按摘要截断（commit `9be4a10`） | 超长节点输出只保留摘要与受限原文，完整内容需回查节点输出或日志 |
+| 检索式记忆（2026-11-18） | 仅接入 `SESSION` 作用域，任务级 / 跨会话记忆未接；无 TTL 与清理策略，记忆会持续累积；记忆向量表按首次写入的 embedding 维度建立，更换维度需重建 | 长期使用需补 TTL 清理与维度变更重建流程 |
+| map-reduce 分段摘要（2026-11-18） | 仅在普通聊天链路生效，Agent / 多 Agent / 工作流链路未接；暂无集成测试覆盖 | 长任务链路仍需单独接入与回归 |
+| 多 Agent 黑板（2026-11-18） | 已提供共享黑板读写接口，但 GroupChat 汇总未使用黑板，仍按对话消息汇总 | 需要跨 Agent 共享中间结论时需显式写入黑板 |
+| 模型能力画像（2026-11-18） | 后端有 `LlmModel` 能力画像与切链降级策略；管理端模型表单未暴露能力档位与 function calling 字段 | 需通过接口或数据库配置，页面暂不支持 |
 | 资源可见性（2026-11-12） | 无团队 / 租户模型，`TEAM` 与 `PUBLIC` 在判定上等价（均为"非 owner 可读"）；存量库执行 `sql/migrations/20261113/01_resource_visibility.sql` 补列与索引（幂等）；历史 `create_by='system'` 的资源升级后默认仅管理员可见 | 升级前需备份并执行该迁移脚本；如需真正的团队边界，需后续引入 `tenant_id` / 团队成员模型 |
 
 ---
 
 ## 9. 路线图 / 后续计划
 
-以下为候选方向，**未排期、不代表交付承诺**；优先级按当前风险与使用频率排序。
+状态口径：**已完成** / **部分完成** / **在途**（进行中、未交付）/ **未实现**（未开始）。§9.1、§9.2 分别对齐两份来源文档的实际进度，不自行推测；§9.3 收录不属于这两份清单的其他方向。
+
+- 来源一：[长任务上下文管理与工具调用兜底 §5.1 优先级清单](docs/design/features/context-management/design-long-task-context-and-tool-fallback.md)
+- 来源二：[缺口开发计划 2026-11-09 任务总表](docs/review/gap-development-plan-2026-11-09.md)
+
+### 9.1 上下文与工具治理落地清单（P0 / P1 / P2）
+
+**P0 — 当前版本（6 项，全部已完成）**
+
+| 项 | 状态 | 说明 |
+|----|------|------|
+| 历史 Token 上限生效 | 已完成 | `HistoryContextBudgeter` 按 Tokens 而非条数截断历史；默认 4000 Tokens（commit `0ed790c`） |
+| `sources` / 指标口径统一 | 已完成 | 指标、来源卡片、模型上下文使用同一份裁剪后列表；`retrieveInfo` 追加 3 个上下文字段；Agent 分支改用步骤内实际喂给模型的 chunk（commit `27fce99`、`7a6070f`） |
+| 工具结果入上下文预算 | 已完成 | 单条 1200 Tokens、单任务累计 3000 Tokens，超出从最旧结果折叠；前端仍展示完整原文（commit `a458197`） |
+| 工具重试 + 熔断 + 结构化错误 | 已完成 | `ToolInvoker`：失败分类、仅幂等调用重试（最多 2 次含首次，300ms 退避）、按 toolId 熔断（5 次 / 30s / 半开单探针）、任务预算（50 次 / 120s）；SSRF 与 401/403/400/404 不重试（commit `3a52ab6`） |
+| 工作流 LLM 节点输入预算 | 已完成 | `WorkflowContextProperties` + `LlmNodeExecutor` 渲染后按模型窗口裁剪并告警（commit `f27704c`） |
+| 缓存友好布局纪律 | 已完成 | 约定 `system` 前缀稳定、动态内容只进尾部；无代码改动，作为实现纪律遵守 |
+
+**P1 — 下一迭代（5 项，全部已完成）**
+
+| 项 | 状态 | 说明 |
+|----|------|------|
+| 统一 `ContextAssembler` | 已完成 | 新增 `rag-context` 模块，承载「按类型 + 优先级分配预算」（commit `03ccb1c`） |
+| Agent 结构化状态块 | 已完成 | 结构化状态块替换 `StringBuilder` 平铺摘要，整体受 `agentStepContextMaxTokens` 约束（commit `7c8e98b`） |
+| 多 Agent 结果卡片 + 故障转移接入 | 已完成 | 结果卡片、复用 `BlockingModelFailover` 与 Agent 记忆注入（commit `2afd8ae`） |
+| 工具结果结构化信封 / 分页 | 已完成 | `rag-tool` 结构化结果信封 + 分页（commit `c0679f8`；测试构造器适配见 `e7318fa`） |
+| 工作流节点输出上限与摘要落库 | 已完成 | 节点输出与 `context_json` 落库上限、摘要截断（commit `9be4a10`） |
+
+**P2 — 后续版本（4 项，全部已完成）**
+
+| 项 | 状态 | 说明 |
+|----|------|------|
+| 检索式记忆 | 已完成 | 会话级检索式记忆（commit `239c490`）；当前仅接 `SESSION` 作用域，无 TTL 清理，向量表按首次写入的 embedding 维度建立、换维度需重建 |
+| map-reduce 分段摘要 | 已完成 | 单条 chunk 饱和时触发分段摘要（commit `5bf6ce2`）；只在普通聊天链路生效，暂无集成测试 |
+| 多 Agent 共享黑板 | 已完成 | 共享黑板读写接口（commit `a70753d`）；GroupChat 汇总尚未使用黑板 |
+| 模型能力画像 | 已完成 | `LlmModel` 能力画像 + 切链降级策略（commit `d6cdee3`）；管理端模型表单未暴露能力档位与 function calling 字段 |
+
+### 9.2 缺口开发计划任务状态（T01–T13）
+
+| ID | 任务 | 状态 | 说明 |
+|----|------|------|------|
+| T01 | 文档解析增强：OCR + 表格结构 + 清洗 | 已完成 | 扫描版 PDF 按页 OCR、版面分析、表格还原与清洗（commit `6ed9d10`） |
+| T02 | 检索参数治理与自动补偿 | 部分完成 | 参数与 HYDE 已完成（commit `874f43d`）；低覆盖自动补偿（`coverageRate < 0.4` 扩 topK / 放宽阈值）未实现 |
+| T02F | 窗口级检索参数 UI | 已完成 | 聊天窗口可配置 `hybridEnabled` / `queryTransformMode` / `rewriteModelId`（commit `8b52b5f`） |
+| T03 | chunk 级引用与原文定位 | 已完成 | `sources` 扩 10 字段、按文档编号 `[Sn]`、`SourcePanel.vue` 三页接入（commit `96dfc42`）；`pageNo` 恒空、Agent 分支无 `[Sn]` |
+| T04a | 资源归属与可见性（后端） | 已完成 | 五类资源 `visibility` + `DataScopeInterceptor` + 5 个 `PATCH .../visibility`（commit `59c5eee`） |
+| T04b | 资源归属与可见性（前端） | 已完成 | 五个列表页可见性列 + `VisibilityControl.vue`（2026-11-12） |
+| T05 | OpenAI 兼容入口 + Python SDK | 已完成 | `/v1/models`、`/v1/chat/completions`（含 SSE）+ `sdk/python/**`（commit `a2d9046`） |
+| T06a | 生成侧评测指标补齐 | 已完成 | Faithfulness / Answer Relevancy / Context Precision / Context Recall 多 judge（commit `e814bb5`） |
+| T06b | 评测数据集版本化 + CI 门禁 | 已完成 | 写时复制版本、跨版本对比、CI `retrieval-gate` 五项阈值（commit `adbdafe`） |
+| T07 | 审计覆盖补齐 | 部分完成 | AdminUser 走 `AccountAuditService` 显式审计，角色 / 配额 / Agent / 多 Agent 已覆盖（commit `1307d27`）；资源 ID 仍只落 `detail` |
+| T08 | URL/HTTP 数据源增量同步 | 已完成 | 单页抓取、`content_hash` 判重、变更换版本、404/410 清理、SSRF 逐跳校验、可选定时同步（commit `855f61f`）；robots.txt 与整站爬取未做 |
+| T09 | 工作流表达式节点 + 单步调试 | 已完成 | `EXPRESSION` 受限 SpEL 节点 + `POST /api/workflows/{id}/debug/step`（commit `e27723f`）；不支持任意脚本执行 |
+| T10 | 大文件分片上传 / 断点续传 | 已完成 | 三段式接口、顺序分片、`content_hash` 判重、会话归属校验、24h 清理（commit `140375a`） |
+| T11 | 模型提供商扩展（Azure / Bedrock / Ollama） | 已完成 | Azure OpenAI / Ollama 等扩展已交付（commit `028f1bc`）；Bedrock 未做 |
+| T12 | 多实例与可观测 | 未实现（未开始） | Redis 共享、JWKS 缓存共享、分布式链路追踪、k8s / 备份脚本 |
+| T13 | Agent 长期记忆 / 代码沙箱 | 未实现（未开始） | 依赖 T09 执行节点，建议延后 |
+
+### 9.3 其他后续方向
+
+以下方向不属于上述两份清单，**未排期、不代表交付承诺**。
 
 | 优先级 | 方向 | 当前状态 | 说明 |
 |--------|------|----------|------|
 | P0 | 模型故障转移补全 | 已完成（首 token 前切链） | 普通 RAG 首个 token 前的连接失败 / 超时 / 4xx / 5xx 已进入切链；部分输出后失败与全部候选失败均有明确错误收口（commit `e496f71`）；切链逻辑已抽成 `rag-llm` 的 `FailoverAttempt` / `StreamingModelFailover` / `BlockingModelFailover` / `ModelFailoverService`（commit `8e357bb`） |
-| P0 | 检索来源结构化与 [Sn] 引用溯源 | 已完成（2026-11-12） | `sources` 扩 10 个字段、按文档编号 `[Sn]`、预算裁剪后编号、`SourcePanel` 展开原文与高亮（commit `96dfc42`） |
-| P0 | 资源归属与可见性 | 已完成（2026-11-12） | 五类资源 `visibility` + `DataScopeInterceptor` + 5 个 `PATCH .../visibility`；存量库执行 `sql/migrations/20261113/01_resource_visibility.sql`（commit `59c5eee`） |
-| P0 | 窗口级混合检索与查询变换 | 已完成（2026-11-18） | 聊天窗口可配置 `hybridEnabled` / `queryTransformMode` / `rewriteModelId`；混合检索为“窗口或全局”任一开启即生效，查询变换支持 REWRITE / MULTI_QUERY / HYDE 并在失败时降级原查询（commit `8b52b5f`） |
-| P0 | 评测数据集版本化与 CI 检索门禁 | 已完成（2026-11-18） | 数据集/用例/结果三表、写时复制版本、按版本归档与跨版本对比；CI `retrieval-gate` 用固定 fixture 校验 Recall / Precision / MRR / NDCG / 命中率五项阈值，不依赖 Key 与网络（commit `adbdafe`） |
-| P1 | 工作流表达式节点与单步调试 | 已完成（2026-11-18） | `EXPRESSION` 受限表达式节点 + `POST /api/workflows/{id}/debug/step` 逐节点调试、输入/输出快照、游标续跑与 HITL 暂停（commit `e27723f`） |
-| P1 | URL 数据源连接器 | 已完成（2026-11-18，单页 + 增量） | 单页抓取、`content_hash` 判重、内容变化新版本、404/410 清理、SSRF 逐跳校验、运行记录与可选定时同步（commit `855f61f`） |
-| P1 | Agent / 工作流接入故障转移 | 已完成 | Planner / StepExecutor / ReflectionEngine 与工作流 LLM 节点复用 `BlockingModelFailover`，首响应前失败切链、已产出内容后不切链，并下发 `model_switch`；Agent 恢复 / 重试入口回查窗口路由组（commit `8e357bb`） |
-| P1 | 大文件分片上传 / 断点续传 | 未实现 | OSS multipart 与失败续传；业务侧分片大小与并发控制 |
+| P1 | Agent / 工作流接入故障转移 | 已完成 | Planner / StepExecutor / ReflectionEngine 与工作流 LLM 节点复用 `BlockingModelFailover`；Agent 恢复 / 重试入口回查窗口路由组（commit `8e357bb`） |
 | P1 | 存储迁移与孤儿对象清理 | 未实现 | `local` ↔ `oss` 历史对象迁移工具；按 `file_path` 比对清理 OSS 残留对象 |
-| P2 | 多实例 JWKS 缓存共享 | 未实现 | 将 JWKS 缓存放至 Redis 或共享缓存，统一密钥轮换后的刷新时机 |
-| P2 | 分布式链路追踪 | 未实现 | 在现有 Prometheus + `X-Request-Id` 基础上接入 Tracing |
-| P2 | 整站爬取与多源接入 | 未实现 | robots.txt 校验、站点爬取 / Sitemap、PDF / RSS / 第三方文档源同步；单页 URL 连接器已交付 |
+| P2 | 多实例 JWKS 缓存共享 | 未实现 | 将 JWKS 缓存放至 Redis 或共享缓存，统一密钥轮换后的刷新时机（T12 范围） |
+| P2 | 分布式链路追踪 | 未实现 | 在现有 Prometheus + `X-Request-Id` 基础上接入 Tracing（T12 范围） |
+| P2 | 整站爬取与多源接入 | 未实现 | robots.txt 校验、站点爬取 / Sitemap、PDF / RSS / 第三方文档源同步；单页 URL 连接器已交付（T08 未做部分） |
 | P3 | 反馈 A/B 对比 | 未实现 | 版本化评测集已交付；仍缺实验分流、对照组与显著性分析 |
 | P3 | 图片 OCR | 部分完成 | 扫描版 PDF 已按页 OCR（`TessOcrService`，commit `6ed9d10`）；独立图片文件（PNG / JPG）未接入 |
 

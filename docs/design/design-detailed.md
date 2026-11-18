@@ -9,7 +9,7 @@
 | 上层文档 | [design-overview.md](design-overview.md) |
 | 接口清单 | [api.md](../api/api.md) |
 
-> 本文所有结论均来自当前源码与配置核对；与代码冲突时以代码为准。专项实现的更深说明见 `design-public-access.md`、`quota-design.md`、`design-file-storage.md`、`design-observability.md`、`agent-design.md`、`workflow-design.md`、`multi-agent-detail-design.md`。
+> 本文所有结论均来自当前源码与配置核对；与代码冲突时以代码为准。专项实现的更深说明见 `features/public-access/design-public-access.md`、`features/quota/quota-design.md`、`features/storage/design-file-storage.md`、`features/observability/design-observability.md`、`features/agent/agent-design.md`、`features/workflow/workflow-design.md`、`features/agent/multi-agent-detail-design.md`。
 
 ---
 
