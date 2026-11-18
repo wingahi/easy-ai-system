@@ -80,6 +80,23 @@ class KnowledgeFileContentDedupeTest {
     }
 
     @Test
+    @DisplayName("URL 入库：同知识库已有相同内容时命中 content_hash 去重，不落存储、不新增记录")
+    void ingestContent_sameContent_returnsExistingFile() {
+        KnowledgeFile existing = new KnowledgeFile();
+        existing.setId(9L);
+        existing.setFileName("page.txt");
+        when(fileMapper.selectList(any())).thenReturn(List.of(existing));
+
+        KnowledgeFileService.IngestOutcome outcome = service.ingestContent(1L, "page.txt", "txt",
+                "same-content".getBytes(java.nio.charset.StandardCharsets.UTF_8), "PARAGRAPH", null);
+
+        assertThat(outcome.duplicate()).isTrue();
+        assertThat(outcome.file()).isSameAs(existing);
+        verify(fileStorageService, never()).store(anyString(), any(InputStream.class), anyLong(), any());
+        verify(fileMapper, never()).insert(any(KnowledgeFile.class));
+    }
+
+    @Test
     @DisplayName("chunk 去重：批内重复与知识库已存在的文本都不重复嵌入")
     void dedupeSegments_removesDuplicates() {
         TextSegment first = TextSegment.from("重复段落");

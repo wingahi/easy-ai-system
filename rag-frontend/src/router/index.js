@@ -22,6 +22,7 @@ const routes = [
     children: [
       { path: 'kb', name: 'KnowledgeBase', component: () => import('../views/kb/KnowledgeBase.vue'), meta: { title: '知识库管理' } },
       { path: 'kb/:id/files', name: 'KBFiles', component: () => import('../views/kb/KBFiles.vue'), meta: { title: '文件管理' } },
+      { path: 'kb/:id/connectors', name: 'KBConnectors', component: () => import('../views/kb/KBConnectors.vue'), meta: { title: '数据源连接器' } },
       { path: 'kb/:id/search', name: 'KBSearch', component: () => import('../views/kb/KBSearch.vue'), meta: { title: '知识库搜索' } },
       { path: 'kb/:id/evaluation', name: 'KBEvaluation', component: () => import('../views/kb/KBEvaluation.vue'), meta: { title: '检索评测' } },
       { path: 'models/chat', name: 'ChatModels', component: () => import('../views/models/ChatModels.vue'), meta: { title: '大模型管理' } },

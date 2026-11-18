@@ -758,3 +758,45 @@ CREATE TABLE IF NOT EXISTS wgh_api_call_log (
     update_by VARCHAR(64),
     deleted SMALLINT NOT NULL DEFAULT 0
 );
+
+-- ===== URL / HTTP 数据源连接器（T08，与 01-schema.sql 列名/列型一致） =====
+
+CREATE TABLE IF NOT EXISTS wgh_kb_connector (
+    id BIGSERIAL PRIMARY KEY,
+    knowledge_base_id BIGINT NOT NULL,
+    name VARCHAR(200) NOT NULL,
+    url VARCHAR(1000) NOT NULL,
+    split_strategy VARCHAR(20) DEFAULT 'PARAGRAPH',
+    split_config TEXT,
+    sync_interval_minutes INT DEFAULT 60,
+    enabled SMALLINT DEFAULT 0,
+    last_file_id BIGINT,
+    last_content_hash VARCHAR(64),
+    last_sync_time TIMESTAMP,
+    last_status VARCHAR(20),
+    last_error TEXT,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    create_by VARCHAR(50) DEFAULT 'system',
+    update_by VARCHAR(50) DEFAULT 'system',
+    deleted SMALLINT DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS wgh_kb_connector_run (
+    id BIGSERIAL PRIMARY KEY,
+    connector_id BIGINT NOT NULL,
+    status VARCHAR(20) NOT NULL,
+    http_status INT,
+    file_id BIGINT,
+    content_hash VARCHAR(64),
+    chunk_count INT DEFAULT 0,
+    message TEXT,
+    duration_ms BIGINT,
+    started_at TIMESTAMP,
+    finished_at TIMESTAMP,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    create_by VARCHAR(50) DEFAULT 'system',
+    update_by VARCHAR(50) DEFAULT 'system',
+    deleted SMALLINT DEFAULT 0
+);

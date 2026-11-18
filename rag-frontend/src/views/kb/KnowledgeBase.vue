@@ -53,10 +53,11 @@
           </template>
         </el-table-column>
         <el-table-column prop="createTime" label="创建时间" width="170" />
-        <el-table-column label="操作" width="310" fixed="right">
+        <el-table-column label="操作" width="370" fixed="right">
           <template #default="{ row }">
             <div class="table-actions">
               <el-button link type="primary" @click="goFiles(row)">文件</el-button>
+              <el-button link type="primary" @click="goConnectors(row)">数据源</el-button>
               <el-button link type="primary" @click="goSearch(row)">搜索</el-button>
               <el-button link type="warning" @click="openTagDialog(row)">标签</el-button>
               <el-button link type="primary" @click="openDialog(row)">编辑</el-button>
@@ -258,6 +259,7 @@ const del = async (row) => {
 }
 
 const goFiles = (row) => router.push(`/kb/${row.id}/files`)
+const goConnectors = (row) => router.push(`/kb/${row.id}/connectors`)
 const goSearch = (row) => router.push(`/kb/${row.id}/search`)
 
 // ===== 标签管理方法 =====

@@ -27,6 +27,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
@@ -130,6 +131,70 @@ public class KnowledgeFileService {
         processFileAsync(file, kb);
 
         return file;
+    }
+
+    /**
+     * 以内存内容直接入库（URL 连接器等非上传来源复用）。
+     * <p>
+     * 与 {@link #upload} 共用同一套 content_hash 判重：同知识库内已存在相同内容时直接返回既有文件，
+     * 不再写入存储对象、不重复切分/嵌入。
+     */
+    @Transactional
+    public IngestOutcome ingestContent(Long kbId, String fileName, String fileType, byte[] content,
+                                       String splitStrategy, String splitConfig) {
+        KnowledgeBase kb = kbService.getById(kbId);
+        if (content == null || content.length == 0) {
+            throw new BusinessException(ResultCode.PARAM_ERROR, "入库内容为空");
+        }
+
+        String contentHash;
+        try {
+            contentHash = sha256Hex(new ByteArrayInputStream(content));
+        } catch (IOException e) {
+            throw new BusinessException("内容读取失败: " + e.getMessage(), e);
+        }
+        KnowledgeFile duplicate = findDuplicateFile(kbId, contentHash);
+        if (duplicate != null) {
+            log.info("知识库 {} 已存在相同内容，跳过入库: existingFileId={}, hash={}",
+                    kbId, duplicate.getId(), contentHash);
+            return new IngestOutcome(duplicate, true);
+        }
+
+        String storedKey = StorageKeys.kbKey(kbId, UUID.randomUUID().toString(), fileName);
+        try (InputStream in = new ByteArrayInputStream(content)) {
+            StoredObject stored = fileStorageService.store(
+                    storedKey, in, content.length, "text/plain; charset=utf-8");
+            storedKey = stored.key();
+        } catch (IOException e) {
+            throw new BusinessException("内容写入存储失败: " + e.getMessage(), e);
+        }
+
+        KnowledgeFile file = new KnowledgeFile();
+        file.setKnowledgeBaseId(kbId);
+        file.setFileName(fileName);
+        file.setFileType(fileType);
+        file.setFileSize((long) content.length);
+        file.setFilePath(storedKey);
+        file.setSplitStrategy(splitStrategy != null ? splitStrategy : "PARAGRAPH");
+        file.setSplitConfig(splitConfig);
+        file.setStatus("PENDING");
+        file.setContentHash(contentHash);
+
+        try {
+            fileMapper.insert(file);
+        } catch (RuntimeException e) {
+            deleteStorageQuietly(storedKey);
+            throw e;
+        }
+
+        processFileAsync(file, kb);
+        return new IngestOutcome(file, false);
+    }
+
+    /**
+     * 内存内容入库结果：{@code duplicate=true} 表示命中同知识库 content_hash 去重，未产生新文件。
+     */
+    public record IngestOutcome(KnowledgeFile file, boolean duplicate) {
     }
 
     /**

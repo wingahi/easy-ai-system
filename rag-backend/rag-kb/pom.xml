@@ -26,6 +26,11 @@
             <groupId>com.wgh</groupId>
             <artifactId>rag-llm</artifactId>
         </dependency>
+        <!-- URL 数据源抓取复用 rag-tool 的 SsrfGuard（协议/内网/重定向/体积校验） -->
+        <dependency>
+            <groupId>com.wgh</groupId>
+            <artifactId>rag-tool</artifactId>
+        </dependency>
         <dependency>
             <groupId>dev.langchain4j</groupId>
             <artifactId>langchain4j-pgvector</artifactId>

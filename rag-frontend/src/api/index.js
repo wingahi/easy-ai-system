@@ -34,6 +34,14 @@ export const kbResplitFile = (fileId, splitStrategy, splitConfig) => {
 export const kbPreviewSplit = (fileId) => request.get(`/kb/files/${fileId}/preview`)
 export const kbSearch = (kbId, query, rerankModelId, hybrid, queryTransformMode, rewriteModelId) => request.get(`/kb/${kbId}/search`, { params: { query, rerankModelId: rerankModelId || undefined, hybrid: hybrid || undefined, queryTransformMode: queryTransformMode && queryTransformMode !== 'NONE' ? queryTransformMode : undefined, rewriteModelId: rewriteModelId || undefined } })
 
+// URL / HTTP 数据源连接器（单页抓取 + 增量同步，内容未变不重复入库）
+export const kbConnectorList = (kbId) => request.get(`/kb/${kbId}/connectors`)
+export const kbConnectorCreate = (kbId, data) => request.post(`/kb/${kbId}/connectors`, data)
+export const kbConnectorUpdate = (kbId, id, data) => request.put(`/kb/${kbId}/connectors/${id}`, data)
+export const kbConnectorDelete = (kbId, id) => request.delete(`/kb/${kbId}/connectors/${id}`)
+export const kbConnectorSync = (kbId, id) => request.post(`/kb/${kbId}/connectors/${id}/sync`)
+export const kbConnectorRuns = (kbId, id, params) => request.get(`/kb/${kbId}/connectors/${id}/runs`, { params })
+
 // 检索评测（ground truth 标注 + Recall@K）
 export const kbGroundTruthList = (kbId) => request.get(`/kb/${kbId}/ground-truth`)
 export const kbGroundTruthCreate = (kbId, data) => request.post(`/kb/${kbId}/ground-truth`, data)
