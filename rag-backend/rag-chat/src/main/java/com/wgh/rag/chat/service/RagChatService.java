@@ -39,6 +39,7 @@ import com.wgh.rag.llm.service.ModelRouter;
 import com.wgh.rag.llm.util.HistoryContextBudgeter;
 import com.wgh.rag.llm.util.RagContextBudgeter;
 import com.wgh.rag.llm.util.TokenEstimator;
+import com.wgh.rag.llm.util.ToolResultBudgeter;
 import com.wgh.rag.tool.entity.ToolConfig;
 import com.wgh.rag.tool.constant.ToolConstants;
 import com.wgh.rag.tool.executor.ToolExecutionEngine;
@@ -888,6 +889,8 @@ public class RagChatService {
                     ctx.messages.add(aiMessage);
                     // 把工具执行结果加入 messages
                     ctx.messages.addAll(toolResults);
+                    // 工具结果纳入上下文预算：单条上限 + 多轮累计上限，避免工具密集任务撑爆窗口
+                    applyToolResultBudget(ctx.messages);
 
                     // 发起下一次 chat 调用（带更新后的 messages + toolSpecs）
                     ChatRequest nextRequest = ChatRequest.builder()
@@ -1298,8 +1301,28 @@ public class RagChatService {
         return result;
     }
 
-    /** 估算已构建消息（system + 历史 + 当前问题）占用的 Tokens。 */
-    private int estimatePromptTokens(List<ChatMessage> messages) {
+    /**
+     * 对消息中的工具结果做「单条 + 多轮累计」Token 裁剪（原地替换）。
+     * 超出预算时按句界截断 / 折叠更早结果，显式标注，避免模型把残缺结果当完整数据。
+     */
+    private void applyToolResultBudget(List<ChatMessage> messages) {
+        RagProperties.Context props = ragProperties.getContext();
+        int perResult = props != null && props.getToolResultMaxTokens() != null
+                ? props.getToolResultMaxTokens() : ToolResultBudgeter.DEFAULT_TOOL_RESULT_MAX_TOKENS;
+        int roundBudget = props != null && props.getToolRoundHistoryMaxTokens() != null
+                ? props.getToolRoundHistoryMaxTokens() : ToolResultBudgeter.DEFAULT_TOOL_ROUND_HISTORY_MAX_TOKENS;
+        ToolResultBudgeter.Result result = ToolResultBudgeter.trim(messages, perResult, roundBudget);
+        if (!result.changed()) {
+            return;
+        }
+        messages.clear();
+        messages.addAll(result.messages());
+        log.info("工具结果上下文预算: 单条上限={}, 累计上限={}, 原始 {} tokens, 保留 {} tokens, 截断 {} 条, 折叠 {} 条",
+                perResult, roundBudget, result.originalTokens(), result.keptTokens(),
+                result.truncatedCount(), result.collapsedCount());
+    }
+
+    /** 估算已构建消息（system + 历史 + 当前问题）占用的 Tokens。 */    private int estimatePromptTokens(List<ChatMessage> messages) {
         int total = 0;
         for (ChatMessage message : messages) {
             if (message instanceof SystemMessage systemMessage) {

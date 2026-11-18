@@ -95,6 +95,13 @@ public class RagProperties {
         private Integer fallbackWindowTokens = 8192;
         /** 预算耗尽时单条 chunk 的最小保留 Token（默认 120，避免整条上下文丢失） */
         private Integer minChunkTokens = 120;
+
+        // ============ 工具结果 Token 预算 ============
+
+        /** 单条工具结果进入 prompt 的 Token 上限（默认 1200，超出按句界裁剪并标注截断） */
+        private Integer toolResultMaxTokens = 1200;
+        /** 多轮工具结果累计 Token 上限（默认 3000，超出从最旧结果开始折叠） */
+        private Integer toolRoundHistoryMaxTokens = 3000;
     }
 
     @Data

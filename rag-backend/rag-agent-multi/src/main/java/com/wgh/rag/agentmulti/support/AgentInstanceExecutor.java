@@ -5,9 +5,11 @@ import com.wgh.rag.agentmulti.context.MultiAgentContext;
 import com.wgh.rag.agentmulti.dto.AgentInstance;
 import com.wgh.rag.agentmulti.dto.AgentInstanceResult;
 import com.wgh.rag.kb.service.RagRetrieveService;
+import com.wgh.rag.config.property.RagProperties;
 import com.wgh.rag.llm.factory.ModelCacheManager;
 import com.wgh.rag.llm.util.RagContextBudgeter;
 import com.wgh.rag.llm.util.TokenEstimator;
+import com.wgh.rag.llm.util.ToolResultBudgeter;
 import com.wgh.rag.tool.definition.ToolDefinitionParser;
 import com.wgh.rag.tool.entity.ToolConfig;
 import com.wgh.rag.tool.executor.ToolExecutionEngine;
@@ -44,6 +46,7 @@ public class AgentInstanceExecutor {
     private final ToolConfigService toolConfigService;
     private final RagRetrieveService ragRetrieveService;
     private final SseEventSender sse;
+    private final RagProperties ragProperties;
 
     /**
      * 执行一次 Agent 调用（可能带 ReAct 循环），返回结构化结果。
@@ -195,6 +198,8 @@ public class AgentInstanceExecutor {
                                 "latencyMs", tLatency);
                     }
                     messages.addAll(toolResults);
+                    // 工具结果纳入上下文预算：单条上限 + 多轮累计上限
+                    messages = applyToolResultBudget(messages);
                     continue;
                 }
 
@@ -307,6 +312,23 @@ public class AgentInstanceExecutor {
     }
 
     // ==================== 工具方法 ====================
+
+    /** 按配置对消息中的工具结果做「单条 + 累计」Token 裁剪，未超限时原样返回。 */
+    private List<ChatMessage> applyToolResultBudget(List<ChatMessage> messages) {
+        RagProperties.Context props = ragProperties != null ? ragProperties.getContext() : null;
+        int perResult = props != null && props.getToolResultMaxTokens() != null
+                ? props.getToolResultMaxTokens() : ToolResultBudgeter.DEFAULT_TOOL_RESULT_MAX_TOKENS;
+        int roundBudget = props != null && props.getToolRoundHistoryMaxTokens() != null
+                ? props.getToolRoundHistoryMaxTokens() : ToolResultBudgeter.DEFAULT_TOOL_ROUND_HISTORY_MAX_TOKENS;
+        ToolResultBudgeter.Result result = ToolResultBudgeter.trim(messages, perResult, roundBudget);
+        if (!result.changed()) {
+            return messages;
+        }
+        log.info("AgentInstanceExecutor 工具结果上下文预算: 单条上限={}, 累计上限={}, 原始 {} tokens, 保留 {} tokens, 截断 {} 条, 折叠 {} 条",
+                perResult, roundBudget, result.originalTokens(), result.keptTokens(),
+                result.truncatedCount(), result.collapsedCount());
+        return result.messages();
+    }
 
     private AgentInstanceResult failed(String msg, long t0) {
         return AgentInstanceResult.builder()

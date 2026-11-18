@@ -6,6 +6,7 @@ import com.wgh.rag.agent.dto.AgentStepResult.ModelSwitchRecord;
 import com.wgh.rag.agent.dto.AgentStepResult.RagSourceRecord;
 import com.wgh.rag.agent.dto.AgentStepResult.ToolInvocationRecord;
 import com.wgh.rag.kb.service.RagRetrieveService;
+import com.wgh.rag.config.property.RagProperties;
 import com.wgh.rag.llm.entity.LlmModel;
 import com.wgh.rag.llm.failover.BlockingModelFailover;
 import com.wgh.rag.llm.failover.FailoverAttempt;
@@ -14,6 +15,7 @@ import com.wgh.rag.llm.factory.ModelCacheManager;
 import com.wgh.rag.llm.service.ModelFailoverService;
 import com.wgh.rag.llm.util.RagContextBudgeter;
 import com.wgh.rag.llm.util.TokenEstimator;
+import com.wgh.rag.llm.util.ToolResultBudgeter;
 import com.wgh.rag.tool.entity.ToolConfig;
 import com.wgh.rag.tool.executor.ToolExecutionEngine;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
@@ -48,6 +50,7 @@ public class StepExecutor {
     private final ModelCacheManager modelCacheManager;
     private final RagRetrieveService ragRetrieveService;
     private final ModelFailoverService modelFailoverService;
+    private final RagProperties ragProperties;
 
     /**
      * 执行一个 Agent Step —— 同步循环直到 LLM 返回最终文本或达到最大工具轮次。
@@ -257,6 +260,8 @@ public class StepExecutor {
                 // 把 AiMessage + ToolExecutionResultMessage 加入历史
                 messages.add(aiMessage);
                 messages.addAll(toolResults);
+                // 工具结果纳入上下文预算：单条上限 + 多轮累计上限
+                messages = applyToolResultBudget(messages);
 
                 if (toolRounds > maxToolRounds) {
                     // 让 LLM 基于已有工具结果给出最终回答
@@ -277,6 +282,23 @@ public class StepExecutor {
                 return buildSuccessResult(finalText, scratch, ragSources, latency);
             }
         }
+    }
+
+    /** 按配置对消息中的工具结果做「单条 + 累计」Token 裁剪，未超限时原样返回。 */
+    private List<ChatMessage> applyToolResultBudget(List<ChatMessage> messages) {
+        RagProperties.Context props = ragProperties != null ? ragProperties.getContext() : null;
+        int perResult = props != null && props.getToolResultMaxTokens() != null
+                ? props.getToolResultMaxTokens() : ToolResultBudgeter.DEFAULT_TOOL_RESULT_MAX_TOKENS;
+        int roundBudget = props != null && props.getToolRoundHistoryMaxTokens() != null
+                ? props.getToolRoundHistoryMaxTokens() : ToolResultBudgeter.DEFAULT_TOOL_ROUND_HISTORY_MAX_TOKENS;
+        ToolResultBudgeter.Result result = ToolResultBudgeter.trim(messages, perResult, roundBudget);
+        if (!result.changed()) {
+            return messages;
+        }
+        log.info("StepExecutor 工具结果上下文预算: 单条上限={}, 累计上限={}, 原始 {} tokens, 保留 {} tokens, 截断 {} 条, 折叠 {} 条",
+                perResult, roundBudget, result.originalTokens(), result.keptTokens(),
+                result.truncatedCount(), result.collapsedCount());
+        return result.messages();
     }
 
     private AgentStepResult buildSuccessResult(String finalText, AttemptScratch scratch,

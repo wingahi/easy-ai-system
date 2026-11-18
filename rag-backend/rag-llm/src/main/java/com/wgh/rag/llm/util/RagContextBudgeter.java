@@ -182,6 +182,14 @@ public final class RagContextBudgeter {
 
     /**
      * 按 Token 估算裁剪文本，优先在句末/换行处截断；放得下时原样返回。
+     * <p>供工具结果、工作流节点输入等「非检索片段」的内容复用同一套裁剪口径。
+     */
+    public static String clip(String text, int maxTokens) {
+        return clipToTokens(text, maxTokens);
+    }
+
+    /**
+     * 按 Token 估算裁剪文本，优先在句末/换行处截断；放得下时原样返回。
      */
     private static String clipToTokens(String text, int maxTokens) {
         if (text == null || text.isEmpty() || maxTokens <= 0) return "";
