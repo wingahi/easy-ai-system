@@ -103,7 +103,9 @@ class ModelFailoverStreamTest {
                 org.mockito.Mockito.mock(com.wgh.rag.tool.fallback.ToolInvoker.class), toolConfigService,
                 agentOrchestrator,
                 agentProperties, chatWorkflowService, quotaService, modelPriceService,
-                llmModelService, semanticCacheService, chatImageService, promptTemplateService,
+                llmModelService, semanticCacheService,
+                org.mockito.Mockito.mock(com.wgh.rag.kb.service.AgentMemoryService.class),
+                chatImageService, promptTemplateService,
                 knowledgeBaseMapper, modelRouter, metrics);
         session = org.mockito.Mockito.mock(ChatSession.class);
         window = org.mockito.Mockito.mock(ChatWindow.class);

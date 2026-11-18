@@ -100,6 +100,7 @@ public class RagChatService {
     private final ModelPriceService modelPriceService;
     private final LlmModelService llmModelService;
     private final SemanticCacheService semanticCacheService;
+    private final com.wgh.rag.kb.service.AgentMemoryService agentMemoryService;
     private final ChatImageService chatImageService;
     private final PromptTemplateService promptTemplateService;
     private final com.wgh.rag.kb.mapper.KnowledgeBaseMapper knowledgeBaseMapper;
@@ -336,8 +337,9 @@ public class RagChatService {
         }
         final List<EmbeddingMatch<TextSegment>> retrievedMatches = new ArrayList<>(retrieveResult.matches());
 
-        // 3. 构建系统提示词（防注入 + RAG 上下文；template: 语法在此解析，userName 取请求线程用户）
-        String systemPrompt = buildSystemPrompt(window, quotaUsername);
+        // 3. 构建系统提示词（防注入 + RAG 上下文 + 检索式记忆；template: 语法在此解析，userName 取请求线程用户）
+        String systemPrompt = withMemoryBlock(buildSystemPrompt(window, quotaUsername),
+                session != null ? session.getId() : null, userMessage);
 
         // 4. 加载窗口级工具（隔离：只给这个窗口注册它自己的 toolIds 指定的工具）
         // 放在路线判断之前：即使知识库没有检索结果，只要窗口配了工具也要继续走 LLM
@@ -1618,6 +1620,7 @@ public class RagChatService {
                 msg.setSources(objectMapper.writeValueAsString(sources));
             }
             messageMapper.insert(msg);
+            rememberSession(session.getId(), content);
 
             // 更新会话消息计数
             ChatSession update = new ChatSession();
@@ -1628,6 +1631,47 @@ public class RagChatService {
             log.error("保存assistant消息失败", e);
         }
         return msg;
+    }
+
+    /**
+     * 在系统提示词尾部追加检索式记忆（受 wgh.rag.memory.max-tokens 预算约束）。
+     * 召回失败或未命中时原样返回，不影响主链路。
+     */
+    private String withMemoryBlock(String systemPrompt, Long sessionId, String userMessage) {
+        if (sessionId == null || userMessage == null || userMessage.isBlank()) {
+            return systemPrompt;
+        }
+        try {
+            List<com.wgh.rag.kb.service.AgentMemoryService.MemoryHit> hits = agentMemoryService.recall(
+                    com.wgh.rag.kb.service.AgentMemoryService.ScopeType.SESSION,
+                    String.valueOf(sessionId), userMessage);
+            if (hits.isEmpty()) {
+                return systemPrompt;
+            }
+            StringBuilder sb = new StringBuilder(systemPrompt == null ? "" : systemPrompt);
+            sb.append("\n\n【历史记忆（按相关度召回，仅供参考；与当前对话冲突时以当前为准）】");
+            for (com.wgh.rag.kb.service.AgentMemoryService.MemoryHit hit : hits) {
+                sb.append("\n- ").append(hit.content());
+            }
+            return sb.toString();
+        } catch (Exception e) {
+            log.warn("组装历史记忆失败（忽略）: sessionId={}, reason={}", sessionId, e.getMessage());
+            return systemPrompt;
+        }
+    }
+
+    /** 会话级记忆写入：每轮助手答复完成后落一条摘要，失败只记日志 */
+    private void rememberSession(Long sessionId, String content) {
+        if (sessionId == null || content == null || content.isBlank()) {
+            return;
+        }
+        try {
+            String summary = content.length() > 800 ? content.substring(0, 800) : content;
+            agentMemoryService.remember(com.wgh.rag.kb.service.AgentMemoryService.ScopeType.SESSION,
+                    String.valueOf(sessionId), null, "SUMMARY", summary, null);
+        } catch (Exception e) {
+            log.warn("写入会话记忆失败（忽略）: sessionId={}, reason={}", sessionId, e.getMessage());
+        }
     }
 
     /**

@@ -28,6 +28,11 @@ public class RagProperties {
     private Context context = new Context();
 
     /**
+     * 检索式记忆
+     */
+    private Memory memory = new Memory();
+
+    /**
      * 语义缓存
      */
     private Cache cache = new Cache();
@@ -102,6 +107,21 @@ public class RagProperties {
         private Integer toolResultMaxTokens = 1200;
         /** 多轮工具结果累计 Token 上限（默认 3000，超出从最旧结果开始折叠） */
         private Integer toolRoundHistoryMaxTokens = 3000;
+    }
+
+    /**
+     * 检索式记忆
+     */
+    @Data
+    public static class Memory {
+        /** 是否启用（关闭时读写均直接跳过） */
+        private Boolean enabled = true;
+        /** 召回条数上限 */
+        private Integer topK = 5;
+        /** 召回相似度下限 */
+        private Double minScore = 0.6;
+        /** 召回内容进入 prompt 的 Token 预算（默认 500） */
+        private Integer maxTokens = 500;
     }
 
     @Data

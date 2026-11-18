@@ -1448,3 +1448,42 @@ COMMENT ON COLUMN wgh_upload_session.update_time IS '更新时间';
 COMMENT ON COLUMN wgh_upload_session.create_by IS '创建人';
 COMMENT ON COLUMN wgh_upload_session.update_by IS '更新人';
 COMMENT ON COLUMN wgh_upload_session.deleted IS '逻辑删除（0 未删除 / 1 已删除）';
+
+-- ==================== 检索式记忆 ====================
+CREATE TABLE IF NOT EXISTS wgh_agent_memory (
+  id BIGSERIAL PRIMARY KEY,
+  scope_type VARCHAR(16) NOT NULL,
+  scope_id VARCHAR(64) NOT NULL,
+  agent_id VARCHAR(64),
+  memory_type VARCHAR(20) DEFAULT 'SUMMARY',
+  content TEXT NOT NULL,
+  content_hash VARCHAR(64) NOT NULL,
+  embedding_id VARCHAR(64),
+  source_message_id BIGINT,
+  token_count INT DEFAULT 0,
+  create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  create_by VARCHAR(50) DEFAULT 'system',
+  update_by VARCHAR(50) DEFAULT 'system',
+  deleted SMALLINT DEFAULT 0
+);
+COMMENT ON TABLE wgh_agent_memory IS '检索式记忆（会话/任务级；向量存 wgh_agent_memory_vec，按 scopeKey 隔离）';
+COMMENT ON COLUMN wgh_agent_memory.scope_type IS '作用域类型：SESSION 会话级 / TASK 任务级';
+COMMENT ON COLUMN wgh_agent_memory.scope_id IS '作用域 ID（sessionId 或 taskId）';
+COMMENT ON COLUMN wgh_agent_memory.agent_id IS '产生该记忆的 Agent（单 Agent 链路为空）';
+COMMENT ON COLUMN wgh_agent_memory.memory_type IS '记忆类型：SUMMARY 摘要 / FACT 事实';
+COMMENT ON COLUMN wgh_agent_memory.content IS '记忆正文';
+COMMENT ON COLUMN wgh_agent_memory.content_hash IS '正文 SHA-256，用于同作用域去重';
+COMMENT ON COLUMN wgh_agent_memory.embedding_id IS 'wgh_agent_memory_vec 中的向量 ID（uuid）';
+COMMENT ON COLUMN wgh_agent_memory.source_message_id IS '来源消息 ID（可选）';
+COMMENT ON COLUMN wgh_agent_memory.token_count IS '正文估算 Token 数';
+COMMENT ON COLUMN wgh_agent_memory.deleted IS '逻辑删除（0 未删除 / 1 已删除）';
+CREATE UNIQUE INDEX IF NOT EXISTS uk_agent_memory_scope_hash
+  ON wgh_agent_memory (scope_type, scope_id, content_hash)
+  WHERE deleted = 0;
+CREATE INDEX IF NOT EXISTS idx_agent_memory_scope_time
+  ON wgh_agent_memory (scope_type, scope_id, create_time DESC)
+  WHERE deleted = 0;
+CREATE INDEX IF NOT EXISTS idx_agent_memory_agent
+  ON wgh_agent_memory (agent_id, create_time DESC)
+  WHERE deleted = 0;
