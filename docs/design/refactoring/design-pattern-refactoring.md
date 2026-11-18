@@ -1,7 +1,7 @@
 # 设计模式重构方案
 
 > 版本：v1.0｜日期：2026-10-28｜范围：rag-backend 10 个模块
-> 关联文档：[overall-design.md](./overall-design.md)｜[detail-design.md](./detail-design.md)｜[test-cases.md](./testing/test-cases.md)
+> 关联文档：[overall-design.md](../../archive/design/overall-design.md)｜[detail-design.md](../../archive/design/detail-design.md)｜[test-cases.md](../../testing/test-cases.md)
 > 原则：**不改变外部行为**（所有 e2e 测试保持绿色）、**小步重构**（每模式独立提交）、**有测试兜底**（重构前补单元测试）
 
 ---
@@ -227,4 +227,4 @@ public record DomainEvent(String name, Map<String,Object> payload, Instant ts) {
 | R8 RagProperties 配置分组 | ⏭ 跳过 | 用户决策：前提失效，不做 |
 | R9 Controller 下沉 | ✅ 完成 | 全模块编译通过 + 全量 e2e |
 
-**最终质量基线**：单元测试 374/374、功能 e2e 113/113、压测 8/8 全绿。测试代码统一英文命名 + 中文注释，并由 CI 静态检查（`rag-backend/scripts/check-test-conventions.py`）持续保障。完整数据见 `docs/test-report-20261028.md`。
+**最终质量基线**：单元测试 374/374、功能 e2e 113/113、压测 8/8 全绿。测试代码统一英文命名 + 中文注释，并由 CI 静态检查（`rag-backend/scripts/check-test-conventions.py`）持续保障。完整数据见 `docs/archive/testing/test-report-20261028.md`。

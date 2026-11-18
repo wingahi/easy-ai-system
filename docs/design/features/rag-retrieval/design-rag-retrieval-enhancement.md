@@ -23,9 +23,9 @@
 
 ## 2. 现状关键事实（代码勘察结论）
 
-- 检索主链路：[RagRetrieveService.java](../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/RagRetrieveService.java) `searchMultiple`（分组向量检索）→ [RagChatService.java](../rag-backend/rag-chat/src/main/java/com/wgh/rag/chat/service/RagChatService.java) L211-L240（计算 recallRate/hitRate 并 SSE 推送）
-- 配置：[RagProperties.java](../rag-backend/rag-config/src/main/java/com/wgh/rag/config/property/RagProperties.java) 已有 `topK/minScore/enableRerank` 及切分 `maxLength/overlapLength/defaultStrategy`
-- 切分：[TextSplitter.java](../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/splitter/TextSplitter.java) 策略枚举 `AUTO/RECURSIVE/CHAPTER/PARAGRAPH/FAQ/LENGTH/CUSTOM`，段落滑窗+长度回退已实现
+- 检索主链路：[RagRetrieveService.java](../../../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/RagRetrieveService.java) `searchMultiple`（分组向量检索）→ [RagChatService.java](../../../../rag-backend/rag-chat/src/main/java/com/wgh/rag/chat/service/RagChatService.java) L211-L240（计算 recallRate/hitRate 并 SSE 推送）
+- 配置：[RagProperties.java](../../../../rag-backend/rag-config/src/main/java/com/wgh/rag/config/property/RagProperties.java) 已有 `topK/minScore/enableRerank` 及切分 `maxLength/overlapLength/defaultStrategy`
+- 切分：[TextSplitter.java](../../../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/splitter/TextSplitter.java) 策略枚举 `AUTO/RECURSIVE/CHAPTER/PARAGRAPH/FAQ/LENGTH/CUSTOM`，段落滑窗+长度回退已实现
 - pgvector：`VectorStoreService.createEmbeddingStore(tableName, dimension)` 基于 `PgVectorEmbeddingStore.datasourceBuilder`，每知识库一张表（collectionName），text 列存 chunk 原文
 - LangChain4j 1.19.0 core 自带：`ScoringModel`、`ReRankingContentAggregator`、`ExpandingQueryTransformer`、`CompressingQueryTransformer`、`DefaultQueryTransformer`
 - langchain4j-community-dashscope **无** rerank/scoring 实现 → DashScope rerank 需 HTTP 直连

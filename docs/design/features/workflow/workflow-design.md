@@ -1,7 +1,7 @@
 # 工作流编排（Workflow Orchestration）系统设计
 
 > 版本：v1.1　｜　适用代码：`rag-workflow` 模块 + `WorkflowController` + 前端 `views/workflow`　｜　日期：2026-10-28
-> 关联设计：[agent-design.md](./agent-design.md)
+> 关联设计：[agent-design.md](../agent/agent-design.md)
 
 ---
 
@@ -438,4 +438,4 @@ while frontier 非空:
 
 ---
 
-> **文档修订（2026-10-28）**：测试体系与质量门禁更新 —— 单元测试 374 项、功能 e2e 113 项、压测 7 场景 8/8 全绿；测试代码统一英文命名 + 中文注释并纳入 CI 静态检查。本次改动不涉及本文档描述的架构与接口设计变更，完整数据见 `docs/test-report-20261028.md`。
+> **文档修订（2026-10-28）**：测试体系与质量门禁更新 —— 单元测试 374 项、功能 e2e 113 项、压测 7 场景 8/8 全绿；测试代码统一英文命名 + 中文注释并纳入 CI 静态检查。本次改动不涉及本文档描述的架构与接口设计变更，完整数据见 `docs/archive/testing/test-report-20261028.md`。
