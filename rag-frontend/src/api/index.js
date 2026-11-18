@@ -41,6 +41,20 @@ export const kbGroundTruthDelete = (kbId, id) => request.delete(`/kb/${kbId}/gro
 export const kbListChunks = (kbId, params) => request.get(`/kb/${kbId}/chunks`, { params })
 export const kbEvaluate = (kbId, params) => request.post(`/kb/${kbId}/evaluate`, null, { params })
 
+// 评测数据集（版本化）：用例变更自动推进版本，结果按版本归档可对比
+export const kbEvalDatasetList = (kbId) => request.get(`/kb/${kbId}/eval-datasets`)
+export const kbEvalDatasetCreate = (kbId, data) => request.post(`/kb/${kbId}/eval-datasets`, data)
+export const kbEvalDatasetUpdate = (kbId, datasetId, data) => request.put(`/kb/${kbId}/eval-datasets/${datasetId}`, data)
+export const kbEvalDatasetDelete = (kbId, datasetId) => request.delete(`/kb/${kbId}/eval-datasets/${datasetId}`)
+export const kbEvalDatasetVersions = (kbId, datasetId) => request.get(`/kb/${kbId}/eval-datasets/${datasetId}/versions`)
+export const kbEvalCaseList = (kbId, datasetId, params) => request.get(`/kb/${kbId}/eval-datasets/${datasetId}/cases`, { params })
+export const kbEvalCaseCreate = (kbId, datasetId, data) => request.post(`/kb/${kbId}/eval-datasets/${datasetId}/cases`, data)
+export const kbEvalCaseUpdate = (kbId, datasetId, caseId, data) => request.put(`/kb/${kbId}/eval-datasets/${datasetId}/cases/${caseId}`, data)
+export const kbEvalCaseDelete = (kbId, datasetId, caseId) => request.delete(`/kb/${kbId}/eval-datasets/${datasetId}/cases/${caseId}`)
+export const kbEvalDatasetEvaluate = (kbId, datasetId, params) => request.post(`/kb/${kbId}/eval-datasets/${datasetId}/evaluate`, null, { params })
+export const kbEvalResultList = (kbId, datasetId) => request.get(`/kb/${kbId}/eval-datasets/${datasetId}/results`)
+export const kbEvalResultCompare = (kbId, datasetId, params) => request.get(`/kb/${kbId}/eval-datasets/${datasetId}/results/compare`, { params })
+
 // 模型
 export const chatModelPage = (params) => request.get('/models/chat', { params })
 export const chatModelList = () => request.get('/models/chat/list')

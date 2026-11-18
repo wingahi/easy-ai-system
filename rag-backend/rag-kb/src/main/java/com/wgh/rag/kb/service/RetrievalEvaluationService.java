@@ -128,6 +128,30 @@ public class RetrievalEvaluationService {
         if (truths.isEmpty()) {
             throw new BusinessException(ResultCode.PARAM_ERROR, "该知识库暂无标注数据，无法计算 Recall@K");
         }
+        List<GroundTruthPayload> samples = new ArrayList<>(truths.size());
+        for (KbGroundTruth gt : truths) {
+            samples.add(new GroundTruthPayload(gt.getQueryText(),
+                    new ArrayList<>(parseKeys(gt.getRelevantChunks()))));
+        }
+        if (samples.stream().allMatch(s -> toKeySet(s.relevantChunks()).isEmpty())) {
+            throw new BusinessException(ResultCode.PARAM_ERROR, "标注数据缺少有效相关 chunk，无法计算 Recall@K");
+        }
+        return evaluateSamples(kbId, samples, options);
+    }
+
+    /**
+     * 按给定样本计算检索指标，供版本化评测数据集复用同一套指标口径。
+     *
+     * <p>口径与 {@link #evaluate(Long, RetrievalOptions)} 完全一致：聚合为「可计算查询」的算术平均，
+     * 无标注相关集合的样本跳过、不以 0 分参与平均；单次评测样本数受同一上限保护。
+     *
+     * @param samples 评测样本（查询 + 标注相关 chunk 键）
+     */
+    public Map<String, Object> evaluateSamples(Long kbId, List<GroundTruthPayload> samples,
+                                               RetrievalOptions options) {
+        if (samples == null || samples.isEmpty()) {
+            throw new BusinessException(ResultCode.PARAM_ERROR, "评测用例为空，无法计算 Recall@K");
+        }
 
         int maxQueries = maxEvalQueries();
         List<Map<String, Object>> details = new ArrayList<>();
@@ -143,17 +167,17 @@ public class RetrievalEvaluationService {
         int effectiveTopK = 0;
         long latencySum = 0;
 
-        for (KbGroundTruth gt : truths) {
+        for (GroundTruthPayload sample : samples) {
             if (details.size() >= maxQueries) {
                 break;
             }
-            Set<String> relevant = parseKeys(gt.getRelevantChunks());
+            Set<String> relevant = toKeySet(sample.relevantChunks());
             if (relevant.isEmpty()) {
                 continue;
             }
             long start = System.currentTimeMillis();
             RetrieveResult result = retrieveService.searchMultiple(
-                    List.of(kbId), gt.getQueryText(), options);
+                    List.of(kbId), sample.queryText(), options);
             long latency = System.currentTimeMillis() - start;
 
             // 保留检索返回顺序（排名 1..n），重复键只保留首次出现，避免 NDCG 重复计增益
@@ -194,7 +218,7 @@ public class RetrievalEvaluationService {
             if (hit) hitQueries++;
 
             Map<String, Object> item = new LinkedHashMap<>();
-            item.put("query", gt.getQueryText());
+            item.put("query", sample.queryText());
             item.put("relevantCount", relevant.size());
             item.put("retrievedCount", retrieved.size());
             item.put("hitCount", hits);
@@ -209,15 +233,15 @@ public class RetrievalEvaluationService {
         }
 
         if (details.isEmpty()) {
-            throw new BusinessException(ResultCode.PARAM_ERROR, "标注数据缺少有效相关 chunk，无法计算 Recall@K");
+            throw new BusinessException(ResultCode.PARAM_ERROR, "评测用例缺少有效相关 chunk，无法计算 Recall@K");
         }
 
         Map<String, Object> resp = new LinkedHashMap<>();
         resp.put("kbId", kbId);
         resp.put("topK", effectiveTopK);
         resp.put("queryCount", details.size());
-        resp.put("totalGroundTruthCount", truths.size());
-        resp.put("truncated", truths.size() > details.size() && details.size() >= maxQueries);
+        resp.put("totalGroundTruthCount", samples.size());
+        resp.put("truncated", samples.size() > details.size() && details.size() >= maxQueries);
         resp.put("recallAtK", recallCount > 0 ? round4(recallSum / recallCount) : null);
         resp.put("precisionAtK", round4(precisionSum / details.size()));
         resp.put("mrr", mrrCount > 0 ? round4(mrrSum / mrrCount) : null);
@@ -350,6 +374,18 @@ public class RetrievalEvaluationService {
             log.warn("解析标注相关 chunk 失败: {}", json);
             return Set.of();
         }
+    }
+
+    /** 归一化相关 chunk 键集合：去空、去重并保留顺序 */
+    private Set<String> toKeySet(List<String> keys) {
+        Set<String> result = new LinkedHashSet<>();
+        if (keys == null) return result;
+        for (String key : keys) {
+            if (key != null && !key.isBlank()) {
+                result.add(key.trim());
+            }
+        }
+        return result;
     }
 
     private Map<String, Object> readMetadata(String json) {

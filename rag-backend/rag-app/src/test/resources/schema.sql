@@ -401,6 +401,59 @@ CREATE TABLE IF NOT EXISTS wgh_kb_ground_truth (
     deleted SMALLINT DEFAULT 0
 );
 
+-- ===== 评测数据集（版本化，与 sql/schema/01-schema.sql 保持一致） =====
+
+CREATE TABLE IF NOT EXISTS wgh_eval_dataset (
+    id BIGSERIAL PRIMARY KEY,
+    knowledge_base_id BIGINT NOT NULL,
+    name VARCHAR(100) NOT NULL,
+    description VARCHAR(500),
+    current_version INT NOT NULL DEFAULT 0,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    create_by VARCHAR(50) DEFAULT 'system',
+    update_by VARCHAR(50) DEFAULT 'system',
+    deleted SMALLINT DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_eval_dataset_kb ON wgh_eval_dataset(knowledge_base_id, deleted);
+
+CREATE TABLE IF NOT EXISTS wgh_eval_case (
+    id BIGSERIAL PRIMARY KEY,
+    dataset_id BIGINT NOT NULL,
+    dataset_version INT NOT NULL,
+    query_text VARCHAR(500) NOT NULL,
+    relevant_chunks TEXT NOT NULL,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    create_by VARCHAR(50) DEFAULT 'system',
+    update_by VARCHAR(50) DEFAULT 'system',
+    deleted SMALLINT DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_eval_case_ds_version ON wgh_eval_case(dataset_id, dataset_version, deleted);
+
+CREATE TABLE IF NOT EXISTS wgh_eval_result (
+    id BIGSERIAL PRIMARY KEY,
+    dataset_id BIGINT NOT NULL,
+    knowledge_base_id BIGINT NOT NULL,
+    dataset_version INT NOT NULL,
+    top_k INT,
+    hybrid SMALLINT DEFAULT 0,
+    query_count INT DEFAULT 0,
+    recall_at_k DOUBLE PRECISION,
+    precision_at_k DOUBLE PRECISION,
+    mrr DOUBLE PRECISION,
+    ndcg DOUBLE PRECISION,
+    query_hit_rate DOUBLE PRECISION,
+    coverage_rate DOUBLE PRECISION,
+    details_json TEXT,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    create_by VARCHAR(50) DEFAULT 'system',
+    update_by VARCHAR(50) DEFAULT 'system',
+    deleted SMALLINT DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_eval_result_ds_version ON wgh_eval_result(dataset_id, dataset_version, deleted);
+
 -- ===== 生产基线同步：工作流 =====
 
 CREATE TABLE IF NOT EXISTS wgh_workflow (

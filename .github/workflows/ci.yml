@@ -21,6 +21,34 @@ jobs:
       - name: 检查测试方法命名与中文注释
         run: python3 rag-backend/scripts/check-test-conventions.py --root rag-backend
 
+  retrieval-gate:
+    name: 检索评测门禁（固定 fixture，无模型依赖）
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # 只用标准库：fixture 预置检索结果，不发网络请求、不加载真实模型
+      - name: 门禁脚本单测（指标口径 + 阈值判定通过/不通过两侧）
+        run: python3 -m unittest discover -s rag-backend/eval -p "test_*.py" -v
+
+      - name: 固定 fixture 指标门禁
+        env:
+          EVAL_GATE_RECALL: '0.85'
+          EVAL_GATE_PRECISION: '0.50'
+          EVAL_GATE_MRR: '0.70'
+          EVAL_GATE_NDCG: '0.80'
+          EVAL_GATE_HIT_RATE: '0.95'
+        run: |
+          python3 rag-backend/eval/eval_recall.py \
+            --fixture rag-backend/eval/fixtures/retrieval_gate.json \
+            --json-out rag-backend/eval/gate-result.json
+
   backend:
     name: 后端编译与测试（JDK 21）
     runs-on: ubuntu-latest
