@@ -730,7 +730,7 @@ SSE：`multi_agent_start`、`agent_start`、`agent_rag`、`agent_tool_call_start
 - **失败关闭**：命中白名单表但带 `JOIN` 的查询直接抛 `SQLException`；无法安全改写的 `UNION` / CTE 若包含白名单表同样抛错，不静默放行。
 - 同一条 `BoundSql` 通过附加参数防止重复追加条件。
 
-**升级注意**：存量库需手工执行 10 条 ALTER（5 张表 `ADD COLUMN visibility` + 5 个 `(create_by, visibility)` 索引）；仓库当前未提供独立迁移脚本。历史 `create_by='system'` 的资源升级后默认仅管理员可见，需要时由管理员改归属或可见性。
+**升级注意**：存量库执行 `rag-backend/sql/migrations/20261113/01_resource_visibility.sql`（幂等：5 张表 `ADD COLUMN visibility` + 5 个 `(create_by, visibility)` 索引 + 内置资源回填 `PUBLIC`）；新库直接执行 `sql/schema/01-schema.sql` + `sql/seed/02-data.sql`，不要跑迁移脚本。历史 `create_by='system'` 的资源升级后默认仅管理员可见，需要时由管理员改归属或可见性。
 
 ---
 
@@ -944,7 +944,7 @@ sequenceDiagram
 | 7 | 本地 `resolveUrl` 非下载服务 | 仅返回 `url-prefix + key`；应用未挂载静态目录 |
 | 8 | 引用溯源字段不完整（2026-11-12） | `pageNo` 恒空（解析器不产出页级映射）；纯 Agent 分支上下文未加 `[Sn]`；同名文件跨知识库合并为一张卡片 |
 | 9 | 资源可见性无团队边界（2026-11-12） | 无 `tenant_id` / 团队成员模型，`TEAM` 与 `PUBLIC` 判定等价；只覆盖单表列表查询，`JOIN` / `UNION` / CTE 直接失败关闭 |
-| 10 | 存量库升级需手工 DDL（2026-11-12） | 5 张表需 `ADD COLUMN visibility` + 5 个索引，共 10 条 ALTER；仓库暂无独立迁移脚本，历史 `create_by='system'` 资源仅管理员可见 |
+| 10 | 存量库升级需迁移脚本（2026-11-12） | 5 张表需 `ADD COLUMN visibility` + 5 个索引，已由 `sql/migrations/20261113/01_resource_visibility.sql` 覆盖；历史 `create_by='system'` 资源迁移后仅管理员可见 |
 
 ---
 

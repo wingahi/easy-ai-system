@@ -1,8 +1,9 @@
 # WGH RAG System 全面测试用例
 
-> 版本：v1.0　｜　日期：2026-10-28　｜　测试方法：黑盒 + 灰盒（已知 API 面）
+> 版本：v1.1　｜　日期：2026-11-12（增补批次 2：引用溯源 / 资源可见性 / OpenAI 兼容入口）　｜　初版：v1.0，2026-10-28
+> 测试方法：黑盒 + 灰盒（已知 API 面）
 > 分类：正常功能 / 边界条件 / 异常场景
-> 覆盖模块：鉴权 · 知识库 · 模型 · 聊天 · Agent · 工作流 · 工具 · 上下文压缩 · 评估 · 分享 · 触发器 · 多 Agent 协作
+> 覆盖模块：鉴权 · 知识库 · 模型 · 聊天 · Agent · 工作流 · 工具 · 上下文压缩 · 评估 · 分享 · 触发器 · 多 Agent 协作 · 引用溯源 · 资源可见性 · OpenAI 兼容 API
 
 ---
 
@@ -39,6 +40,9 @@
 29. [可观测性（Metrics / Request-Id / Actuator）](#29-可观测性metrics--request-id--actuator)
 30. [补充用例（文档元数据 / 工作流 / 路由 / 标签版本）](#30-补充用例文档元数据--工作流--路由--标签版本)
 31. [限制与未覆盖](#31-限制与未覆盖)
+32. [检索来源结构化与 [Sn] 引用溯源（批次 2）](#32-检索来源结构化与-sn-引用溯源批次-2-2026-11-12)
+33. [资源可见性（批次 2）](#33-资源可见性批次-2-2026-11-12)
+34. [OpenAI 兼容入口](#34-openai-兼容入口)
 
 - [附录 A：测试环境速查](#附录-a测试环境速查)
 - [附录 B：测试代码规范与自动化门禁](#附录-b测试代码规范与自动化门禁)
@@ -1378,3 +1382,165 @@
 | L-16 | 模型路由缺少自动化单测 | 流式切链（`ModelFailoverStreamTest` 7 项）与同步切链（`BlockingModelFailoverTest` 4 项）已覆盖；`ModelRouter#resolveChain` 本身仍无单测，路由命中/回退仅手工验证 | ROUTE-01~10 | 补充 `ModelRouterTest` |
 | L-17 | 登出/改密/重置后旧 token 语义依赖 pv | 本地 token 通过 `pv` 比对失效；外部 OIDC token 无 pv 概念，改密/重置不影响其有效性 | Auth-35、Auth-50、Auth-56 | 外部 token 生命周期由 IdP 管理；必要时缩短 IdP token TTL |
 | L-18 | 缺少大文件病毒扫描/内容安全检测 | 上传仅做格式、大小、空文件校验；无恶意内容扫描 | KB-08~17、STO-01~26 | 按合规要求接入扫描服务（当前未实现） |
+| L-19 | 引用溯源字段不完整（2026-11-12） | `pageNo` 恒空（解析链路无页级映射）；纯 Agent 分支上下文不加 `[Sn]`；同名文件跨知识库合并为一张卡片 | CIT-04、CIT-16、CIT-17 | 需要页码/Agent 引用时补解析页映射与 Agent 上下文编号 |
+| L-20 | 可见性无团队边界（2026-11-12） | 无 `tenant_id` / 团队成员模型，`TEAM` 与 `PUBLIC` 判定等价；`DataScopeInterceptor` 只覆盖单表 page/list，JOIN/UNION/CTE 失败关闭 | VIS-11、VIS-14~16 | 需要真正团队边界时引入租户/成员模型并扩展拦截器 |
+| L-21 | 存量库可见性需手工执行迁移（2026-11-12） | 存量库需执行 `sql/migrations/20261113/01_resource_visibility.sql`（5 `ADD COLUMN` + 5 索引 + 2 条内置资源回填，均幂等）；未执行时访问 `visibility` 会报 SQL 错误；新库走 `01-schema.sql`，不要执行该脚本 | VIS-29、VIS-31、VIS-32 | 升级前备份并按脚本执行；脚本不修改历史 `create_by` |
+| L-22 | 历史 system 资源默认仅管理员可见（2026-11-12） | 旧数据 `create_by='system'`，升级后 `visibility` 默认 `PRIVATE`，普通用户不可见 | VIS-30 | 升级后由管理员批量改归属或可见性 |
+
+---
+
+## 32. 检索来源结构化与 [Sn] 引用溯源（批次 2，2026-11-12）
+
+> 依据 commit `96dfc42`。`sources` 随 SSE `sources` 事件下发并写入 `wgh_chat_message.sources`；上下文按文档分配 `[Sn]`，前端 `SourcePanel.vue` + `utils/markdown.js#renderMarkdownWithCitations`，聊天 / 登录态分享 / 公开分享三页统一接入。
+> 本节标注“需运行环境验证”的用例依赖真实模型、有效知识库与浏览器，只作为待执行用例，不代表已通过。
+
+### 32.1 来源字段与归并
+
+| 编号 | 分类 | 名称 | 前置条件 | 操作步骤 | 预期结果（HTTP / 业务码） | 覆盖类型 | 自动化落点 |
+|------|------|------|---------|---------|--------------------------|---------|-----------|
+| CIT-01 | 正常 | sources 返回 10 个字段 | 已配置可用模型、知识库与文件；窗口关联该知识库 | 发起一次命中 2 个文件的提问；抓取 SSE `sources` 事件或 `GET /api/chat/messages?windowId=...` 历史消息 | 每个来源含 `kbId`、`kbName`、`fileId`、`fileName`、`chunkIndex`、`pageNo`、`charStart`、`charEnd`、`score`、`snippet`；`chunkIndex>=0`、`score` 为数值、`snippet` 非空；`pageNo` 为 `null` | 接口（需运行环境验证） | `RagChatService.buildSourcesList` |
+| CIT-02 | 正常 | 同文档多段合并为一张卡片 | 同一文件命中 3 个 chunk，分数分别为高 / 中 / 低 | 提问并查看 `sources` | 该文件只出现 1 条；`score` 取 3 段最高值；`chunkIndex` 对应最高分那一段 | 单元 + 接口 | `RagChatService.buildSourcesList` |
+| CIT-03 | 正常 | 多文档分卡且顺序稳定 | 命中文件 A、B 各 1 段 | 连续提问两次（或重复渲染同一消息） | `sources` 为 2 条，顺序按文档首次出现顺序；前端卡片顺序与 `[S1]`、`[S2]` 一致 | 接口（需运行环境验证） | `buildSourcesList`、`SourcePanel.vue` |
+| CIT-04 | 边界 | 同名文件跨知识库合并 | 知识库 A、B 中存在同名文件且均命中 | 提问并查看 `sources` | 合并为 1 张卡片（当前实现按 `fileName` 归并）；`kbName` 取首个命中来源；不出现两张同名卡片 | 接口（需运行环境验证，已知限制） | `buildSourcesList` |
+
+### 32.2 [Sn] 编号与预算
+
+| 编号 | 分类 | 名称 | 前置条件 | 操作步骤 | 预期结果（HTTP / 业务码） | 覆盖类型 | 自动化落点 |
+|------|------|------|---------|---------|--------------------------|---------|-----------|
+| CIT-05 | 正常 | 编号按文档分配且同文档共用 | 命中 3 个文档，其中文档 A 有 2 段 | 查看注入 LLM 的上下文与 `sources` | 上下文块前缀为 `[S1]`、`[S2]`、`[S3]`；文档 A 的两段共用同一编号；编号从 1 连续递增 | 单元 | `RagChatService.buildCitationNumbers/extractRagContext` |
+| CIT-06 | 正常 | 预算裁剪先于编号 | 将模型上下文预算调小，使部分 chunk 被裁剪 | 发起提问，检查上下文与 `sources` | 只对裁剪后保留的 chunk 编号；编号仍从 1 连续；被裁 chunk 不占号 | 单元 | `applyRagContextBudget`、`buildCitationNumbers` |
+| CIT-07 | 边界 | 编号与卡片一一对应 | 回答中出现 `[S1]`~`[Sn]` | 依次点击每个编号 | 每个编号都能定位到同序号卡片；不存在“编号找不到卡片”或卡片数少于最大编号 | 页面（需运行环境验证） | `markdown.js#renderMarkdownWithCitations`、`SourcePanel.vue` |
+| CIT-08 | 边界 | 被裁 chunk 不分号 | 命中 20 段，裁剪后仅 5 段 | 检查回答可引用编号范围 | 最大编号为 `[S5]`；不出现 `[S6]`~`[S20]`；前端无对应空卡片 | 单元 | `applyRagContextBudget` |
+
+### 32.3 snippet 与前端交互
+
+| 编号 | 分类 | 名称 | 前置条件 | 操作步骤 | 预期结果（HTTP / 业务码） | 覆盖类型 | 自动化落点 |
+|------|------|------|---------|---------|--------------------------|---------|-----------|
+| CIT-09 | 正常 | snippet 压缩空白并截断 120 字 | chunk 含连续空格、换行、制表符且长度超过 120 字 | 查看 `sources[].snippet` | 连续空白被压缩为单个空格；去首尾空白；长度 ≤120 字；不截断为半个 UTF-8 字符 | 单元 | `RagChatService` snippet 构造 |
+| CIT-10 | 边界 | 短 chunk 不补全 | chunk 正文 30 字 | 查看 `snippet` | 返回压缩空白后的 30 字，不补省略号、不填充至 120 字 | 单元 | 同上 |
+| CIT-11 | 正常 | 点击 [Sn] 滚动并高亮卡片 | 回答含 `[S2]`，来源面板已渲染 | 点击正文中的 `[S2]` | 页面滚动到第 2 张卡片并触发高亮（`cite-flash`）；来源面板展开对应条目 | 页面（需运行环境验证） | `renderMarkdownWithCitations`、`SourcePanel.vue` |
+| CIT-12 | 边界 | 代码块/行内代码/链接内不转换 | 回答包含 `` `[S1]` ``、代码块中的 `[S1]`、链接文本中的 `[S1]` | 渲染回答 | 代码与链接内的 `[S1]` 保持纯文本，不生成可点击引用；正文中的 `[S1]` 仍可点击 | 页面（需运行环境验证） | `renderMarkdownWithCitations`（跳过 `pre`/`code`/`a`） |
+| CIT-13 | 正常 | 登录态分享页展示引用 | 已生成分享链接且访客已登录 | 打开 `/share/chat/{token}` 提问 | 回答中的 `[Sn]` 可点击；来源面板正常展开；只读态不提供修改入口 | 页面（需运行环境验证） | `ShareChat.vue`、`SourcePanel.vue` |
+| CIT-14 | 正常 | 公开分享页展示引用 | 公开分享 token 有效 | 未登录打开 `/public/share/{token}` 提问 | 只读展示来源卡片与 `[Sn]` 高亮；不要求登录；不展示管理操作 | 页面（需运行环境验证） | `PublicShareChat.vue` |
+| CIT-15 | 异常 | snippet 内容做 XSS 清洗 | 上传含 `<script>alert(1)</script>` 的文本并命中 | 打开来源卡片 | `snippet` 以纯文本展示或经 DOMPurify 清洗；脚本不执行；不产生新 DOM 事件属性 | 页面（需运行环境验证） | `markdown.js`、`SourcePanel.vue` |
+
+### 32.4 已知边界
+
+| 编号 | 分类 | 名称 | 前置条件 | 操作步骤 | 预期结果（HTTP / 业务码） | 覆盖类型 | 自动化落点 |
+|------|------|------|---------|---------|--------------------------|---------|-----------|
+| CIT-16 | 边界 | pageNo 恒为空 | 命中 PDF / DOCX 等分页文档 | 查看 `sources[].pageNo` 与来源卡片 | `pageNo` 始终为 `null`；前端不显示页码；不报错（解析链路无页级映射，已知限制） | 接口（需运行环境验证） | —（限制） |
+| CIT-17 | 边界 | 纯 Agent 分支无 [Sn] | 窗口开启 Agent 且命中知识库 | 发起走 Agent 规划的提问 | Agent 回答不注入 `[Sn]`；来源面板为空或仅展示历史来源；不出现无卡片对应的编号（已知限制） | 页面（需运行环境验证） | `AgentOrchestrator` |
+
+---
+
+## 33. 资源可见性（批次 2，2026-11-12）
+
+> 依据 commit `59c5eee`（后端）与 `6dbf712`（前端）。五类资源：知识库、聊天窗口、工作流、Prompt 模板、工具。owner 复用 `create_by`；`visibility` 默认 `PRIVATE`。
+> 说明：读不可见资源、写共享资源的“404 / 403”为语义描述，当前统一由 `BusinessException` 返回 HTTP 200 + 业务码（`3001` / `1004`），前端按 `code` 分支处理。
+> 存量库升级脚本：`sql/migrations/20261113/01_resource_visibility.sql`（幂等；5 列 + 5 索引 + 内置工具/模板回填 PUBLIC；新库不要执行）。
+
+### 33.1 判定矩阵
+
+| 编号 | 分类 | 名称 | 前置条件 | 操作步骤 | 预期结果（HTTP / 业务码） | 覆盖类型 | 自动化落点 |
+|------|------|------|---------|---------|--------------------------|---------|-----------|
+| VIS-01 | 正常 | 新建资源默认 PRIVATE | 普通用户登录 | 分别新建知识库、聊天窗口、工作流、Prompt 模板、工具，不传 `visibility` | 5 类资源 `visibility` 均为 `PRIVATE`；列表/详情返回 `createBy` 为当前用户 | 接口 | 5 个 Service、`MetaObjectHandlerImpl` |
+| VIS-02 | 正常 | owner 读写自己的资源 | A 用户拥有资源 | A 读取、更新、切换可见性、删除 | 全部成功；`visibility` 可切换；删除为逻辑删除 | 接口 | `DataScopeGuard.assertReadable/assertWritable` |
+| VIS-03 | 正常 | ADMIN 读写他人资源 | A 拥有 PRIVATE 资源；B 为 ADMIN | B 读取并更新 A 的资源 | 读取成功；更新成功；不受 visibility 限制 | 接口 | `DataScopeGuard`（admin 分支） |
+| VIS-04 | 异常 | 他人 PRIVATE 详情按不存在处理 | A 拥有 PRIVATE 资源；B 为普通用户 | B 请求详情 / 更新 / 删除 | HTTP 200 / code `3001`，message 含“不存在”；不泄露资源存在性与名称 | 接口 | 各 Controller + `DataScopeGuard` |
+| VIS-05 | 正常 | 他人 PRIVATE 不在列表 | A 拥有 PRIVATE 资源；B 为普通用户 | B 请求对应 `page` / `list` | 列表不含 A 的 PRIVATE 资源；总数同步减少 | 接口 | `DataScopeInterceptor`、5 个 Service |
+| VIS-06 | 正常 | 他人 TEAM 可读 | A 将资源设为 `TEAM` | B 请求列表与详情 | 列表可见、详情可读；`createBy` 仍为 A | 接口 | `DataScopeGuard.isShared` |
+| VIS-07 | 正常 | 他人 PUBLIC 可读 | A 将资源设为 `PUBLIC` | B 请求列表与详情 | 列表可见、详情可读；分享入口按原有规则工作 | 接口 | `DataScopeGuard` |
+| VIS-08 | 异常 | 他人 TEAM 不可写 | A 将资源设为 `TEAM`；B 为普通用户 | B 更新 / 删除 / 切换可见性 | HTTP 200 / code `1004`，message 含“无权操作他人共享的…”；资源不被修改 | 接口 | `DataScopeGuard.assertWritable` |
+| VIS-09 | 异常 | 他人 PUBLIC 不可写 | A 将资源设为 `PUBLIC`；B 为普通用户 | 同 VIS-08 | 同 VIS-08，返回 `1004` | 接口 | `DataScopeGuard.assertWritable` |
+| VIS-10 | 边界 | 无登录上下文放行 | 单元测试或异步线程，无 `SecurityContext` | 直接调用 Service 读取资源 | 不做可见性拦截，正常返回（内部调用 / 调度 / 单测约定） | 单元 | `DataScopeContext.resolveUser()` 返回 null |
+| VIS-11 | 边界 | TEAM 与 PUBLIC 判定等价 | 无租户/团队模型 | 分别以 TEAM、PUBLIC 重复 VIS-06~09 | 读/写结果完全一致；仅展示标签不同（已知限制） | 接口 + 单元 | `ResourceVisibility.isShared` |
+
+### 33.2 DataScopeInterceptor 改写范围
+
+| 编号 | 分类 | 名称 | 前置条件 | 操作步骤 | 预期结果（HTTP / 业务码） | 覆盖类型 | 自动化落点 |
+|------|------|------|---------|---------|--------------------------|---------|-----------|
+| VIS-12 | 正常 | page/list 单表查询追加过滤 | B 普通用户；A 有 PRIVATE 资源 | B 调用 5 个资源的 `page` / `list` | SQL 追加 `(create_by = 'B' OR visibility <> 'PRIVATE')`；结果符合 VIS-05 | 单元 | `DataScopeInterceptor.beforeQuery` |
+| VIS-13 | 边界 | 按 id 取数不激活过滤 | 未使用 `runWithScope` | 直接 `getById` 查询他人 PRIVATE 资源 | SQL 不被改写；是否可见由 `DataScopeGuard` 决定（返回 `3001`），拦截器不介入 | 单元 | `DataScopeContext.isActive()` |
+| VIS-14 | 异常 | 白名单表 JOIN 失败关闭 | 在 `runWithScope` 内执行带 JOIN 的 5 表查询 | 调用 Mapper | 抛 `SQLException`（“数据权限过滤不支持带 JOIN 的资源表查询”）；不返回未过滤数据 | 单元 | `DataScopeInterceptor` |
+| VIS-15 | 异常 | UNION 失败关闭 | 在 `runWithScope` 内执行含白名单表的 UNION | 调用 Mapper | 抛 `SQLException`（“不支持该查询形态（UNION/CTE 等）”）；不静默放行 | 单元 | `assertNoScopedTable` |
+| VIS-16 | 异常 | CTE 失败关闭 | 在 `runWithScope` 内执行含白名单表的 CTE | 调用 Mapper | 同 VIS-15，抛 `SQLException` | 单元 | `assertNoScopedTable` |
+| VIS-17 | 边界 | 非白名单表不改写 | 在 `runWithScope` 内查询 `wgh_chat_message` | 调用 Mapper | SQL 保持不变；不追加 `create_by/visibility` 条件 | 单元 | `DataScopeInterceptor` |
+| VIS-18 | 边界 | 同一 SQL 不重复追加 | 同一次查询经过多次拦截器回调 | 执行查询并检查 SQL | 仅追加一次条件（`APPLIED_KEY` 去重）；无重复 `AND` 谓词 | 单元 | `DataScopeInterceptor` |
+
+### 33.3 Prompt 模板与参数校验
+
+| 编号 | 分类 | 名称 | 前置条件 | 操作步骤 | 预期结果（HTTP / 业务码） | 覆盖类型 | 自动化落点 |
+|------|------|------|---------|---------|--------------------------|---------|-----------|
+| VIS-19 | 正常 | 内置模板固定 PUBLIC | 存在 `builtin=true` 模板 | 查询详情 / 列表；提交更新时携带 `visibility=PRIVATE` | 内置模板 `visibility` 始终为 `PUBLIC`；更新请求不会把内置模板改为非公开 | 单元 | `PromptTemplateService.update` |
+| VIS-20 | 异常 | 修改内置模板可见性 | 内置模板 | `PATCH /api/prompt-templates/{id}/visibility`，body `{"visibility":"PRIVATE"}` | HTTP 200 / code `3003`，message 含“内置模板固定公开”；可见性不变 | 接口 | `PromptTemplateService.updateVisibility` |
+| VIS-21 | 异常 | 普通用户编辑内置模板 | B 无 `PERM_PROMPT_EDIT`；或 B 有权限但非 owner/admin | B 调用 `PUT /api/prompt-templates` 修改内置模板 | 无编辑权限：HTTP 403（权限过滤器）；有权限但非 owner/admin：`1004`；改名：返回“内置模板不可改名”业务错误（具体 code 待确认）；内容均不落库 | 接口 | `PromptTemplateController`、`DataScopeGuard` |
+| VIS-22 | 异常 | 非法 visibility 取值 | 任一资源 owner | `PATCH .../visibility`，body `{"visibility":"FRIENDS"}` | HTTP 200 / code `2001`（参数错误）；资源原可见性不变 | 接口 | `ResourceVisibility.normalize` |
+
+### 33.4 分享链路
+
+| 编号 | 分类 | 名称 | 前置条件 | 操作步骤 | 预期结果（HTTP / 业务码） | 覆盖类型 | 自动化落点 |
+|------|------|------|---------|---------|--------------------------|---------|-----------|
+| VIS-23 | 正常 | 分享 token 不受可见性过滤 | A 的聊天窗口为 `PRIVATE` 且已开启分享 | 匿名/其他用户通过 `/api/chat/share/{token}` 或公开分享页访问 | 按 token 正常返回会话与消息；不因 `PRIVATE` 返回 `3001`；不参与 `DataScopeInterceptor` 过滤 | 接口 + 页面（需运行环境验证） | `ChatController` 分享分支、`DataScopeContext` |
+| VIS-24 | 正常 | 分享链路不可写资源 | 分享 token 有效 | 通过分享接口尝试修改窗口 / 知识库 | 无写入口或返回权限错误；分享只读语义不变 | 接口 | 分享相关 Service |
+
+### 33.5 前端交互
+
+| 编号 | 分类 | 名称 | 前置条件 | 操作步骤 | 预期结果（HTTP / 业务码） | 覆盖类型 | 自动化落点 |
+|------|------|------|---------|---------|--------------------------|---------|-----------|
+| VIS-25 | 正常 | 五个列表页展示可见性列 | 5 类资源均有数据 | 打开知识库、聊天窗口、工作流、工具、Prompt 模板列表 | 每页均有可见性列/徽标；`PRIVATE`/`TEAM`/`PUBLIC` 文案与颜色符合 `VISIBILITY_OPTIONS` | 页面（需运行环境验证） | `KnowledgeBase.vue`、`ChatWindows.vue`、`WorkflowList.vue`、`ToolManagement.vue`、`PromptTemplates.vue` |
+| VIS-26 | 正常 | 无写权限只读徽标 + tooltip | B 查看 A 的共享资源 | 悬停可见性徽标 | 显示只读徽标；tooltip 为“仅创建者或管理员可修改可见性”；不出现下拉菜单 | 页面（需运行环境验证） | `VisibilityControl.vue`、`utils/visibility.js#canWriteResource` |
+| VIS-27 | 正常 | 切换后即时更新并刷新保持 | A 为自己资源的有写权限用户 | 下拉切换可见性，刷新页面 | 切换成功后徽标立即更新（取接口返回 `visibility`）；刷新后仍为新值；失败时回滚并提示错误 | 页面（需运行环境验证） | `VisibilityControl.vue`、5 个列表页 |
+| VIS-28 | 正常 | 内置模板不可切换 | ADMIN 打开 Prompt 模板页 | 查看内置模板的可见性控件 | 显示只读 `PUBLIC` 徽标或禁用下拉；不发起 PATCH；tooltip 说明内置模板固定公开 | 页面（需运行环境验证） | `PromptTemplates.vue`、`VisibilityControl.vue` |
+
+### 33.6 存量库升级
+
+| 编号 | 分类 | 名称 | 前置条件 | 操作步骤 | 预期结果（HTTP / 业务码） | 覆盖类型 | 自动化落点 |
+|------|------|------|---------|---------|--------------------------|---------|-----------|
+| VIS-29 | 异常 | 未执行迁移访问 visibility 报错 | 旧库未执行 `sql/migrations/20261113/01_resource_visibility.sql` | 启动应用并打开任一资源列表 | 查询报 `column "visibility" does not exist`（或等价 SQL 错误），接口 500 / code 500；用于验证升级前必须执行迁移（缺陷场景，不视为通过） | 接口（需运行环境验证） | —（升级检查项） |
+| VIS-30 | 边界 | 历史 system 资源仅管理员可见 | 旧数据 `create_by='system'`，升级后 `visibility` 默认 `PRIVATE` | 普通用户与 ADMIN 分别查看列表 | 普通用户列表不可见、详情返回 `3001`；ADMIN 可见并可改归属/可见性 | 接口（需运行环境验证） | `DataScopeGuard`、`DataScopeInterceptor` |
+| VIS-31 | 边界 | 迁移脚本可重复执行 | 已执行过迁移的库 | 再次执行 `psql -f sql/migrations/20261113/01_resource_visibility.sql` | 无错误；5 列与 5 索引不重复；数据不丢失；`BEGIN/COMMIT` 内全部成功 | 手工 | `sql/migrations/20261113/01_resource_visibility.sql` |
+| VIS-32 | 正常 | 迁移回填内置资源为 PUBLIC | 旧库中 `wgh_tool.is_example=1`、`wgh_prompt_template.builtin=1` 的存量行 | 执行迁移脚本后查询对应行 | 内置示例工具与内置 Prompt 模板 `visibility='PUBLIC'`；其余历史行保持 `PRIVATE`；不修改 `create_by` | 手工 | 迁移脚本第 3 节两条 UPDATE |
+
+---
+
+## 34. OpenAI 兼容入口
+
+> 依据 commit `a2d9046`。统一前缀 `/v1` 与 `/api/open/v1`；鉴权由 `ApiKeyAuthenticationFilter` 校验 `Authorization: Bearer <key>` 或 `X-API-Key`。`chat/completions` 需要 `chat:write`，`models` 需要 `model:read`。
+> `model` 字段解析顺序：`wgh-window-{id}` → 纯数字窗口 ID → 启用状态的窗口名称；不匹配返回 404 `model_not_found`，不支持直接传底层 LLM 模型名。
+
+### 34.1 模型列表
+
+| 编号 | 分类 | 名称 | 前置条件 | 操作步骤 | 预期结果（HTTP / 业务码） | 覆盖类型 | 自动化落点 |
+|------|------|------|---------|---------|--------------------------|---------|-----------|
+| OAI-01 | 正常 | 列出启用窗口为模型 | 有效 Key（含 `model:read`）；存在启用/停用窗口 | `GET /v1/models` | HTTP 200；`object=list`；仅返回启用窗口；`id=wgh-window-{windowId}`、`object=model`、`owned_by=wgh-rag` | 接口 | `OpenAiCompatController.models` |
+| OAI-02 | 异常 | 缺少 model:read | Key 仅有 `chat:write` | `GET /v1/models` | HTTP 403；`error.type=permission_error`、`error.code=insufficient_permissions` | 接口 | `ApiKeyAuthenticationFilter`、`OpenAiErrorHandler` |
+
+### 34.2 对话补全
+
+| 编号 | 分类 | 名称 | 前置条件 | 操作步骤 | 预期结果（HTTP / 业务码） | 覆盖类型 | 自动化落点 |
+|------|------|------|---------|---------|--------------------------|---------|-----------|
+| OAI-03 | 正常 | 非流式补全 | 有效 Key（含 `chat:write`）；窗口启用 | `POST /v1/chat/completions`，`stream=false`，`model=wgh-window-{id}`，messages 含一条 user | HTTP 200；返回 `object=chat.completion`、`choices[0].message.content` 非空、`usage` 存在；响应含 `wgh_session_id` | 接口（需运行环境验证） | `OpenAiCompletionSink` |
+| OAI-04 | 正常 | 流式补全 | 同上 | `stream=true`，读取 SSE | 逐块返回 `chat.completion.chunk`；`data: [DONE]` 结束；内容与最终落库消息一致 | 接口（需运行环境验证） | `OpenAiSseTap`、`OpenAiCompletionSink` |
+| OAI-05 | 正常 | stream_options.include_usage | 同上 | `stream=true` 且 `stream_options.include_usage=true` | 末尾额外返回 usage 分块；`choices` 为空数组；usage 含 `prompt_tokens/completion_tokens/total_tokens` | 接口（需运行环境验证） | `OpenAiCompletionSink` |
+| OAI-06 | 正常 | 多模态图片输入 | 模型支持视觉；请求含 `image_url` | 发送带图片的 messages | 图片被解析并传入；回答引用图片内容；不支持视觉的模型返回可读错误而非 500 | 接口（需运行环境验证） | `OpenAiCompatController` prompt 解析 |
+
+### 34.3 鉴权与错误映射
+
+| 编号 | 分类 | 名称 | 前置条件 | 操作步骤 | 预期结果（HTTP / 业务码） | 覆盖类型 | 自动化落点 |
+|------|------|------|---------|---------|--------------------------|---------|-----------|
+| OAI-07 | 异常 | 缺少 API Key | 不携带 `Authorization` / `X-API-Key` | 调用 `/v1/models` 或 `/v1/chat/completions` | HTTP 401；`error.type=authentication_error`；不进入业务逻辑 | 接口 | `ApiKeyAuthenticationFilter` |
+| OAI-08 | 异常 | Key 无效或吊销 | 使用不存在 / 已吊销的 Key | 调用 `/v1/chat/completions` | HTTP 401；`error.code=invalid_api_key`（或等价）；不泄露内部校验细节 | 接口 | `ApiKeyService` |
+| OAI-09 | 异常 | 缺少 chat:write | Key 仅有 `model:read` | 调用 `/v1/chat/completions` | HTTP 403；`error.type=permission_error`、`error.code=insufficient_permissions` | 接口 | `ApiKeyAuthenticationFilter` |
+| OAI-10 | 异常 | 模型/窗口不存在 | `model=wgh-window-999999` 或窗口已停用 | 调用 `/v1/chat/completions` | HTTP 404；`error.type=invalid_request_error`、`error.code=model_not_found`；message 提示模型不可用 | 接口 | `OpenAiCompatController.resolveWindow` |
+| OAI-11 | 异常 | 配额超限 | 用户配额已用尽 | 调用 `/v1/chat/completions` | HTTP 429；`error.type=rate_limit_error`、`error.code=insufficient_quota` | 接口（需运行环境验证） | 配额拦截器、`OpenAiErrorHandler` |
+| OAI-12 | 异常 | 请求体非法 | 缺少 `messages` 或 `model` | 调用 `/v1/chat/completions` | HTTP 400；`error.type=invalid_request_error`、`error.code=invalid_request` | 接口 | `OpenAiCompatController`、`OpenAiErrorHandler` |
+
+### 34.4 会话续聊与别名
+
+| 编号 | 分类 | 名称 | 前置条件 | 操作步骤 | 预期结果（HTTP / 业务码） | 覆盖类型 | 自动化落点 |
+|------|------|------|---------|---------|--------------------------|---------|-----------|
+| OAI-13 | 正常 | session_id 续聊 | 首次请求已返回 `wgh_session_id` | 第二次请求携带 `session_id`（或 `sessionId`） | 复用同一会话；响应/分块回带相同 `wgh_session_id`；历史由服务端维护，不要求客户端重放 messages | 接口（需运行环境验证） | `OpenAiCompatController.resolveSession` |
+| OAI-14 | 边界 | 不传 session_id 每次新建会话 | 连续两次请求均不传 `session_id` | 比较两次 `wgh_session_id` | 每次返回新的会话 ID；第二次回答不包含第一次上下文（不重放 messages 历史） | 接口（需运行环境验证） | `OpenAiCompatController` |
+| OAI-15 | 异常 | session_id 非数字 | 携带 `session_id="abc"` | 调用 `/v1/chat/completions` | HTTP 400（`2001` 参数错误映射）；`error.code=invalid_request`；不创建新会话 | 接口 | `parseSessionId` |
+| OAI-16 | 异常 | session_id 不属于当前窗口/用户 | 使用他人会话 ID 或其他窗口会话 ID | 调用 `/v1/chat/completions` | 返回 404 / `model_not_found` 或 `3001` 映射的 404；不返回他人会话内容 | 接口 | `ChatWindowService.getOwnedSession` |
+| OAI-17 | 正常 | `/api/open/v1` 别名 | 有效 Key | 用 `/api/open/v1/models` 与 `/api/open/v1/chat/completions` 重复 OAI-01/03 | 行为与 `/v1` 完全一致 | 接口 | `OpenAiCompatController` 类级映射 |

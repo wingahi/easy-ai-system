@@ -226,6 +226,15 @@ docker exec -i postgres-with-vector psql -U postgres -d wgh_rag \
   -f /sql/schema/01-schema.sql -f /sql/seed/02-data.sql
 ```
 
+> **已有库升级**：不要重跑 schema / seed。按版本顺序执行 `sql/migrations/` 下的增量脚本，例如资源可见性：
+>
+> ```bash
+> docker exec -i postgres-with-vector psql -U postgres -d wgh_rag \
+>   -f /sql/migrations/20261113/01_resource_visibility.sql
+> ```
+>
+> 迁移脚本均为幂等（`IF NOT EXISTS`），只补列 / 索引与必要回填，不重建表。
+
 2）启动后端：
 
 ```bash
@@ -418,7 +427,7 @@ OSS 配置不完整时不阻断启动，仅在真正调用存储操作时返回�
 | 移动端 / 国际化 | 仅桌面端布局，无 i18n | — |
 | 扩展性 | 无 URL 抓取与第三方数据源连接器，无增量同步 | 文档需手工上传或经 API 写入 |
 | 引用溯源（2026-11-12） | `pageNo` 目前恒为空（解析链路只做段落摊平，无页级映射）；纯 Agent 分支上下文未注入 `[Sn]`；同名文件跨知识库会合并为一张来源卡片 | Agent 回答中的编号可能无对应卡片；需要页码或 Agent 引用时需后续补页级映射与 Agent 上下文编号 |
-| 资源可见性（2026-11-12） | 无团队 / 租户模型，`TEAM` 与 `PUBLIC` 在判定上等价（均为"非 owner 可读"）；存量库需手工执行 10 条 ALTER（5 张表 `ADD COLUMN visibility` + 5 个 `(create_by, visibility)` 索引），仓库当前未提供独立迁移脚本；历史 `create_by='system'` 的资源升级后默认仅管理员可见 | 升级前需备份并按表执行 DDL；如需真正的团队边界，需后续引入 `tenant_id` / 团队成员模型 |
+| 资源可见性（2026-11-12） | 无团队 / 租户模型，`TEAM` 与 `PUBLIC` 在判定上等价（均为"非 owner 可读"）；存量库执行 `sql/migrations/20261113/01_resource_visibility.sql` 补列与索引（幂等）；历史 `create_by='system'` 的资源升级后默认仅管理员可见 | 升级前需备份并执行该迁移脚本；如需真正的团队边界，需后续引入 `tenant_id` / 团队成员模型 |
 
 ---
 
@@ -430,7 +439,7 @@ OSS 配置不完整时不阻断启动，仅在真正调用存储操作时返回�
 |--------|------|----------|------|
 | P0 | 模型故障转移补全 | 已完成（首 token 前切链） | 普通 RAG 首个 token 前的连接失败 / 超时 / 4xx / 5xx 已进入切链；部分输出后失败与全部候选失败均有明确错误收口（commit `e496f71`）；切链逻辑已抽成 `rag-llm` 的 `FailoverAttempt` / `StreamingModelFailover` / `BlockingModelFailover` / `ModelFailoverService`（commit `8e357bb`） |
 | P0 | 检索来源结构化与 [Sn] 引用溯源 | 已完成（2026-11-12） | `sources` 扩 10 个字段、按文档编号 `[Sn]`、预算裁剪后编号、`SourcePanel` 展开原文与高亮（commit `96dfc42`） |
-| P0 | 资源归属与可见性 | 已完成（2026-11-12） | 五类资源 `visibility` + `DataScopeInterceptor` + 5 个 `PATCH .../visibility`；存量库需 10 条 ALTER（commit `59c5eee`） |
+| P0 | 资源归属与可见性 | 已完成（2026-11-12） | 五类资源 `visibility` + `DataScopeInterceptor` + 5 个 `PATCH .../visibility`；存量库执行 `sql/migrations/20261113/01_resource_visibility.sql`（commit `59c5eee`） |
 | P1 | Agent / 工作流接入故障转移 | 已完成 | Planner / StepExecutor / ReflectionEngine 与工作流 LLM 节点复用 `BlockingModelFailover`，首响应前失败切链、已产出内容后不切链，并下发 `model_switch`；Agent 恢复 / 重试入口回查窗口路由组（commit `8e357bb`） |
 | P1 | 大文件分片上传 / 断点续传 | 未实现 | OSS multipart 与失败续传；业务侧分片大小与并发控制 |
 | P1 | 存储迁移与孤儿对象清理 | 未实现 | `local` ↔ `oss` 历史对象迁移工具；按 `file_path` 比对清理 OSS 残留对象 |

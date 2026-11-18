@@ -484,7 +484,7 @@ db/migration/mysql/V2__mysql_indexes.sql
 - 但它假设表上存在 `create_by` / `visibility` 两列，且表名固定。若未来引入 schema 前缀或多租户列，需要同步扩展 `DataScopeContext.SCOPED_TABLES` 与谓词构造，否则过滤会失效或误伤。
 - 失败关闭策略要求测试基座覆盖三类 SQL：单表列表、带 JOIN 的列表、含 CTE/UNION 的统计查询。H2 测试库只能验证"是否抛错"，不能验证 PostgreSQL 上的实际执行计划。
 
-**待补**：目前仓库未提供存量库迁移脚本，5 张表需手工执行 `ADD COLUMN visibility`（默认 `PRIVATE`）与 `(create_by, visibility)` 索引，共 10 条 ALTER。
+**存量库升级**：执行 `rag-backend/sql/migrations/20261113/01_resource_visibility.sql`，脚本幂等（`IF NOT EXISTS`），补 5 张表的 `visibility` 列（默认 `PRIVATE`）、5 个 `(create_by, visibility)` 索引，并把内置工具（`is_example=1`）与内置 Prompt 模板（`builtin=1`）回填为 `PUBLIC`；新库直接执行 `sql/schema/01-schema.sql` + `sql/seed/02-data.sql`，无需跑迁移。
 
 ---
 

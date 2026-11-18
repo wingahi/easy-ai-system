@@ -29,7 +29,7 @@
 | RAG 上下文无预算 | `rag-llm/.../util/RagContextBudgeter.java` 已存在并在聊天链路使用 | **已完成** |
 | 引用来源 kbName 为空 | 元数据已写 + 读取兜底 | **已完成** |
 | T03 chunk 级引用与原文定位 | `sources` 扩 10 字段、`[Sn]` 按文档编号、`SourcePanel.vue` + `renderMarkdownWithCitations` 三页接入（commit `96dfc42`） | **已完成**，见 T03 完成说明 |
-| T04a 资源归属与可见性（后端） | 五类资源 `visibility` + `DataScopeInterceptor` + 5 个 `PATCH .../visibility`（commit `59c5eee`） | **已完成**，迁移脚本待补 |
+| T04a 资源归属与可见性（后端） | 五类资源 `visibility` + `DataScopeInterceptor` + 5 个 `PATCH .../visibility`（commit `59c5eee`），迁移脚本 `sql/migrations/20261113/01_resource_visibility.sql` 已入库 | **已完成** |
 | T04b 资源归属与可见性（前端） | 五个列表页可见性列 + `VisibilityControl.vue`，无写权限只读徽标（2026-11-12） | **已完成** |
 
 > 原“检索参数问题”已由 T02 处理（commit `874f43d`）：`min-score` 默认与各环境 yml 统一为 `0.55`，`enable-hybrid` / `keyword-top-n` 在 yml 暴露，HYDE 改为「原查询 + 假设答案」双路。低覆盖自动补偿仍未实现，见 T02 保留项。
@@ -47,7 +47,7 @@
 | T02 | 检索参数治理与自动补偿 | P0 | 小 | 1 | `RagProperties.java`、`application.yml`（retrieve 段）、`QueryTransformService.java`、`RagRetrieveService.java` | 无 | 部分完成 `874f43d`（参数与 HYDE 已完成，自动补偿未做） |
 | T02F | 窗口级检索参数 UI | P0 | 小 | 3 | `ChatWindows.vue`（只此一个页面） | T02、T04b | 未开始 |
 | T03 | chunk 级引用与原文定位 | P0 | 中 | 2 | `KnowledgeFileService.buildMetadata`、`VectorStoreService`（metadata 透传）、`RagChatService.buildSourcesList/extractRagContext`、三个聊天页 + 新建 `SourcePanel.vue` | T02（检索结果字段） | 已完成 `96dfc42`（`pageNo` 恒空，Agent 分支无 `[Sn]`） |
-| T04a | 资源归属与可见性（后端） | P0 | 中 | 2 | `01-schema.sql` + 新迁移、KB/ChatWindow/Workflow/ToolConfig/PromptTemplate 的 entity/service/controller、`rag-data` 数据范围拦截器 | 无（建议先做“owner + visibility”MVP） | 已完成 `59c5eee`（迁移脚本未入库） |
+| T04a | 资源归属与可见性（后端） | P0 | 中 | 2 | `01-schema.sql` + `sql/migrations/20261113/01_resource_visibility.sql`、KB/ChatWindow/Workflow/ToolConfig/PromptTemplate 的 entity/service/controller、`rag-data` 数据范围拦截器 | 无（建议先做“owner + visibility”MVP） | 已完成 `59c5eee`（迁移脚本已入库） |
 | T04b | 资源归属与可见性（前端） | P0 | 中 | 2（T04a 后） | `KnowledgeBase.vue`、`ChatWindows.vue`、`WorkflowList.vue`、`ToolManagement.vue`、`PromptTemplates.vue` | T04a | 已完成（2026-11-12，未单独提交） |
 | T05 | OpenAI 兼容入口 + Python SDK | P1 | 中 | 1 | 新建 `OpenAiCompatController.java`、`ApiKeyAuthenticationFilter.java`、`SecurityConfig.java`、`ApiKeyService.java`、新建 `sdk/python/**`、`PublicAccess.vue` | 无 | 已完成 `a2d9046` |
 | T06a | 生成侧评测指标补齐（无表结构） | P1 | 中 | 1 | `LlmJudgeService.java`、`RetrievalEvaluationService.java`、`RetrievalEvaluationController.java` | 无 | 已完成 `e814bb5` |
@@ -180,12 +180,12 @@
 
 **一句话目标**：让知识库、聊天窗口、工作流、工具、Prompt 模板有“所有者 + 可见性”，非所有者不可见、不可改。
 
-> **完成情况（2026-11-12，commit `59c5eee`）**：五类资源已加 `visibility`（`PRIVATE` 默认 / `TEAM` / `PUBLIC`），owner 复用 `create_by`；读他人 `PRIVATE` 按不存在处理（业务码 `3001`），写他人 `TEAM`/`PUBLIC` 返回权限不足（业务码 `1004`），均为 HTTP 200 + 业务码；内置 Prompt 模板固定 `PUBLIC`、改可见性返回 `3003`；`DataScopeInterceptor` 仅改写 `page/list` 单表查询，白名单表 JOIN / UNION / CTE 失败关闭。**与原计划的偏差**：`sql/migrations/20261109_resource_visibility.sql` 未入库（仓库已无 `sql/migrations/` 目录），存量库需手工执行 10 条 ALTER（5 `ADD COLUMN` + 5 索引）；`TEAM` 与 `PUBLIC` 当前判定等价。
+> **完成情况（2026-11-12，commit `59c5eee`）**：五类资源已加 `visibility`（`PRIVATE` 默认 / `TEAM` / `PUBLIC`），owner 复用 `create_by`；读他人 `PRIVATE` 按不存在处理（业务码 `3001`），写他人 `TEAM`/`PUBLIC` 返回权限不足（业务码 `1004`），均为 HTTP 200 + 业务码；内置 Prompt 模板固定 `PUBLIC`、改可见性返回 `3003`；`DataScopeInterceptor` 仅改写 `page/list` 单表查询，白名单表 JOIN / UNION / CTE 失败关闭。**与原计划的偏差**：迁移脚本改以日期目录形式入库为 `sql/migrations/20261113/01_resource_visibility.sql`（原计划路径 `20261109_resource_visibility.sql`），存量库执行该脚本即可补列与索引，无需手工 DDL；`TEAM` 与 `PUBLIC` 当前判定等价。
 
 **建议先做 MVP**：不引入 `tenant_id`，用现有 `BaseEntity.createBy` 作为 owner，新增 `visibility`（PRIVATE/TEAM/PUBLIC）与查询过滤；等真有多租户诉求再加 `tenant_id`。这样改动集中、可回滚。
 
 **涉及模块与文件**
-- 表结构：`rag-backend/sql/schema/01-schema.sql`（5 张表加 `visibility`，`create_by` 已有）；新建 `rag-backend/sql/migrations/20261109_resource_visibility.sql`（存量库补列 + 索引，幂等）
+- 表结构：`rag-backend/sql/schema/01-schema.sql`（5 张表加 `visibility`，`create_by` 已有）；`rag-backend/sql/migrations/20261113/01_resource_visibility.sql`（存量库补列 + 索引 + 内置资源回填，幂等）
 - 实体：`rag-kb/.../entity/KnowledgeBase.java`、`rag-chat/.../entity/ChatWindow.java`、`rag-workflow/.../entity/Workflow.java`、`rag-tool/.../entity/ToolConfig.java`、`rag-chat/.../entity/PromptTemplate.java`
 - 服务：`KnowledgeBaseService.java`、`ChatWindowService.java`、`WorkflowService.java`、`ToolConfigService.java`、`PromptTemplateService.java`
 - 控制器：`KnowledgeBaseController.java`、`ChatController.java`（`/windows` 与 `/tools` 都在这个类）、`WorkflowController.java`、`PromptTemplateController.java`
