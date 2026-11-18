@@ -24,6 +24,24 @@ public final class StorageKeys {
     }
 
     /**
+     * 分片 key：{@code kb/{kbId}/{uploadUuid}/parts/{index}.part}。
+     * <p>
+     * 与正式文件同处一个上传目录下，合并完成后整体清理该目录的分片对象。
+     */
+    public static String chunkKey(Long kbId, String uploadUuid, int index) {
+        if (kbId == null) {
+            throw new IllegalArgumentException("kbId 不能为空");
+        }
+        if (uploadUuid == null || uploadUuid.isBlank()) {
+            throw new IllegalArgumentException("uploadUuid 不能为空");
+        }
+        if (index < 0) {
+            throw new IllegalArgumentException("分片序号不能为负");
+        }
+        return KB_PREFIX + kbId + "/" + uploadUuid.trim() + "/parts/" + index + ".part";
+    }
+
+    /**
      * 仅保留文件名本身（去掉客户端可能携带的目录），并把路径分隔符、空白等替换为下划线。
      */
     public static String sanitizeFileName(String fileName) {

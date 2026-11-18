@@ -7,6 +7,7 @@ import com.wgh.rag.common.result.Result;
 import com.wgh.rag.common.security.RequiresPermission;
 import com.wgh.rag.kb.entity.KnowledgeBase;
 import com.wgh.rag.kb.entity.KnowledgeFile;
+import com.wgh.rag.kb.service.ChunkUploadService;
 import com.wgh.rag.kb.service.KnowledgeBaseService;
 import com.wgh.rag.kb.service.KnowledgeFileService;
 import com.wgh.rag.kb.service.RagRetrieveService;
@@ -35,6 +36,7 @@ public class KnowledgeBaseController {
     private final KnowledgeBaseService kbService;
     private final KnowledgeFileService fileService;
     private final RagRetrieveService retrieveService;
+    private final ChunkUploadService chunkUploadService;
     private final com.wgh.rag.config.property.RagProperties ragProperties;
 
     // ===== 知识库 CRUD =====
@@ -114,6 +116,47 @@ public class KnowledgeBaseController {
     @RequiresPermission(AuthConstants.PERM_KB_READ)
     public Result<List<KnowledgeFile>> listFiles(@PathVariable Long kbId) {
         return Result.success(fileService.listByKbId(kbId));
+    }
+
+    // ===== 大文件分片上传（断点续传） =====
+
+    @Operation(summary = "初始化分片上传会话")
+    @PostMapping("/{kbId}/files/chunk/init")
+    @RequiresPermission(AuthConstants.PERM_KB_WRITE)
+    public Result<ChunkUploadService.InitResult> initChunkUpload(
+            @PathVariable Long kbId,
+            @RequestParam("fileName") String fileName,
+            @RequestParam("fileSize") Long fileSize,
+            @RequestParam(value = "chunkSize", required = false) Integer chunkSize,
+            @RequestParam(value = "splitStrategy", defaultValue = "PARAGRAPH") String splitStrategy,
+            @RequestParam(value = "splitConfig", required = false) String splitConfig) {
+        return Result.success(chunkUploadService.init(
+                kbId, fileName, fileSize, chunkSize, splitStrategy, splitConfig));
+    }
+
+    @Operation(summary = "上传分片")
+    @PostMapping("/files/chunk/{sessionId}")
+    @RequiresPermission(AuthConstants.PERM_KB_WRITE)
+    public Result<ChunkUploadService.UploadChunkResult> uploadChunk(
+            @PathVariable Long sessionId,
+            @RequestParam("index") Integer index,
+            @RequestParam("chunk") MultipartFile chunk) {
+        return Result.success(chunkUploadService.uploadChunk(sessionId, index, chunk));
+    }
+
+    @Operation(summary = "查询分片上传进度（续传用）")
+    @GetMapping("/files/chunk/{sessionId}")
+    @RequiresPermission(AuthConstants.PERM_KB_READ)
+    public Result<ChunkUploadService.Progress> chunkProgress(@PathVariable Long sessionId) {
+        return Result.success(chunkUploadService.progress(sessionId));
+    }
+
+    @Operation(summary = "合并分片并入库")
+    @PostMapping("/files/chunk/{sessionId}/complete")
+    @Audit(action = "KB_FILE_CHUNK_UPLOAD", resourceType = "KNOWLEDGE_FILE")
+    @RequiresPermission(AuthConstants.PERM_KB_WRITE)
+    public Result<KnowledgeFile> completeChunkUpload(@PathVariable Long sessionId) {
+        return Result.success(chunkUploadService.complete(sessionId));
     }
 
     @Operation(summary = "删除知识库文件")

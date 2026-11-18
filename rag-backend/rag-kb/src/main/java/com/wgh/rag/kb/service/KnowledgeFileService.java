@@ -78,11 +78,10 @@ public class KnowledgeFileService {
     @Transactional
     public KnowledgeFile upload(Long kbId, MultipartFile multipartFile, 
                                  String splitStrategy, String splitConfig) {
-        KnowledgeBase kb = kbService.getById(kbId);
+        kbService.getById(kbId);
 
         String originalName = multipartFile.getOriginalFilename();
         String fileType = getExtension(originalName);
-        String storedKey = StorageKeys.kbKey(kbId, UUID.randomUUID().toString(), originalName);
 
         // 内容哈希用于同知识库去重：先算哈希再落存储，重复文件不产生存储对象与向量
         String contentHash;
@@ -91,17 +90,35 @@ public class KnowledgeFileService {
         } catch (IOException e) {
             throw new BusinessException("文件读取失败: " + e.getMessage(), e);
         }
+
+        IngestOutcome outcome = storeAndRegister(kbId, originalName, fileType, multipartFile.getSize(),
+                multipartFile.getContentType(), contentHash, multipartFile::getInputStream,
+                splitStrategy, splitConfig);
+        return outcome.file();
+    }
+
+    /**
+     * 以可重复打开的输入流落存储并登记文件（单文件上传与分片合并共用）。
+     * <p>
+     * 调用方负责先算好 contentHash；命中同知识库重复内容时直接返回既有文件，不写存储、不重复入库。
+     */
+    @Transactional
+    public IngestOutcome storeAndRegister(Long kbId, String originalName, String fileType, long size,
+                                          String contentType, String contentHash, ContentSource content,
+                                          String splitStrategy, String splitConfig) {
+        KnowledgeBase kb = kbService.getById(kbId);
+
         KnowledgeFile duplicate = findDuplicateFile(kbId, contentHash);
         if (duplicate != null) {
             log.info("知识库 {} 已存在相同内容文件，跳过入库: existingFileId={}, hash={}",
                     kbId, duplicate.getId(), contentHash);
-            return duplicate;
+            return new IngestOutcome(duplicate, true);
         }
 
         // 通过可插拔存储服务写入（本地/OSS 由配置决定），上层不拼接本地路径
-        try (InputStream in = multipartFile.getInputStream()) {
-            StoredObject stored = fileStorageService.store(
-                    storedKey, in, multipartFile.getSize(), multipartFile.getContentType());
+        String storedKey = StorageKeys.kbKey(kbId, UUID.randomUUID().toString(), originalName);
+        try (InputStream in = content.open()) {
+            StoredObject stored = fileStorageService.store(storedKey, in, size, contentType);
             storedKey = stored.key();
         } catch (IOException e) {
             throw new BusinessException("文件读取失败: " + e.getMessage(), e);
@@ -112,7 +129,7 @@ public class KnowledgeFileService {
         file.setKnowledgeBaseId(kbId);
         file.setFileName(originalName);
         file.setFileType(fileType);
-        file.setFileSize(multipartFile.getSize());
+        file.setFileSize(size);
         file.setFilePath(storedKey);
         file.setSplitStrategy(splitStrategy != null ? splitStrategy : "AUTO");
         file.setSplitConfig(splitConfig);
@@ -130,7 +147,15 @@ public class KnowledgeFileService {
         // 异步处理
         processFileAsync(file, kb);
 
-        return file;
+        return new IngestOutcome(file, false);
+    }
+
+    /**
+     * 可重复打开的输入流来源（分片合并需要多次读取：先算哈希，再写存储）。
+     */
+    @FunctionalInterface
+    public interface ContentSource {
+        InputStream open() throws IOException;
     }
 
     /**

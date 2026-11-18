@@ -800,3 +800,25 @@ CREATE TABLE IF NOT EXISTS wgh_kb_connector_run (
     update_by VARCHAR(50) DEFAULT 'system',
     deleted SMALLINT DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS wgh_upload_session (
+    id BIGSERIAL PRIMARY KEY,
+    knowledge_base_id BIGINT NOT NULL,
+    upload_uuid VARCHAR(64) NOT NULL,
+    file_name VARCHAR(255) NOT NULL,
+    file_type VARCHAR(20) NOT NULL,
+    file_size BIGINT NOT NULL,
+    chunk_size INT NOT NULL,
+    total_chunks INT NOT NULL,
+    uploaded_chunks TEXT,
+    status VARCHAR(20) DEFAULT 'UPLOADING',
+    file_id BIGINT,
+    split_strategy VARCHAR(20) DEFAULT 'PARAGRAPH',
+    split_config TEXT,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    create_by VARCHAR(50) DEFAULT 'system',
+    update_by VARCHAR(50) DEFAULT 'system',
+    deleted SMALLINT DEFAULT 0
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uk_upload_session_uuid ON wgh_upload_session(upload_uuid);
+CREATE INDEX IF NOT EXISTS idx_upload_session_status ON wgh_upload_session(status, update_time);

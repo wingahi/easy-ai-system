@@ -24,6 +24,20 @@ export const kbUploadFile = (kbId, file, splitStrategy, splitConfig) => {
   return request.post(`/kb/${kbId}/files`, formData, { headers: { 'Content-Type': 'multipart/form-data' } })
 }
 export const kbListFiles = (kbId) => request.get(`/kb/${kbId}/files`)
+export const kbChunkInit = (kbId, fileName, fileSize, chunkSize, splitStrategy) =>
+  request.post(`/kb/${kbId}/files/chunk/init`, null, {
+    params: { fileName, fileSize, chunkSize, splitStrategy: splitStrategy || 'AUTO' }
+  })
+export const kbChunkUpload = (sessionId, index, blob) => {
+  const formData = new FormData()
+  formData.append('index', index)
+  formData.append('chunk', blob)
+  return request.post(`/kb/files/chunk/${sessionId}`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  })
+}
+export const kbChunkProgress = (sessionId) => request.get(`/kb/files/chunk/${sessionId}`)
+export const kbChunkComplete = (sessionId) => request.post(`/kb/files/chunk/${sessionId}/complete`)
 export const kbDeleteFile = (fileId) => request.delete(`/kb/files/${fileId}`)
 export const kbResplitFile = (fileId, splitStrategy, splitConfig) => {
   const params = new URLSearchParams()

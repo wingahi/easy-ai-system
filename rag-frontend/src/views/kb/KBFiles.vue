@@ -6,14 +6,24 @@
         <h2>{{ kb?.name }} - 文件管理</h2>
       </div>
       <div style="display:flex;gap:8px;align-items:center">
+        <div v-if="chunkUploading" style="width:180px">
+          <div style="font-size:12px;color:#606266;margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+            {{ chunkFileName }} {{ chunkPercent }}%
+          </div>
+          <el-progress :percentage="chunkPercent" :stroke-width="6" :show-text="false" />
+        </div>
+        <el-button v-else-if="pendingUpload" type="warning" plain @click="resumeChunkUpload">
+          继续上传（{{ chunkPercent }}%）
+        </el-button>
         <el-button :icon="DataAnalysis" @click="$router.push(`/kb/${kbId}/evaluation`)">检索评测</el-button>
         <el-upload
           :show-file-list="false"
           :before-upload="beforeUpload"
           :http-request="doUpload"
+          :disabled="chunkUploading"
           accept=".pdf,.docx,.doc,.txt,.md,.csv,.xlsx,.xls,.pptx,.html,.htm,.json,.eml"
         >
-          <el-button type="primary" :icon="Upload">上传文件</el-button>
+          <el-button type="primary" :icon="Upload" :disabled="chunkUploading">上传文件</el-button>
         </el-upload>
       </div>
     </div>
@@ -167,6 +177,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft, Upload, DataAnalysis } from '@element-plus/icons-vue'
 import {
   kbGet, kbListFiles, kbUploadFile, kbDeleteFile, kbResplitFile, kbPreviewSplit,
+  kbChunkInit, kbChunkUpload, kbChunkComplete,
   tagList, kbFileTags, kbFileSetTags, kbFileVersions, kbFileRollback
 } from '../../api'
 
@@ -189,6 +200,14 @@ const tagDialogSelected = ref([])
 const versionDialogVisible = ref(false)
 const versionDialogFile = ref(null)
 const versionList = ref([])
+
+// 大文件分片上传：超过阈值走分片，中断后保留会话供续传
+const CHUNK_THRESHOLD = 20 * 1024 * 1024
+const CHUNK_SIZE = 5 * 1024 * 1024
+const chunkUploading = ref(false)
+const chunkPercent = ref(0)
+const chunkFileName = ref('')
+const pendingUpload = ref(null)
 const versionLoading = ref(false)
 
 const loadAllTags = async () => {
@@ -231,11 +250,58 @@ const load = async () => {
 const beforeUpload = () => true
 
 const doUpload = async ({ file }) => {
+  if (file.size > CHUNK_THRESHOLD) {
+    await startChunkUpload(file)
+    return
+  }
   try {
     await kbUploadFile(kbId, file, 'AUTO')
     ElMessage.success('上传成功，正在处理...')
     setTimeout(load, 2000)
   } catch (e) {}
+}
+
+/**
+ * 分片上传：先 init 拿会话与缺失分片，再顺序补传，最后 complete 合并入库。
+ * 失败时保留 pendingUpload，页面出现「继续上传」按钮从已完成分片续传。
+ */
+const startChunkUpload = async (file, existing) => {
+  chunkUploading.value = true
+  chunkFileName.value = file.name
+  let state = existing
+  try {
+    if (!state) {
+      const initRes = await kbChunkInit(kbId, file.name, file.size, CHUNK_SIZE, 'AUTO')
+      const init = initRes.data
+      state = { sessionId: init.sessionId, totalChunks: init.totalChunks, done: new Set(init.uploadedChunks || []) }
+    }
+    pendingUpload.value = { file, state }
+    chunkPercent.value = Math.round((state.done.size / state.totalChunks) * 100)
+
+    for (let i = 0; i < state.totalChunks; i++) {
+      if (state.done.has(i)) continue
+      const start = i * CHUNK_SIZE
+      const blob = file.slice(start, Math.min(start + CHUNK_SIZE, file.size))
+      await kbChunkUpload(state.sessionId, i, blob)
+      state.done.add(i)
+      chunkPercent.value = Math.round((state.done.size / state.totalChunks) * 100)
+    }
+
+    const res = await kbChunkComplete(state.sessionId)
+    pendingUpload.value = null
+    ElMessage.success(res.data?.fileName ? `上传成功：${res.data.fileName}，正在处理...` : '上传成功，正在处理...')
+    setTimeout(load, 2000)
+  } catch (e) {
+    ElMessage.warning('分片上传中断，可点击「继续上传」从已完成分片续传')
+  } finally {
+    chunkUploading.value = false
+  }
+}
+
+const resumeChunkUpload = async () => {
+  const pending = pendingUpload.value
+  if (!pending) return
+  await startChunkUpload(pending.file, pending.state)
 }
 
 const del = async (row) => {

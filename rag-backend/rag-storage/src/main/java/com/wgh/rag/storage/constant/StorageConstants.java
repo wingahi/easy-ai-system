@@ -21,8 +21,13 @@ public interface StorageConstants {
     /** 本地存储默认静态访问前缀 */
     String DEFAULT_URL_PREFIX = "/uploads";
 
-    /** 单文件大小上限（MB） */
-    int DEFAULT_MAX_FILE_SIZE_MB = 50;
+    /**
+     * 单文件大小上限（MB）。
+     * <p>
+     * 分片上传按 5MB 分片写入、合并后一次性落正式对象，合并写入同样受该上限约束；
+     * 默认值需覆盖分片上传的验收文件（200MB），单次上传仍受 servlet multipart 限制约束。
+     */
+    int DEFAULT_MAX_FILE_SIZE_MB = 200;
     /** OSS 签名 URL 默认有效期（分钟） */
     int DEFAULT_SIGNED_URL_EXPIRE_MINUTES = 60;
     /** OSS 上传默认重试次数（含首次） */
