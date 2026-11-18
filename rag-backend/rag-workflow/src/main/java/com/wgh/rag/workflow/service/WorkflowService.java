@@ -494,7 +494,7 @@ public class WorkflowService {
         ctx.getVars().put("lastOutput", confirmInput);
 
         run.setStatus(WorkflowConstants.STATUS_RUNNING);
-        run.setContextJson(toJson(ctx));
+        run.setContextJson(engine.serializeContext(ctx));
         run.setUpdateTime(LocalDateTime.now());
         runMapper.updateById(run);
 

@@ -19,4 +19,10 @@ public class WorkflowContextProperties {
 
     /** 模型未配置窗口大小时的兜底窗口（Tokens） */
     private int fallbackContextWindowTokens = 8192;
+
+    /** 单节点输出落库上限（字节），默认 64KB；超限只落摘要 + truncated 标记 */
+    private int nodeOutputMaxBytes = 65536;
+
+    /** context_json 落库总上限（字节），默认 256KB；超限按早期节点优先摘要/剔除 nodeOutputs */
+    private int contextJsonMaxBytes = 262144;
 }

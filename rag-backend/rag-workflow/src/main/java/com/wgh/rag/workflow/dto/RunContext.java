@@ -4,6 +4,7 @@ import lombok.Data;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -16,8 +17,8 @@ public class RunContext {
     /** 变量池：input / lastOutput / 用户赋值变量 */
     private Map<String, Object> vars = new HashMap<>();
 
-    /** 节点输出池：nodeId → { text / sources / result / iteration ... } */
-    private Map<String, Map<String, Object>> nodeOutputs = new HashMap<>();
+    /** 节点输出池：nodeId → { text / sources / result / iteration ... }（LinkedHashMap 保持节点插入顺序） */
+    private Map<String, Map<String, Object>> nodeOutputs = new LinkedHashMap<>();
 
     /** 循环节点已执行轮次：nodeId → iteration */
     private Map<String, Integer> loopIterations = new HashMap<>();

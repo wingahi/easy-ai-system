@@ -6,6 +6,7 @@ import com.wgh.rag.common.log.MdcContext;
 import com.wgh.rag.common.metrics.RagMetrics;
 import com.wgh.rag.workflow.constant.WorkflowConstants;
 import com.wgh.rag.workflow.constant.WorkflowEvents;
+import com.wgh.rag.workflow.config.WorkflowContextProperties;
 import com.wgh.rag.workflow.dto.*;
 import com.wgh.rag.workflow.engine.executor.NodeExecutionContext;
 import com.wgh.rag.workflow.engine.executor.NodeConfigSupport;
@@ -19,6 +20,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.*;
@@ -43,6 +45,8 @@ public class WorkflowEngine {
     private static final int MAX_TOTAL_NODE_EXECUTIONS = 1000;
     private static final int MAX_NESTING_DEPTH = 3;
     private static final int WORKER_COUNT = 4;
+    /** 节点输出摘要中随正文保留的单个轻量字段上限（字节） */
+    private static final int SUMMARY_FIELD_MAX_BYTES = 2048;
 
     private final WorkflowRunMapper runMapper;
     private final WorkflowNodeRunMapper nodeRunMapper;
@@ -51,6 +55,7 @@ public class WorkflowEngine {
     private final NodeExecutorRegistry nodeExecutorRegistry;
     private final ObjectMapper objectMapper;
     private final RagMetrics metrics;
+    private final WorkflowContextProperties contextProperties;
 
     // ==================== 入口 ====================
 
@@ -244,10 +249,10 @@ public class WorkflowEngine {
             long duration = System.currentTimeMillis() - t0;
             ctx.getNodeOutputs().put(node.getId(), result.getOutput());
             Object text = result.getOutput().get("text");
-            if (text != null) ctx.getVars().put("lastOutput", text);
+            updateLastOutput(ctx, result.getOutput());
 
             nr.setStatus(WorkflowConstants.STATUS_SUCCESS);
-            nr.setOutputJson(toJson(result.getOutput()));
+            nr.setOutputJson(serializeNodeOutput(result.getOutput()));
             nr.setEndTime(LocalDateTime.now());
             nr.setDurationMs(duration);
             nodeRunMapper.updateById(nr);
@@ -293,7 +298,7 @@ public class WorkflowEngine {
         ctx.setDebugPendingIn(new HashMap<>(pendingIn));
         ctx.setDebugExecutedCount(executedTotal);
         run.setExecutedNodes(executedTotal);
-        run.setContextJson(toJson(ctx));
+        run.setContextJson(serializeContext(ctx));
         run.setStatus(status);
         run.setUpdateTime(LocalDateTime.now());
         if (WorkflowConstants.STATUS_COMPLETED.equals(status)) {
@@ -613,10 +618,10 @@ public class WorkflowEngine {
             long duration = System.currentTimeMillis() - t0;
             ctx.getNodeOutputs().put(node.getId(), result.getOutput());
             Object text = result.getOutput().get("text");
-            if (text != null) ctx.getVars().put("lastOutput", text);
+            updateLastOutput(ctx, result.getOutput());
 
             nr.setStatus(WorkflowConstants.STATUS_SUCCESS);
-            nr.setOutputJson(toJson(result.getOutput()));
+            nr.setOutputJson(serializeNodeOutput(result.getOutput()));
             nr.setEndTime(LocalDateTime.now());
             nr.setDurationMs(duration);
             nodeRunMapper.updateById(nr);
@@ -786,10 +791,160 @@ public class WorkflowEngine {
     }
 
     private void persistContext(WorkflowRun run, RunContext ctx, String status) {
-        run.setContextJson(toJson(ctx));
+        run.setContextJson(serializeContext(ctx));
         run.setStatus(status);
         run.setUpdateTime(LocalDateTime.now());
         runMapper.updateById(run);
+    }
+
+    // ==================== 节点输出 / 上下文落库上限 ====================
+
+    /**
+     * 序列化单个节点输出用于落库（output_json）。
+     * 超过 {@code wgh.workflow.context.node-output-max-bytes} 时只落摘要：保留 text 预览与轻量字段，
+     * 并写入 {@code truncated=true} / {@code originalBytes} 截断标记。内存中的完整输出不受影响。
+     */
+    private String serializeNodeOutput(Map<String, Object> output) {
+        String json = toJson(output);
+        int maxBytes = contextProperties.getNodeOutputMaxBytes();
+        if (maxBytes <= 0 || byteSize(json) <= maxBytes) return json;
+        return toJson(summarizeNodeOutput(output, maxBytes));
+    }
+
+    /**
+     * 序列化运行上下文用于落库（context_json）。
+     * 超过 {@code wgh.workflow.context.context-json-max-bytes} 时，按节点插入顺序（早期优先）
+     * 先把 nodeOutputs 摘要化，仍超限则逐条剔除最早的节点输出。不修改内存中的 ctx。
+     */
+    public String serializeContext(RunContext ctx) {
+        int maxBytes = contextProperties.getContextJsonMaxBytes();
+        String json = toJson(ctx);
+        if (maxBytes <= 0 || byteSize(json) <= maxBytes) return json;
+
+        // 超限才构造可变快照，避免常规路径多一次序列化/反序列化
+        Map<String, Object> snapshot = objectMapper.convertValue(ctx,
+                new TypeReference<LinkedHashMap<String, Object>>() {});
+        Object rawOutputs = snapshot.get("nodeOutputs");
+        if (!(rawOutputs instanceof Map<?, ?> outputs) || outputs.isEmpty()) return json;
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> nodeOutputs = (Map<String, Object>) outputs;
+        int nodeMaxBytes = contextProperties.getNodeOutputMaxBytes();
+
+        // 第一轮：早期节点优先摘要（保留 text 预览与轻量字段）
+        for (Map.Entry<String, Object> entry : nodeOutputs.entrySet()) {
+            if (byteSize(json) <= maxBytes) break;
+            entry.setValue(summarizeNodeOutput(asOutputMap(entry.getValue()), nodeMaxBytes));
+            json = toJson(snapshot);
+        }
+
+        // 第二轮：仍然超限则按早期优先整体剔除
+        Iterator<Map.Entry<String, Object>> it = nodeOutputs.entrySet().iterator();
+        while (it.hasNext() && byteSize(json) > maxBytes) {
+            it.next();
+            it.remove();
+            json = toJson(snapshot);
+        }
+        if (byteSize(json) > maxBytes) {
+            log.warn("context_json 超过上限 {} 字节：nodeOutputs 已全部摘要/剔除后仍为 {} 字节", maxBytes, byteSize(json));
+        }
+        return json;
+    }
+
+    /** 节点输出摘要：text 截取预览 + 轻量字段，附带截断标记；摘要本身不超过 maxBytes。已摘要的输出原样返回。 */
+    private Map<String, Object> summarizeNodeOutput(Map<String, Object> output, int maxBytes) {
+        if (Boolean.TRUE.equals(output.get("truncated"))) return output;
+
+        int originalBytes = byteSize(toJson(output));
+        Map<String, Object> summary = new LinkedHashMap<>();
+        String preview = textOf(output.get("text"));
+        int limit = previewLimit(maxBytes);
+        if (preview.length() > limit) preview = preview.substring(0, limit);
+        if (!preview.isEmpty()) summary.put("text", preview);
+
+        for (Map.Entry<String, Object> entry : output.entrySet()) {
+            String key = entry.getKey();
+            if ("text".equals(key) || "truncated".equals(key) || "originalBytes".equals(key)) continue;
+            if (isLightweightValue(entry.getValue())) summary.put(key, entry.getValue());
+        }
+
+        // 摘要仍超过单节点上限时：先持续截短 text，再逐个丢弃非 text 字段
+        summary.put("truncated", true);
+        summary.put("originalBytes", originalBytes);
+        while (maxBytes > 0 && byteSize(toJson(summary)) > maxBytes) {
+            Object text = summary.get("text");
+            if (text instanceof String s && !s.isEmpty()) {
+                summary.put("text", s.substring(0, s.length() / 2));
+            } else if (!removeLastNonTextField(summary)) {
+                break;
+            }
+        }
+        return summary;
+    }
+
+    /** 去掉摘要中最后一个非 text 字段；没有可去字段时返回 false。 */
+    private boolean removeLastNonTextField(Map<String, Object> summary) {
+        String last = null;
+        for (String key : summary.keySet()) {
+            if (!"text".equals(key) && !"truncated".equals(key) && !"originalBytes".equals(key)) last = key;
+        }
+        return last != null && summary.remove(last) != null;
+    }
+
+    /**
+     * 更新 lastOutput：只接受「最近一个有意义的文本输出」——非空白字符串，且不是结构化 JSON 对象/数组，
+     * 避免表达式节点等产出的大 JSON 覆盖真正的文本结果。
+     */
+    private void updateLastOutput(RunContext ctx, Map<String, Object> output) {
+        Object text = output.get("text");
+        if (!(text instanceof CharSequence cs)) return;
+        String value = cs.toString().trim();
+        if (value.isEmpty()) return;
+        char first = value.charAt(0);
+        if (first == '{' || first == '[') {
+            try {
+                objectMapper.readTree(value);
+                return; // 合法 JSON 结构，不作为文本输出
+            } catch (Exception ignored) {
+                // 解析失败说明只是以括号开头的普通文本（如 Markdown 链接），照常写入
+            }
+        }
+        ctx.getVars().put("lastOutput", text);
+    }
+
+    private Map<String, Object> asOutputMap(Object value) {
+        if (value instanceof Map<?, ?> map) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> cast = (Map<String, Object>) map;
+            return cast;
+        }
+        Map<String, Object> wrapped = new LinkedHashMap<>();
+        if (value != null) wrapped.put("text", textOf(value));
+        return wrapped;
+    }
+
+    private String textOf(Object text) {
+        if (text == null) return "";
+        return text instanceof CharSequence cs ? cs.toString() : String.valueOf(text);
+    }
+
+    /** 摘要中 text 预览长度：与节点上限挂钩，限制在 256~2000 字符。 */
+    private int previewLimit(int maxBytes) {
+        if (maxBytes <= 0) return 2000;
+        return Math.max(256, Math.min(2000, maxBytes / 8));
+    }
+
+    /** 轻量字段判定：标量或序列化后不超过 2KB 的字段随摘要保留。 */
+    private boolean isLightweightValue(Object value) {
+        if (value == null) return false;
+        if (value instanceof CharSequence || value instanceof Number || value instanceof Boolean) {
+            return byteSize(String.valueOf(value)) <= SUMMARY_FIELD_MAX_BYTES;
+        }
+        return byteSize(toJson(value)) <= SUMMARY_FIELD_MAX_BYTES;
+    }
+
+    private int byteSize(String value) {
+        return value == null ? 0 : value.getBytes(StandardCharsets.UTF_8).length;
     }
 
     private void failRun(WorkflowRun run, String nodeId, String error,
