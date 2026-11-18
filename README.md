@@ -39,7 +39,7 @@
 |------|----------|----------------|------|
 | **企业内部知识库问答与员工自助** | 制度、手册、SOP 入库，员工在聊天窗口提问，回答附带原文出处 | 12 种文档格式解析、9 种切分策略、混合检索、SSE 流式回答、引用来源与检索指标 | 不替代 OA / 工单流程；文档需先上传或经 API 写入 |
 | **客服 / 工单坐席辅助** | 坐席把客户问题或工单描述作为查询，检索知识库并生成建议答复；对外可用免登录分享或 Widget 自助问答 | RAG 问答、引用来源、分享链接、Widget 嵌入、开放 API、配额与限流 | 工单流转、客户画像、坐席工作台集成不在本系统范围 |
-| **研发文档与规范检索助手** | 接口文档、设计文档、排障记录、编码规范入库，研发在聊天窗口或经开放 API 在内部工具中检索 | 混合检索（向量 + 关键词）、查询变换、Rerank、API Key 开放 API | 不直接同步 Git / Jira 等数据源；文档需上传或经 API 写入 |
+| **研发文档与规范检索助手** | 接口文档、设计文档、排障记录、编码规范入库，研发在聊天窗口或经开放 API 在内部工具中检索 | 混合检索（向量 + 关键词）、查询变换、Rerank、API Key 开放 API、单页 URL 连接器 | 不直接同步 Git / Jira 等数据源；文档需上传、经 API 写入或由连接器抓取单个页面 |
 | **培训 / 考试题库知识问答** | 培训资料、FAQ、题库解析后入库，学员按自然语言提问 | FAQ / 章节 / 结构化 / 语义等多种切分，问答对与知识点检索，引用来源 | 不提供组卷、考试、判分等培训业务功能 |
 | **第三方系统集成** | 既有站点嵌入问答窗口，或由外部系统通过 API 调用问答与知识库检索 | 免登录分享链接、iframe Widget、API Key（`chat:write` / `kb:read` / `usage:read`）、Redis 限流与调用日志 | Widget 为 iframe 注入，不含 `postMessage` 双向通信；跨域需宿主配置 CSP |
 | **多用户按角色与配额分权使用** | 管理员维护用户/角色/权限，按用户配置日/月配额，审计关键操作 | OIDC 资源服务器 + 本地 admin/体验账号、RBAC、角色与权限管理页面、配额模块、审计日志 | **不做租户隔离**；知识库/文档级权限未全量覆盖 |
@@ -61,11 +61,13 @@
 | 扫描版 PDF OCR | 已完成 | `TessOcrService` 按页兜底，单页文字少于阈值（默认 20 字）触发；依赖本机 `tesseract` 与 `chi_sim+eng` 语言包，缺失或超时降级为文本抽取（`WGH_OCR_*`） |
 | 新增文档格式（PPTX / HTML / JSON / EML） | 已完成 | `PptxParser` / `HtmlParser` / `JsonParser` / `EmlParser` + 统一元数据与大小上限 |
 | 文本切分（9 种策略） | 已完成 | AUTO / RECURSIVE / CHAPTER / PARAGRAPH / FAQ / LENGTH / CUSTOM / STRUCTURED（标题感知）/ SEMANTIC（语义断句） |
-| 查询变换 / 混合检索 / RRF / Rerank | 已完成 | REWRITE / MULTI_QUERY / HYDE；向量余弦 + pg_trgm 关键词召回；RRF(k=60) 融合；可选 Rerank |
+| 查询变换 / 混合检索 / RRF / Rerank | 已完成 | REWRITE / MULTI_QUERY / HYDE；向量余弦 + pg_trgm 关键词召回；RRF(k=60) 融合；可选 Rerank；聊天窗口可单独配置 `hybridEnabled` / `queryTransformMode` / `rewriteModelId`，混合检索按“窗口开启或全局开启”生效，窗口关闭不能覆盖全局开启（2026-11-18，commit `8b52b5f`） |
 | 检索指标与离线评测 | 已完成 | 覆盖率 / 命中率；ground truth 标注后计算 Recall@K / Precision@K / MRR / NDCG；生成侧多 judge 评估 Faithfulness / Answer Relevancy / Context Precision / Context Recall（缺参考答案时显式标记不可计算）；`eval/eval_recall.py` 复用同一标注 |
+| 评测数据集版本化与 CI 检索门禁 | 已完成 | 数据集 / 用例 / 结果三表；用例每次变更按“写时复制”生成新版本，旧版本只读；按版本评测并归档指标与逐查询明细，支持跨版本指标差值与逐查询 Recall 差值；CI 用固定 fixture 在无 Key、无网络、无真实模型条件下校验五项阈值（commit `adbdafe`） |
 | 检索来源结构化与 [Sn] 引用溯源 | 已完成 | `sources` 扩展 `kbId` / `kbName` / `fileId` / `fileName` / `chunkIndex` / `pageNo` / `charStart` / `charEnd` / `score` / `snippet`（压缩空白后前 120 字），按文件名去重保留最高分；上下文按文档分配 `[Sn]` 编号（同文档多段共用），system prompt 要求按编号引用；前端 `SourcePanel.vue` 展开原文并高亮对应卡片（commit `96dfc42`） |
 | 知识库标签 | 已完成 | `TagService` / `TagController`；知识库与文件多标签绑定及管理界面 |
 | 文档版本 | 已完成 | `FileVersionService` + 版本列表 / 回滚；回滚生成新版本，不覆盖旧版本 |
+| URL 数据源连接器（单页抓取 + 增量同步） | 已完成 | `ConnectorController` / `ConnectorService` / `UrlConnector`；单个 http/https 页面抓取、Jsoup 正文抽取、SSRF 逐跳校验；按 `content_hash` 判重，内容未变返回 `UNCHANGED` 不重复入库，内容变化生成新文件并逻辑删除旧文件，404/410 清理旧文件；每次同步留运行记录；定时同步默认关闭，需显式 `WGH_CONNECTOR_SCHEDULER_ENABLED=true`（commit `855f61f`） |
 | 可插拔文件存储（local / OSS） | 已完成 | 独立 `rag-storage` 模块，`FileStorageService` + 本地 / 阿里云 OSS 实现 |
 | 大文件分片上传 | **未实现** | OSS 仅单次流式 `putObject`，无 multipart / 断点续传；业务侧默认上限 50MB |
 | `local` ↔ `oss` 历史对象自动迁移 | **未实现** | 切换本身已支持，但旧对象仍留在原存储后端，需手工迁移或重新上传并重建向量 |
@@ -92,8 +94,10 @@
 |------|------|------|
 | 单 Agent | 已完成 | Planner 拆解 → StepExecutor 执行 → Reflection 评分重试 → 汇总答复；计划 / 步骤落库；支持 HITL |
 | 多 Agent 协作 | 已完成 | 6 种模式：CREW_SEQUENTIAL / CREW_HIERARCHICAL / CREW_PARALLEL / GRAPH_ROUTED / GROUP_CHAT_ROUND_ROBIN / GROUP_CHAT_DYNAMIC_ROUTER |
-| 工作流编排 | 已完成 | 11 类节点：START / END / LLM / RETRIEVAL / TOOL / CONDITION / LOOP / HITL / VARIABLE / WORKFLOW / AGENT；并行 fan-out/fan-in、版本、触发器、模板市场 |
+| 工作流编排 | 已完成 | 12 类节点：START / END / LLM / RETRIEVAL / TOOL / CONDITION / LOOP / HITL / VARIABLE / WORKFLOW / AGENT / EXPRESSION；并行 fan-out/fan-in、版本、触发器、模板市场 |
 | 工作流 AGENT 节点 | 已完成 | `AgentNodeExecutor` 内置轻量 Plan-and-Execute；编辑器支持 `goal` / `maxSteps` / `timeoutMs` / `kbIds` |
+| 工作流表达式节点 | 已完成 | `EXPRESSION` 节点基于 `SimpleEvaluationContext` 的受限 SpEL 沙箱：仅允许字面量、`#input` / `#last` / `#loop` / `#vars` / `#nodes`、算术/比较/逻辑/三元与白名单 `#fn.*`；拒绝 `T()`、`new`、`@bean`、赋值与实例方法；表达式长度上限 2000 字符；保存时做必填与语法校验（commit `e27723f`） |
+| 工作流单步调试 | 已完成 | `POST /api/workflows/{id}/debug/step` 按节点推进并返回输入快照（渲染后配置 + 直接上游输出）与输出；游标（frontier / pendingIn / 已执行数）持久化在运行记录，可带 `runId` 续跑；HITL 节点停在 `PAUSED`；开关 `wgh.workflow.debug.enabled` 默认关闭（commit `e27723f`） |
 | 模型故障转移（Agent / 工作流） | 已完成 | Planner / StepExecutor / ReflectionEngine 与工作流 LLM 节点复用 `rag-llm` 的 `BlockingModelFailover`：首响应前失败切下一个模型，已产出内容后不切链；SSE 下发 `model_switch` |
 
 ### 3.4 平台治理
@@ -367,7 +371,7 @@ OSS 配置不完整时不阻断启动，仅在真正调用存储操作时返回�
 | 配置 | 默认 | 说明 |
 |------|------|------|
 | `wgh.rag.retrieve.min-score` | 0.55 | 向量召回最低余弦相似度；`0.3` 会引入大量弱相关噪声，dev / test / prod 三套 yml 已统一为 `0.55` |
-| `wgh.rag.retrieve.enable-hybrid` | `false` | 是否启用向量 + 关键词 RRF 混合检索（窗口级配置优先） |
+| `wgh.rag.retrieve.enable-hybrid` | `false` | 全局混合检索开关；最终是否启用为“窗口 `hybridEnabled=true` **或** 本项为 `true`”，窗口显式关闭不能覆盖全局开启（2026-11-18） |
 | `wgh.rag.retrieve.keyword-top-n` | 10 | 混合检索关键词路召回条数 |
 | `wgh.rag.evaluation.judge-timeout-seconds` | 30 | 单个 LLM judge 调用超时，超时按该 judge 失败处理，不影响主链路 |
 | `wgh.rag.evaluation.judge-concurrency` | 4 | 同时评估的 judge 数量上限 |
@@ -375,6 +379,22 @@ OSS 配置不完整时不阻断启动，仅在真正调用存储操作时返回�
 | `wgh.rag.evaluation.max-queries-per-evaluation` | 200 | 单次离线检索评测最多处理的标注查询数 |
 
 > OCR 相关配置通过环境变量注入：`WGH_OCR_ENABLED`、`WGH_OCR_LANG`（默认 `chi_sim+eng`）、`WGH_OCR_MIN_TEXT_CHARS`（默认 20）、`WGH_OCR_MAX_PAGES`（默认 50）、`WGH_OCR_TIMEOUT_SECONDS`（默认 60）；引擎缺失或超时时降级为纯文本抽取，不阻断入库。
+
+### 6.6 URL 数据源连接器与工作流调试
+
+| 配置 | 默认 | 说明 |
+|------|------|------|
+| `WGH_CONNECTOR_SCHEDULER_ENABLED` / `wgh.connector.scheduler.enabled` | `false` | 定时同步总开关；默认关闭时启动后不抓取外网，只能手动同步 |
+| `WGH_CONNECTOR_SCHEDULER_INTERVAL_SECONDS` | 60 | 调度轮询间隔（秒，最小 5） |
+| `WGH_CONNECTOR_SCHEDULER_INITIAL_DELAY_SECONDS` | 30 | 启动后首次轮询延迟（秒） |
+| `WGH_CONNECTOR_SCHEDULER_BATCH_SIZE` | 20 | 单轮最多检查的连接器数 |
+| `WGH_CONNECTOR_FETCH_TIMEOUT_MS` | 10000 | 单次抓取连接 / 请求超时（毫秒） |
+| `WGH_CONNECTOR_FETCH_USER_AGENT` | `WGH-RAG-Connector/1.0` | 抓取 User-Agent |
+| `WGH_CONNECTOR_FETCH_MAX_CONTENT_CHARS` | 200000 | 正文最大字符数，超出截断 |
+| `WGH_CONNECTOR_DEFAULT_SYNC_INTERVAL_MINUTES` | 60 | 新建连接器未指定间隔时的默认值 |
+| `WGH_WORKFLOW_DEBUG_ENABLED` / `wgh.workflow.debug.enabled` | `false` | 工作流单步调试开关；关闭时调试接口直接拒绝，普通运行链路不受影响 |
+
+> URL 抓取复用 `SsrfGuard`：仅允许 http/https，拒绝回环 / 内网 / 链路本地 / 云元数据地址，重定向逐跳校验（默认最多 3 跳），响应体默认上限 2MB；`wgh.tool.ssrf.allow-private-network` 默认 `false`。
 
 ---
 
@@ -386,12 +406,14 @@ OSS 配置不完整时不阻断启动，仅在真正调用存储操作时返回�
 |------|------|------|
 | 鉴权 / OIDC | `/api/auth` | 本地登录、当前用户、改密、OIDC 状态 |
 | 知识库 | `/api/kb` | 知识库 / 文件 CRUD、重切、检索测试、ground truth、召回评测 |
+| 评测数据集 | `/api/kb/{kbId}/eval-datasets` | 数据集 / 用例 CRUD、版本列表、按版本评测归档、历史结果与跨版本对比 |
+| 数据源连接器 | `/api/kb/{kbId}/connectors` | URL 连接器 CRUD、立即同步、运行记录 |
 | 模型 | `/api/models` | Chat / Embedding / Rerank 模型 CRUD |
 | 聊天 | `/api/chat/windows` | 窗口 CRUD、会话、消息、SSE 对话、反馈 |
 | 分享（登录态旧入口） | `/api/chat/share` | 窗口分享开关与 token 管理 |
 | 工具 | `/api/chat/tools` | 工具 CRUD、在线调试、Skill 目录管理 |
 | Agent | `/api/agent` | 计划状态、HITL 确认、取消 / 重试 / 跳过 |
-| 工作流 | `/api/workflows` | CRUD、校验、运行、HITL、版本、触发器、模板 |
+| 工作流 | `/api/workflows` | CRUD、校验、运行、HITL、版本、触发器、模板；`POST /{id}/debug/step` 单步调试（需开启调试开关） |
 | 多 Agent | `/api/agent-multi` | Crew CRUD / 校验、运行、SSE、state、HITL |
 | Prompt 模板 | `/api/prompt-templates` | CRUD、渲染预览、前缀联想候选（`/suggest`） |
 | 标签 / 版本 | `/api/tags`、`/api/kb/files/{id}/versions` | 标签 CRUD 与绑定、版本列表与回滚 |
@@ -414,7 +436,7 @@ OSS 配置不完整时不阻断启动，仅在真正调用存储操作时返回�
 | 分享密码 | 失败 5 次锁定 15 分钟（可配置），无验证码 | 换 IP 可继续尝试；强防护可叠加网关限流 / 验证码 |
 | API Key | 无自动轮换；已有可选 IP 白名单 | 泄露后需人工吊销；建议始终配置 IP 白名单 |
 | 真实 IP | 默认只信任 TCP 对端，XFF 仅在可信代理下生效 | 代理拓扑变化时需同步 `trusted-proxies`，配置过宽会引入伪造风险 |
-| 反馈与评测 | 无数据集版本管理、无 A/B 对比；生成侧 Context Precision / Recall 依赖参考答案字段，当前标注表只有相关 chunk，缺参考答案时返回不可计算 | 离线评测只能脚本化执行；需先补参考答案字段才能端到端产出 CP / CR |
+| 反馈与评测 | 评测数据集已支持版本化（写时复制、按版本归档与跨版本对比，2026-11-18），但仍无 A/B 实验对比；生成侧 Context Precision / Recall 依赖参考答案字段，当前标注表只有相关 chunk，缺参考答案时返回不可计算 | A/B 对比需后续补实验分流与显著性分析；需先补参考答案字段才能端到端产出 CP / CR |
 | 多模态 | 视觉模型支持图片输入；扫描版 PDF 按页 OCR；独立图片文件不入库 | OCR 依赖本机 Tesseract 与 `chi_sim+eng` 语言包，纯图片知识库仍需先转 PDF |
 | OpenAI 兼容 | 仅 `/v1/models` 与 `/v1/chat/completions`，`n>1`、`logprobs`、function calling / tools 未支持；`model` 只能映射已启用聊天窗口 | 复杂参数与底层模型直连需走原生 `/api/chat` 接口 |
 | OCR | 依赖本机 `tesseract` 可执行文件与语言包；单页 20 字触发、文档最多 50 页、单页 60s 超时；栏检测优先于表格 | 引擎缺失时静默降级为文本抽取；纯两列表格可能按双栏处理 |
@@ -425,7 +447,11 @@ OSS 配置不完整时不阻断启动，仅在真正调用存储操作时返回�
 | 大文件上传 | 未实现分片上传 / 断点续传，OSS 仅单次 `putObject`；默认上限 50MB | 超大文件与弱网场景需另行接入 |
 | 多实例 JWKS | `JwksProvider` 缓存为进程内，多实例不共享 | 单实例部署假设；多实例需接受轮换后的刷新时间差 |
 | 移动端 / 国际化 | 仅桌面端布局，无 i18n | — |
-| 扩展性 | 无 URL 抓取与第三方数据源连接器，无增量同步 | 文档需手工上传或经 API 写入 |
+| 数据源连接器（2026-11-18） | 已支持单页 URL 抓取（Jsoup 正文抽取）、按 `content_hash` 判重不重复入库、内容变化生成新文件并逻辑删除旧文件、404/410 清理旧文件、按间隔增量同步与运行记录；仍未实现 robots.txt 校验、整站爬取、非 HTML 数据源（PDF / RSS / Sitemap / 第三方 API） | 仅适合“少量单页 + 定时重抓”；站点治理与批量抓取需另行接入爬虫或第三方数据源 |
+| 数据源定时同步（2026-11-18） | 调度器默认关闭，需显式 `WGH_CONNECTOR_SCHEDULER_ENABLED=true`；单轮按 `batchSize` 限量，间隔为 0 的连接器只支持手动同步；单实例进程内锁，多实例之间不互斥 | 多实例部署需接受重复抓取（`content_hash` 仍可避免重复入库）或改为分布式锁 |
+| 工作流表达式与单步调试（2026-11-18） | 表达式仅支持受限语法子集与固定 `#fn.*` 函数集，不支持自定义函数 / Bean / 类型引用；单步调试默认关闭，只按拓扑串行推进，调试运行使用创建会话时的图快照 | 复杂计算需拆成多节点或改用 TOOL 节点；调试期间修改图不会影响已开始的会话 |
+| 评测门禁（2026-11-18） | CI 门禁使用固定 fixture（预置 `relevant` / `retrieved`），不验证真实检索链路，也不依赖 Key / 网络 / 模型 | fixture 只能防止指标口径与阈值回退；真实检索质量仍需在线评测或人工回归 |
+| 存量库批次 3 迁移（2026-11-18） | 存量库需按序执行 `sql/migrations/20261118/01_eval_dataset_versioning.sql`（3 表 + 3 索引）与 `02_kb_connector.sql`（2 表 + 3 索引），脚本均幂等；新库走 `01-schema.sql`，不要重复执行 | 未执行时评测数据集 / 连接器相关接口会因表不存在报错 |
 | 引用溯源（2026-11-12） | `pageNo` 目前恒为空（解析链路只做段落摊平，无页级映射）；纯 Agent 分支上下文未注入 `[Sn]`；同名文件跨知识库会合并为一张来源卡片 | Agent 回答中的编号可能无对应卡片；需要页码或 Agent 引用时需后续补页级映射与 Agent 上下文编号 |
 | 资源可见性（2026-11-12） | 无团队 / 租户模型，`TEAM` 与 `PUBLIC` 在判定上等价（均为"非 owner 可读"）；存量库执行 `sql/migrations/20261113/01_resource_visibility.sql` 补列与索引（幂等）；历史 `create_by='system'` 的资源升级后默认仅管理员可见 | 升级前需备份并执行该迁移脚本；如需真正的团队边界，需后续引入 `tenant_id` / 团队成员模型 |
 
@@ -440,13 +466,17 @@ OSS 配置不完整时不阻断启动，仅在真正调用存储操作时返回�
 | P0 | 模型故障转移补全 | 已完成（首 token 前切链） | 普通 RAG 首个 token 前的连接失败 / 超时 / 4xx / 5xx 已进入切链；部分输出后失败与全部候选失败均有明确错误收口（commit `e496f71`）；切链逻辑已抽成 `rag-llm` 的 `FailoverAttempt` / `StreamingModelFailover` / `BlockingModelFailover` / `ModelFailoverService`（commit `8e357bb`） |
 | P0 | 检索来源结构化与 [Sn] 引用溯源 | 已完成（2026-11-12） | `sources` 扩 10 个字段、按文档编号 `[Sn]`、预算裁剪后编号、`SourcePanel` 展开原文与高亮（commit `96dfc42`） |
 | P0 | 资源归属与可见性 | 已完成（2026-11-12） | 五类资源 `visibility` + `DataScopeInterceptor` + 5 个 `PATCH .../visibility`；存量库执行 `sql/migrations/20261113/01_resource_visibility.sql`（commit `59c5eee`） |
+| P0 | 窗口级混合检索与查询变换 | 已完成（2026-11-18） | 聊天窗口可配置 `hybridEnabled` / `queryTransformMode` / `rewriteModelId`；混合检索为“窗口或全局”任一开启即生效，查询变换支持 REWRITE / MULTI_QUERY / HYDE 并在失败时降级原查询（commit `8b52b5f`） |
+| P0 | 评测数据集版本化与 CI 检索门禁 | 已完成（2026-11-18） | 数据集/用例/结果三表、写时复制版本、按版本归档与跨版本对比；CI `retrieval-gate` 用固定 fixture 校验 Recall / Precision / MRR / NDCG / 命中率五项阈值，不依赖 Key 与网络（commit `adbdafe`） |
+| P1 | 工作流表达式节点与单步调试 | 已完成（2026-11-18） | `EXPRESSION` 受限表达式节点 + `POST /api/workflows/{id}/debug/step` 逐节点调试、输入/输出快照、游标续跑与 HITL 暂停（commit `e27723f`） |
+| P1 | URL 数据源连接器 | 已完成（2026-11-18，单页 + 增量） | 单页抓取、`content_hash` 判重、内容变化新版本、404/410 清理、SSRF 逐跳校验、运行记录与可选定时同步（commit `855f61f`） |
 | P1 | Agent / 工作流接入故障转移 | 已完成 | Planner / StepExecutor / ReflectionEngine 与工作流 LLM 节点复用 `BlockingModelFailover`，首响应前失败切链、已产出内容后不切链，并下发 `model_switch`；Agent 恢复 / 重试入口回查窗口路由组（commit `8e357bb`） |
 | P1 | 大文件分片上传 / 断点续传 | 未实现 | OSS multipart 与失败续传；业务侧分片大小与并发控制 |
 | P1 | 存储迁移与孤儿对象清理 | 未实现 | `local` ↔ `oss` 历史对象迁移工具；按 `file_path` 比对清理 OSS 残留对象 |
 | P2 | 多实例 JWKS 缓存共享 | 未实现 | 将 JWKS 缓存放至 Redis 或共享缓存，统一密钥轮换后的刷新时机 |
 | P2 | 分布式链路追踪 | 未实现 | 在现有 Prometheus + `X-Request-Id` 基础上接入 Tracing |
-| P2 | 数据源连接器与增量同步 | 未实现 | URL 抓取、第三方文档源同步、增量更新 |
-| P3 | 反馈 A/B 与数据集版本 | 未实现 | 版本化评测集、实验对比与效果回归 |
+| P2 | 整站爬取与多源接入 | 未实现 | robots.txt 校验、站点爬取 / Sitemap、PDF / RSS / 第三方文档源同步；单页 URL 连接器已交付 |
+| P3 | 反馈 A/B 对比 | 未实现 | 版本化评测集已交付；仍缺实验分流、对照组与显著性分析 |
 | P3 | 图片 OCR | 部分完成 | 扫描版 PDF 已按页 OCR（`TessOcrService`，commit `6ed9d10`）；独立图片文件（PNG / JPG）未接入 |
 
 暂不规划：多租户隔离、独立向量数据库 / 搜索引擎、Kubernetes 级编排。当前设计以单库 PostgreSQL + pgvector 与单实例部署为优先，降低私有化部署与运维成本。

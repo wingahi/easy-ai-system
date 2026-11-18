@@ -1,9 +1,9 @@
 # WGH RAG System 全面测试用例
 
-> 版本：v1.1　｜　日期：2026-11-12（增补批次 2：引用溯源 / 资源可见性 / OpenAI 兼容入口）　｜　初版：v1.0，2026-10-28
+> 版本：v1.2　｜　日期：2026-11-18（增补批次 3：窗口检索参数 / 评测数据集版本化 / CI 检索门禁 / 表达式节点 / 单步调试 / URL 连接器 / 迁移脚本）　｜　历史：v1.1，2026-11-12（批次 2：引用溯源 / 资源可见性 / OpenAI 兼容入口）；v1.0，2026-10-28
 > 测试方法：黑盒 + 灰盒（已知 API 面）
 > 分类：正常功能 / 边界条件 / 异常场景
-> 覆盖模块：鉴权 · 知识库 · 模型 · 聊天 · Agent · 工作流 · 工具 · 上下文压缩 · 评估 · 分享 · 触发器 · 多 Agent 协作 · 引用溯源 · 资源可见性 · OpenAI 兼容 API
+> 覆盖模块：鉴权 · 知识库 · 模型 · 聊天 · Agent · 工作流 · 工具 · 上下文压缩 · 评估 · 分享 · 触发器 · 多 Agent 协作 · 引用溯源 · 资源可见性 · OpenAI 兼容 API · 窗口检索参数 · 评测数据集版本化 · CI 检索门禁 · 工作流表达式 · 单步调试 · URL 连接器 · 存量库迁移
 
 ---
 
@@ -43,6 +43,13 @@
 32. [检索来源结构化与 [Sn] 引用溯源（批次 2）](#32-检索来源结构化与-sn-引用溯源批次-2-2026-11-12)
 33. [资源可见性（批次 2）](#33-资源可见性批次-2-2026-11-12)
 34. [OpenAI 兼容入口](#34-openai-兼容入口)
+35. [窗口级检索参数（批次 3）](#35-窗口级检索参数批次-3-2026-11-18)
+36. [评测数据集版本化（批次 3）](#36-评测数据集版本化批次-3-2026-11-18)
+37. [CI 检索门禁（批次 3）](#37-ci-检索门禁批次-3-2026-11-18)
+38. [工作流表达式节点（批次 3）](#38-工作流表达式节点批次-3-2026-11-18)
+39. [工作流单步调试（批次 3）](#39-工作流单步调试批次-3-2026-11-18)
+40. [URL 数据源连接器（批次 3）](#40-url-数据源连接器批次-3-2026-11-18)
+41. [批次 3 存量库迁移脚本](#41-批次-3-存量库迁移脚本2026-11-18)
 
 - [附录 A：测试环境速查](#附录-a测试环境速查)
 - [附录 B：测试代码规范与自动化门禁](#附录-b测试代码规范与自动化门禁)
@@ -1386,6 +1393,12 @@
 | L-20 | 可见性无团队边界（2026-11-12） | 无 `tenant_id` / 团队成员模型，`TEAM` 与 `PUBLIC` 判定等价；`DataScopeInterceptor` 只覆盖单表 page/list，JOIN/UNION/CTE 失败关闭 | VIS-11、VIS-14~16 | 需要真正团队边界时引入租户/成员模型并扩展拦截器 |
 | L-21 | 存量库可见性需手工执行迁移（2026-11-12） | 存量库需执行 `sql/migrations/20261113/01_resource_visibility.sql`（5 `ADD COLUMN` + 5 索引 + 2 条内置资源回填，均幂等）；未执行时访问 `visibility` 会报 SQL 错误；新库走 `01-schema.sql`，不要执行该脚本 | VIS-29、VIS-31、VIS-32 | 升级前备份并按脚本执行；脚本不修改历史 `create_by` |
 | L-22 | 历史 system 资源默认仅管理员可见（2026-11-12） | 旧数据 `create_by='system'`，升级后 `visibility` 默认 `PRIVATE`，普通用户不可见 | VIS-30 | 升级后由管理员批量改归属或可见性 |
+| L-23 | 窗口检索参数无法经接口恢复“未设置”（2026-11-18） | `hybrid_enabled` / `query_transform_mode` 列可空，但 `updateById` 忽略 null；已设值后只能切换开/关，不能回到 null。混合检索为 OR 语义，窗口关闭不能覆盖全局 `enable-hybrid=true` | WRP-05、WRP-13 | 需要清除时手工改库；“未设置”只作为历史数据与新建时的展示态 |
+| L-24 | 评测数据集版本不可变且只增（2026-11-18） | 版本 0 表示空数据集；每次用例变更复制为新版本，版本号只增不减，不提供删除单个历史版本；删除数据集为逻辑删除，用例与结果保留归档但接口不再可读 | EVDS-06、EVDS-19 | 需要精简历史时按库归档，不在接口层删除 |
+| L-25 | CI 门禁只校验固定 fixture（2026-11-18） | fixture 直接给出 `relevant` / `retrieved`，不调用真实检索、模型或网络；未配置阈值时不判定；fixture 读取/解析失败退出码为 2（不是 1） | CIG-01、CIG-08 | 真实检索质量仍需在线评测或人工回归 |
+| L-26 | URL 连接器仅支持单页 HTML / 纯文本（2026-11-18） | 无 robots.txt 校验、无整站爬取、无 JS 渲染、无 PDF / RSS / 第三方 API 数据源；正文抽取为启发式（`article` / `main` / `#content` 等 + 块级元素），非标准结构可能漏正文 | CONN-06、CONN-18 | 复杂站点需接入专用爬虫或在源站提供稳定正文 |
+| L-27 | 连接器无独立可见性且并发锁为进程内（2026-11-18） | 非管理员列表只返回自己创建的连接器；按 ID 访问他人连接器按不存在处理（3001）；同步互斥使用进程内 `Set`，多实例之间不互斥 | CONN-04、CONN-14 | 多实例部署需接受重复抓取（`content_hash` 仍可避免重复入库）或改为分布式锁 |
+| L-28 | 单步调试在 HITL 后无法继续（2026-11-18） | HITL 节点把运行置为 `PAUSED`，而续跑要求状态为 `DEBUG_PAUSED`，随后调试接口拒绝“调试会话已结束”，需重新开始；调试运行写入普通运行记录 | WFDBG-07、WFDBG-10 | 需要 HITL 调试续跑时扩展独立调试状态机 |
 
 ---
 
@@ -1544,3 +1557,214 @@
 | OAI-15 | 异常 | session_id 非数字 | 携带 `session_id="abc"` | 调用 `/v1/chat/completions` | HTTP 400（`2001` 参数错误映射）；`error.code=invalid_request`；不创建新会话 | 接口 | `parseSessionId` |
 | OAI-16 | 异常 | session_id 不属于当前窗口/用户 | 使用他人会话 ID 或其他窗口会话 ID | 调用 `/v1/chat/completions` | 返回 404 / `model_not_found` 或 `3001` 映射的 404；不返回他人会话内容 | 接口 | `ChatWindowService.getOwnedSession` |
 | OAI-17 | 正常 | `/api/open/v1` 别名 | 有效 Key | 用 `/api/open/v1/models` 与 `/api/open/v1/chat/completions` 重复 OAI-01/03 | 行为与 `/v1` 完全一致 | 接口 | `OpenAiCompatController` 类级映射 |
+
+---
+
+## 35. 窗口级检索参数（批次 3，2026-11-18）
+
+> 依据 commit `8b52b5f`。聊天窗口新增 `hybridEnabled`（Boolean，可空）、`queryTransformMode`（`NONE` / `REWRITE` / `MULTI_QUERY` / `HYDE`，可空）、`rewriteModelId`。
+> 混合检索最终值 = 窗口 `hybridEnabled=true` **或** 全局 `wgh.rag.retrieve.enable-hybrid=true`；窗口显式关闭不能覆盖全局开启。
+> 查询变换仅在 `queryTransformMode` 非空且不为 `NONE`、且解析出变换模型时执行；为空按关闭处理，失败/超时降级原查询。
+> 本节标注“需运行环境验证”的用例依赖真实模型、知识库或浏览器，只作为待执行用例，不代表已通过。
+
+### 35.1 混合检索三态与全局优先
+
+| 编号 | 分类 | 名称 | 前置条件 | 操作步骤 | 预期结果（HTTP / 业务码） | 覆盖类型 | 自动化落点 |
+|------|------|------|---------|---------|--------------------------|---------|-----------|
+| WRP-01 | 正常 | 新建窗口不配置混合检索 | 全局 `enable-hybrid=false`；已登录且具备窗口写权限 | `POST /api/chat/windows`，不传 `hybridEnabled` | HTTP 200 / code 200；保存成功；`hybrid_enabled` 取列默认值 `0`（历史/手工插入的 NULL 行仍保留 null）；响应中的窗口可用于后续检索 | 接口 | `ChatWindowService.create`、`01-schema.sql` 默认值 |
+| WRP-02 | 正常 | 窗口开启、全局关闭 | 窗口 `hybridEnabled=true`；全局 `enable-hybrid=false`；知识库有可检索内容 | 发送一次命中知识库的提问，抓取 SSE `retrieve` 事件 | `hybridApplied=true`；结果包含关键词路命中的 chunk；`wgh_retrieval_duration_seconds{hybrid="true"}` 有样本 | 接口（需运行环境验证） | `RagChatService.resolveHybridEnabled`、`RagRetrieveService` |
+| WRP-03 | 正常 | 窗口关闭、全局关闭 | 窗口 `hybridEnabled=false`；全局 `false` | 同上 | `hybridApplied=false`；仅向量召回；指标标签 `hybrid="false"` | 接口（需运行环境验证） | 同上 |
+| WRP-04 | 边界 | 窗口关闭、全局开启 | 窗口 `hybridEnabled=false`；全局 `enable-hybrid=true` | 同上 | `hybridApplied=true`；窗口关闭不覆盖全局开启（OR 语义） | 接口（需运行环境验证） | `RagChatService.resolveHybridEnabled` |
+| WRP-05 | 边界 | 历史 NULL 视为未设置 | 库中存在 `hybrid_enabled IS NULL` 的窗口（升级前数据或手工插入）；全局 `false` | 打开窗口列表并提问 | 列表显示“混合未设置”；检索按关闭处理（`hybridApplied=false`）；不报错 | 页面（需运行环境验证） | `ChatWindows.vue` 三态标签、`resolveHybridEnabled` |
+| WRP-06 | 正常 | 列表三态回显 | 分别存在 `true` / `false` / `NULL` 的窗口 | 打开聊天窗口管理页 | 三种标签分别为“混合检索开”“混合检索关”“混合未设置”；颜色分别为 success / info / info；刷新后保持一致 | 页面（需运行环境验证） | `ChatWindows.vue` |
+
+### 35.2 查询变换四模式与空态
+
+| 编号 | 分类 | 名称 | 前置条件 | 操作步骤 | 预期结果（HTTP / 业务码） | 覆盖类型 | 自动化落点 |
+|------|------|------|---------|---------|--------------------------|---------|-----------|
+| WRP-07 | 正常 | NONE 等同关闭 | 窗口 `queryTransformMode=NONE` | 发送提问并观察检索 | 不调用 `QueryTransformService`；向量查询等于原查询；召回结果与未配置变换一致 | 单元 | `RetrievalOptions.transformEnabled`、`RagRetrieveService` |
+| WRP-08 | 正常 | REWRITE 改写单查询 | 窗口 `queryTransformMode=REWRITE`；`rewriteModelId` 指向可用 CHAT 模型 | 发送提问 | 变换服务以 `REWRITE` 调用一次；向量路使用改写后的单条查询；关键词路仍用原查询 | 单元 + 接口 | `QueryTransformService.transform`、`RagRetrieveServiceTest` |
+| WRP-09 | 正常 | MULTI_QUERY 多变体召回 | 同上，模式 `MULTI_QUERY` | 发送提问 | 解析出多个变体；向量路 = 原查询 + 变体（去重）；解析失败/空数组降级原查询 | 单元 | `QueryTransformService.parseMultiQuery` |
+| WRP-10 | 正常 | HYDE 双路召回 | 同上，模式 `HYDE` | 发送提问 | 向量路 = 原查询 + 假设答案两条；`transformedQueries` 含假设答案 | 单元 | `QueryTransformService.transform` |
+| WRP-11 | 边界 | 未设置模式按关闭 | 历史窗口 `query_transform_mode IS NULL` | 打开列表并提问 | 列表显示“变换·未设置”；检索等同关闭；不报错 | 页面（需运行环境验证） | `ChatWindows.vue`、`RetrievalOptions.transformEnabled` |
+| WRP-12 | 正常 | 变换模型缺省复用聊天模型 | `queryTransformMode=REWRITE`，`rewriteModelId=null` | 发送提问 | 使用窗口 `chatModelId` 作为变换模型；仍能返回改写结果 | 单元 | `RagChatService.resolveTransformModelId` |
+| WRP-13 | 边界 | 已设值后无法恢复未设置 | 窗口已保存 `hybridEnabled=true` 或 `queryTransformMode=REWRITE` | `PUT /api/chat/windows/{id}`，显式提交对应字段为 `null` | 保存成功但库中值不变（`updateById` 忽略 null）；列表仍显示原设置（见 §31 L-23）；要回到未设置需手工改库 | 接口 | `ChatWindowService.update`、MyBatis-Plus 更新策略 |
+| WRP-14 | 异常 | 未知变换模式降级 | 直接写库 `query_transform_mode='FOO'` | 发送提问 | 日志 WARN“未知查询变换模式”，降级原查询；检索正常返回，不抛错 | 单元 | `QueryTransformService.transform` default 分支 |
+| WRP-15 | 异常 | 变换模型不可用/超时 | 模式非 `NONE`，变换模型被禁用或调用超时（默认 5s） | 发送提问 | 降级原查询；主对话不失败；日志 WARN；SSE 正常结束 | 单元 + 接口（需运行环境验证） | `QueryTransformService`、`RagChatService` |
+| WRP-16 | 正常 | 保存后详情与列表一致 | 已配置 `hybridEnabled=true`、`queryTransformMode=MULTI_QUERY`、`rewriteModelId` | 保存 → 重新打开编辑弹窗 → 返回列表 | 详情回显三项原值；列表同时显示“混合检索开”与“变换·多查询”；刷新后不变 | 页面（需运行环境验证） | `ChatWindows.vue` |
+
+---
+
+## 36. 评测数据集版本化（批次 3，2026-11-18）
+
+> 依据 commit `adbdafe`。表：`wgh_eval_dataset` / `wgh_eval_case` / `wgh_eval_result`；接口前缀 `/api/kb/{kbId}/eval-datasets`。
+> 版本规则：数据集初始 `currentVersion=0`（空集）；新增/修改/删除用例都把当前版本全部用例复制为 `currentVersion+1`，只在新副本上应用变更，旧版本只读。
+> 评测指标复用 `RetrievalEvaluationService.evaluateSamples`，与 ground truth 链路口径一致；结果按 `datasetVersion` 归档。
+> 本节标注“需运行环境验证”的用例依赖可用知识库、Embedding 模型与后端服务，只作为待执行用例，不代表已通过。
+
+### 36.1 数据集 CRUD 与归属
+
+| 编号 | 分类 | 名称 | 前置条件 | 操作步骤 | 预期结果（HTTP / 业务码） | 覆盖类型 | 自动化落点 |
+|------|------|------|---------|---------|--------------------------|---------|-----------|
+| EVDS-01 | 正常 | 创建数据集 | 已登录且具备 `kb:write`；知识库存在 | `POST /api/kb/{kbId}/eval-datasets`，`{"name":"核心回归集","description":"..."}` | HTTP 200 / code 200；返回 id；`currentVersion=0`；列表可见 | 单元 + 接口 | `EvalDatasetService.create` |
+| EVDS-02 | 边界 | 名称必填与长度上限 | — | 提交空名称、纯空白、101 字符名称 | HTTP 200 / code 2001；分别返回“数据集名称不能为空”“长度不能超过 100”；不落库 | 单元 | `EvalDatasetService.applyDataset` |
+| EVDS-03 | 边界 | 说明长度上限 | — | 提交 501 字符 `description` | HTTP 200 / code 2001；返回“数据集说明长度不能超过 500”；不落库 | 单元 | 同上 |
+| EVDS-04 | 正常 | 列表按 id 倒序 | 同一知识库有 3 个数据集 | `GET /api/kb/{kbId}/eval-datasets` | HTTP 200 / code 200；仅返回该知识库的数据集；按 id 倒序 | 单元 + 接口 | `EvalDatasetService.list` |
+| EVDS-05 | 正常 | 修改名称/说明不产生新版本 | 数据集已有 2 个版本 | `PUT /api/kb/{kbId}/eval-datasets/{datasetId}` | HTTP 200 / code 200；名称/说明更新；`currentVersion` 不变；版本列表不变 | 单元 | `EvalDatasetService.update` |
+| EVDS-06 | 边界 | 删除为逻辑删除且保留归档 | 数据集已有用例与历史结果 | `DELETE /api/kb/{kbId}/eval-datasets/{datasetId}` | HTTP 200 / code 200；列表不可见；`deleted=1`；用例与结果行仍保留在库中（接口不再可读，见 §31 L-24） | 单元 + 手工 | `EvalDatasetService.delete` |
+
+### 36.2 用例写时复制与版本推进
+
+| 编号 | 分类 | 名称 | 前置条件 | 操作步骤 | 预期结果（HTTP / 业务码） | 覆盖类型 | 自动化落点 |
+|------|------|------|---------|---------|--------------------------|---------|-----------|
+| EVDS-07 | 边界 | 空数据集版本列表 | 新建数据集，未添加用例 | `GET /api/kb/{kbId}/eval-datasets/{datasetId}/versions` | HTTP 200 / code 200；返回 `[0]`，前端始终有可选版本 | 单元 | `EvalDatasetService.listVersions` |
+| EVDS-08 | 正常 | 新增首个用例生成 v1 | 数据集当前 v0 | `POST .../cases`，`{"queryText":"...","relevantChunks":["2:0"]}` | HTTP 200 / code 200；返回用例；`currentVersion=1`；v1 有 1 条；v0 仍为空 | 单元 | `EvalDatasetService.addCase` |
+| EVDS-09 | 正常 | 再次新增生成 v2 且 v1 只读 | 数据集当前 v1，已有 1 条用例 | 再新增 1 条 | `currentVersion=2`；v2 有 2 条；v1 仍为 1 条且内容未变；按 v1 查询返回原用例 | 单元 | `addCase`、`listCases` |
+| EVDS-10 | 正常 | 修改用例写时复制 | 当前 v2 有 2 条用例 | `PUT .../cases/{caseId}` 修改其中 1 条 | `currentVersion=3`；v3 为 2 条，仅目标用例内容变化；v2 两条均保持原值 | 单元 | `EvalDatasetService.updateCase` |
+| EVDS-11 | 正常 | 删除用例写时复制 | 当前 v3 有 2 条用例 | `DELETE .../cases/{caseId}` | `currentVersion=4`；v4 仅 1 条；v3 仍为 2 条（旧版本完整保留） | 单元 | `EvalDatasetService.deleteCase` |
+| EVDS-12 | 边界 | 用例字段校验 | — | 提交空查询、501 字符查询、空 `relevantChunks`、全空白元素 | HTTP 200 / code 2001；分别返回“评测查询不能为空”“长度不能超过 500”“相关 chunk 集合不能为空”；不产生新版本 | 单元 | `requireQuery`、`serializeRelevant` |
+| EVDS-13 | 异常 | 修改/删除非当前版本用例 | 传入的 `caseId` 属于旧版本或不存在 | `PUT` / `DELETE .../cases/{caseId}` | HTTP 200 / code 3001，“评测用例不存在”；版本不变 | 单元 | `indexOf`、`updateCase`、`deleteCase` |
+| EVDS-14 | 边界 | 版本查询边界 | 当前版本 v4 | `GET .../cases` 不传 version；传 `version=2`；传 `version=5`；传 `version=-1` | 不传取 v4；v2 返回历史快照；v5 / -1 返回 code 2001“版本号不存在” | 单元 | `listCases`、`requireVersionExists` |
+
+### 36.3 按版本评测、归档与对比
+
+| 编号 | 分类 | 名称 | 前置条件 | 操作步骤 | 预期结果（HTTP / 业务码） | 覆盖类型 | 自动化落点 |
+|------|------|------|---------|---------|--------------------------|---------|-----------|
+| EVDS-15 | 正常 | 按当前版本评测并归档 | 数据集当前 v2，用例 ≥1；知识库已入库并有 Embedding 模型 | `POST .../evaluate?topK=5&hybrid=false`，不传 version | HTTP 200 / code 200；返回 `topK`、`queryCount`、`recallAtK`、`precisionAtK`、`mrr`、`ndcg`、`queryHitRate`、`coverageRate`、`details`、`resultId`、`datasetId`、`datasetVersion=2`；`wgh_eval_result` 新增 1 行 | 接口（需运行环境验证） | `EvalDatasetService.evaluate`、`archive` |
+| EVDS-16 | 正常 | 指定旧版本评测 | 数据集当前 v4，v2 有历史用例 | `POST .../evaluate?version=2` | 使用 v2 用例集计算；归档行 `dataset_version=2`；不覆盖 v4 的结果 | 接口（需运行环境验证） | `EvalDatasetService.evaluate` |
+| EVDS-17 | 边界 | 空数据集/空版本不可评测 | 数据集 v0 或无任何用例 | `POST .../evaluate` | HTTP 200 / code 2001；分别返回“数据集暂无可用用例版本，无法评测”“该版本暂无评测用例，无法评测”；不写结果表 | 单元 | `EvalDatasetService.evaluate` |
+| EVDS-18 | 正常 | 历史结果按版本倒序 | 同一数据集有 v2、v3、v4 三次归档 | `GET .../results` | HTTP 200 / code 200；按 `datasetVersion` 倒序、同版本按 id 倒序；含归档指标与 `hybrid` 标记 | 接口（需运行环境验证） | `EvalDatasetService.listResults` |
+| EVDS-19 | 正常 | 跨版本对比 | 两次归档结果 `baseId`、`targetId` 均属于该数据集 | `GET .../results/compare?baseId=..&targetId=..` | HTTP 200 / code 200；返回 `base` / `target` 摘要；`delta` 含 `recallAtK`、`precisionAtK`、`mrr`、`ndcg`、`queryHitRate`、`coverageRate`，值为 target-base 并四舍五入 4 位；`queryDiffs` 按查询给出 `baseRecall` / `targetRecall` / `delta` | 接口（需运行环境验证） | `EvalDatasetService.compareResults` |
+| EVDS-20 | 边界 | 逐查询差异的缺失侧 | 两次归档的查询集合不完全相同 | 对比两次结果 | 并集返回；仅一侧存在的查询另一侧值为 `null`，`delta=null`；不抛错、不补 0 | 接口（需运行环境验证） | `queryDiffs`、`recallByQuery` |
+| EVDS-21 | 异常 | 归属校验 | `datasetId` 属于其他知识库；`resultId` 属于其他数据集 | 分别调用数据集详情/版本/评测与 compare | HTTP 200 / code 3001；分别返回“评测数据集不存在”“评测结果不存在”；不泄露其他知识库数据 | 单元 | `requireOwned`、`requireResult` |
+| EVDS-22 | 安全 | 读写权限 | 普通用户无 `kb:write`；另一个无 `kb:read` | 分别调用写接口与读接口 | 写接口 code 1004；读接口 code 1004（`@RequiresPermission`）；均不落库/不返回数据 | 接口 | `EvalDatasetController` |
+
+---
+
+## 37. CI 检索门禁（批次 3，2026-11-18）
+
+> 依据 commit `adbdafe`。脚本 `rag-backend/eval/eval_recall.py` 新增 `--fixture` 离线模式与 `--gate-*` 阈值；CI job `retrieval-gate` 使用 `rag-backend/eval/fixtures/retrieval_gate.json`。
+> fixture 直接给出每条查询的 `relevant` 与 `retrieved`，不发网络请求、不加载真实模型、不需要 API Key。
+> 指标口径：Recall 分母为标注相关集合；Precision 分母为实际返回条数；MRR / NDCG / 命中率为查询级算术平均。
+
+| 编号 | 分类 | 名称 | 前置条件 | 操作步骤 | 预期结果（HTTP / 业务码） | 覆盖类型 | 自动化落点 |
+|------|------|------|---------|---------|--------------------------|---------|-----------|
+| CIG-01 | 正常 | fixture 离线模式 | 仅 Python 3 标准库，无后端、无 Key、无网络 | `python3 rag-backend/eval/eval_recall.py --fixture rag-backend/eval/fixtures/retrieval_gate.json` | 不发起任何 HTTP 请求；输出 `模式=fixture`；`queryCount=5`；退出码 0 | 单元（CI） | `eval_recall.run_fixture` |
+| CIG-02 | 正常 | fixture 指标口径 | 同上 | 读取输出或 `--json-out` | `recallAtK=0.9`、`precisionAtK=0.5667`、`mrr=0.7667`、`ndcg=0.8262`、`hitRate=1.0`；与手算一致 | 单元（CI） | `test_eval_recall.FixtureTest` |
+| CIG-03 | 正常 | 五项阈值全部达标 | 设置 CI 默认阈值 | `EVAL_GATE_RECALL=0.85 EVAL_GATE_PRECISION=0.50 EVAL_GATE_MRR=0.70 EVAL_GATE_NDCG=0.80 EVAL_GATE_HIT_RATE=0.95` 运行 fixture | 五项均输出 PASS；退出码 0 | 单元（CI） | `gate_failures`、`.github/workflows/ci.yml` |
+| CIG-04 | 异常 | 任一指标不达标 | fixture 指标固定 | 增加 `--gate-recall 0.95` | 输出 `recall: 0.9 < 阈值 0.95`；退出码 1；其余指标仍正常打印 | 单元（CI） | `run_fixture`、`print_summary` |
+| CIG-05 | 边界 | 指标缺失按不通过 | 构造缺少某指标的汇总 | 调用 `gate_failures({}, {"recall":0.85})` | 返回“recall: 指标不可计算（阈值 0.85）”；不静默放过 | 单元 | `test_eval_recall.GateTest` |
+| CIG-06 | 边界 | 阈值来源优先级 | 同时设置命令行与环境变量 | 命令行 `--gate-recall 0.8`，环境 `EVAL_GATE_RECALL=0.95` | 采用命令行 0.8；未提供命令行的指标才读环境变量；两者都没有的指标不校验 | 单元 | `parse_gates` |
+| CIG-07 | 正常 | JSON 结果落盘 | 指定 `--json-out` | 运行 fixture 门禁 | 文件包含汇总指标、`gates`、`gateFailures`、`passed`；`passed` 与退出码一致 | 单元（CI） | `write_json_out` |
+| CIG-08 | 异常 | fixture 读取/解析失败 | 文件不存在、缺 `cases`、用例缺 `relevant` | 运行 `--fixture` | 输出 `[ERROR] fixture 读取/解析失败：...`；退出码 2（与“指标不达标”的 1 区分） | 单元 | `run_fixture_mode`、`load_fixture` |
+| CIG-09 | 正常 | 脚本单测全绿 | Python 3.11 | `python3 -m unittest discover -s rag-backend/eval -p "test_*.py" -v` | 指标口径、通过侧、失败侧、fixture 期望值全部通过；无网络访问 | 单元（CI） | `rag-backend/eval/test_eval_recall.py` |
+| CIG-10 | 运维 | CI 作业独立且无外部依赖 | GitHub Actions | 触发 CI | `retrieval-gate` 与 `backend` 作业并行独立；不注入 API Key、不启动数据库/后端、不访问外网业务接口 | 仅手工（CI 配置审查） | `.github/workflows/ci.yml` |
+
+---
+
+## 38. 工作流表达式节点（批次 3，2026-11-18）
+
+> 依据 commit `e27723f`。节点类型 `EXPRESSION`，配置 `expression`（必填）与 `resultVar`（可选）。
+> 求值入口 `ExpressionSandbox.evaluate` 基于 `SimpleEvaluationContext`：无 TypeLocator、无 BeanResolver、关闭赋值与实例方法，仅注册只读 Map 属性访问器与 `#fn` 函数白名单。
+> 节点输出 `value` / `text` / `expression` / `resultType`；`resultVar` 非空时同时写入 `vars[resultVar]`。
+
+| 编号 | 分类 | 名称 | 前置条件 | 操作步骤 | 预期结果（HTTP / 业务码） | 覆盖类型 | 自动化落点 |
+|------|------|------|---------|---------|--------------------------|---------|-----------|
+| WFX-01 | 正常 | 合法表达式求值 | 上游 VARIABLE 节点写入 `base=3` | 运行含 `expression=#fn.intOf(#vars.base) + 1` 的节点 | 节点成功；输出 `value=4`、`text="4"`、`resultType=Integer`、`expression` 原样；下游 `{{nodeId.text}}` 得到 `4` | 单元 | `ExpressionNodeExecutorTest` |
+| WFX-02 | 正常 | resultVar 写入变量池 | 表达式节点配置 `resultVar=total` | 运行后检查上下文与下游渲染 | `vars.total=4`；下游 `{{vars.total}}` 渲染为 `4` | 单元 | `ExpressionNodeExecutor`、`WorkflowEngineDebugStepTest` |
+| WFX-03 | 正常 | 上下文字段读取 | 上下文含 `#input`、`#last`、`#loop`、`#vars`、`#nodes` | 分别求值 `#input`、`#last`、`#loop`、`#vars.x`、`#nodes.n1.text`、`#nodes['n1']['text']` | 返回对应值；`#nodes` 支持点号与下标两种写法 | 单元 | `ExpressionSandboxTest.contextAccess` |
+| WFX-04 | 正常 | 白名单函数可用 | 上下文含字符串与数字 | 调用 `#fn.str/intOf/num/bool/len/upper/lower/trim/substr/replace/split/isEmpty/orElse` | 各函数返回预期结果；未知函数或非 `#fn` 目标不解析 | 单元 | `ExpressionSandboxTest.whitelistedFunctions` |
+| WFX-05 | 安全 | 拒绝类型引用 T() | — | 求值或保存 `T(java.lang.Runtime).getRuntime()` | 抛出/记录“不允许使用类型引用 T(...)”；运行时节点失败；保存时校验报“表达式节点表达式非法” | 单元 | `ExpressionSandbox.assertSafe`、`GraphValidator` |
+| WFX-06 | 安全 | 拒绝 new 构造 | — | 求值 `new java.util.Date()` | 抛出“不允许使用 new 构造对象”；不执行构造 | 单元 | `ExpressionSandboxTest.rejectsConstructor` |
+| WFX-07 | 安全 | 拒绝 Bean 引用 | — | 求值 `@someBean` | 抛出“不允许引用 Bean（@bean）”；不触发 Bean 解析 | 单元 | `ExpressionSandboxTest.rejectsBeanReference` |
+| WFX-08 | 安全 | 拒绝赋值 | 上下文含 `#vars.x=3` | 求值 `#vars.x = 9` | 抛出“表达式求值失败：...”；`vars.x` 保持 3 | 单元 | `withAssignmentDisabled` |
+| WFX-09 | 安全 | 拒绝实例方法 | — | 求值 `#vars.getClass()`、`'abc'.toUpperCase()` | 均抛出“表达式求值失败：...”；不产生反射调用 | 单元 | `WhitelistedFunctionResolver` |
+| WFX-10 | 边界 | 表达式长度上限 | — | 求值长度 2001 字符的表达式 | 抛出“表达式长度超过上限 2000 字符”；不进入解析 | 单元 | `ExpressionSandbox.MAX_EXPRESSION_LENGTH` |
+| WFX-11 | 异常 | 表达式必填 | 表达式节点未配置 `expression` | 保存工作流；再直接运行该节点 | 保存校验报“表达式节点缺少表达式：{nodeId}”；运行时报“表达式节点缺少表达式” | 单元 | `GraphValidatorTest`、`ExpressionNodeExecutor` |
+| WFX-12 | 异常 | 语法错误校验 | 表达式为 `#vars.x +` | 保存或 `POST /api/workflows/{id}/validate` | 校验失败，错误含“表达式节点表达式非法：{nodeId}（表达式语法错误：...）”；不落库 | 单元 + 接口 | `ExpressionSandbox.validateSyntax`、`GraphValidator` |
+| WFX-13 | 边界 | 字符串字面量不触发误判 | — | 求值 `'T(java.lang.Runtime)'`、`'a@b.com'` | 正常返回原字符串；不对字面量内的 `T(` / `@` 报安全错误 | 单元 | `stripStringLiterals` |
+| WFX-14 | 正常 | 结果字符串化 | 表达式返回 Map / List | 运行节点并查看 `text` | 标量（String/Number/Boolean）原样字符串化；Map/List 序列化为 JSON；`value` 保留原始对象 | 单元 | `ExpressionNodeExecutor.stringify` |
+
+---
+
+## 39. 工作流单步调试（批次 3，2026-11-18）
+
+> 依据 commit `e27723f`。接口 `POST /api/workflows/{id}/debug/step`，请求体 `{input, runId?, maxSteps?, stopAtNodeId?}`；需 `workflow:edit` 权限。
+> 开关 `wgh.workflow.debug.enabled` / `WGH_WORKFLOW_DEBUG_ENABLED`，默认 `false`。关闭时调试接口直接拒绝，普通运行链路与引擎行为不变。
+> 状态：`DEBUG_PAUSED`（可继续）、`COMPLETED`、`FAILED`；HITL 节点停在 `PAUSED`。游标 `debugFrontier` / `debugPendingIn` / `debugExecutedCount` 持久化在 `run.contextJson`。
+
+| 编号 | 分类 | 名称 | 前置条件 | 操作步骤 | 预期结果（HTTP / 业务码） | 覆盖类型 | 自动化落点 |
+|------|------|------|---------|---------|--------------------------|---------|-----------|
+| WFDBG-01 | 边界 | 开关默认关闭 | 未配置 `wgh.workflow.debug.enabled` | `POST /api/workflows/{id}/debug/step` | HTTP 200 / code 3003，“单步调试未启用（配置项 wgh.workflow.debug.enabled=false）”；不创建运行记录、不触碰引擎；普通运行链路不受影响 | 单元 | `WorkflowServiceDebugTest.disabledByDefault_rejects` |
+| WFDBG-02 | 正常 | 开启后首次单步创建调试运行 | 开关为 `true`；工作流图合法 | 不传 `runId`，传 `input`、`maxSteps=1` | 返回 `runId`；运行记录 `status` 由 `RUNNING` 推进；`inputText` 为传入值；`graphSnapshot` 为当前图 | 单元 + 接口 | `WorkflowService.debugStep` |
+| WFDBG-03 | 边界 | 步数预算 | 开关为 `true` | 分别传 `maxSteps` 不传、`0`、`1`、`100` | 不传按 1；0 归一为 1；100 截断为 50；单次返回的 `stepCount` 不超过预算 | 单元 | `WorkflowService.debugStep` 预算计算 |
+| WFDBG-04 | 正常 | 逐节点输入快照与输出 | 图 START → VARIABLE → EXPRESSION → END | 每次 `maxSteps=1` 连续调用，带上次 `runId` | 每次仅执行 1 个节点；`steps[0].input` 含 `config`（变量已渲染）与 `upstream`（直接上游输出）；`steps[0].output` 为该节点写入上下文的内容 | 单元 | `WorkflowEngineDebugStepTest.stepByStep_executesOneNodeAndReturnsSnapshots` |
+| WFDBG-05 | 正常 | 流程结束状态 | 同上，推进到 END | 继续单步直到 END | 最后一次 `status=COMPLETED`、`finished=true`、`output` 为 END 渲染结果；不再返回 `DEBUG_PAUSED` | 单元 | 同上 |
+| WFDBG-06 | 边界 | stopAtNodeId 暂停 | 图含 `v`、`e` 节点 | 传 `maxSteps=10`、`stopAtNodeId=e` | 执行到 `e` 后停止；`status=DEBUG_PAUSED`；游标保留 `end` 节点，可继续推进 | 单元 | `WorkflowEngineDebugStepTest.stopAtNodeId_pausesAtTarget` |
+| WFDBG-07 | 边界 | HITL 节点停在 PAUSED | 图含 HITL 节点 | 单步到 HITL | 返回 `status=PAUSED`；节点记录 `HITL_PENDING`；输入/输出含渲染后的 `prompt`；后续带该 `runId` 续跑被拒（见 §31 L-28） | 单元 | `WorkflowEngine.debugStep` HITL 分支 |
+| WFDBG-08 | 正常 | 游标持久化 | 已执行 2 个节点后暂停 | 查询运行记录 `context_json` 与 `executed_nodes` | `debugFrontier` / `debugPendingIn` / `debugExecutedCount` 有值；`executed_nodes` 为累计执行数；下次带 `runId` 从游标继续而非从 START 重跑 | 单元 + 接口 | `WorkflowEngine.debugStep` 持久化段 |
+| WFDBG-09 | 异常 | 已结束会话不可续跑 | 运行记录状态为 `COMPLETED` / `FAILED` / `PAUSED` | 带该 `runId` 调调试接口 | HTTP 200 / code 3003，“调试会话已结束，请重新开始单步调试” | 单元 | `WorkflowServiceDebugTest.finishedRun_rejectsNextStep` |
+| WFDBG-10 | 异常 | 运行记录不属于该工作流 | `runId` 属于其他工作流 | 带 `runId` 调调试接口 | HTTP 200 / code 3001，“调试运行记录不属于该工作流”；不推进 | 单元 | `WorkflowService.debugStep` |
+| WFDBG-11 | 正常 | 续跑使用图快照 | 调试会话已创建；期间编辑并保存了工作流图 | 带 `runId` 继续单步 | 使用创建会话时的 `graphSnapshot` 校验与推进；不受中途编辑影响；游标与节点 ID 保持一致 | 单元 + 接口 | `WorkflowService.debugStep` |
+| WFDBG-12 | 异常 | 节点失败终止 | 表达式节点引用不存在的变量 | 单步执行到该节点 | `steps[0].status=FAILED`、`error` 含“表达式求值失败”；整体 `status=FAILED`、`finished=true`；`onError=CONTINUE` 时记录失败输出并继续后续节点 | 单元 | `WorkflowEngineDebugStepTest.nodeFailure_stopsWithFailed` |
+| WFDBG-13 | 正常 | 编辑器单步交互 | 后端开启调试；已打开工作流编辑器 | 点击“开始单步”→“下一步”→“结束调试” | 每次只推进 1 个节点；轨迹新增该节点；展开“输入/输出”可查看 JSON 快照；结束后按钮禁用；调试中的 SSE 运行流被中断 | 页面（需运行环境验证） | `WorkflowEditor.vue` |
+| WFDBG-14 | 正常 | 普通运行链路不受影响 | 调试开关关闭或开启均可 | 走普通 SSE 运行完整工作流 | 事件顺序、节点状态、输出与批次 3 之前一致；不读取调试游标字段 | 单元 | `WorkflowEngineTest` |
+
+---
+
+## 40. URL 数据源连接器（批次 3，2026-11-18）
+
+> 依据 commit `855f61f`。接口前缀 `/api/kb/{kbId}/connectors`；读需要 `kb:read`，写需要 `kb:write` / `kb:delete`。
+> 同步语义：抓取正文 → `KnowledgeFileService.ingestContent` 按 `content_hash` 判重；未变 `UNCHANGED`；变化生成新文件并逻辑删除旧文件；404/410 为 `REMOVED`；其他失败为 `FAILED`。
+> 抓取统一走 `SsrfGuard`：仅 http/https，拒绝内网/回环/链路本地/元数据地址，重定向逐跳校验（默认最多 3 跳），响应体默认上限 2MB。
+
+### 40.1 配置 CRUD 与归属
+
+| 编号 | 分类 | 名称 | 前置条件 | 操作步骤 | 预期结果（HTTP / 业务码） | 覆盖类型 | 自动化落点 |
+|------|------|------|---------|---------|--------------------------|---------|-----------|
+| CONN-01 | 边界 | 名称与 URL 必填 | 已登录且具备 `kb:write` | `POST /api/kb/{kbId}/connectors`，分别提交空名称、空 URL | HTTP 200 / code 2001；返回“连接器名称不能为空”“URL 不能为空”；不落库 | 单元 | `ConnectorService.applyPayload` |
+| CONN-02 | 安全 | 不可抓取 URL 拒绝 | — | 提交 `ftp://...`、`http://127.0.0.1/`、`http://169.254.169.254/`、`http://10.0.0.1/` | HTTP 200 / code 2001，“URL 不可抓取: ...”；不创建连接器 | 单元 | `UrlConnector.validateUrl`、`SsrfGuard` |
+| CONN-03 | 正常 | 默认配置 | 只提交名称与 URL | 创建后查询详情 | `splitStrategy=PARAGRAPH`、`syncIntervalMinutes=60`（或配置的默认值）、`enabled=0`；`last*` 运行态字段为空 | 单元 | `ConnectorService.applyPayload` |
+| CONN-04 | 边界 | 列表按创建人过滤 | 管理员与普通用户各创建 1 个连接器；知识库共享 | 两者分别 `GET /api/kb/{kbId}/connectors` | 管理员看到全部；普通用户只看到自己创建的；不泄露他人数据源配置 | 单元 + 接口 | `ConnectorService.list` |
+| CONN-05 | 异常 | 归属校验 | 连接器属于其他知识库；或为他人创建 | `PUT` / `DELETE` / `sync` / `GET runs` | 归属不匹配返回 code 3001“连接器不存在”；他人连接器按 3001；删除仅逻辑删除连接器，运行记录保留 | 单元 | `ConnectorService.load`、`getOwnedForRead/Write` |
+
+### 40.2 抓取与增量同步
+
+| 编号 | 分类 | 名称 | 前置条件 | 操作步骤 | 预期结果（HTTP / 业务码） | 覆盖类型 | 自动化落点 |
+|------|------|------|---------|---------|--------------------------|---------|-----------|
+| CONN-06 | 正常 | 正文抽取 | HTML 含 `script/style/nav/footer/header/aside/form`、`article` 正文与多个块级元素 | 调用抓取或 `parseHtml` fixture | 噪声节点被移除；优先取 `article/main/[role=main]/#content/.content`；块级元素按空行拼接；空白归一；超 `maxContentChars` 截断；标题为 `<title>` | 单元 | `UrlConnectorTest` |
+| CONN-07 | 正常 | 首次同步成功 | 连接器 URL 可访问；知识库存在 | `POST .../connectors/{id}/sync` | HTTP 200 / code 200；`status=SUCCESS`；返回 `fileId`、`contentHash`、`httpStatus`；`lastFileId` / `lastContentHash` / `lastSyncTime` 更新；运行记录新增 1 行 | 单元 + 接口 | `ConnectorServiceTest` |
+| CONN-08 | 正常 | 内容未变 UNCHANGED | 已成功同步过一次；源页面正文不变 | 再次同步 | `status=UNCHANGED`；`message` 含“复用已有文件”；不新增知识库文件、不重复切分/嵌入；`lastFileId` 不变 | 单元 | `KnowledgeFileContentDedupeTest`、`ConnectorServiceTest` |
+| CONN-09 | 正常 | 内容变化生成新版本 | 已同步过一次；源页面正文变化 | 再次同步 | `status=SUCCESS`；生成新 `fileId`；旧文件被逻辑删除；`message` 含旧文件 ID；知识库中只保留最新正文 | 单元 | `ConnectorServiceTest` |
+| CONN-10 | 边界 | 404 / 410 清理旧文件 | 已同步过一次；源页面返回 404 或 410 | 再次同步 | `status=REMOVED`；旧文件逻辑删除；`lastFileId` / `lastContentHash` 清空；运行记录 `httpStatus` 为 404/410 | 单元 | `ConnectorServiceTest` |
+| CONN-11 | 异常 | 其他非 2xx 保留旧文件 | 已同步过一次；源页面返回 500 | 再次同步 | `status=FAILED`；`lastError` 记录 HTTP 状态；旧文件不被删除；`lastFileId` 保持 | 单元 | `ConnectorServiceTest` |
+| CONN-12 | 异常 | 2xx 但正文为空 | 页面返回 200，抽取正文为空 | 同步 | `status=FAILED`；`message` 含“抓取成功但正文为空，未入库”；不新增文件 | 单元 | `ConnectorService.runSync` |
+| CONN-13 | 安全 | SSRF 防护 | — | 构造 30x 跳转到内网/元数据地址、超过 3 跳重定向、响应体超过 2MB | 跳转目标被 `SsrfGuard` 拒绝并记 FAILED；超过跳数上限拒绝；超大响应按上限截断后解析，不 OOM | 单元 | `SsrfGuardTest`、`UrlConnectorTest` |
+| CONN-14 | 边界 | 并发同步互斥 | 同一连接器正在同步 | 并发发起第二次手动同步 | 第二次返回 code 3003，“该连接器正在同步中，请稍后再试”；定时入口检测到冲突时只记录 debug 日志并跳过，不抛异常打断整轮调度 | 单元 | `ConnectorService.syncing`、`syncScheduled` |
+
+### 40.3 定时调度与运行记录
+
+| 编号 | 分类 | 名称 | 前置条件 | 操作步骤 | 预期结果（HTTP / 业务码） | 覆盖类型 | 自动化落点 |
+|------|------|------|---------|---------|--------------------------|---------|-----------|
+| CONN-15 | 边界 | 调度器默认关闭 | 未设置 `WGH_CONNECTOR_SCHEDULER_ENABLED` | 启动应用 | 不注册轮询；日志输出“定时同步未启用”；只能手动同步；设置 `WGH_CONNECTOR_SCHEDULER_ENABLED=true` 后才注册（间隔最小 5s） | 单元 + 手工 | `ConnectorScheduler.start` |
+| CONN-16 | 正常 | 到期判定 | 存在启用/停用、间隔 0/正数、已同步/未同步的连接器 | 调用 `tick` 或 `isDue` | 仅 `enabled=1` 且 `interval>0` 且（从未同步或 `lastSync+interval<=now`）的连接器被触发；间隔 0 仅手动；单轮不超过 `batchSize` | 单元 | `ConnectorSchedulerTest.isDue` |
+| CONN-17 | 正常 | 运行记录查询 | 已有多次同步 | `GET .../connectors/{id}/runs?limit=..` | 按 id 倒序；`limit` 默认 20、最大 100；返回状态、HTTP 状态、文件 ID、哈希、耗时、消息 | 单元 + 接口 | `ConnectorService.listRuns` |
+| CONN-18 | 正常 | 连接器管理页交互 | 后端运行；已打开知识库连接器页 | 新建 → 立即同步 → 查看运行记录 → 编辑 → 删除 | 新建后列表出现；同步按钮 loading 期间禁用；成功提示并刷新 `lastStatus` / `lastSyncTime`；失败展示 `message`；删除提示“已入库文件不会被删除” | 页面（需运行环境验证） | `KBConnectors.vue` |
+
+---
+
+## 41. 批次 3 存量库迁移脚本（2026-11-18）
+
+> 脚本位置：`rag-backend/sql/migrations/20261118/01_eval_dataset_versioning.sql`、`02_kb_connector.sql`。
+> 适用对象：2026-11-18 之前创建的存量库；新库由 `sql/schema/01-schema.sql` 建表，**不要**执行这两个脚本。
+> 两个脚本均在 `BEGIN/COMMIT` 内执行，建表/建索引使用 `IF NOT EXISTS`，`COMMENT` 可重复执行；只新增对象，不改既有表、不写业务数据。
+
+| 编号 | 分类 | 名称 | 前置条件 | 操作步骤 | 预期结果（HTTP / 业务码） | 覆盖类型 | 自动化落点 |
+|------|------|------|---------|---------|--------------------------|---------|-----------|
+| MIG3-01 | 正常 | 评测数据集迁移适用对象 | 2026-11-18 前的存量库，未执行过该脚本 | `psql -f sql/migrations/20261118/01_eval_dataset_versioning.sql` | 创建 `wgh_eval_dataset`、`wgh_eval_case`、`wgh_eval_result` 三表与 `idx_eval_dataset_kb`、`idx_eval_case_ds_version`、`idx_eval_result_ds_version` 三索引；表/列注释齐全；事务提交 | 手工 | 迁移脚本 |
+| MIG3-02 | 边界 | 评测数据集迁移幂等 | 已执行过 01 脚本 | 再次执行同一脚本 | 无错误；表与索引不重复创建；`COMMENT` 覆盖同名列注释；不产生重复数据 | 手工 | `CREATE TABLE/INDEX IF NOT EXISTS` |
+| MIG3-03 | 边界 | 评测数据集迁移影响面 | 存量库已有业务表与数据 | 执行 01 脚本并比对执行前后 | 不新增/修改既有表列；不写业务数据；`wgh_eval_*` 三表初始为空；`current_version` 默认 0 | 手工 | 脚本头注释与 SQL 内容 |
+| MIG3-04 | 正常 | 连接器迁移适用对象 | 2026-11-18 前的存量库，未执行过该脚本 | `psql -f sql/migrations/20261118/02_kb_connector.sql` | 创建 `wgh_kb_connector`、`wgh_kb_connector_run` 两表与 `idx_kb_connector_kb`、`idx_kb_connector_due`、`idx_kb_connector_run` 三索引；注释齐全；事务提交 | 手工 | 迁移脚本 |
+| MIG3-05 | 边界 | 连接器迁移幂等与影响面 | 已执行过 02 脚本 | 再次执行并比对 | 无错误；表/索引不重复；不改既有表；不写业务数据；连接器默认 `enabled=0`、`sync_interval_minutes=60`、`split_strategy='PARAGRAPH'` | 手工 | `CREATE TABLE/INDEX IF NOT EXISTS` |
+| MIG3-06 | 异常 | 未迁移时接口报错 | 存量库未执行 01/02 | 调用 `/api/kb/{kbId}/eval-datasets` 或 `/api/kb/{kbId}/connectors` | 因表不存在返回服务端错误（非 200）；执行对应脚本后相同请求恢复 HTTP 200 / code 200 | 接口（需运行环境验证） | 两组 Controller / Service |
+| MIG3-07 | 正常 | 迁移结果校验查询 | 已执行两个脚本 | `SELECT table_name FROM information_schema.tables WHERE table_name IN (...)`；查询 `pg_indexes` | 5 张表全部存在；6 个索引全部存在；无重复索引；`COMMENT ON COLUMN` 可读 | 手工 | `information_schema` / `pg_indexes` |

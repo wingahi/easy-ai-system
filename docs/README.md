@@ -28,7 +28,7 @@
 
 | 文档 | 一句话定位 | 更新时间 |
 |---|---|---|
-| [test-cases.md](testing/test-cases.md) | 全量测试用例（编号、前置条件、步骤、预期与自动化落点；含批次 2 引用溯源 / 资源可见性 / OpenAI 兼容入口） | 2026-11-12 |
+| [test-cases.md](testing/test-cases.md) | 全量测试用例（编号、前置条件、步骤、预期与自动化落点；含批次 2 引用溯源 / 资源可见性 / OpenAI 兼容入口，批次 3 窗口检索参数 / 评测数据集版本化 / CI 检索门禁 / 表达式节点 / 单步调试 / URL 连接器 / 迁移脚本） | 2026-11-18 |
 | [unit-test-report.md](testing/unit-test-report.md) | 单元测试执行结果与覆盖说明 | 2026-11-04 |
 | [browser-test-report-2026-11-03.md](testing/browser-test-report-2026-11-03.md) | 2026-11-03 浏览器回归报告 | 2026-11-06 |
 | [browser-test-report-2026-11-04.md](testing/browser-test-report-2026-11-04.md) | 2026-11-04 浏览器全量回归与重启后复验报告 | 2026-11-04 |
