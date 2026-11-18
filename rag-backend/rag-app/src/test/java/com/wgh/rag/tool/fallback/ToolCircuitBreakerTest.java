@@ -17,7 +17,7 @@ class ToolCircuitBreakerTest {
     private final ToolFallbackProperties properties = new ToolFallbackProperties();
 
     private ToolCircuitBreaker newBreaker() {
-        return new ToolCircuitBreaker(properties, now::get);
+        return ToolCircuitBreaker.forTest(properties, now::get);
     }
 
     @Test

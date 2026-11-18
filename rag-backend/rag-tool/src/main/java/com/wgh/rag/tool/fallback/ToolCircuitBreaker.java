@@ -20,17 +20,24 @@ import java.util.function.LongSupplier;
 public class ToolCircuitBreaker {
 
     private final ToolFallbackProperties properties;
-    private final LongSupplier clock;
     private final Map<String, State> states = new ConcurrentHashMap<>();
+    /** 时钟，默认系统时间；测试通过 {@link #forTest} 注入。 */
+    private LongSupplier clock = System::currentTimeMillis;
 
     public ToolCircuitBreaker(ToolFallbackProperties properties) {
-        this(properties, System::currentTimeMillis);
+        this.properties = properties;
     }
 
-    /** 测试用：可注入时钟。 */
-    ToolCircuitBreaker(ToolFallbackProperties properties, LongSupplier clock) {
-        this.properties = properties;
-        this.clock = clock;
+    /**
+     * 测试用：注入可控时钟。
+     *
+     * <p>刻意不在类上保留第二个构造器——Spring 只有在“唯一构造器”时才会自动装配参数，
+     * 多一个私有构造器都会让它回退去找无参构造器并启动失败。
+     */
+    static ToolCircuitBreaker forTest(ToolFallbackProperties properties, LongSupplier clock) {
+        ToolCircuitBreaker breaker = new ToolCircuitBreaker(properties);
+        breaker.clock = clock;
+        return breaker;
     }
 
     /**
