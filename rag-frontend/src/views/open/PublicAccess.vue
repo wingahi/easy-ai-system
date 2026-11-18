@@ -166,6 +166,7 @@
           <el-checkbox-group v-model="keyForm.scopes">
             <el-checkbox label="chat:write">对话</el-checkbox>
             <el-checkbox label="kb:read">知识库检索</el-checkbox>
+            <el-checkbox label="model:read">模型列表（/v1/models）</el-checkbox>
             <el-checkbox label="usage:read">用量查询</el-checkbox>
           </el-checkbox-group>
         </el-form-item>
