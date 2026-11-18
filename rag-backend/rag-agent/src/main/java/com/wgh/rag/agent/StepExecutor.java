@@ -302,12 +302,17 @@ public class StepExecutor {
         if (matches == null) return records;
         for (EmbeddingMatch<TextSegment> m : matches) {
             TextSegment seg = m.embedded();
-            String fileName = seg != null && seg.metadata() != null ? seg.metadata().getString("fileName") : null;
-            Integer chunkIndex = seg != null && seg.metadata() != null ? seg.metadata().getInteger("chunkIndex") : null;
             records.add(RagSourceRecord.builder()
-                    .fileName(fileName)
-                    .chunkIndex(chunkIndex)
+                    .kbId(seg != null && seg.metadata() != null ? seg.metadata().getLong("kbId") : null)
+                    .kbName(seg != null && seg.metadata() != null ? seg.metadata().getString("kbName") : null)
+                    .fileId(seg != null && seg.metadata() != null ? seg.metadata().getLong("fileId") : null)
+                    .fileName(seg != null && seg.metadata() != null ? seg.metadata().getString("fileName") : null)
+                    .chunkIndex(seg != null && seg.metadata() != null ? seg.metadata().getInteger("chunkIndex") : null)
+                    .pageNo(seg != null && seg.metadata() != null ? seg.metadata().getInteger("pageNo") : null)
+                    .charStart(seg != null && seg.metadata() != null ? seg.metadata().getInteger("charStart") : null)
+                    .charEnd(seg != null && seg.metadata() != null ? seg.metadata().getInteger("charEnd") : null)
                     .score(m.score())
+                    .snippet(seg != null && seg.metadata() != null ? seg.metadata().getString("snippet") : null)
                     .content(seg != null ? seg.text() : null)
                     .build());
         }

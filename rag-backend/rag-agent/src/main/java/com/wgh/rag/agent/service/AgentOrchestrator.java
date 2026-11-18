@@ -282,6 +282,9 @@ public class AgentOrchestrator {
                                           List<LlmModel> executorChain,
                                           List<LlmModel> plannerChain) {
         AgentStepResult lastResult = null;
+        // 跨步骤（含 Reflection 重试 / re-plan / HITL resume）累积真正进入模型上下文的检索来源，
+        // 供聊天侧生成与模型上下文同源的引用卡片
+        List<AgentStepResult.RagSourceRecord> aggregatedSources = new ArrayList<>();
 
         for (StepDTO stepDTO : stepDTOs) {
             if (AgentConstants.STATUS_CANCELLED.equals(plan.getStatus())) {
@@ -380,6 +383,9 @@ public class AgentOrchestrator {
             }
 
             // 5e. 持久化结果
+            if (result.getRagSources() != null && !result.getRagSources().isEmpty()) {
+                aggregatedSources.addAll(result.getRagSources());
+            }
             String finalStatus = result.getStatus();
             String finalResultSummary = result.getResultSummary();
             long finalLatencyMs = stepLatencyMs;
@@ -474,6 +480,9 @@ public class AgentOrchestrator {
                     "totalSteps", plan.getMaxSteps()));
         }
 
+        if (lastResult != null) {
+            lastResult.setRagSources(List.copyOf(aggregatedSources));
+        }
         return lastResult;
     }
 

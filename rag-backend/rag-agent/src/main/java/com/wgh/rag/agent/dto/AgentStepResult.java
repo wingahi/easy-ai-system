@@ -61,9 +61,16 @@ public class AgentStepResult {
     @NoArgsConstructor
     @AllArgsConstructor
     public static class RagSourceRecord {
+        private Long kbId;
+        private String kbName;
+        private Long fileId;
         private String fileName;
         private Integer chunkIndex;
+        private Integer pageNo;
+        private Integer charStart;
+        private Integer charEnd;
         private Double score;
+        private String snippet;
         private String content;
     }
 }

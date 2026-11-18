@@ -14,6 +14,7 @@ import com.wgh.rag.chat.evaluation.RetrievalMetricsCalculator;
 import com.wgh.rag.chat.mapper.ChatMessageMapper;
 import com.wgh.rag.chat.mapper.ChatSessionMapper;
 import com.wgh.rag.chat.mapper.ChatWindowMapper;
+import com.wgh.rag.agent.dto.AgentStepResult.RagSourceRecord;
 import com.wgh.rag.agent.service.AgentOrchestrator;
 import com.wgh.rag.common.exception.BusinessException;
 import com.wgh.rag.common.log.MdcContext;
@@ -331,7 +332,39 @@ public class RagChatService {
         }
         final List<EmbeddingMatch<TextSegment>> retrievedMatches = new ArrayList<>(retrieveResult.matches());
 
-        // 检索指标（在线链路无相关性标注，Recall@K 不可计算，故不下发 recallRate）：
+        // 3. 构建系统提示词（防注入 + RAG 上下文；template: 语法在此解析，userName 取请求线程用户）
+        String systemPrompt = buildSystemPrompt(window, quotaUsername);
+
+        // 4. 加载窗口级工具（隔离：只给这个窗口注册它自己的 toolIds 指定的工具）
+        // 放在路线判断之前：即使知识库没有检索结果，只要窗口配了工具也要继续走 LLM
+        List<ToolSpecification> toolSpecs = loadWindowTools(window);
+        // 快照：流式模型的回调在异步线程执行，ThreadLocal 会失效，必须显式传递
+        final Map<String, ToolConfig> toolRegistry = toolExecutionEngine.snapshotWindowTools();
+        final Long windowModelId = window.getLlmModelId();
+
+        // 5. 上下文预算前置：模型实际拿到的 chunk、引用来源卡片、检索指标必须基于同一份裁剪后列表
+        boolean agentEnabled = Integer.valueOf(1).equals(window.getAgentEnabled());
+        boolean willRunLlm = !retrievedMatches.isEmpty() || !toolSpecs.isEmpty() || !imageUrls.isEmpty();
+        List<LlmModel> modelChain = null;
+        List<ChatMessage> messages = null;
+        if (!agentEnabled && willRunLlm) {
+            // 模型路由：优先窗口 route_group（按优先级形成故障转移链路），否则 llmModelId 单模型
+            modelChain = modelRouter.resolveChain(window.getModelRouteGroup(), window.getLlmModelId());
+            messages = buildMessageHistory(session, systemPrompt, userMessage);
+        }
+        RagContextBudgeter.Result contextBudget = null;
+        if (!retrievedMatches.isEmpty()) {
+            if (modelChain == null) {
+                modelChain = modelRouter.resolveChain(window.getModelRouteGroup(), window.getLlmModelId());
+            }
+            // Agent 路线不装配窗口级历史（由步骤内检索负责），按 system + 当前问题估算已占用 prompt
+            List<ChatMessage> promptMessages = messages != null ? messages
+                    : List.of(SystemMessage.from(systemPrompt), UserMessage.from(userMessage));
+            contextBudget = applyRagContextBudget(retrievedMatches, promptMessages, modelChain.get(0));
+        }
+
+        // 6. 检索指标（基于预算裁剪后的列表，与来源卡片、模型上下文同源；在线链路无相关性标注，
+        //    Recall@K 不可计算，故不下发 recallRate）：
         // coverageRate: 召回覆盖率 = 实际返回条数 / topK（是否填满 topK，不是召回率）
         // hitRate:      命中率 = 分数达标的条数 / 实际返回条数（Precision@K）
         // 注意：未配置知识库时，不应下发/持久化检索指标（前端按 null 不展示）
@@ -357,6 +390,11 @@ public class RagChatService {
             retrieveInfo.put("keywordHitCount", retrieveResult.keywordHitIds().size());
             retrieveInfo.put("transformedQueries", retrieveResult.transformedQueries());
             retrieveInfo.put("transformLatencyMs", retrieveResult.transformLatencyMs());
+            // 追加字段：预算裁剪后的上下文规模（既有字段名与语义保持不变）
+            retrieveInfo.put("contextKeptCount", retrievedMatches.size());
+            retrieveInfo.put("contextBudgetTokens", contextBudget != null ? contextBudget.budgetTokens() : null);
+            retrieveInfo.put("contextTrimmed", contextBudget != null
+                    && (!contextBudget.dropped().isEmpty() || contextBudget.truncated()));
             emitter.send(SseEmitter.event().name(ChatEvents.RETRIEVE).data(retrieveInfo));
 
             // 保存用户消息的检索指标
@@ -365,20 +403,10 @@ public class RagChatService {
             messageMapper.updateById(userMsg);
         }
 
-        // 3. 构建系统提示词（防注入 + RAG 上下文；template: 语法在此解析，userName 取请求线程用户）
-        String systemPrompt = buildSystemPrompt(window, quotaUsername);
-
-        // 4. 加载窗口级工具（隔离：只给这个窗口注册它自己的 toolIds 指定的工具）
-        // 放在路线判断之前：即使知识库没有检索结果，只要窗口配了工具也要继续走 LLM
-        List<ToolSpecification> toolSpecs = loadWindowTools(window);
-        // 快照：流式模型的回调在异步线程执行，ThreadLocal 会失效，必须显式传递
-        final Map<String, ToolConfig> toolRegistry = toolExecutionEngine.snapshotWindowTools();
-        final Long windowModelId = window.getLlmModelId();
-
         // ===== Agent 分支：窗口启用了 Agent 自动规划执行 =====
         log.info("Agent 分支检查: windowId={}, agentEnabled={}, toolSpecsSize={}, hasKb={}",
                 window.getId(), window.getAgentEnabled(), toolSpecs.size(), hasKb);
-        if (Integer.valueOf(1).equals(window.getAgentEnabled())) {
+        if (agentEnabled) {
             try {
                 // SSE 事件回调：AgentOrchestrator.emit(eventName, data) → 拆成独立 SSE 事件名
                 java.util.function.BiConsumer<String, Map<String, Object>> sseEventSink = (eventName, data) -> {
@@ -435,9 +463,12 @@ public class RagChatService {
                 // 关键点：用户刷新页面会导致 SSE 客户端断开，不能因为发送失败丢掉 Agent 结果
                 String agentFinalText = agentResult != null && agentResult.getFinalText() != null
                         ? agentResult.getFinalText() : "";
-                List<Map<String, Object>> sourceList = buildSourcesList(retrievedMatches);
+                // 来源与模型上下文同源：取步骤内实际进入 prompt 的裁剪后 chunk（跨步骤累加、同文档留最高分）
+                List<RagSourceRecord> agentSources = agentResult != null && agentResult.getRagSources() != null
+                        ? agentResult.getRagSources() : List.of();
+                List<Map<String, Object>> sourceList = buildSourcesListFromRecords(agentSources);
                 Double agentAccuracy = hasKb
-                        ? calculateAccuracyRate(agentFinalText, retrievedMatches) : null;
+                        ? calculateAccuracyRateFromRecords(agentFinalText, agentSources) : null;
 
                 if (!agentFinalText.isBlank()) {
                     saveAssistantMessage(session, agentFinalText, sourceList, hitRate, agentAccuracy, null, null);
@@ -488,8 +519,10 @@ public class RagChatService {
         }
 
         // 路线二：有搜索结果 -> 组装上下文 -> 调 LLM（带工具调用循环）
-        // 模型路由：优先窗口 route_group（按优先级形成故障转移链路），否则 llmModelId 单模型
-        List<LlmModel> modelChain = modelRouter.resolveChain(window.getModelRouteGroup(), window.getLlmModelId());
+        // 模型链路/消息历史已在预算前置阶段装配；Agent 降级等场景在此兜底补齐
+        if (modelChain == null) {
+            modelChain = modelRouter.resolveChain(window.getModelRouteGroup(), window.getLlmModelId());
+        }
         // 记录实际模型（切链成功后回填，用于成本回填）
         final AtomicReference<LlmModel> actualModel = new AtomicReference<>(modelChain.get(0));
         // 故障转移可观测事件：尝试顺序/切换原因同步到日志与前端
@@ -506,13 +539,18 @@ public class RagChatService {
             onModelSwitch.accept(modelChain.get(0), "首模型");
         }
 
-        List<ChatMessage> messages = buildMessageHistory(session, systemPrompt, userMessage);
+        if (messages == null) {
+            messages = buildMessageHistory(session, systemPrompt, userMessage);
+            // Agent 分支失败降级到普通 RAG 时，历史此时才装配，需重新按完整 prompt 计算预算
+            if (!retrievedMatches.isEmpty()) {
+                applyRagContextBudget(retrievedMatches, messages, modelChain.get(0));
+            }
+        }
 
         // 有检索结果时把知识库内容拼进用户消息；只配了工具但没有知识库结果时用原始消息
         String userPromptText = userMessage;
         if (!retrievedMatches.isEmpty()) {
-            // 先按模型窗口 + 已占用 prompt 计算预算并裁剪，再拼接（引用来源随后统一取裁剪后的列表）
-            applyRagContextBudget(retrievedMatches, messages, modelChain.get(0));
+            // 预算已在前面统一应用，此处直接拼接，保证来源/指标/上下文同源
             String finalContext = extractRagContext(retrievedMatches);
             userPromptText = """
                     已知知识库内容：
@@ -1220,8 +1258,8 @@ public class RagChatService {
      * 裁剪按分数（rerank / RRF / 余弦）降序保留，并把结果写回原列表，
      * 保证 prompt 拼接、引用来源、正确率计算使用同一批 chunk。
      */
-    private void applyRagContextBudget(List<EmbeddingMatch<TextSegment>> matches,
-                                       List<ChatMessage> messages, LlmModel model) {
+    private RagContextBudgeter.Result applyRagContextBudget(List<EmbeddingMatch<TextSegment>> matches,
+                                                            List<ChatMessage> messages, LlmModel model) {
         RagProperties.Context props = ragProperties.getContext();
         int promptTokens = estimatePromptTokens(messages) + RAG_PROMPT_TEMPLATE_TOKENS;
         int cap = props != null && props.getContextMaxTokens() != null
@@ -1255,6 +1293,7 @@ public class RagChatService {
 
         matches.clear();
         matches.addAll(result.kept());
+        return result;
     }
 
     /** 估算已构建消息（system + 历史 + 当前问题）占用的 Tokens。 */
@@ -1415,16 +1454,76 @@ public class RagChatService {
         return new ArrayList<>(byFile.values());
     }
 
+    /**
+     * 由 Agent 步骤内实际进入模型上下文的检索来源生成引用卡片。
+     * 去重口径与普通路线一致：按文档归并、保留最高分，顺序为文档首次出现顺序。
+     */
+    static List<Map<String, Object>> buildSourcesListFromRecords(List<RagSourceRecord> records) {
+        Map<String, Map<String, Object>> byFile = new LinkedHashMap<>();
+        if (records == null) return new ArrayList<>();
+        for (RagSourceRecord record : records) {
+            if (record == null) continue;
+            String key = sourceKeyOf(record);
+            Map<String, Object> source = new HashMap<>();
+            source.put("kbId", record.getKbId());
+            source.put("kbName", record.getKbName());
+            source.put("fileId", record.getFileId());
+            source.put("fileName", record.getFileName());
+            source.put("chunkIndex", record.getChunkIndex());
+            source.put("pageNo", record.getPageNo());
+            source.put("charStart", record.getCharStart());
+            source.put("charEnd", record.getCharEnd());
+            source.put("score", record.getScore());
+            source.put("snippet", record.getSnippet());
+
+            Map<String, Object> prev = byFile.get(key);
+            double score = record.getScore() == null ? 0d : record.getScore();
+            double prevScore = prev == null || prev.get("score") == null ? -1d : (Double) prev.get("score");
+            if (prev == null || score > prevScore) {
+                byFile.put(key, source);
+            }
+        }
+        return new ArrayList<>(byFile.values());
+    }
+
+    /** 来源去重键（与 {@link #sourceKey(TextSegment)} 口径一致）：文件名 → fileId → 知识库名。 */
+    private static String sourceKeyOf(RagSourceRecord record) {
+        if (record.getFileName() != null && !record.getFileName().isBlank()) {
+            return "name:" + record.getFileName();
+        }
+        if (record.getFileId() != null) {
+            return "file:" + record.getFileId();
+        }
+        return "kb:" + (record.getKbName() == null ? "" : record.getKbName());
+    }
+
     private double calculateAccuracyRate(String response, List<EmbeddingMatch<TextSegment>> matches) {
+        List<String> contents = new ArrayList<>();
+        for (EmbeddingMatch<TextSegment> match : matches) {
+            contents.add(match.embedded() != null ? match.embedded().text() : null);
+        }
+        return calculateAccuracyRateFromContents(response, contents);
+    }
+
+    private double calculateAccuracyRateFromRecords(String response, List<RagSourceRecord> records) {
+        List<String> contents = new ArrayList<>();
+        if (records != null) {
+            for (RagSourceRecord record : records) {
+                contents.add(record != null ? record.getContent() : null);
+            }
+        }
+        return calculateAccuracyRateFromContents(response, contents);
+    }
+
+    private double calculateAccuracyRateFromContents(String response, List<String> contents) {
         // 响应中是否引用了检索片段的关键短语（中文 3 字滑窗 + 英文按词）
-        if (matches.isEmpty() || response == null || response.isBlank()) return 0.0;
+        if (contents.isEmpty() || response == null || response.isBlank()) return 0.0;
 
         // 剥离 Markdown 符号后再匹配（LLM 常输出 **粗体**、`代码` 等）
         String respNorm = response.replaceAll("[\\*\\`#_~\\[\\](){}<>|\\\\]", "").toLowerCase();
 
         int hitChunks = 0;
-        for (EmbeddingMatch<TextSegment> match : matches) {
-            String content = match.embedded() != null ? match.embedded().text() : null;
+        for (String content : contents) {
             if (content == null || content.isBlank()) continue;
 
             java.util.Set<String> phrases = new java.util.HashSet<>();
@@ -1450,7 +1549,7 @@ public class RagChatService {
             // 至少 8% 的关键短语命中 → 该 chunk 视为被引用
             if (hits >= Math.max(1, (int) (phrases.size() * 0.08))) hitChunks++;
         }
-        return (double) hitChunks / matches.size();
+        return (double) hitChunks / contents.size();
     }
 
     /** HITL 确认恢复执行后的最终答复补写（REST 通道没有 SSE，需要主动落库）。 */
