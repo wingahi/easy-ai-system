@@ -2,6 +2,8 @@ package com.wgh.rag.workflow.engine.executor;
 
 import com.wgh.rag.workflow.engine.ConditionEvaluator;
 import com.wgh.rag.workflow.engine.VariableResolver;
+import com.wgh.rag.common.metrics.RagMetrics;
+import com.wgh.rag.workflow.config.WorkflowContextProperties;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -19,7 +21,8 @@ class NodeExecutorRegistryTest {
     private NodeExecutorRegistry newRegistry() {
         return new NodeExecutorRegistry(List.of(
                 new StartNodeExecutor(),
-                new LlmNodeExecutor(variableResolver, null, null),
+                new LlmNodeExecutor(variableResolver, null, null,
+                        new WorkflowContextProperties(), org.mockito.Mockito.mock(RagMetrics.class)),
                 new RetrievalNodeExecutor(variableResolver, null),
                 new ToolNodeExecutor(variableResolver, null),
                 new WorkflowNodeExecutor(variableResolver, null, null, null),

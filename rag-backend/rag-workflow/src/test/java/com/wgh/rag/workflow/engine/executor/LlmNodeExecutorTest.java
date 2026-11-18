@@ -3,6 +3,8 @@ package com.wgh.rag.workflow.engine.executor;
 import com.wgh.rag.llm.entity.LlmModel;
 import com.wgh.rag.llm.factory.ModelCacheManager;
 import com.wgh.rag.llm.service.ModelFailoverService;
+import com.wgh.rag.common.metrics.RagMetrics;
+import com.wgh.rag.workflow.config.WorkflowContextProperties;
 import com.wgh.rag.workflow.dto.GraphNode;
 import com.wgh.rag.workflow.dto.NodeResult;
 import com.wgh.rag.workflow.dto.RunContext;
@@ -45,7 +47,8 @@ class LlmNodeExecutorTest {
     private final VariableResolver variableResolver = new VariableResolver();
 
     private LlmNodeExecutor executor() {
-        return new LlmNodeExecutor(variableResolver, modelCacheManager, modelFailoverService);
+        return new LlmNodeExecutor(variableResolver, modelCacheManager, modelFailoverService,
+                new WorkflowContextProperties(), org.mockito.Mockito.mock(RagMetrics.class));
     }
 
     private LlmModel llmModel(Long id) {

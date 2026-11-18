@@ -135,6 +135,15 @@ public class RagMetrics {
         if (droppedMessages > 0) counter(RAG_CONTEXT_DROPPED, "kind", "history").increment(droppedMessages);
     }
 
+    /**
+     * 工作流 LLM 节点输入预算裁剪：复用检索上下文指标，kind 追加 workflow_prompt_original / workflow_prompt_kept。
+     */
+    public void recordWorkflowNodePromptTrim(int originalTokens, int keptTokens) {
+        counter(RAG_CONTEXT_TOKENS, "kind", "workflow_prompt_original").increment(Math.max(originalTokens, 0));
+        counter(RAG_CONTEXT_TOKENS, "kind", "workflow_prompt_kept").increment(Math.max(keptTokens, 0));
+        counter(RAG_CONTEXT_DROPPED, "kind", "workflow_prompt").increment(1);
+    }
+
     // ==================== LLM ====================
 
     public void recordLlmCall(String provider) {

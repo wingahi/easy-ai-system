@@ -8,6 +8,10 @@ import com.wgh.rag.llm.failover.FailoverAttempt;
 import com.wgh.rag.llm.failover.FailoverErrors;
 import com.wgh.rag.llm.factory.ModelCacheManager;
 import com.wgh.rag.llm.service.ModelFailoverService;
+import com.wgh.rag.llm.util.RagContextBudgeter;
+import com.wgh.rag.llm.util.TokenEstimator;
+import com.wgh.rag.common.metrics.RagMetrics;
+import com.wgh.rag.workflow.config.WorkflowContextProperties;
 import com.wgh.rag.workflow.constant.WorkflowEvents;
 import com.wgh.rag.workflow.dto.NodeResult;
 import com.wgh.rag.workflow.dto.RunContext;
@@ -37,6 +41,8 @@ public class LlmNodeExecutor implements NodeExecutor {
     private final VariableResolver variableResolver;
     private final ModelCacheManager modelCacheManager;
     private final ModelFailoverService modelFailoverService;
+    private final WorkflowContextProperties contextProperties;
+    private final RagMetrics metrics;
 
     @Override
     public String supportedType() {
@@ -55,13 +61,15 @@ public class LlmNodeExecutor implements NodeExecutor {
         String prompt = variableResolver.render(NodeConfigSupport.str(cfg.get("prompt")), ctx);
         if (prompt.isBlank()) prompt = String.valueOf(ctx.getVars().getOrDefault("lastOutput", ""));
 
+        List<LlmModel> chain = modelFailoverService.resolveChain(modelId);
+        prompt = applyInputBudget(context, systemPrompt, prompt, chain);
+
         List<ChatMessage> messages = new ArrayList<>();
         if (!systemPrompt.isBlank()) messages.add(SystemMessage.from(systemPrompt));
         messages.add(UserMessage.from(prompt));
 
         ChatRequest request = ChatRequest.builder().messages(messages).build();
         // 单节点算一次逻辑调用：首个响应前失败切下一个模型，已产出后不切链
-        List<LlmModel> chain = modelFailoverService.resolveChain(modelId);
         ChatResponse response = BlockingModelFailover.call(chain, (attempt, model) -> {
             ChatResponse r = modelCacheManager.getChatModel(model.getId()).chat(request);
             attempt.markStarted();
@@ -90,5 +98,36 @@ public class LlmNodeExecutor implements NodeExecutor {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("text", text != null ? text : "");
         return NodeResult.builder().success(true).output(out).build();
+    }
+
+    private static final String TRUNCATE_MARK = "\n…（节点输入超出上下文预算，已截断）";
+
+    /**
+     * LLM 节点输入预算：模型窗口 × 比例；System 优先占用预算，Prompt 超出时按句界裁剪并标注截断。
+     */
+    private String applyInputBudget(NodeExecutionContext context, String systemPrompt, String prompt,
+                                    List<LlmModel> chain) {
+        double ratio = contextProperties.getNodePromptMaxRatio();
+        if (ratio <= 0 || ratio > 1) {
+            ratio = 0.7;
+        }
+        Integer configuredWindow = chain.isEmpty() ? null : chain.get(0).getMaxContextTokens();
+        int windowTokens = configuredWindow != null && configuredWindow > 0
+                ? configuredWindow : contextProperties.getFallbackContextWindowTokens();
+        int budget = Math.max((int) (windowTokens * ratio), TokenEstimator.estimate(TRUNCATE_MARK) + 1);
+
+        int original = TokenEstimator.estimate(prompt);
+        int promptBudget = budget - TokenEstimator.estimate(systemPrompt) - TokenEstimator.estimate(TRUNCATE_MARK);
+        if (original <= promptBudget) {
+            return prompt;
+        }
+
+        String clipped = RagContextBudgeter.clip(prompt, Math.max(promptBudget, 1)) + TRUNCATE_MARK;
+        int kept = TokenEstimator.estimate(clipped);
+        log.warn("工作流 LLM 节点 {} 输入超预算：窗口={}, 比例={}, 预算={} tokens, 原始={} tokens, 保留={} tokens",
+                context.getNode() != null ? context.getNode().getId() : "?",
+                windowTokens, ratio, budget, original, kept);
+        metrics.recordWorkflowNodePromptTrim(original, kept);
+        return clipped;
     }
 }

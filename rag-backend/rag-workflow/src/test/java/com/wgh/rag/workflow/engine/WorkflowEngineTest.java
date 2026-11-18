@@ -115,7 +115,9 @@ class WorkflowEngineTest {
         });
         NodeExecutorRegistry registry = new NodeExecutorRegistry(List.of(
                 new StartNodeExecutor(),
-                new LlmNodeExecutor(variableResolver, modelCacheManager, modelFailoverService),
+                new LlmNodeExecutor(variableResolver, modelCacheManager, modelFailoverService,
+                        new com.wgh.rag.workflow.config.WorkflowContextProperties(),
+                        org.mockito.Mockito.mock(com.wgh.rag.common.metrics.RagMetrics.class)),
                 new RetrievalNodeExecutor(variableResolver, ragRetrieveService),
                 new ToolNodeExecutor(variableResolver, toolNodeInvoker),
                 new WorkflowNodeExecutor(variableResolver, workflowMapper, objectMapper, engineProvider),
