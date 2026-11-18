@@ -32,4 +32,9 @@ public record ToolInvocationOutcome(ToolExecutionResultMessage message,
         return new ToolInvocationOutcome(message, false, kind,
                 kind != null && kind.retryable(), attempts, latencyMs, false, false);
     }
+
+    /** 结构化信封视图（分页 + 摘要），不改变原始文本与既有字段。 */
+    public ToolResultEnvelope envelope(int pageChars, int summaryChars) {
+        return ToolResultNormalizer.firstPage(message.toolName(), message.text(), pageChars, summaryChars);
+    }
 }
