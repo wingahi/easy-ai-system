@@ -61,6 +61,13 @@ public class WorkflowService {
     /** runId → 活跃 SSE 通道（进程内） */
     private final Map<Long, SseEmitter> emitters = new ConcurrentHashMap<>();
 
+    /**
+     * 单步调试开关（默认关闭）。关闭时调试接口直接拒绝，普通运行链路不受任何影响。
+     * 可通过配置项 {@code wgh.workflow.debug.enabled} 或环境变量 {@code WGH_WORKFLOW_DEBUG_ENABLED} 开启。
+     */
+    @org.springframework.beans.factory.annotation.Value("${wgh.workflow.debug.enabled:false}")
+    private boolean debugStepEnabled = false;
+
     public WorkflowService(WorkflowMapper workflowMapper,
                            WorkflowVersionMapper versionMapper,
                            WorkflowRunMapper runMapper,
@@ -523,6 +530,65 @@ public class WorkflowService {
     private record HitlResumeState(WorkflowRun run, WorkflowGraph graph,
                                    GraphValidator.GraphValidationResult validation,
                                    RunContext ctx) {
+    }
+
+    // ==================== 单步调试 ====================
+
+    /**
+     * 单步调试：一次调用推进最多 {@code maxSteps} 个节点，返回每个节点的输入/输出快照。
+     * 首次调用不传 runId 会创建调试运行记录；后续调用带上 runId 从断点游标继续。
+     * 调试执行与 SSE 运行链路完全独立，开关关闭时直接拒绝。
+     */
+    public com.wgh.rag.workflow.dto.DebugStepResult debugStep(Long workflowId, String input, Long runId,
+                                                              Integer maxSteps, String stopAtNodeId) {
+        if (!debugStepEnabled) {
+            throw new BusinessException(ResultCode.OPERATION_NOT_ALLOWED,
+                    "单步调试未启用（配置项 wgh.workflow.debug.enabled=false）");
+        }
+        Workflow wf = getVisible(workflowId);
+        DataScopeGuard.assertWritable(wf.getCreateBy(), wf.getVisibility(), "工作流");
+
+        WorkflowGraph graph = parseGraph(wf.getGraphJson());
+        GraphValidator.GraphValidationResult vr = graphValidator.validate(graph);
+        assertValid(vr);
+
+        WorkflowRun run;
+        RunContext ctx;
+        if (runId == null) {
+            run = new WorkflowRun();
+            run.setWorkflowId(wf.getId());
+            run.setWorkflowVersion(wf.getVersion());
+            run.setInputText(input == null ? "" : input);
+            run.setStatus(WorkflowConstants.STATUS_RUNNING);
+            run.setCreateBy(SecurityUtils.currentUsername());
+            run.setGraphSnapshot(wf.getGraphJson());
+            run.setExecutedNodes(0);
+            run.setTotalNodes(graph.getNodes().size());
+            run.setStartTime(LocalDateTime.now());
+            runMapper.insert(run);
+
+            ctx = new RunContext();
+            ctx.getVars().put("input", input == null ? "" : input);
+            ctx.getVars().put("lastOutput", "");
+        } else {
+            run = getRun(runId);
+            if (!workflowId.equals(run.getWorkflowId())) {
+                throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "调试运行记录不属于该工作流");
+            }
+            if (!WorkflowConstants.STATUS_DEBUG_PAUSED.equals(run.getStatus())) {
+                throw new BusinessException(ResultCode.OPERATION_NOT_ALLOWED, "调试会话已结束，请重新开始单步调试");
+            }
+            // 续跑必须使用创建调试会话时的图快照，避免中途编辑导致游标与图不一致
+            if (run.getGraphSnapshot() != null && !run.getGraphSnapshot().isBlank()) {
+                graph = parseGraph(run.getGraphSnapshot());
+                vr = graphValidator.validate(graph);
+                assertValid(vr);
+            }
+            ctx = engine.parseContext(run.getContextJson());
+        }
+
+        int budget = maxSteps == null ? 1 : Math.max(1, Math.min(maxSteps, 50));
+        return engine.debugStep(run, graph, vr, ctx, budget, stopAtNodeId);
     }
 
     /** 取消运行。 */

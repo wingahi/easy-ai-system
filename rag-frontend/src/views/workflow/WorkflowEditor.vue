@@ -203,6 +203,25 @@
                 <div class="empty-hint">赋值后可通过 <code v-text="VARS_REF"></code> 引用。</div>
               </template>
 
+              <!-- EXPRESSION -->
+              <template v-else-if="selectedNode.data.nodeType === 'EXPRESSION'">
+                <div class="field">
+                  <label>表达式（受限沙箱）</label>
+                  <el-input v-model="cfg.expression" type="textarea" :rows="5"
+                            placeholder="如：#fn.intOf(#vars.count) + 1" />
+                </div>
+                <div class="field">
+                  <label>结果写入变量（可选）</label>
+                  <el-input v-model="cfg.resultVar" size="small" placeholder="如：total" />
+                </div>
+                <div class="empty-hint">
+                  引用：<code>#input</code> / <code>#last</code> / <code>#loop</code> /
+                  <code>#vars.xxx</code> / <code>#nodes.节点ID.text</code><br />
+                  函数：<code>#fn.str / intOf / num / bool / len / upper / lower / trim / substr / replace / split / isEmpty / orElse</code><br />
+                  支持 <code>+ - * / %</code>、比较、逻辑、三元、<code>matches</code>；禁止 <code>T()</code>、<code>new</code>、<code>@bean</code>、实例方法。
+                </div>
+              </template>
+
               <el-divider content-position="left">失败策略</el-divider>
               <div class="field">
                 <el-radio-group v-model="selectedNode.data.onError" size="small">
@@ -223,6 +242,17 @@
               <el-button size="small" :disabled="!running || !currentRunId" @click="cancelRun">取消</el-button>
             </div>
 
+            <el-divider content-position="left">单步调试</el-divider>
+            <div class="run-actions">
+              <el-button size="small" :icon="VideoPlay" :loading="debugLoading" :disabled="debugLoading" @click="startDebug">开始单步</el-button>
+              <el-button size="small" :loading="debugLoading" :disabled="debugLoading || !debugRunId || debugFinished" @click="debugNext">下一步</el-button>
+              <el-button size="small" :disabled="!debugRunId" @click="resetDebug">结束调试</el-button>
+            </div>
+            <div class="empty-hint">
+              需后端开启 <code>wgh.workflow.debug.enabled</code>；每步执行一个节点，展开可查看该节点的输入/输出快照。
+            </div>
+            <el-alert v-if="debugError" :title="debugError" type="warning" :closable="false" show-icon style="margin-top:8px" />
+
             <el-alert v-if="runError" :title="runError" type="error" :closable="false" show-icon style="margin-top:10px" />
 
             <div class="trace-title">节点轨迹</div>
@@ -234,6 +264,16 @@
                 <span class="t-dur">{{ t.durationMs != null ? t.durationMs + ' ms' : '' }}</span>
                 <div v-if="t.preview" class="t-preview">{{ t.preview }}</div>
                 <div v-if="t.error" class="t-error">{{ t.error }}</div>
+                <div v-if="t.input || t.output" class="t-io" @click.stop>
+                  <details v-if="t.input">
+                    <summary>输入</summary>
+                    <pre>{{ prettyJson(t.input) }}</pre>
+                  </details>
+                  <details v-if="t.output">
+                    <summary>输出</summary>
+                    <pre>{{ prettyJson(t.output) }}</pre>
+                  </details>
+                </div>
               </div>
             </div>
 
@@ -278,7 +318,7 @@ import {
   chatModelList, kbList, toolList,
   workflowGet, workflowUpdate, workflowValidate, workflowPageRuns,
   workflowRunState, workflowCancelRun, streamWorkflowRun, streamWorkflowResume,
-  workflowUpdateVisibility
+  workflowUpdateVisibility, workflowDebugStep
 } from '../../api'
 import { canWriteResource } from '../../utils/visibility'
 import { useUserStore } from '../../stores/user'
@@ -318,6 +358,7 @@ const palette = [
   { type: 'LOOP', label: '循环', icon: '↻', color: '#16a085' },
   { type: 'HITL', label: '人工确认', icon: '👤', color: '#d46b08' },
   { type: 'VARIABLE', label: '变量赋值', icon: '𝑥', color: '#606266' },
+  { type: 'EXPRESSION', label: '表达式', icon: 'ƒ', color: '#2f54eb' },
   { type: 'END', label: '结束', icon: '■', color: '#909399' }
 ]
 
@@ -336,6 +377,12 @@ const hitlVisible = ref(false)
 const hitlPrompt = ref('')
 const hitlInput = ref('')
 const confirming = ref(false)
+
+// ============ 单步调试 ============
+const debugRunId = ref(null)
+const debugLoading = ref(false)
+const debugFinished = ref(false)
+const debugError = ref('')
 
 let streamHandle = null
 let pollTimer = null
@@ -522,6 +569,7 @@ const defaultConfig = (type) => {
   if (type === 'CONDITION') return { expression: '' }
   if (type === 'LOOP') return { maxIterations: 3, breakCondition: '' }
   if (type === 'VARIABLE') return { assignments: [] }
+  if (type === 'EXPRESSION') return { expression: '', resultVar: '' }
   if (type === 'END') return { output: '{{input}}' }
   if (type === 'LLM') return { systemPrompt: '', prompt: '{{input}}' }
   if (type === 'TOOL') return { toolId: null, arguments: {} }
@@ -618,6 +666,10 @@ const startRun = async () => {
   running.value = true
   activeTab.value = 'run'
   resetAllStatus()
+  // 切换回整流程运行：中断未完成的调试会话与旧 SSE 流
+  resetDebug()
+  streamHandle?.abort()
+  stopPolling()
 
   try {
     await save(true)
@@ -636,6 +688,89 @@ const startRun = async () => {
   // 所有运行状态一律以 SSE 事件驱动复位，避免流结束信号延迟导致 UI 卡死
   streamHandle.doStream()
 }
+
+// ============ 单步调试 ============
+const startDebug = async () => {
+  if (debugLoading.value) return
+  runError.value = ''
+  finalOutput.value = ''
+  trace.value = []
+  debugError.value = ''
+  debugRunId.value = null
+  debugFinished.value = false
+  activeTab.value = 'run'
+  running.value = false
+  resetAllStatus()
+  streamHandle?.abort()
+  stopPolling()
+
+  debugLoading.value = true
+  try {
+    await save(true)
+    const res = await workflowDebugStep(workflowId, { input: runInput.value, maxSteps: 1 })
+    debugRunId.value = res.data?.runId ?? null
+    applyDebugResult(res.data)
+  } catch (e) {
+    debugError.value = errorText(e, '单步调试不可用')
+  } finally {
+    debugLoading.value = false
+  }
+}
+
+const debugNext = async () => {
+  if (debugLoading.value || !debugRunId.value || debugFinished.value) return
+  debugLoading.value = true
+  try {
+    const res = await workflowDebugStep(workflowId, { runId: debugRunId.value, maxSteps: 1 })
+    debugRunId.value = res.data?.runId ?? debugRunId.value
+    applyDebugResult(res.data)
+  } catch (e) {
+    debugError.value = errorText(e, '单步执行失败')
+  } finally {
+    debugLoading.value = false
+  }
+}
+
+const applyDebugResult = (data) => {
+  if (!data) return
+  ;(data.steps || []).forEach((s) => {
+    trace.value.push({
+      key: `dbg_${s.nodeId}_${trace.value.length}_${Date.now()}`,
+      nodeId: s.nodeId,
+      nodeName: s.nodeName,
+      status: s.status,
+      durationMs: s.durationMs,
+      preview: previewOf(s.output),
+      error: s.error,
+      input: s.input,
+      output: s.output
+    })
+    setNodeStatus(s.nodeId, s.status)
+  })
+  debugFinished.value = data.status !== 'DEBUG_PAUSED'
+  if (data.status === 'FAILED') {
+    debugError.value = data.error || '调试执行失败'
+  } else if (data.status === 'PAUSED') {
+    debugError.value = '流程在人工确认节点暂停，可改用「执行」继续确认'
+  }
+  if (data.output) finalOutput.value = data.output
+}
+
+const resetDebug = () => {
+  debugRunId.value = null
+  debugFinished.value = false
+  debugError.value = ''
+}
+
+const prettyJson = (value) => {
+  try {
+    return JSON.stringify(value, null, 2)
+  } catch {
+    return String(value)
+  }
+}
+
+const errorText = (e, fallback) => e?.response?.data?.message || e?.message || fallback
 
 const confirmHitl = () => {
   confirming.value = true
@@ -1032,6 +1167,22 @@ onBeforeUnmount(() => {
     word-break: break-all;
   }
   .t-error { margin-top: 4px; color: #f56c6c; word-break: break-all; }
+  .t-io {
+    margin-top: 4px;
+    font-size: 11px;
+    color: #606266;
+    summary { cursor: pointer; color: #409eff; }
+    pre {
+      margin: 4px 0 0;
+      padding: 6px;
+      max-height: 180px;
+      overflow: auto;
+      background: #f7f8fa;
+      border-radius: 4px;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+  }
 }
 .final-output {
   background: #f7f8fa;

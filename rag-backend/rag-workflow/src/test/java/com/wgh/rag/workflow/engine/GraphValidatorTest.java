@@ -178,6 +178,50 @@ class GraphValidatorTest {
                 .containsEntry("end", 1);
     }
 
+    // ===== 表达式节点 =====
+
+    @Test
+    @DisplayName("表达式节点：合法表达式通过校验")
+    void expressionNodeValid() {
+        WorkflowGraph graph = graph(
+                List.of(node("start", WorkflowConstants.NODE_START),
+                        node("expr", WorkflowConstants.NODE_EXPRESSION, Map.of("expression", "#vars.x + 1")),
+                        node("end", WorkflowConstants.NODE_END)),
+                List.of(edge("start", "expr"), edge("expr", "end")));
+
+        assertThat(validator.validate(graph).hasErrors()).isFalse();
+    }
+
+    @Test
+    @DisplayName("表达式节点：缺失表达式 / 危险语法 / 语法错误被检出")
+    void expressionNodeInvalid() {
+        WorkflowGraph missing = graph(
+                List.of(node("start", WorkflowConstants.NODE_START),
+                        node("expr", WorkflowConstants.NODE_EXPRESSION),
+                        node("end", WorkflowConstants.NODE_END)),
+                List.of(edge("start", "expr"), edge("expr", "end")));
+        assertThat(validator.validate(missing).errors)
+                .contains("表达式节点缺少表达式：expr");
+
+        WorkflowGraph unsafe = graph(
+                List.of(node("start", WorkflowConstants.NODE_START),
+                        node("expr", WorkflowConstants.NODE_EXPRESSION,
+                                Map.of("expression", "T(java.lang.Runtime).getRuntime()")),
+                        node("end", WorkflowConstants.NODE_END)),
+                List.of(edge("start", "expr"), edge("expr", "end")));
+        assertThat(validator.validate(unsafe).errors)
+                .anyMatch(e -> e.startsWith("表达式节点表达式非法：expr"))
+                .anyMatch(e -> e.contains("类型引用"));
+
+        WorkflowGraph badSyntax = graph(
+                List.of(node("start", WorkflowConstants.NODE_START),
+                        node("expr", WorkflowConstants.NODE_EXPRESSION, Map.of("expression", "#vars.x +")),
+                        node("end", WorkflowConstants.NODE_END)),
+                List.of(edge("start", "expr"), edge("expr", "end")));
+        assertThat(validator.validate(badSyntax).errors)
+                .anyMatch(e -> e.contains("表达式节点表达式非法：expr"));
+    }
+
     // ===== 辅助 =====
 
     private WorkflowGraph validGraph(GraphNode llm) {

@@ -5,11 +5,14 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.wgh.rag.auth.constant.AuthConstants;
 import com.wgh.rag.controller.support.RunAccessGuard;
+import com.wgh.rag.common.exception.BusinessException;
 import com.wgh.rag.common.result.PageResult;
 import com.wgh.rag.common.result.Result;
+import com.wgh.rag.common.result.ResultCode;
 import com.wgh.rag.common.security.RequiresPermission;
 import com.wgh.rag.llm.entity.LlmModel;
 import com.wgh.rag.llm.service.LlmModelService;
+import com.wgh.rag.workflow.dto.DebugStepResult;
 import com.wgh.rag.workflow.entity.Workflow;
 import com.wgh.rag.workflow.entity.WorkflowRun;
 import com.wgh.rag.workflow.entity.WorkflowVersion;
@@ -211,6 +214,22 @@ public class WorkflowController {
         return workflowService.run(id, input);
     }
 
+    @Operation(summary = "单步调试：推进节点并返回输入/输出快照（需开启 wgh.workflow.debug.enabled）")
+    @PostMapping("/{id}/debug/step")
+    @RequiresPermission(AuthConstants.PERM_WORKFLOW_EDIT)
+    public Result<DebugStepResult> debugStep(@PathVariable Long id,
+                                             @RequestBody(required = false) Map<String, Object> body) {
+        String input = body != null && body.get("input") != null ? String.valueOf(body.get("input")) : "";
+        Long runId = parseLong(body != null ? body.get("runId") : null, "runId");
+        Integer maxSteps = parseInt(body != null ? body.get("maxSteps") : null, "maxSteps");
+        String stopAtNodeId = body != null && body.get("stopAtNodeId") != null
+                ? String.valueOf(body.get("stopAtNodeId")) : null;
+        if (runId != null) {
+            assertRunAccessible(runId);
+        }
+        return Result.success(workflowService.debugStep(id, input, runId, maxSteps, stopAtNodeId));
+    }
+
     @Operation(summary = "查询运行状态（刷新恢复）")
     @GetMapping("/runs/{runId}/state")
     @RequiresPermission(AuthConstants.PERM_WORKFLOW_USE)
@@ -335,5 +354,23 @@ public class WorkflowController {
 
     private void assertRunAccessible(Long runId) {
         runAccessGuard.assertAccessible(runId);
+    }
+
+    private Long parseLong(Object value, String field) {
+        if (value == null || String.valueOf(value).isBlank()) return null;
+        try {
+            return Long.valueOf(String.valueOf(value).trim());
+        } catch (NumberFormatException e) {
+            throw new BusinessException(ResultCode.PARAM_ERROR, field + " 必须为数字");
+        }
+    }
+
+    private Integer parseInt(Object value, String field) {
+        if (value == null || String.valueOf(value).isBlank()) return null;
+        try {
+            return Integer.valueOf(String.valueOf(value).trim());
+        } catch (NumberFormatException e) {
+            throw new BusinessException(ResultCode.PARAM_ERROR, field + " 必须为数字");
+        }
     }
 }

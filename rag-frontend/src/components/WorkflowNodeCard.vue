@@ -31,11 +31,12 @@ const props = defineProps({
 
 const ICONS = {
   START: '▶', END: '■', LLM: '✨', RETRIEVAL: '🔍', AGENT: '🤖',
-  TOOL: '🔧', CONDITION: '◆', LOOP: '↻', HITL: '👤', VARIABLE: '𝑥'
+  TOOL: '🔧', CONDITION: '◆', LOOP: '↻', HITL: '👤', VARIABLE: '𝑥', EXPRESSION: 'ƒ'
 }
 const LABELS = {
   START: '开始', END: '结束', LLM: '大模型', RETRIEVAL: '知识库检索', AGENT: 'Agent 规划',
-  TOOL: '工具调用', CONDITION: '条件分支', LOOP: '循环', HITL: '人工确认', VARIABLE: '变量赋值'
+  TOOL: '工具调用', CONDITION: '条件分支', LOOP: '循环', HITL: '人工确认', VARIABLE: '变量赋值',
+  EXPRESSION: '表达式'
 }
 const STATUS = {
   RUNNING: '执行中', SUCCESS: '成功', FAILED: '失败',
@@ -105,6 +106,7 @@ const sourceHandles = computed(() => {
   &.t-loop .wf-node-head { background: #16a085; }
   &.t-hitl .wf-node-head { background: #d46b08; }
   &.t-variable .wf-node-head { background: #606266; }
+  &.t-expression .wf-node-head { background: #2f54eb; }
 
   /* 运行状态 */
   &.s-running { border-color: #e6a23c; box-shadow: 0 0 0 2px rgba(230, 162, 60, 0.35); }

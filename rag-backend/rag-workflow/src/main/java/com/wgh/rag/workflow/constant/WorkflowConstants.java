@@ -17,6 +17,7 @@ public interface WorkflowConstants {
     String NODE_VARIABLE = "VARIABLE";
     String NODE_WORKFLOW = "WORKFLOW";
     String NODE_AGENT = "AGENT";
+    String NODE_EXPRESSION = "EXPRESSION";
 
     // ============ 运行 / 节点状态 ============
     String STATUS_PENDING = "PENDING";
@@ -27,6 +28,8 @@ public interface WorkflowConstants {
     String STATUS_CANCELLED = "CANCELLED";
     String STATUS_SUCCESS = "SUCCESS";
     String STATUS_HITL_PENDING = "HITL_PENDING";
+    /** 单步调试会话在推进到指定节点/步数后暂停（与 HITL 的 PAUSED 区分，便于前端识别） */
+    String STATUS_DEBUG_PAUSED = "DEBUG_PAUSED";
 
     // ============ onError 策略 ============
     String ON_ERROR_STOP = "STOP";

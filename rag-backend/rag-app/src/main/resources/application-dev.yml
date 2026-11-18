@@ -34,6 +34,11 @@ wgh:
       top-k: 5
       min-score: 0.55
 
+  workflow:
+    debug:
+      enabled: true
+
+
 logging:
   level:
     root: INFO

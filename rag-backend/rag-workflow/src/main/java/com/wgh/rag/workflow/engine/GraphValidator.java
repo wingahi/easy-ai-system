@@ -22,7 +22,7 @@ public class GraphValidator {
             WorkflowConstants.NODE_START, WorkflowConstants.NODE_END, WorkflowConstants.NODE_LLM,
             WorkflowConstants.NODE_RETRIEVAL, WorkflowConstants.NODE_TOOL, WorkflowConstants.NODE_CONDITION,
             WorkflowConstants.NODE_LOOP, WorkflowConstants.NODE_HITL, WorkflowConstants.NODE_VARIABLE,
-            WorkflowConstants.NODE_WORKFLOW, WorkflowConstants.NODE_AGENT);
+            WorkflowConstants.NODE_WORKFLOW, WorkflowConstants.NODE_AGENT, WorkflowConstants.NODE_EXPRESSION);
 
     public GraphValidationResult validate(WorkflowGraph graph) {
         List<String> errors = new ArrayList<>();
@@ -87,6 +87,18 @@ public class GraphValidator {
             }
             if (WorkflowConstants.NODE_WORKFLOW.equals(node.getType()) && configLong(node, "workflowId") == null) {
                 errors.add("子流程节点未选择工作流：" + node.getId());
+            }
+            if (WorkflowConstants.NODE_EXPRESSION.equals(node.getType())) {
+                if (isBlank(node, "expression")) {
+                    errors.add("表达式节点缺少表达式：" + node.getId());
+                } else {
+                    // 仅做语法与安全约束校验，不执行表达式
+                    try {
+                        ExpressionSandbox.validateSyntax(String.valueOf(node.getConfig().get("expression")));
+                    } catch (IllegalArgumentException e) {
+                        errors.add("表达式节点表达式非法：" + node.getId() + "（" + e.getMessage() + "）");
+                    }
+                }
             }
         }
 

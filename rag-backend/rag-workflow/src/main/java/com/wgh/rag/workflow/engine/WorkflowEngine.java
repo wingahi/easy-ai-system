@@ -91,6 +91,313 @@ public class WorkflowEngine {
         executeLoop(run, graph, validation, ctx, new ArrayList<>(ctx.getPendingNodeIds()), sink, 1);
     }
 
+    // ==================== 单步调试 ====================
+
+    /**
+     * 单步推进（同步执行，最多 maxSteps 个节点）。
+     *
+     * <p>与 {@link #run} 完全独立的执行路径：按拓扑串行执行，命中 {@code stopAtNodeId} 或步数用尽即暂停，
+     * 游标（frontier / pendingIn）持久化在 {@link RunContext}，下次调用从游标继续。
+     * 普通运行链路不读取这些字段，因此关闭调试能力时引擎行为与原先一致。
+     *
+     * <p>每个节点都会记录输入快照（渲染后的节点配置 + 直接上游输出）与输出，便于前端单步查看。
+     */
+    public DebugStepResult debugStep(WorkflowRun run, WorkflowGraph graph,
+                                     GraphValidator.GraphValidationResult validation,
+                                     RunContext ctx, int maxSteps, String stopAtNodeId) {
+        Map<String, GraphNode> nodeMap = graph.getNodes().stream()
+                .collect(Collectors.toMap(GraphNode::getId, n -> n, (a, b) -> a));
+        Map<String, List<GraphEdge>> outEdges = new HashMap<>();
+        Map<String, List<GraphEdge>> inEdges = new HashMap<>();
+        for (GraphEdge edge : graph.getEdgesSafe()) {
+            outEdges.computeIfAbsent(edge.getSource(), k -> new ArrayList<>()).add(edge);
+            inEdges.computeIfAbsent(edge.getTarget(), k -> new ArrayList<>()).add(edge);
+        }
+
+        Deque<String> frontier;
+        Map<String, Integer> pendingIn;
+        if (ctx.getDebugFrontier() == null || ctx.getDebugFrontier().isEmpty()) {
+            // 首次单步：从 START 出发
+            GraphNode start = startNode(graph);
+            frontier = new ArrayDeque<>(List.of(start.getId()));
+            pendingIn = new ConcurrentHashMap<>(validation.parallelInDegree);
+            pendingIn.put(start.getId(), 0);
+            ctx.getVars().putIfAbsent("input", run.getInputText() == null ? "" : run.getInputText());
+            ctx.getVars().putIfAbsent("lastOutput", "");
+        } else {
+            frontier = new ArrayDeque<>(ctx.getDebugFrontier());
+            pendingIn = new ConcurrentHashMap<>(ctx.getDebugPendingIn() == null ? Map.of() : ctx.getDebugPendingIn());
+        }
+
+        List<DebugStepResult.Step> steps = new ArrayList<>();
+        Set<String> submitted = new HashSet<>();
+        BiConsumer<String, Map<String, Object>> sink = (event, payload) -> { /* 调试为同步调用，无 SSE */ };
+        int budget = Math.max(1, maxSteps);
+        int executedTotal = ctx.getDebugExecutedCount() == null ? 0 : ctx.getDebugExecutedCount();
+        int executedThisCall = 0;
+        String status = WorkflowConstants.STATUS_DEBUG_PAUSED;
+        String finalOutput = null;
+        String error = null;
+
+        while (!frontier.isEmpty() && executedThisCall < budget) {
+            if (executedTotal >= MAX_TOTAL_NODE_EXECUTIONS) {
+                error = "超过最大节点执行次数 " + MAX_TOTAL_NODE_EXECUTIONS;
+                status = WorkflowConstants.STATUS_FAILED;
+                break;
+            }
+            String nodeId = pollRunnable(frontier, pendingIn);
+            if (nodeId == null) break; // 无可执行节点（理论上前置校验已排除）
+            GraphNode node = nodeMap.get(nodeId);
+            if (node == null) {
+                error = "节点不存在：" + nodeId;
+                status = WorkflowConstants.STATUS_FAILED;
+                break;
+            }
+            int iteration = ctx.getCurrentLoopIteration() == null ? 0 : ctx.getCurrentLoopIteration();
+
+            // ---------- LOOP 回边：仅推进轮次 ----------
+            if (WorkflowConstants.NODE_LOOP.equals(node.getType()) && ctx.getLoopIterations().containsKey(nodeId)) {
+                int prev = ctx.getLoopIterations().get(nodeId);
+                int max = NodeConfigSupport.intConfig(node, "maxIterations", 3);
+                boolean shouldBreak = prev >= max || evalBreakCondition(node, ctx);
+                int nextIteration = prev;
+                if (!shouldBreak) {
+                    nextIteration = prev + 1;
+                    ctx.getLoopIterations().put(nodeId, nextIteration);
+                    ctx.setCurrentLoopIteration(nextIteration);
+                }
+                Map<String, Object> output = new LinkedHashMap<>();
+                output.put("iteration", nextIteration);
+                ctx.getNodeOutputs().put(nodeId, output);
+                appendNodeRun(run, node, nextIteration, output, 0L, WorkflowConstants.STATUS_SUCCESS, null);
+
+                DebugStepResult.Step step = newStep(node, WorkflowConstants.STATUS_SUCCESS, nextIteration, 0L);
+                step.setInput(loopInput(prev, nextIteration, shouldBreak));
+                step.setOutput(output);
+                steps.add(step);
+
+                executedTotal++;
+                executedThisCall++;
+                activateSuccessors(node, outEdges, shouldBreak ? "done" : "loop", pendingIn, frontier, submitted);
+                if (stopAtNodeId != null && stopAtNodeId.equals(nodeId)) break;
+                continue;
+            }
+
+            // ---------- HITL：暂停并持久化待确认 ----------
+            if (WorkflowConstants.NODE_HITL.equals(node.getType())) {
+                String prompt = variableResolver.render(NodeConfigSupport.str(node.getConfig().get("prompt")), ctx);
+                WorkflowNodeRun nr = new WorkflowNodeRun();
+                nr.setRunId(run.getId());
+                nr.setNodeId(node.getId());
+                nr.setNodeType(node.getType());
+                nr.setNodeName(nameOf(node));
+                nr.setStatus(WorkflowConstants.STATUS_HITL_PENDING);
+                nr.setIteration(iteration);
+                nr.setInputJson(toJson(Map.of("prompt", prompt)));
+                nr.setStartTime(LocalDateTime.now());
+                nodeRunMapper.insert(nr);
+
+                ctx.setPendingNodeIds(allTargets(outEdges.get(nodeId)));
+                DebugStepResult.Step step = newStep(node, WorkflowConstants.STATUS_HITL_PENDING, iteration, 0L);
+                step.setInput(Map.of("prompt", prompt));
+                step.setOutput(Map.of("prompt", prompt));
+                steps.add(step);
+                status = WorkflowConstants.STATUS_PAUSED;
+                break;
+            }
+
+            // ---------- 普通节点 ----------
+            Map<String, Object> inputSnapshot = snapshotNodeInput(node, inEdges, ctx);
+            WorkflowNodeRun nr = insertNodeRun(run, node, iteration, inputSnapshot);
+            long t0 = System.currentTimeMillis();
+            NodeResult result;
+            try {
+                result = executeNode(node, ctx, run, 1, sink);
+            } catch (Exception e) {
+                long duration = System.currentTimeMillis() - t0;
+                nr.setStatus(WorkflowConstants.STATUS_FAILED);
+                nr.setEndTime(LocalDateTime.now());
+                nr.setDurationMs(duration);
+                nr.setErrorMessage(e.getMessage());
+                nodeRunMapper.updateById(nr);
+
+                DebugStepResult.Step step = newStep(node, WorkflowConstants.STATUS_FAILED, iteration, duration);
+                step.setInput(inputSnapshot);
+                step.setError(e.getMessage());
+                steps.add(step);
+
+                if ("CONTINUE".equalsIgnoreCase(node.getOnError())) {
+                    log.warn("调试节点 {} 失败但配置为 CONTINUE，继续执行", node.getId(), e);
+                    Map<String, Object> failed = new LinkedHashMap<>();
+                    failed.put("error", e.getMessage());
+                    ctx.getNodeOutputs().put(node.getId(), failed);
+                    activateAllSuccessors(node, outEdges, pendingIn, frontier, submitted);
+                    executedTotal++;
+                    executedThisCall++;
+                    continue;
+                }
+                error = "节点「" + nameOf(node) + "」执行失败：" + e.getMessage();
+                status = WorkflowConstants.STATUS_FAILED;
+                break;
+            }
+
+            long duration = System.currentTimeMillis() - t0;
+            ctx.getNodeOutputs().put(node.getId(), result.getOutput());
+            Object text = result.getOutput().get("text");
+            if (text != null) ctx.getVars().put("lastOutput", text);
+
+            nr.setStatus(WorkflowConstants.STATUS_SUCCESS);
+            nr.setOutputJson(toJson(result.getOutput()));
+            nr.setEndTime(LocalDateTime.now());
+            nr.setDurationMs(duration);
+            nodeRunMapper.updateById(nr);
+
+            DebugStepResult.Step step = newStep(node, WorkflowConstants.STATUS_SUCCESS, iteration, duration);
+            step.setInput(inputSnapshot);
+            step.setOutput(result.getOutput());
+            steps.add(step);
+
+            executedTotal++;
+            executedThisCall++;
+
+            if (WorkflowConstants.NODE_END.equals(node.getType())) {
+                finalOutput = text != null ? String.valueOf(text) : "";
+                status = WorkflowConstants.STATUS_COMPLETED;
+                break;
+            }
+
+            if (WorkflowConstants.NODE_CONDITION.equals(node.getType())) {
+                boolean bool = Boolean.TRUE.equals(result.getOutput().get("result"));
+                activateSuccessors(node, outEdges, String.valueOf(bool), pendingIn, frontier, submitted);
+            } else if (WorkflowConstants.NODE_LOOP.equals(node.getType())) {
+                int max = NodeConfigSupport.intConfig(node, "maxIterations", 3);
+                activateSuccessors(node, outEdges, max <= 0 ? "done" : "loop", pendingIn, frontier, submitted);
+            } else {
+                activateAllSuccessors(node, outEdges, pendingIn, frontier, submitted);
+            }
+
+            if (stopAtNodeId != null && stopAtNodeId.equals(nodeId)) break;
+        }
+
+        if (WorkflowConstants.STATUS_DEBUG_PAUSED.equals(status) && frontier.isEmpty()) {
+            // 已无后续节点：按流程结束处理，避免游标停在一个无法推进的状态
+            status = WorkflowConstants.STATUS_COMPLETED;
+            if (finalOutput == null) {
+                Object last = ctx.getVars().get("lastOutput");
+                finalOutput = last == null ? "" : String.valueOf(last);
+            }
+        }
+
+        // ---------- 持久化运行状态与调试游标 ----------
+        ctx.setDebugFrontier(new ArrayList<>(frontier));
+        ctx.setDebugPendingIn(new HashMap<>(pendingIn));
+        ctx.setDebugExecutedCount(executedTotal);
+        run.setExecutedNodes(executedTotal);
+        run.setContextJson(toJson(ctx));
+        run.setStatus(status);
+        run.setUpdateTime(LocalDateTime.now());
+        if (WorkflowConstants.STATUS_COMPLETED.equals(status)) {
+            run.setOutputText(finalOutput);
+            run.setErrorMessage(null);
+            run.setFinishTime(LocalDateTime.now());
+        } else if (WorkflowConstants.STATUS_FAILED.equals(status)) {
+            run.setErrorMessage(error);
+            run.setFinishTime(LocalDateTime.now());
+        } else {
+            // DEBUG_PAUSED / PAUSED：保留可继续执行的游标，不算结束
+            run.setFinishTime(null);
+        }
+        run.setDurationMs(elapsed(run));
+        runMapper.updateById(run);
+
+        DebugStepResult result = new DebugStepResult();
+        result.setRunId(run.getId());
+        result.setWorkflowId(run.getWorkflowId());
+        result.setStatus(status);
+        result.setStepCount(steps.size());
+        result.setFinished(!WorkflowConstants.STATUS_DEBUG_PAUSED.equals(status));
+        result.setOutput(finalOutput);
+        result.setError(error);
+        result.setSteps(steps);
+        Map<String, Object> contextSnapshot = new LinkedHashMap<>();
+        contextSnapshot.put("vars", ctx.getVars());
+        contextSnapshot.put("nodeOutputs", ctx.getNodeOutputs());
+        contextSnapshot.put("loopIterations", ctx.getLoopIterations());
+        result.setContext(contextSnapshot);
+        return result;
+    }
+
+    /** 按队列顺序取出第一个入边已就绪的节点；未就绪节点轮转到队尾。 */
+    private String pollRunnable(Deque<String> frontier, Map<String, Integer> pendingIn) {
+        int size = frontier.size();
+        for (int i = 0; i < size; i++) {
+            String id = frontier.pollFirst();
+            if (id == null) return null;
+            if (pendingIn.getOrDefault(id, 0) <= 0) {
+                return id;
+            }
+            frontier.offerLast(id);
+        }
+        return null;
+    }
+
+    /** 调试输入快照：渲染后的节点配置 + 直接上游节点输出。 */
+    private Map<String, Object> snapshotNodeInput(GraphNode node, Map<String, List<GraphEdge>> inEdges,
+                                                  RunContext ctx) {
+        Map<String, Object> snapshot = new LinkedHashMap<>();
+        snapshot.put("config", renderDeep(node.getConfig(), ctx));
+        Map<String, Object> upstream = new LinkedHashMap<>();
+        for (GraphEdge edge : inEdges.getOrDefault(node.getId(), List.of())) {
+            Map<String, Object> out = ctx.getNodeOutputs().get(edge.getSource());
+            if (out != null) {
+                upstream.put(edge.getSource(), out);
+            }
+        }
+        snapshot.put("upstream", upstream);
+        return snapshot;
+    }
+
+    /** 递归渲染配置中的 {{变量}} 占位符，非字符串原样保留。 */
+    private Object renderDeep(Object value, RunContext ctx) {
+        if (value instanceof String s) {
+            return variableResolver.render(s, ctx);
+        }
+        if (value instanceof Map<?, ?> map) {
+            Map<String, Object> rendered = new LinkedHashMap<>();
+            for (Map.Entry<?, ?> entry : map.entrySet()) {
+                rendered.put(String.valueOf(entry.getKey()), renderDeep(entry.getValue(), ctx));
+            }
+            return rendered;
+        }
+        if (value instanceof List<?> list) {
+            List<Object> rendered = new ArrayList<>(list.size());
+            for (Object item : list) {
+                rendered.add(renderDeep(item, ctx));
+            }
+            return rendered;
+        }
+        return value;
+    }
+
+    private Map<String, Object> loopInput(int prevIteration, int nextIteration, boolean shouldBreak) {
+        Map<String, Object> input = new LinkedHashMap<>();
+        input.put("previousIteration", prevIteration);
+        input.put("iteration", nextIteration);
+        input.put("shouldBreak", shouldBreak);
+        return input;
+    }
+
+    private DebugStepResult.Step newStep(GraphNode node, String status, int iteration, long durationMs) {
+        DebugStepResult.Step step = new DebugStepResult.Step();
+        step.setNodeId(node.getId());
+        step.setNodeName(nameOf(node));
+        step.setNodeType(node.getType());
+        step.setStatus(status);
+        step.setIteration(iteration);
+        step.setDurationMs(durationMs);
+        return step;
+    }
+
     /** 子流程嵌套执行（引擎内部调用，不上报顶级 workflow_complete 事件） */
     public WorkflowRun runSubWorkflow(Workflow sub, WorkflowGraph graph, String input,
                                       GraphValidator.GraphValidationResult validation,
@@ -441,6 +748,11 @@ public class WorkflowEngine {
     // ==================== 持久化 / 事件 ====================
 
     private WorkflowNodeRun insertNodeRun(WorkflowRun run, GraphNode node, int iteration) {
+        return insertNodeRun(run, node, iteration, node.getConfig());
+    }
+
+    /** 调试用：写入自定义输入快照（渲染后的配置 + 上游输出）。 */
+    private WorkflowNodeRun insertNodeRun(WorkflowRun run, GraphNode node, int iteration, Object inputSnapshot) {
         WorkflowNodeRun nr = new WorkflowNodeRun();
         nr.setRunId(run.getId());
         nr.setNodeId(node.getId());
@@ -448,7 +760,7 @@ public class WorkflowEngine {
         nr.setNodeName(nameOf(node));
         nr.setStatus(WorkflowConstants.STATUS_RUNNING);
         nr.setIteration(iteration);
-        nr.setInputJson(toJson(node.getConfig()));
+        nr.setInputJson(toJson(inputSnapshot));
         nr.setStartTime(LocalDateTime.now());
         nodeRunMapper.insert(nr);
         return nr;

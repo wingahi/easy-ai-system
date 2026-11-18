@@ -356,6 +356,8 @@ export const workflowTriggerDelete = (tid) => request.delete(`/workflows/trigger
 export const workflowTemplates = () => request.get('/workflows/templates')
 export const workflowInstantiate = (templateId, name) =>
   request.post(`/workflows/templates/${templateId}/instantiate`, { name })
+// 单步调试：推进节点并返回输入/输出快照（需后端开启 wgh.workflow.debug.enabled）
+export const workflowDebugStep = (id, data) => request.post(`/workflows/${id}/debug/step`, data)
 
 /** 通用 SSE 读取（POST JSON） */
 function streamPost(url, body, onEvent, onDone, onError) {

@@ -26,6 +26,7 @@ class NodeExecutorRegistryTest {
                 new ConditionNodeExecutor(variableResolver, new ConditionEvaluator()),
                 new LoopNodeExecutor(),
                 new VariableNodeExecutor(variableResolver),
+                new ExpressionNodeExecutor(new com.fasterxml.jackson.databind.ObjectMapper()),
                 new EndNodeExecutor(variableResolver)));
     }
 
@@ -42,6 +43,7 @@ class NodeExecutorRegistryTest {
         assertThat(registry.get("CONDITION")).isInstanceOf(ConditionNodeExecutor.class);
         assertThat(registry.get("LOOP")).isInstanceOf(LoopNodeExecutor.class);
         assertThat(registry.get("VARIABLE")).isInstanceOf(VariableNodeExecutor.class);
+        assertThat(registry.get("EXPRESSION")).isInstanceOf(ExpressionNodeExecutor.class);
         assertThat(registry.get("END")).isInstanceOf(EndNodeExecutor.class);
     }
 

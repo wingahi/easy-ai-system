@@ -33,4 +33,15 @@ public class RunContext {
      * （HTTP 非 GET/HEAD、MCP）。随上下文持久化，HITL 恢复后仍然生效。
      */
     private Boolean safeMode = false;
+
+    // ===== 单步调试游标（仅调试运行使用，普通运行保持 null/空，不影响原执行链路） =====
+
+    /** 调试会话待执行的节点队列 */
+    private List<String> debugFrontier;
+
+    /** 调试会话各节点剩余入边数 */
+    private Map<String, Integer> debugPendingIn;
+
+    /** 调试会话累计已执行节点数（用于总执行次数上限保护） */
+    private Integer debugExecutedCount = 0;
 }
