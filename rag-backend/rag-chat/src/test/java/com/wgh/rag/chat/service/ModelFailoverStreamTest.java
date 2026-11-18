@@ -99,7 +99,9 @@ class ModelFailoverStreamTest {
         service = new RagChatService(
                 windowMapper, sessionMapper, messageMapper, ragRetrieveService, modelCacheManager,
                 ragProperties, objectMapper, contextCompressionService, llmJudgeService,
-                judgeModelSelector, toolExecutionEngine, toolConfigService, agentOrchestrator,
+                judgeModelSelector, toolExecutionEngine,
+                org.mockito.Mockito.mock(com.wgh.rag.tool.fallback.ToolInvoker.class), toolConfigService,
+                agentOrchestrator,
                 agentProperties, chatWorkflowService, quotaService, modelPriceService,
                 llmModelService, semanticCacheService, chatImageService, promptTemplateService,
                 knowledgeBaseMapper, modelRouter, metrics);
@@ -342,7 +344,8 @@ class ModelFailoverStreamTest {
                 },
                 new RagChatService.ChatMetricContext(new AtomicReference<>("rag"),
                         new AtomicBoolean(false), System.nanoTime()),
-                cancellation);
+                cancellation,
+                new com.wgh.rag.tool.fallback.ToolTaskBudget(50, 120_000));
     }
 
     private static LlmModel model(long id, String name) {

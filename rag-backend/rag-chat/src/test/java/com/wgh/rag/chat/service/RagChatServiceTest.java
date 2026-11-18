@@ -18,7 +18,7 @@ class RagChatServiceTest {
 
     private final RagChatService service = new RagChatService(null, null, null, null, null,
             null, null, null, null, null, null, null, null, null, null,
-            null, null, null, null, null, null, null, null, null);
+            null, null, null, null, null, null, null, null, null, null);
 
     @Test
     @DisplayName("来源列表包含 chunk 级字段并按文件去重保留最高分")
