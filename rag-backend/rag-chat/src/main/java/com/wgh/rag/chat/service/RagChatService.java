@@ -383,7 +383,9 @@ public class RagChatService {
             Map<String, Object> retrieveInfo = new HashMap<>();
             retrieveInfo.put("coverageRate", coverageRate);
             retrieveInfo.put("hitRate", hitRate);
-            retrieveInfo.put("retrievedCount", retrievedMatches.size());
+            // 保留原始检索条数语义；预算裁剪后的规模由 contextKeptCount 承载
+            retrieveInfo.put("retrievedCount", contextBudget != null
+                    ? contextBudget.originalCount() : retrievedMatches.size());
             retrieveInfo.put("rerankApplied", retrieveResult.rerankApplied());
             retrieveInfo.put("rerankLatencyMs", retrieveResult.rerankLatencyMs());
             retrieveInfo.put("hybridApplied", retrieveResult.hybridApplied());
