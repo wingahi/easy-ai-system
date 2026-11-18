@@ -30,8 +30,9 @@ spring:
   # ===== 文件上传 =====
   servlet:
     multipart:
-      max-file-size: 50MB
-      max-request-size: 50MB
+      max-file-size: 200MB
+      # 比单文件上限留 10MB 余量给 multipart 边界与表单字段
+      max-request-size: 210MB
       file-size-threshold: 10240
 
   # ===== Jackson 序列化 =====
@@ -119,7 +120,7 @@ wgh:
       local:
         base-dir: ${WGH_UPLOAD_DIR:./uploads}          # 本地根目录（沿用历史 WGH_UPLOAD_DIR）
         url-prefix: ${WGH_STORAGE_URL_PREFIX:/uploads} # 仅用于 resolveUrl 返回逻辑地址
-        max-file-size-mb: ${WGH_STORAGE_MAX_FILE_MB:50}
+        max-file-size-mb: ${WGH_STORAGE_MAX_FILE_MB:200}
       oss:
         endpoint: ${WGH_OSS_ENDPOINT:}                 # 公网 endpoint，如 https://oss-cn-hangzhou.aliyuncs.com
         internal-endpoint: ${WGH_OSS_INTERNAL_ENDPOINT:} # 可选：内网 endpoint，服务端读写优先使用
@@ -130,7 +131,7 @@ wgh:
         public-read: ${WGH_OSS_PUBLIC_READ:false}      # false 时 resolveUrl 返回签名 URL
         signed-url-expire-minutes: ${WGH_OSS_SIGNED_URL_EXPIRE_MINUTES:60}
         max-retries: ${WGH_OSS_MAX_RETRIES:3}
-        max-file-size-mb: ${WGH_STORAGE_MAX_FILE_MB:50}
+        max-file-size-mb: ${WGH_STORAGE_MAX_FILE_MB:200}
     # ===== Redis（限流 / 分享密码锁定 / Widget 嵌入授权）=====
     # Redis 不可用时不阻断启动，公开访问能力自动降级为单机内存并输出 WARN。
     redis:
@@ -177,7 +178,7 @@ wgh:
   
   file:
     upload-dir: ${WGH_UPLOAD_DIR:./uploads}
-    max-single-file-mb: 50
+    max-single-file-mb: 200
 
   # ===== 免登录分享 / Widget / 开放 API =====
   public-access:

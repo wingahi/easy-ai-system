@@ -27,8 +27,8 @@ public class DocumentParserDispatcher {
     private DocumentNormalizer normalizer = new DocumentNormalizer();
 
     /** 单文件解析大小上限（MB），与上传上限保持一致 */
-    @Value("${wgh.file.max-single-file-mb:50}")
-    private int maxSingleFileMb = 50;
+    @Value("${wgh.file.max-single-file-mb:200}")
+    private int maxSingleFileMb = 200;
 
     /**
      * 解析文件为纯文本内容列表（按段落/行切分）
