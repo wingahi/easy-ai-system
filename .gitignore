@@ -58,3 +58,6 @@ replay_pid*
 # ===== Skill runtime dirs (wgh.skill.base-path) =====
 rag-backend/rag-app/skills/
 rag-backend/skills/
+
+# ===== 测试证据截图（体积大、可再生，不入库）=====
+docs/testing/evidence/
