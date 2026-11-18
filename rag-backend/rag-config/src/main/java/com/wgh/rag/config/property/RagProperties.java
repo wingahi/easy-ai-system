@@ -107,6 +107,15 @@ public class RagProperties {
         private Integer toolResultMaxTokens = 1200;
         /** 多轮工具结果累计 Token 上限（默认 3000，超出从最旧结果开始折叠） */
         private Integer toolRoundHistoryMaxTokens = 3000;
+
+        // ============ map-reduce 分段摘要 ============
+
+        /** 单条 chunk 撑满预算时是否启用分段摘要（默认开启） */
+        private Boolean mapReduceEnabled = true;
+        /** 最多切分几段 */
+        private Integer mapReduceMaxSegments = 4;
+        /** 单段摘要的输出 Token 上限 */
+        private Integer mapReduceSegmentOutputTokens = 200;
     }
 
     /**

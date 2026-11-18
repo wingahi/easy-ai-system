@@ -37,6 +37,7 @@ import com.wgh.rag.llm.service.LlmModelService;
 import com.wgh.rag.llm.service.ModelPriceService;
 import com.wgh.rag.llm.service.ModelRouter;
 import com.wgh.rag.llm.util.HistoryContextBudgeter;
+import com.wgh.rag.llm.util.MapReduceChunkSummarizer;
 import com.wgh.rag.llm.util.RagContextBudgeter;
 import com.wgh.rag.llm.util.TokenEstimator;
 import com.wgh.rag.llm.util.ToolResultBudgeter;
@@ -1288,6 +1289,7 @@ public class RagChatService {
                 : (props != null ? props.getFallbackWindowTokens() : null);
 
         int budget = RagContextBudgeter.computeBudget(window, promptTokens, cap, ratio, minChunk);
+        applyMapReduceIfSaturated(matches, budget, model, props);
         RagContextBudgeter.Result result = RagContextBudgeter.trim(matches, budget, minChunk);
 
         metrics.recordRagContextBudget(result.budgetTokens(), result.originalTokens(),
@@ -1302,13 +1304,62 @@ public class RagChatService {
         }
         if (result.singleChunkSaturated()) {
             log.warn("RAG 检索上下文已撑满预算（保留 {} 条、丢弃 {} 条、截断={}）："
-                            + "问整篇总结类问题时需引入分段摘要（map-reduce），当前版本仅做确定性裁剪",
+                            + "若已启用分段摘要仍饱和，建议调大预算或缩小单条 chunk",
                     result.keptCount(), result.dropped().size(), result.truncated());
         }
 
         matches.clear();
         matches.addAll(result.kept());
         return result;
+    }
+
+    /**
+     * 单条 chunk 撑满预算时，先用 map-reduce 分段摘要压缩该 chunk，再走常规预算裁剪。
+     * 摘要失败或未启用时保持原样，由 {@link RagContextBudgeter} 的截断逻辑兜底。
+     */
+    private void applyMapReduceIfSaturated(List<EmbeddingMatch<TextSegment>> matches, int budget,
+                                           LlmModel model, RagProperties.Context props) {
+        if (matches == null || matches.isEmpty() || model == null) {
+            return;
+        }
+        boolean enabled = props == null || !Boolean.FALSE.equals(props.getMapReduceEnabled());
+        if (!enabled) {
+            return;
+        }
+        int topIndex = 0;
+        for (int i = 1; i < matches.size(); i++) {
+            double a = matches.get(i).score() == null ? Double.NEGATIVE_INFINITY : matches.get(i).score();
+            double b = matches.get(topIndex).score() == null ? Double.NEGATIVE_INFINITY : matches.get(topIndex).score();
+            if (a > b) topIndex = i;
+        }
+        EmbeddingMatch<TextSegment> top = matches.get(topIndex);
+        int chunkTokens = RagContextBudgeter.chunkTokens(top);
+        if (!MapReduceChunkSummarizer.shouldApply(chunkTokens, budget)) {
+            return;
+        }
+        int maxSegments = props != null && props.getMapReduceMaxSegments() != null
+                ? props.getMapReduceMaxSegments() : 4;
+        int segmentTokens = props != null && props.getMapReduceSegmentOutputTokens() != null
+                ? props.getMapReduceSegmentOutputTokens() : 200;
+        try {
+            MapReduceChunkSummarizer.Result reduced = MapReduceChunkSummarizer.summarize(
+                    top.embedded().text(), modelCacheManager.getChatModel(model.getId()),
+                    maxSegments, segmentTokens, budget);
+            if (!reduced.reduced()) {
+                log.warn("分段摘要未生效（fallback 到截断）: model={}, chunkTokens={}, budget={}",
+                        model.getModelName(), chunkTokens, budget);
+                return;
+            }
+            TextSegment segment = TextSegment.from(reduced.text(), top.embedded().metadata());
+            matches.set(topIndex, new EmbeddingMatch<>(top.score(), top.embeddingId(), top.embedding(), segment));
+            metrics.recordRagContextBudget(budget, chunkTokens,
+                    RagContextBudgeter.chunkTokens(matches.get(topIndex)), 0, false);
+            log.info("✓ 分段摘要生效: model={}, 原文 {} tokens, 摘要 {} tokens, 分段 {}",
+                    model.getModelName(), chunkTokens,
+                    RagContextBudgeter.chunkTokens(matches.get(topIndex)), reduced.segments());
+        } catch (Exception e) {
+            log.warn("分段摘要失败（fallback 到截断）: model={}, reason={}", model.getModelName(), e.getMessage());
+        }
     }
 
     /**
