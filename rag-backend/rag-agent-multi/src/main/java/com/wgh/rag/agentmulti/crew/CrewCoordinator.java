@@ -177,6 +177,7 @@ public class CrewCoordinator {
 
         AgentInstanceResult managerResult = agentExecutor.execute(manager, managerPrompt, ctx, emitter);
         ctx.put(manager.getAgentId() + ".text", managerResult.getOutput());
+        ctx.blackboard().put("plan.manager", managerResult.getOutput());
         persistStep(run, manager, null, managerResult, 0);
 
         // Workers 执行（串行 + 并行可选 —— 这里默认并行，数量少直接顺序执行也可）
@@ -198,6 +199,7 @@ public class CrewCoordinator {
             ctx.put(worker.getAgentId() + ".text", r.getOutput());
             if (r.getCard() != null) {
                 workerCards.add(r.getCard());
+                ctx.blackboard().put("card." + worker.getAgentId(), r.getCard());
                 ctx.put(worker.getAgentId() + ".card", AgentResultCardBuilder.format(r.getCard()));
             }
             persistStep(run, worker, null, r, idx.getAndIncrement());
@@ -213,7 +215,8 @@ public class CrewCoordinator {
 
                 请综合以上信息，给出一份面向用户的最终答复（结构化、清晰、完整）。
                 """.formatted(truncate(managerResult.getOutput()),
-                AgentResultCardBuilder.merge(workerCards, contextProperties.getSummaryMaxTokens()));
+                AgentResultCardBuilder.merge(cardsFromBlackboard(ctx, workerCards),
+                        contextProperties.getSummaryMaxTokens()));
 
         AgentInstanceResult finalResult = agentExecutor.execute(manager, summaryPrompt, ctx, emitter);
         ctx.put(manager.getAgentId() + ".summary", finalResult.getOutput());
@@ -222,6 +225,15 @@ public class CrewCoordinator {
     }
 
     // ==================== PARALLEL ====================
+
+    /** 优先从共享黑板读取 worker 卡片；黑板缺失时回退到本地列表。 */
+    private List<AgentResultCard> cardsFromBlackboard(MultiAgentContext ctx, List<AgentResultCard> fallback) {
+        List<AgentResultCard> cards = ctx.blackboard().snapshot("card.").values().stream()
+                .filter(AgentResultCard.class::isInstance)
+                .map(AgentResultCard.class::cast)
+                .toList();
+        return cards.isEmpty() ? fallback : cards;
+    }
 
     private void runParallel(MultiAgentRun run, List<AgentInstance> agents,
                               DAGGraph graph, MultiAgentContext ctx, SseEmitter emitter) {

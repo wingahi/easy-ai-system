@@ -1,6 +1,8 @@
 package com.wgh.rag.agentmulti.context;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.wgh.rag.agentmulti.blackboard.Blackboard;
+import com.wgh.rag.agentmulti.blackboard.InMemoryBlackboard;
 import com.wgh.rag.common.template.TemplateRenderer;
 import lombok.extern.slf4j.Slf4j;
 
@@ -32,6 +34,9 @@ public class MultiAgentContext {
     private final Map<String, List<Object>> history = new ConcurrentHashMap<>();
 
     private final ObjectMapper objectMapper;
+
+    /** 跨 Agent 共享黑板 */
+    private final Blackboard blackboard = new InMemoryBlackboard();
 
     public MultiAgentContext() {
         this(new ObjectMapper());
@@ -117,6 +122,12 @@ public class MultiAgentContext {
         return history;
     }
 
+    // ==================== 共享黑板 ====================
+
+    public Blackboard blackboard() {
+        return blackboard;
+    }
+
     // ==================== 模板渲染 ====================
 
     /**
@@ -196,6 +207,7 @@ public class MultiAgentContext {
         snap.put("loopIterations", new LinkedHashMap<>(loopIterations));
         snap.put("pendingAgents", new LinkedHashMap<>(pendingAgents));
         snap.put("history", new LinkedHashMap<>(history));
+        snap.put("blackboard", blackboard.snapshot());
         return snap;
     }
 }
