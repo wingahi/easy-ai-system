@@ -145,7 +145,8 @@ class AgentOrchestratorTest {
                 planMapper, stepMapper, agentProperties, objectMapper, txManager);
         HitlGate hitlGate = new HitlGate(lifecycle, eventPublisher);
         return new AgentOrchestrator(planner, stepExecutor, reflectionEngine,
-                lifecycle, new StepScheduler(), hitlGate, eventPublisher, agentProperties);
+                lifecycle, new StepScheduler(), hitlGate, eventPublisher, agentProperties,
+                new com.wgh.rag.agent.support.AgentStateBlockBuilder(agentProperties));
     }
 
     // ==================== 用例 ====================

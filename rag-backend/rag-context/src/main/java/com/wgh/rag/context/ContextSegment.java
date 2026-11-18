@@ -7,8 +7,10 @@ package com.wgh.rag.context;
  * @param type      片段类型，决定默认优先级
  * @param content   片段文本
  * @param trimmable 预算不足时是否允许按句界裁剪；false 表示放不下就整段丢弃
+ * @param priorityOverride 优先级覆盖值（>=0 生效，数字越小越优先）；-1 表示使用类型默认优先级
  */
-public record ContextSegment(int index, SegmentType type, String content, boolean trimmable) {
+public record ContextSegment(int index, SegmentType type, String content, boolean trimmable,
+                             int priorityOverride) {
 
     public ContextSegment {
         if (type == null) {
@@ -19,12 +21,17 @@ public record ContextSegment(int index, SegmentType type, String content, boolea
         }
     }
 
-    /** 默认可裁剪。 */
+    /** 使用类型默认优先级、可裁剪。 */
     public ContextSegment(int index, SegmentType type, String content) {
-        this(index, type, content, true);
+        this(index, type, content, true, -1);
+    }
+
+    /** 使用类型默认优先级。 */
+    public ContextSegment(int index, SegmentType type, String content, boolean trimmable) {
+        this(index, type, content, trimmable, -1);
     }
 
     public int priority() {
-        return type.priority();
+        return priorityOverride >= 0 ? priorityOverride : type.priority();
     }
 }

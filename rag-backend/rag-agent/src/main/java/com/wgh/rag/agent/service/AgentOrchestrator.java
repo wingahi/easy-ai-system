@@ -13,6 +13,7 @@ import com.wgh.rag.agent.entity.AgentStep;
 import com.wgh.rag.agent.exception.AgentException;
 import com.wgh.rag.agent.planner.Planner;
 import com.wgh.rag.agent.reflection.ReflectionEngine;
+import com.wgh.rag.agent.support.AgentStateBlockBuilder;
 import com.wgh.rag.llm.entity.LlmModel;
 import com.wgh.rag.tool.entity.ToolConfig;
 import dev.langchain4j.agent.tool.ToolSpecification;
@@ -50,6 +51,7 @@ public class AgentOrchestrator {
     private final HitlGate hitlGate;
     private final AgentEventPublisher eventPublisher;
     private final AgentProperties agentProperties;
+    private final AgentStateBlockBuilder agentStateBlockBuilder;
 
     // ==================== 首次入口：规划 + 执行 ====================
 
@@ -119,7 +121,7 @@ public class AgentOrchestrator {
         // 4. 逐步执行
         return executeSteps(plan, orderedSteps, windowModelId, toolSpecs, toolRegistry,
                 hasKb, kbIds, userGoal, reflectionThreshold, reflectionMaxRetries, hitlEnabled, sse,
-                new StringBuilder(), executorChain, plannerChain);
+                new ArrayList<>(), executorChain, plannerChain);
     }
 
     // ==================== 恢复入口：HITL 确认后继续 ====================
@@ -152,19 +154,19 @@ public class AgentOrchestrator {
         List<AgentStep> dbSteps = planLifecycleService.loadSteps(planId);
         AgentStep hitlStep = hitlGate.findHitlPendingStep(dbSteps);
 
-        // 构建上下文：已完成步骤的 resultSummary 聚合
-        StringBuilder contextBuilder = new StringBuilder();
+        // 构建上下文：已完成步骤的结构化状态块
+        List<AgentStateBlockBuilder.Entry> stateEntries = new ArrayList<>();
         for (AgentStep s : dbSteps) {
             if (AgentConstants.STATUS_SUCCESS.equals(s.getStatus()) && s.getResultSummary() != null) {
-                contextBuilder.append("【步骤 ").append(s.getStepId()).append(" - ")
-                        .append(s.getTitle()).append("】\n").append(s.getResultSummary()).append("\n\n");
+                stateEntries.add(new AgentStateBlockBuilder.Entry(
+                        s.getStepId(), s.getTitle(), s.getResultSummary()));
             }
         }
 
         // 用户确认：注入用户输入，恢复 plan 为 RUNNING
         hitlGate.confirmAndResumePlan(plan, hitlStep, userInput);
-        contextBuilder.append("【HITL 用户确认】").append(hitlStep.getTitle())
-                .append(" → 用户输入: ").append(userInput).append("\n\n");
+        stateEntries.add(new AgentStateBlockBuilder.Entry(
+                hitlStep.getStepId(), hitlStep.getTitle(), "用户确认输入: " + userInput));
 
         // 构建剩余步骤列表：HITL_PENDING 之后的 PENDING 步骤
         int hitlIndex = dbSteps.indexOf(hitlStep);
@@ -184,7 +186,7 @@ public class AgentOrchestrator {
         // 继续执行剩余步骤
         return executeSteps(plan, remainingStepDTOs, plan.getLlmModelId(),
                 null, null, false, List.of(), plan.getUserGoal(),
-                reflectionThreshold, reflectionMaxRetries, true, sse, contextBuilder, executorChain, plannerChain);
+                reflectionThreshold, reflectionMaxRetries, true, sse, stateEntries, executorChain, plannerChain);
     }
 
     // ==================== 执行控制 API ====================
@@ -231,11 +233,11 @@ public class AgentOrchestrator {
         StepDTO dto = fullPlan.getSteps().stream()
                 .filter(s -> s.getStepId().equals(stepId)).findFirst().orElseThrow();
 
-        // 构建上下文
-        StringBuilder ctx = new StringBuilder();
+        // 构建上下文（结构化状态块）
+        List<AgentStateBlockBuilder.Entry> ctx = new ArrayList<>();
         List<AgentStep> prevSteps = planLifecycleService.loadSucceededStepsBefore(planId, step.getStepIndex());
         for (AgentStep ps : prevSteps) {
-            ctx.append("【步骤 ").append(ps.getStepId()).append("】\n").append(ps.getResultSummary()).append("\n\n");
+            ctx.add(new AgentStateBlockBuilder.Entry(ps.getStepId(), ps.getTitle(), ps.getResultSummary()));
         }
 
         return executeSteps(plan, List.of(dto), plan.getLlmModelId(),
@@ -268,7 +270,7 @@ public class AgentOrchestrator {
                                           BiConsumer<String, Map<String, Object>> sse) {
         return executeSteps(plan, stepDTOs, executorModelId, toolSpecs, toolRegistry,
                 hasKb, kbIds, userGoal, reflectionThreshold, reflectionMaxRetries, hitlEnabled, sse,
-                new StringBuilder(), null, null);
+                new ArrayList<>(), null, null);
     }
 
     private AgentStepResult executeSteps(AgentPlan plan, List<StepDTO> stepDTOs,
@@ -278,7 +280,7 @@ public class AgentOrchestrator {
                                           double reflectionThreshold, int reflectionMaxRetries,
                                           boolean hitlEnabled,
                                           BiConsumer<String, Map<String, Object>> sse,
-                                          StringBuilder contextBuilder,
+                                          List<AgentStateBlockBuilder.Entry> stateEntries,
                                           List<LlmModel> executorChain,
                                           List<LlmModel> plannerChain) {
         AgentStepResult lastResult = null;
@@ -313,7 +315,7 @@ public class AgentOrchestrator {
                     "stepIndex", dbStep.getStepIndex()));
 
             // 5b. 构建 step prompt
-            String stepContext = buildStepContext(contextBuilder);
+            String stepContext = buildStepContext(stateEntries);
             String stepPrompt = buildStepPrompt(stepDTO, stepContext, userGoal);
 
             // 5c. 过滤工具
@@ -399,11 +401,10 @@ public class AgentOrchestrator {
                         "latencyMs", finalLatencyMs,
                         "toolCount", result.getToolInvocations() != null ? result.getToolInvocations().size() : 0,
                         "ragSourceCount", result.getRagSources() != null ? result.getRagSources().size() : 0));
-                // 聚合 context 供下游
+                // 聚合状态供下游（结构化状态块，受预算约束）
                 if (finalResultSummary != null && !finalResultSummary.isBlank()) {
-                    contextBuilder.append("【步骤 ").append(stepDTO.getStepId()).append(" - ")
-                            .append(stepDTO.getTitle()).append("】\n")
-                            .append(finalResultSummary).append("\n\n");
+                    stateEntries.add(new AgentStateBlockBuilder.Entry(
+                            stepDTO.getStepId(), stepDTO.getTitle(), finalResultSummary));
                 }
             } else if (AgentConstants.STATUS_HITL_PENDING.equals(finalStatus)) {
                 eventPublisher.emit(sse, AgentEvents.PLAN_PAUSED, Map.of("planId", plan.getId(), "reason", "步骤内 HITL"));
@@ -421,7 +422,7 @@ public class AgentOrchestrator {
                 List<StepDTO> pendingRemaining = planLifecycleService.collectPendingRemaining(plan.getId());
                 if (!pendingRemaining.isEmpty()) {
                     try {
-                        String finishedSummary = contextBuilder.toString();
+                        String finishedSummary = agentStateBlockBuilder.build(stateEntries);
                         String failureHint = "步骤 " + stepDTO.getStepId() + "（" + stepDTO.getTitle() + "）失败: "
                                 + result.getErrorMessage() + "。请重新规划剩余任务。";
                         PlanDTO replanned = plannerChain != null
@@ -499,8 +500,8 @@ public class AgentOrchestrator {
         }
     }
 
-    private String buildStepContext(StringBuilder contextBuilder) {
-        String ctx = contextBuilder.toString();
+    private String buildStepContext(List<AgentStateBlockBuilder.Entry> stateEntries) {
+        String ctx = agentStateBlockBuilder.build(stateEntries);
         return ctx.isBlank() ? "" : """
                 ## 前序步骤执行结果（供你参考，在此基础上继续）
                 %s

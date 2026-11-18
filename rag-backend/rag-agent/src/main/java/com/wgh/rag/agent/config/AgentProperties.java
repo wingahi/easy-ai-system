@@ -22,4 +22,8 @@ public class AgentProperties {
     private boolean reflectionEnabled = true;
     /** Planner prompt version (bump to invalidate cached plans). */
     private String plannerPromptVersion = "v1";
+    /** Agent 状态块（已完成步骤）总预算 Tokens，超预算优先丢弃更早步骤。 */
+    private int agentStepContextMaxTokens = 2000;
+    /** 单个步骤结论摘要预算 Tokens。 */
+    private int agentStepSummaryMaxTokens = 200;
 }
