@@ -10,7 +10,7 @@ import org.slf4j.LoggerFactory;
 
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -22,12 +22,13 @@ public abstract class AbstractLlmCompressionHandler implements CompressionHandle
 
     protected final Logger log = LoggerFactory.getLogger(getClass());
 
-    /** 分层压缩 LLM 调用线程池（各级 handler 共享） */
-    private static final ExecutorService SUMMARY_EXECUTOR = Executors.newFixedThreadPool(2, r -> {
-        Thread t = new Thread(r, "ctx-compress-" + System.nanoTime());
-        t.setDaemon(true);
-        return t;
-    });
+    /** 分层压缩 LLM 调用线程池（各级 handler 共享）；包装后继承提交线程的 MDC */
+    private static final Executor SUMMARY_EXECUTOR = com.wgh.rag.common.log.MdcContext.wrap(
+            Executors.newFixedThreadPool(2, r -> {
+                Thread t = new Thread(r, "ctx-compress-" + System.nanoTime());
+                t.setDaemon(true);
+                return t;
+            }));
 
     /** 带超时调用 LLM，超时取消并抛出 TimeoutException */
     protected String callLlm(CompressionContext ctx, String prompt) throws Exception {

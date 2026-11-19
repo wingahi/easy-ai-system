@@ -6,6 +6,7 @@ import com.wgh.rag.agentmulti.context.MultiAgentContext;
 import com.wgh.rag.agentmulti.dto.AgentInstance;
 import com.wgh.rag.agentmulti.dto.AgentInstanceResult;
 import com.wgh.rag.agentmulti.dto.AgentResultCard;
+import com.wgh.rag.agent.support.AgentTaskMemory;
 import com.wgh.rag.kb.service.RagRetrieveService;
 import com.wgh.rag.config.property.RagProperties;
 import com.wgh.rag.llm.entity.LlmModel;
@@ -30,6 +31,7 @@ import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.store.embedding.EmbeddingMatch;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -56,6 +58,10 @@ public class AgentInstanceExecutor {
     private final RagProperties ragProperties;
     private final ModelFailoverService modelFailoverService;
     private final MultiAgentContextProperties contextProperties;
+
+    /** 长期记忆（可选，单测中未注入时跳过读写） */
+    @Autowired(required = false)
+    private AgentTaskMemory agentTaskMemory;
 
     /**
      * 执行一次 Agent 调用（可能带 ReAct 循环），返回结构化结果。
@@ -106,6 +112,11 @@ public class AgentInstanceExecutor {
             // ========== 可选 RAG ==========
             String enrichedInput = input == null ? "" : input;
             String systemPrompt = buildSystemPrompt(agent);
+            // 长期记忆召回（任务 + 会话作用域），作为 FAR_FACT 片段进入统一预算
+            String memoryBlock = buildMemoryBlock(ctx, input);
+            if (!memoryBlock.isBlank()) {
+                systemPrompt = systemPrompt + "\n\n" + memoryBlock;
+            }
             if (agent.getKbIds() != null && !agent.getKbIds().isEmpty()
                     && enrichedInput != null && !enrichedInput.isBlank()) {
                 List<EmbeddingMatch<TextSegment>> matches = ragRetrieveService.searchMultiple(
@@ -289,6 +300,7 @@ public class AgentInstanceExecutor {
                     .card(buildCard(agentId, agent, finalText, ragSources, toolInvocations, reflectionScore))
                     .build();
             recordMemory(ctx, agent, input, finalText);
+            rememberTaskMemory(ctx, agentId, finalText);
 
             sse.send(emitter, MultiAgentEvents.AGENT_DONE,
                     "runId", runId, "agentId", agentId,
@@ -380,6 +392,44 @@ public class AgentInstanceExecutor {
             return ai.text() == null ? "" : ai.text();
         }
         return "";
+    }
+
+    /** 召回任务/会话长期记忆；失败或无命中返回空串。 */
+    private String buildMemoryBlock(MultiAgentContext ctx, String input) {
+        if (agentTaskMemory == null || ctx == null || input == null || input.isBlank()) {
+            return "";
+        }
+        return agentTaskMemory.recallBlock(taskId(ctx), sessionId(ctx), input);
+    }
+
+    /** 写入任务级记忆（TASK 作用域 + 会话镜像），失败只记日志。 */
+    private void rememberTaskMemory(MultiAgentContext ctx, String agentId, String finalText) {
+        if (agentTaskMemory == null || ctx == null || finalText == null || finalText.isBlank()) {
+            return;
+        }
+        agentTaskMemory.rememberTask(taskId(ctx), sessionId(ctx), agentId, "SUMMARY", finalText);
+    }
+
+    private static String taskId(MultiAgentContext ctx) {
+        Object value = ctx.get("runId");
+        if (value == null) return null;
+        String id = String.valueOf(value);
+        return id.isBlank() ? null : id;
+    }
+
+    private static Long sessionId(MultiAgentContext ctx) {
+        Object value = ctx.get("sessionId");
+        if (value instanceof Number number) {
+            return number.longValue();
+        }
+        if (value != null) {
+            try {
+                return Long.parseLong(String.valueOf(value));
+            } catch (NumberFormatException ignore) {
+                return null;
+            }
+        }
+        return null;
     }
 
     /** 成功轮次写回 agentId 历史，并保持条数上限。 */

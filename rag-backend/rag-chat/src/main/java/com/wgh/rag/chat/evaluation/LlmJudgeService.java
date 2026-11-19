@@ -13,7 +13,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
@@ -46,7 +46,7 @@ public class LlmJudgeService {
     private final RagEvaluationProperties properties;
 
     /** judge 线程池（独立池，避免占用主线程） */
-    private final ExecutorService judgeExecutor;
+    private final Executor judgeExecutor;
 
     /** 单次 judge 的上下文 chunk 上限与截断长度，避免超长输入 */
     private static final int MAX_CONTEXT_CHUNKS = 20;
@@ -66,11 +66,13 @@ public class LlmJudgeService {
         int concurrency = properties != null && properties.getJudgeConcurrency() != null
                 && properties.getJudgeConcurrency() > 0
                 ? properties.getJudgeConcurrency() : DEFAULT_CONCURRENCY;
-        this.judgeExecutor = Executors.newFixedThreadPool(concurrency, r -> {
-            Thread t = new Thread(r, "llm-judge-" + System.nanoTime());
-            t.setDaemon(true);
-            return t;
-        });
+        // 评测在独立线程池运行，包装后每个任务继承提交线程的 MDC（requestId/traceId）
+        this.judgeExecutor = com.wgh.rag.common.log.MdcContext.wrap(
+                Executors.newFixedThreadPool(concurrency, r -> {
+                    Thread t = new Thread(r, "llm-judge-" + System.nanoTime());
+                    t.setDaemon(true);
+                    return t;
+                }));
     }
 
     /**

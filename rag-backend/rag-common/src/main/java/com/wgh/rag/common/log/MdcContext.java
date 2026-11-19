@@ -4,6 +4,7 @@ import org.slf4j.MDC;
 
 import java.util.Map;
 import java.util.concurrent.Callable;
+import java.util.concurrent.Executor;
 
 /**
  * MDC（日志上下文）跨线程传递工具。
@@ -48,6 +49,15 @@ public final class MdcContext {
                 apply(previous);
             }
         };
+    }
+
+    /**
+     * 包装 Executor：每个提交的任务都继承提交线程的 MDC。
+     * <p>用于无法通过 Spring {@code TaskDecorator} 统一配置的自建线程池
+     * （如固定线程池、并行工作线程），避免异步日志丢失 requestId/traceId。</p>
+     */
+    public static Executor wrap(Executor delegate) {
+        return command -> delegate.execute(wrap(command));
     }
 
     private static void apply(Map<String, String> context) {

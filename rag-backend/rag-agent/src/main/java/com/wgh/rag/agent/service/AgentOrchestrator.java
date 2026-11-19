@@ -14,11 +14,13 @@ import com.wgh.rag.agent.exception.AgentException;
 import com.wgh.rag.agent.planner.Planner;
 import com.wgh.rag.agent.reflection.ReflectionEngine;
 import com.wgh.rag.agent.support.AgentStateBlockBuilder;
+import com.wgh.rag.agent.support.AgentTaskMemory;
 import com.wgh.rag.llm.entity.LlmModel;
 import com.wgh.rag.tool.entity.ToolConfig;
 import dev.langchain4j.agent.tool.ToolSpecification;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
@@ -52,6 +54,10 @@ public class AgentOrchestrator {
     private final AgentEventPublisher eventPublisher;
     private final AgentProperties agentProperties;
     private final AgentStateBlockBuilder agentStateBlockBuilder;
+
+    /** 长期记忆（可选，单测中未注入时跳过读写） */
+    @Autowired(required = false)
+    private AgentTaskMemory agentTaskMemory;
 
     // ==================== 首次入口：规划 + 执行 ====================
 
@@ -189,6 +195,68 @@ public class AgentOrchestrator {
                 reflectionThreshold, reflectionMaxRetries, true, sse, stateEntries, executorChain, plannerChain);
     }
 
+    /**
+     * 服务重启/实例失联后的续跑入口：从最后一个成功步骤之后继续。
+     * <p>与 HITL 的 {@link #resume} 区分：这里不要求 PAUSED，也不消费人工输入；
+     * 把中断时残留的 RUNNING 步骤复位为 PENDING，再从 plan_json 取剩余步骤复用既有执行循环。</p>
+     */
+    public AgentStepResult resumeAfterInterruption(Long planId,
+                                                   double reflectionThreshold, int reflectionMaxRetries,
+                                                   BiConsumer<String, Map<String, Object>> sse,
+                                                   List<LlmModel> executorChain, List<LlmModel> plannerChain) {
+        AgentPlan plan = planLifecycleService.findPlan(planId);
+        if (plan == null) throw new AgentException("Plan 不存在: " + planId);
+        if (!AgentConstants.STATUS_RUNNING.equals(plan.getStatus())) {
+            throw new AgentException("Plan 非 RUNNING 状态，无法续跑");
+        }
+
+        List<AgentStep> dbSteps = planLifecycleService.loadSteps(planId);
+        if (dbSteps.stream().anyMatch(s -> AgentConstants.STATUS_HITL_PENDING.equals(s.getStatus()))) {
+            throw new AgentException("Plan 存在 HITL_PENDING 步骤，请使用 HITL 确认入口");
+        }
+
+        // 崩溃中断的 RUNNING 步骤没有线程会再推进，复位为 PENDING 后重新执行
+        for (AgentStep s : dbSteps) {
+            if (AgentConstants.STATUS_RUNNING.equals(s.getStatus())) {
+                s.setStatus(AgentConstants.STATUS_PENDING);
+                planLifecycleService.updateStep(s);
+            }
+        }
+
+        List<AgentStateBlockBuilder.Entry> stateEntries = new ArrayList<>();
+        for (AgentStep s : dbSteps) {
+            if (AgentConstants.STATUS_SUCCESS.equals(s.getStatus()) && s.getResultSummary() != null) {
+                stateEntries.add(new AgentStateBlockBuilder.Entry(
+                        s.getStepId(), s.getTitle(), s.getResultSummary()));
+            }
+        }
+
+        List<AgentStep> remainingDbSteps = dbSteps.stream()
+                .filter(s -> AgentConstants.STATUS_PENDING.equals(s.getStatus()))
+                .toList();
+        if (remainingDbSteps.isEmpty()) {
+            planLifecycleService.markPlanCompleteTx(plan, AgentConstants.STATUS_COMPLETED);
+            return AgentStepResult.builder().status(AgentConstants.STATUS_SUCCESS).finalText("").build();
+        }
+
+        PlanDTO fullPlan = planLifecycleService.parsePlanJsonOrThrow(plan);
+        Map<String, StepDTO> stepDtoById = new HashMap<>();
+        for (StepDTO s : fullPlan.getSteps()) stepDtoById.put(s.getStepId(), s);
+        List<StepDTO> remainingStepDTOs = remainingDbSteps.stream()
+                .map(s -> stepDtoById.get(s.getStepId()))
+                .filter(Objects::nonNull).toList();
+        if (remainingStepDTOs.isEmpty()) {
+            throw new AgentException("plan_json 与数据库步骤不一致，无法续跑");
+        }
+
+        eventPublisher.emit(sse, AgentEvents.PLAN_RESUMED,
+                Map.of("planId", planId, "fromStepId", remainingStepDTOs.get(0).getStepId(), "reason", "interrupted"));
+
+        return executeSteps(plan, remainingStepDTOs, plan.getLlmModelId(),
+                List.of(), Map.of(), false, List.of(), plan.getUserGoal(),
+                reflectionThreshold, reflectionMaxRetries, true, sse, stateEntries, executorChain, plannerChain);
+    }
+
     // ==================== 执行控制 API ====================
 
     /** 取消整个计划。 */
@@ -314,9 +382,10 @@ public class AgentOrchestrator {
                     "stepTitle", stepDTO.getTitle(),
                     "stepIndex", dbStep.getStepIndex()));
 
-            // 5b. 构建 step prompt
+            // 5b. 构建 step prompt（前序状态块 + 长期记忆）
             String stepContext = buildStepContext(stateEntries);
-            String stepPrompt = buildStepPrompt(stepDTO, stepContext, userGoal);
+            String memoryBlock = buildMemoryBlock(plan, stepDTO, userGoal);
+            String stepPrompt = buildStepPrompt(stepDTO, stepContext, userGoal, memoryBlock);
 
             // 5c. 过滤工具
             List<ToolSpecification> stepToolSpecs = filterStepTools(toolSpecs, stepDTO.getRequiresTools());
@@ -405,6 +474,7 @@ public class AgentOrchestrator {
                 if (finalResultSummary != null && !finalResultSummary.isBlank()) {
                     stateEntries.add(new AgentStateBlockBuilder.Entry(
                             stepDTO.getStepId(), stepDTO.getTitle(), finalResultSummary));
+                    rememberStep(plan, stepDTO, finalResultSummary);
                 }
             } else if (AgentConstants.STATUS_HITL_PENDING.equals(finalStatus)) {
                 eventPublisher.emit(sse, AgentEvents.PLAN_PAUSED, Map.of("planId", plan.getId(), "reason", "步骤内 HITL"));
@@ -473,12 +543,15 @@ public class AgentOrchestrator {
             lastResult = result;
         }
 
-        // 6. Plan 完成
+        // 6. Plan 完成（任务级记忆：目标 + 最终结论，任务结束后仍可被同任务/同会话召回）
         if (AgentConstants.STATUS_RUNNING.equals(plan.getStatus())) {
             planLifecycleService.markPlanCompleteTx(plan, AgentConstants.STATUS_COMPLETED);
             eventPublisher.emit(sse, AgentEvents.PLAN_COMPLETE, Map.of(
                     "planId", plan.getId(),
                     "totalSteps", plan.getMaxSteps()));
+        }
+        if (AgentConstants.STATUS_COMPLETED.equals(plan.getStatus())) {
+            rememberPlanResult(plan, userGoal, lastResult);
         }
 
         if (lastResult != null) {
@@ -508,10 +581,13 @@ public class AgentOrchestrator {
                 """.formatted(ctx);
     }
 
-    private String buildStepPrompt(StepDTO stepDTO, String stepContext, String userGoal) {
+    private String buildStepPrompt(StepDTO stepDTO, String stepContext, String userGoal, String memoryBlock) {
         StringBuilder sb = new StringBuilder();
         sb.append("## 用户原始目标\n").append(userGoal).append("\n\n");
         sb.append(stepContext).append("\n");
+        if (memoryBlock != null && !memoryBlock.isBlank()) {
+            sb.append(memoryBlock).append("\n\n");
+        }
         sb.append("## 当前任务步骤\n");
         sb.append("- 步骤ID: ").append(stepDTO.getStepId()).append("\n");
         sb.append("- 标题: ").append(stepDTO.getTitle()).append("\n");
@@ -524,6 +600,39 @@ public class AgentOrchestrator {
         }
         sb.append("\n请执行此步骤。如果需要调用工具，请直接发起 tool call。\n");
         return sb.toString();
+    }
+
+    /** 召回任务/会话长期记忆；失败或无命中返回空串。 */
+    private String buildMemoryBlock(AgentPlan plan, StepDTO stepDTO, String userGoal) {
+        if (agentTaskMemory == null) {
+            return "";
+        }
+        String query = stepDTO.getDescription() != null && !stepDTO.getDescription().isBlank()
+                ? stepDTO.getTitle() + "：" + stepDTO.getDescription()
+                : stepDTO.getTitle() + "：" + userGoal;
+        return agentTaskMemory.recallBlock(String.valueOf(plan.getId()), plan.getSessionId(), query);
+    }
+
+    /** 写入步骤级任务记忆（TASK 作用域 + 会话镜像），失败只记日志。 */
+    private void rememberStep(AgentPlan plan, StepDTO stepDTO, String resultSummary) {
+        if (agentTaskMemory == null) {
+            return;
+        }
+        agentTaskMemory.rememberTask(String.valueOf(plan.getId()), plan.getSessionId(), null,
+                "FACT", "步骤「" + stepDTO.getTitle() + "」：" + resultSummary);
+    }
+
+    /** 写入计划级任务记忆：用户目标 + 最终结论。 */
+    private void rememberPlanResult(AgentPlan plan, String userGoal, AgentStepResult lastResult) {
+        if (agentTaskMemory == null || lastResult == null) {
+            return;
+        }
+        String finalText = lastResult.getFinalText();
+        if (finalText == null || finalText.isBlank()) {
+            return;
+        }
+        agentTaskMemory.rememberTask(String.valueOf(plan.getId()), plan.getSessionId(), null,
+                "SUMMARY", "任务目标：" + userGoal + "\n最终结论：" + finalText);
     }
 
     private List<ToolSpecification> filterStepTools(List<ToolSpecification> all, List<String> requiresTools) {

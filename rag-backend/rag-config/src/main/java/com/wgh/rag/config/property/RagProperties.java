@@ -131,6 +131,32 @@ public class RagProperties {
         private Double minScore = 0.6;
         /** 召回内容进入 prompt 的 Token 预算（默认 500） */
         private Integer maxTokens = 500;
+
+        // ============ 摘要 ============
+
+        /** 是否用 LLM 生成记忆摘要（默认关闭，关闭或失败时回退到截断） */
+        private Boolean llmSummaryEnabled = false;
+        /** LLM 摘要模型 ID（为空时取第一个启用的对话模型） */
+        private Long summaryModelId;
+        /** 送入摘要模型的原文最大字符数，避免超长输入 */
+        private Integer summaryMaxInputChars = 4000;
+        /** 摘要输出 Token 上限（写入提示词，约束输出长度） */
+        private Integer summaryMaxTokens = 300;
+        /** 截断兜底的最大字符数（LLM 摘要关闭或失败时使用） */
+        private Integer fallbackSummaryChars = 800;
+
+        // ============ TTL / 容量清理 ============
+
+        /** 是否启用记忆清理 */
+        private Boolean cleanupEnabled = true;
+        /** 记忆保留天数（<=0 不按年龄清理） */
+        private Integer retentionDays = 30;
+        /** 单作用域最大条数（<=0 不按条数清理，超出后从最旧开始删除） */
+        private Integer maxEntriesPerScope = 200;
+        /** 清理执行间隔（分钟） */
+        private Integer cleanupIntervalMinutes = 60;
+        /** 单次清理批量上限（按年龄与单作用域条数各自生效） */
+        private Integer cleanupBatchSize = 200;
     }
 
     @Data

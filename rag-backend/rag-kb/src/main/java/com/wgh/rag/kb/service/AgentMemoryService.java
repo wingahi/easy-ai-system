@@ -1,6 +1,7 @@
 package com.wgh.rag.kb.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.wgh.rag.common.metrics.RagMetrics;
 import com.wgh.rag.config.property.RagProperties;
 import com.wgh.rag.kb.entity.AgentMemory;
 import com.wgh.rag.kb.mapper.AgentMemoryMapper;
@@ -18,6 +19,7 @@ import dev.langchain4j.store.embedding.EmbeddingStore;
 import dev.langchain4j.store.embedding.filter.comparison.IsEqualTo;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
@@ -54,9 +56,14 @@ public class AgentMemoryService {
     private final ModelCacheManager modelCacheManager;
     private final RagProperties ragProperties;
 
-    /**
-     * 写入一条记忆；同作用域同正文自动去重，失败只记日志。
-     */
+    /** 可选摘要器与指标：缺失时分别回退到截断与不埋点（保持单测可直接 new） */
+    @Autowired(required = false)
+    private AgentMemorySummarizer summarizer;
+
+    @Autowired(required = false)
+    private RagMetrics metrics;
+
+    /** 写入一条记忆；同作用域同正文自动去重，失败只记日志。 */
     public void remember(ScopeType scopeType, String scopeId, String agentId,
                          String memoryType, String content, Long sourceMessageId) {
         if (!enabled() || scopeType == null || isBlank(scopeId) || isBlank(content)) {
@@ -71,6 +78,7 @@ public class AgentMemoryService {
                     .eq(AgentMemory::getDeleted, 0));
             if (exists != null && exists > 0) {
                 log.debug("记忆已存在，跳过写入: scope={}:{}, hash={}", scopeType, scopeId, hash);
+                if (metrics != null) metrics.recordMemoryDedupSkip(scopeType.name());
                 return;
             }
             EmbeddingModelConfig config = resolveEmbeddingConfig();
@@ -102,11 +110,42 @@ public class AgentMemoryService {
             memory.setSourceMessageId(sourceMessageId);
             memory.setTokenCount(estimateTokens(content));
             memoryMapper.insert(memory);
+            if (metrics != null) metrics.recordMemoryWrite(scopeType.name());
             log.debug("✓ 写入记忆: scope={}:{}, type={}, tokens={}", scopeType, scopeId, memoryType,
                     memory.getTokenCount());
         } catch (Exception e) {
             log.warn("记忆写入失败（忽略）: scope={}:{}, reason={}", scopeType, scopeId, e.getMessage());
         }
+    }
+
+    /**
+     * 写入任务级记忆：先做摘要（LLM 可选，失败回退截断），再写入 TASK 作用域；
+     * 传了 sessionId 时同步镜像到 SESSION 作用域，使任务结束后仍可被同会话召回。
+     */
+    public void rememberTask(String taskId, Long sessionId, String agentId,
+                             String memoryType, String content) {
+        if (!enabled() || isBlank(taskId) || isBlank(content)) {
+            return;
+        }
+        String summary = summarizeOrTruncate(content);
+        remember(ScopeType.TASK, taskId, agentId, memoryType, summary, null);
+        if (sessionId != null && sessionId > 0) {
+            remember(ScopeType.SESSION, String.valueOf(sessionId), agentId, memoryType, summary, null);
+        }
+    }
+
+    /** 记忆正文准备：优先 LLM 摘要，关闭或失败时按配置截断。 */
+    String summarizeOrTruncate(String content) {
+        RagProperties.Memory cfg = memoryConfig();
+        if (summarizer != null) {
+            String summary = summarizer.summarize(content);
+            if (!isBlank(summary)) {
+                return summary;
+            }
+        }
+        int maxChars = cfg.getFallbackSummaryChars() != null
+                ? Math.max(1, cfg.getFallbackSummaryChars()) : 800;
+        return content.length() > maxChars ? content.substring(0, maxChars) : content;
     }
 
     /**
@@ -157,6 +196,7 @@ public class AgentMemoryService {
                 hits.add(new MemoryHit(text, match.score() != null ? match.score() : 0d));
             }
             log.debug("✓ 召回记忆: scope={}:{}, hits={}, tokens={}", scopeType, scopeId, hits.size(), used);
+            if (metrics != null) metrics.recordMemoryRecallHits(scopeType.name(), hits.size());
             return hits;
         } catch (Exception e) {
             log.warn("记忆召回失败（降级为空）: scope={}:{}, reason={}", scopeType, scopeId, e.getMessage());
