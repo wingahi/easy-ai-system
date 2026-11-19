@@ -10,6 +10,11 @@ spring:
   application:
     name: wgh-rag-system
 
+  # ===== 功能开关与运行参数（独立文件，值=代码默认值，行为与未配置一致）=====
+  # 文件不存在时不影响启动；profile 专属配置与本文件中的显式键仍可覆盖其默认值。
+  config:
+    import: optional:classpath:application-features.yml
+
   # ===== PostgreSQL 数据源（pgvector 向量化复用同一连接池） =====
   datasource:
     driver-class-name: org.postgresql.Driver
@@ -132,8 +137,9 @@ wgh:
         signed-url-expire-minutes: ${WGH_OSS_SIGNED_URL_EXPIRE_MINUTES:60}
         max-retries: ${WGH_OSS_MAX_RETRIES:3}
         max-file-size-mb: ${WGH_STORAGE_MAX_FILE_MB:200}
-    # ===== Redis（限流 / 分享密码锁定 / Widget 嵌入授权）=====
-    # Redis 不可用时不阻断启动，公开访问能力自动降级为单机内存并输出 WARN。
+    # ===== Redis（限流 / 分享密码锁定 / Widget 嵌入授权 / 跨实例取消）=====
+    # Redis 不可用时不阻断启动，公开访问与取消标记自动降级为单机内存并输出 WARN；
+    # 降级次数暴露为 wgh.state.store.fallbacks 指标，便于多副本部署告警。
     redis:
       enabled: ${WGH_REDIS_ENABLED:true}
       host: ${WGH_REDIS_HOST:localhost}
@@ -141,6 +147,8 @@ wgh:
       database: ${WGH_REDIS_DATABASE:0}
       timeout: ${WGH_REDIS_TIMEOUT:2s}
       password: ${WGH_REDIS_PASSWORD:}
+      # 共享状态 key 的系统命名空间根（多环境共用同一 Redis 时用于区分）
+      key-prefix: ${WGH_REDIS_KEY_PREFIX:wgh}
     retrieve:
       top-k: 5
       # cosine 阈值：实测相关命中位于 0.588~0.601，0.3 会放入大量弱相关噪声；默认 0.55 与文档契约一致
@@ -256,6 +264,8 @@ management:
   metrics:
     tags:
       application: ${spring.application.name}
+      # 多副本时用于区分实例指标序列；K8s 下默认取 Pod 名（HOSTNAME）
+      wgh.instance: ${WGH_INSTANCE_ID:${HOSTNAME:local}}
 
 # ===== Logback 级别 =====
 logging:

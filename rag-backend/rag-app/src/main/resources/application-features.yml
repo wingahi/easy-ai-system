@@ -1,0 +1,116 @@
+# =====================================================================
+# 功能开关与运行参数（独立配置文件）
+# ---------------------------------------------------------------------
+# 由 application.yml 的 spring.config.import 引入：
+#   spring.config.import: optional:classpath:application-features.yml
+#
+# 约定：
+#   1. 本文件所有值均等于对应 @ConfigurationProperties / @Value 的代码默认值，
+#      引入后行为与“完全不配置”一致；需要覆盖时改本文件或用环境变量。
+#   2. 空值/空串默认项（wgh.sandbox.work-root、wgh.rag.memory.summary-model-id）
+#      不搬入本文件，保留在代码中，避免 YAML 空值绑定改变既有语义。
+#   3. 键名与配置类前缀严格对应，注释标注所属类，便于定位。
+# =====================================================================
+wgh:
+
+  # -------------------------------------------------------------------
+  # 检索式长期记忆（RagProperties.Memory，前缀 wgh.rag.memory）
+  # 今日新增：摘要与 TTL/容量清理；enabled/top-k/min-score/max-tokens 为既有项，不在此重复。
+  # -------------------------------------------------------------------
+  rag:
+    memory:
+      # ===== 摘要（AgentMemorySummarizer） =====
+      llm-summary-enabled: false        # 是否用 LLM 生成记忆摘要；关闭或失败时回退截断
+      # summary-model-id: 为空表示取第一个启用的对话模型；空值默认项保留在代码中
+      summary-max-input-chars: 4000     # 送入摘要模型的原文最大字符数
+      summary-max-tokens: 300           # 摘要输出 Token 上限
+      fallback-summary-chars: 800       # 截断兜底最大字符数
+
+      # ===== TTL / 容量清理（AgentMemoryCleaner） =====
+      cleanup-enabled: true             # 是否启用记忆清理
+      retention-days: 30                # 记忆保留天数（<=0 不按年龄清理）
+      max-entries-per-scope: 200        # 单作用域最大条数（<=0 不按条数清理）
+      cleanup-interval-minutes: 60      # 清理执行间隔（分钟，最小 5）
+      cleanup-batch-size: 200           # 单次清理批量上限
+
+    # -----------------------------------------------------------------
+    # 存储运维（StorageMigrationProperties / StorageMigrationJobProperties /
+    #           StorageOrphanCleanupProperties，前缀 wgh.rag.storage.*）
+    # -----------------------------------------------------------------
+    storage:
+      # ===== local <-> oss 迁移执行参数（StorageMigrationProperties） =====
+      migration:
+        concurrency: 4                  # 并发搬运对象数（1~32）
+        max-attempts: 3                 # 单对象最大尝试次数（含首次，1~10）
+        retry-backoff-millis: 200       # 重试退避基数（线性递增，封顶 5 秒）
+        max-failure-entries: 200        # 返回报告中保留的失败对象条数上限
+
+        # ===== 异步作业状态 / 节流（StorageMigrationJobProperties） =====
+        job-ttl-hours: 24               # 任务状态与取消标记 TTL（小时）
+        progress-flush-interval-millis: 1000   # 进度合并写入间隔（毫秒）
+        progress-flush-batch: 50        # 进度合并写入的对象数阈值
+        cancel-check-interval-millis: 1000     # 执行实例检查取消标记的间隔（毫秒）
+        index-limit: 50                 # 任务索引保留条数上限
+        lock-ttl-seconds: 120           # 跨实例单飞锁 TTL（秒，最小 30）
+        lock-renew-interval-seconds: 0  # 0 表示按 TTL/3 自动计算续约间隔
+
+      # ===== 孤儿对象清理（StorageOrphanCleanupProperties） =====
+      orphan-cleanup:
+        enabled: true                   # 是否启用定期扫描（首次执行在一个间隔之后）
+        delete: false                   # 默认仅报告；true 才真正删除孤儿对象
+        interval-minutes: 1440          # 扫描间隔（分钟，最小 5）
+        min-age-minutes: 60             # 删除保护期（分钟）：窗口内对象只报告不删除
+        max-report-entries: 100         # 报告与逐条日志保留的孤儿 key 上限
+
+  # -------------------------------------------------------------------
+  # 代码沙箱（SandboxProperties，前缀 wgh.sandbox）
+  # 默认关闭：enabled=false 时任何执行请求都会被拒绝。
+  # work-root 默认空串（回退 ${java.io.tmpdir}/wgh-sandbox），空值项保留在代码中。
+  # -------------------------------------------------------------------
+  sandbox:
+    enabled: false                      # 总开关，默认关闭
+    default-timeout-ms: 5000            # 默认墙钟超时（毫秒）
+    max-timeout-ms: 30000               # 允许的最大墙钟超时（毫秒）
+    max-output-bytes: 65536             # stdout/stderr 合计输出上限（字节）
+    max-code-bytes: 65536               # 单次提交代码最大字节数
+    cpu-seconds: 5                      # CPU 时间上限（秒，ulimit -t）
+    memory-mb: 256                      # 内存上限（MB，ulimit -v，尽力而为）
+    max-file-bytes: 1048576             # 进程可写单文件上限（字节，ulimit -f）
+    max-concurrent: 2                   # 同时执行的沙箱进程上限
+    max-requests-per-minute: 10         # 每用户每分钟最多执行次数（进程内配额）
+    allowed-languages:                  # 允许的语言（SandboxLanguage 名称）
+      - PYTHON
+      - JAVASCRIPT
+    allow-network: false                # 是否允许子进程访问网络（默认拒绝）
+    isolation: AUTO                     # AUTO / SANDBOX_EXEC / BWRAP / DEGRADED
+    allow-degraded-isolation: false      # 是否允许退回弱隔离（临时目录 + ulimit）
+    audit-to-database: true             # 是否把审计记录异步写入 wgh_audit_log
+
+  # -------------------------------------------------------------------
+  # 多 Agent 上下文预算（MultiAgentContextProperties，前缀 wgh.multi-agent.context）
+  # 既有配置项（提交 2afd8ae），今日未修改默认值；按主题一并收敛，值等于代码默认值。
+  # -------------------------------------------------------------------
+  multi-agent:
+    context:
+      summary-max-tokens: 2000          # 汇总 prompt 的卡片预算 Tokens
+      card-conclusion-max-tokens: 200   # 单张卡片结论预算 Tokens
+      memory-max-messages: 6            # hasMemory 注入的最近消息条数
+      memory-max-tokens: 1000           # hasMemory 注入的历史 Token 上限
+
+  # -------------------------------------------------------------------
+  # 工作流节点上下文预算（WorkflowContextProperties，前缀 wgh.workflow.context）
+  # 既有配置项（提交 9be4a10 / f27704c），今日未修改默认值；按主题一并收敛。
+  # -------------------------------------------------------------------
+  workflow:
+    context:
+      node-prompt-max-ratio: 0.7        # LLM 节点输入预算占模型窗口比例
+      fallback-context-window-tokens: 8192   # 模型未配置窗口时的兜底窗口（Tokens）
+      node-output-max-bytes: 65536      # 单节点输出落库上限（字节）
+      context-json-max-bytes: 262144    # context_json 落库总上限（字节）
+
+  # -------------------------------------------------------------------
+  # 任务恢复（TaskRecoveryService）
+  # 当前无可配置项：恢复线程池大小（2）、进程内互斥、锁续约策略均为代码常量，
+  # 分布式锁 TTL 复用 RedisDistributedLock.DEFAULT_TTL（60s）。
+  # 因此本节不提供键，避免出现“配置了但不生效”的假开关。
+  # -------------------------------------------------------------------
