@@ -22,6 +22,11 @@
             <groupId>com.wgh</groupId>
             <artifactId>rag-storage</artifactId>
         </dependency>
+        <!-- RedisCommandPort / RedisDistributedLock：存储迁移任务状态与跨实例单飞 -->
+        <dependency>
+            <groupId>com.wgh</groupId>
+            <artifactId>rag-config</artifactId>
+        </dependency>
         <dependency>
             <groupId>com.wgh</groupId>
             <artifactId>rag-llm</artifactId>

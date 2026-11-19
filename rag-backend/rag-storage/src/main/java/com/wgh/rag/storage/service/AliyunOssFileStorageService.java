@@ -2,6 +2,9 @@ package com.wgh.rag.storage.service;
 
 import com.aliyun.oss.OSS;
 import com.aliyun.oss.OSSClientBuilder;
+import com.aliyun.oss.model.ListObjectsRequest;
+import com.aliyun.oss.model.OSSObjectSummary;
+import com.aliyun.oss.model.ObjectListing;
 import com.aliyun.oss.model.ObjectMetadata;
 import com.wgh.rag.common.exception.BusinessException;
 import com.wgh.rag.storage.constant.StorageConstants;
@@ -20,6 +23,7 @@ import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.function.Supplier;
@@ -34,7 +38,7 @@ import java.util.function.Supplier;
 @Component
 @ConditionalOnProperty(prefix = StorageConstants.CONFIG_PREFIX, name = "type",
         havingValue = StorageConstants.TYPE_OSS)
-public class AliyunOssFileStorageService implements FileStorageService {
+public class AliyunOssFileStorageService implements FileStorageService, StorageInventoryService {
 
     private final StorageProperties properties;
     /** 测试注入用；生产为 null 时按配置懒创建 */
@@ -171,6 +175,74 @@ public class AliyunOssFileStorageService implements FileStorageService {
                 () -> serverClient().doesObjectExist(properties.getOss().getBucket(), objectKey));
     }
 
+    // ============ StorageInventoryService ============
+
+    @Override
+    public List<StorageObjectInfo> listAll() {
+        ensureConfigured();
+        StorageProperties.Oss oss = properties.getOss();
+        String prefix = normalizedKeyPrefix(oss.getKeyPrefix());
+        return execute("列举对象", () -> {
+            List<StorageObjectInfo> objects = new ArrayList<>();
+            String marker = null;
+            do {
+                ListObjectsRequest request = new ListObjectsRequest(oss.getBucket())
+                        .withPrefix(prefix)
+                        .withMaxKeys(1000);
+                if (marker != null) {
+                    request.setMarker(marker);
+                }
+                ObjectListing listing = serverClient().listObjects(request);
+                for (OSSObjectSummary summary : listing.getObjectSummaries()) {
+                    String objectKey = summary.getKey();
+                    if (objectKey == null || objectKey.endsWith("/")) {
+                        continue;
+                    }
+                    long lastModified = summary.getLastModified() == null
+                            ? 0L : summary.getLastModified().getTime();
+                    objects.add(new StorageObjectInfo(
+                            stripKeyPrefix(objectKey, prefix), summary.getSize(), lastModified));
+                }
+                marker = listing.isTruncated() ? listing.getNextMarker() : null;
+            } while (marker != null);
+            return objects;
+        });
+    }
+
+    @Override
+    public StorageObjectInfo stat(String key) {
+        if (key == null || key.isBlank()) {
+            return null;
+        }
+        ensureConfigured();
+        StorageProperties.Oss oss = properties.getOss();
+        String objectKey = objectKey(key);
+        return execute("获取对象元数据", () -> {
+            if (!serverClient().doesObjectExist(oss.getBucket(), objectKey)) {
+                return null;
+            }
+            ObjectMetadata metadata = serverClient().getObjectMetadata(oss.getBucket(), objectKey);
+            long lastModified = metadata.getLastModified() == null
+                    ? 0L : metadata.getLastModified().getTime();
+            return new StorageObjectInfo(key, metadata.getContentLength(), lastModified);
+        });
+    }
+
+    @Override
+    public String canonicalKey(String storedKey) {
+        if (storedKey == null || storedKey.isBlank()) {
+            return "";
+        }
+        String normalized = storedKey.replace('\\', '/');
+        while (normalized.startsWith("./")) {
+            normalized = normalized.substring(2);
+        }
+        while (normalized.startsWith("/")) {
+            normalized = normalized.substring(1);
+        }
+        return stripKeyPrefix(normalized, normalizedKeyPrefix(properties.getOss().getKeyPrefix()));
+    }
+
     // ============ 私有方法 ============
 
     private void ensureConfigured() {
@@ -193,15 +265,23 @@ public class AliyunOssFileStorageService implements FileStorageService {
         if (normalized.startsWith("/")) {
             normalized = normalized.substring(1);
         }
-        String prefix = properties.getOss().getKeyPrefix();
+        return normalizedKeyPrefix(properties.getOss().getKeyPrefix()) + normalized;
+    }
+
+    /** 规范化 keyPrefix：去反斜杠、去前导斜杠、确保以 / 结尾；空值返回空串。 */
+    private String normalizedKeyPrefix(String prefix) {
         if (prefix == null || prefix.isBlank()) {
-            return normalized;
+            return "";
         }
-        prefix = prefix.replace('\\', '/').replaceAll("^/+", "");
-        if (!prefix.endsWith("/")) {
-            prefix = prefix + "/";
+        String normalized = prefix.replace('\\', '/').replaceAll("^/+", "");
+        return normalized.endsWith("/") ? normalized : normalized + "/";
+    }
+
+    private String stripKeyPrefix(String objectKey, String prefix) {
+        if (!prefix.isEmpty() && objectKey.startsWith(prefix)) {
+            return objectKey.substring(prefix.length());
         }
-        return prefix + normalized;
+        return objectKey;
     }
 
     private Path spoolToTemp(InputStream in, long limit) {

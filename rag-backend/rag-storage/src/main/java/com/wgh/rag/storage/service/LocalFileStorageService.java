@@ -8,6 +8,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.AtomicMoveNotSupportedException;
@@ -15,6 +16,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.stream.Stream;
 
 /**
  * 本地磁盘实现（默认）：目录可配、防路径穿越、大小校验、temp → rename 原子写入。
@@ -26,7 +30,7 @@ import java.nio.file.StandardCopyOption;
 @Component
 @ConditionalOnProperty(prefix = StorageConstants.CONFIG_PREFIX, name = "type",
         havingValue = StorageConstants.TYPE_LOCAL, matchIfMissing = true)
-public class LocalFileStorageService implements FileStorageService {
+public class LocalFileStorageService implements FileStorageService, StorageInventoryService {
 
     private final StorageProperties properties;
     private Path root;
@@ -36,7 +40,7 @@ public class LocalFileStorageService implements FileStorageService {
     }
 
     @PostConstruct
-    void init() {
+    public void init() {
         root = Paths.get(properties.getLocal().getBaseDir()).toAbsolutePath().normalize();
         try {
             Files.createDirectories(root);
@@ -129,6 +133,91 @@ public class LocalFileStorageService implements FileStorageService {
     @Override
     public boolean exists(String key) {
         return Files.isRegularFile(resolvePath(key));
+    }
+
+    // ============ StorageInventoryService ============
+
+    @Override
+    public List<StorageObjectInfo> listAll() {
+        List<StorageObjectInfo> objects = new ArrayList<>();
+        if (!Files.isDirectory(root)) {
+            return objects;
+        }
+        try (Stream<Path> paths = Files.walk(root)) {
+            paths.filter(Files::isRegularFile).forEach(path -> {
+                String name = path.getFileName().toString();
+                if (isTempFile(name)) {
+                    return;
+                }
+                try {
+                    objects.add(new StorageObjectInfo(
+                            toLogicalKey(root.relativize(path)),
+                            Files.size(path),
+                            Files.getLastModifiedTime(path).toMillis()));
+                } catch (IOException e) {
+                    log.warn("读取本地存储对象元数据失败: {} ({})", path, e.getMessage());
+                }
+            });
+        } catch (IOException e) {
+            throw new BusinessException("列举本地存储对象失败: " + e.getMessage(), e);
+        }
+        return objects;
+    }
+
+    @Override
+    public StorageObjectInfo stat(String key) {
+        if (key == null || key.isBlank()) {
+            return null;
+        }
+        try {
+            Path path = resolvePath(key);
+            if (!Files.isRegularFile(path)) {
+                return null;
+            }
+            return new StorageObjectInfo(key, Files.size(path), Files.getLastModifiedTime(path).toMillis());
+        } catch (BusinessException e) {
+            // 非法/越界 key 按“不存在”处理，避免运维扫描因单条异常中断
+            log.debug("本地存储对象 stat 失败，按不存在处理: key={}, error={}", key, e.getMessage());
+            return null;
+        } catch (IOException e) {
+            throw new BusinessException("读取本地存储对象元数据失败: " + e.getMessage(), e);
+        }
+    }
+
+    @Override
+    public String canonicalKey(String storedKey) {
+        if (storedKey == null || storedKey.isBlank()) {
+            return "";
+        }
+        String normalized = storedKey.replace('\\', '/');
+        while (normalized.startsWith("./")) {
+            normalized = normalized.substring(2);
+        }
+        try {
+            Path raw = Paths.get(storedKey);
+            Path candidate = null;
+            if (raw.isAbsolute()) {
+                candidate = raw.normalize();
+            } else if (!normalized.startsWith(StorageConstants.KEY_PREFIX_KB)) {
+                // 历史数据兼容：./uploads/1/a.pdf 这类相对工作目录路径
+                candidate = raw.toAbsolutePath().normalize();
+            }
+            if (candidate != null && candidate.startsWith(root)) {
+                return toLogicalKey(root.relativize(candidate));
+            }
+        } catch (RuntimeException e) {
+            log.debug("历史存储路径无法规范化，按原值处理: {} ({})", storedKey, e.getMessage());
+        }
+        return normalized;
+    }
+
+    private String toLogicalKey(Path path) {
+        return path.toString().replace(File.separatorChar, '/');
+    }
+
+    private boolean isTempFile(String fileName) {
+        return fileName.startsWith(StorageConstants.LOCAL_TEMP_PREFIX)
+                && fileName.endsWith(StorageConstants.TEMP_SUFFIX);
     }
 
     private long maxBytes() {
