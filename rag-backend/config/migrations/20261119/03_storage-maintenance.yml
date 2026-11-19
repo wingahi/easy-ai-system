@@ -1,0 +1,36 @@
+# =====================================================================
+# 增量配置：存储维护（2026-11-19）
+# ---------------------------------------------------------------------
+# 目标文件：rag-backend/rag-app/src/main/resources/application-features.yml
+# 分区：storage-maintenance（今日新增 16 个键）
+# 来源类：StorageMigrationProperties / StorageMigrationJobProperties /
+#         StorageOrphanCleanupProperties（前缀 wgh.rag.storage.*）
+# 说明：增量覆盖片段，不参与自动加载；合并方式见 config/README.md
+# 未收录：wgh.rag.storage.type、local.*、oss.* 等既有键（今日未改动）
+# =====================================================================
+wgh:
+  rag:
+    storage:
+      # ===== local <-> oss 迁移执行参数（StorageMigrationProperties） =====
+      migration:
+        concurrency: 4                  # 并发搬运对象数（1~32）
+        max-attempts: 3                 # 单对象最大尝试次数（含首次，1~10）
+        retry-backoff-millis: 200       # 重试退避基数（线性递增，封顶 5 秒）
+        max-failure-entries: 200        # 返回报告中保留的失败对象条数上限
+
+        # ===== 异步作业状态 / 节流（StorageMigrationJobProperties） =====
+        job-ttl-hours: 24               # 任务状态与取消标记 TTL（小时）
+        progress-flush-interval-millis: 1000   # 进度合并写入间隔（毫秒）
+        progress-flush-batch: 50        # 进度合并写入的对象数阈值
+        cancel-check-interval-millis: 1000     # 执行实例检查取消标记的间隔（毫秒）
+        index-limit: 50                 # 任务索引保留条数上限
+        lock-ttl-seconds: 120           # 跨实例单飞锁 TTL（秒，最小 30）
+        lock-renew-interval-seconds: 0  # 0 表示按 TTL/3 自动计算续约间隔
+
+      # ===== 孤儿对象清理（StorageOrphanCleanupProperties） =====
+      orphan-cleanup:
+        enabled: true                   # 是否启用定期扫描（首次执行在一个间隔之后）
+        delete: false                   # 默认仅报告；true 才真正删除孤儿对象
+        interval-minutes: 1440          # 扫描间隔（分钟，最小 5）
+        min-age-minutes: 60             # 删除保护期（分钟）：窗口内对象只报告不删除
+        max-report-entries: 100         # 报告与逐条日志保留的孤儿 key 上限

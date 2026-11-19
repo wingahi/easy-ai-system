@@ -1,0 +1,19 @@
+# =====================================================================
+# 增量配置：多实例运行标识（2026-11-19）
+# ---------------------------------------------------------------------
+# 目标文件：rag-backend/rag-app/src/main/resources/application.yml
+# 分区：多实例与可观测（今日新增/修改 2 个键）
+# 说明：增量覆盖片段，不参与自动加载；合并方式见 config/README.md
+# 注意：这两个键不在 application-features.yml 中，值为 application.yml 现值
+# =====================================================================
+wgh:
+  rag:
+    redis:
+      # 共享状态 key 的系统命名空间根（默认 wgh，与历史 key 名称保持一致）
+      key-prefix: ${WGH_REDIS_KEY_PREFIX:wgh}
+
+management:
+  metrics:
+    tags:
+      # 多副本时用于区分实例指标序列；K8s 下默认取 Pod 名（HOSTNAME）
+      wgh.instance: ${WGH_INSTANCE_ID:${HOSTNAME:local}}

@@ -1,0 +1,16 @@
+# =====================================================================
+# 增量配置：工作流节点上下文预算（2026-11-19）
+# ---------------------------------------------------------------------
+# 目标文件：rag-backend/rag-app/src/main/resources/application-features.yml
+# 分区：workflow-context（4 个键）
+# 来源类：WorkflowContextProperties（前缀 wgh.workflow.context）
+# 性质：既有键（提交 9be4a10 / f27704c 引入），今日收敛进配置文件，值未修改
+# 说明：增量覆盖片段，不参与自动加载；合并方式见 config/README.md
+# =====================================================================
+wgh:
+  workflow:
+    context:
+      node-prompt-max-ratio: 0.7             # LLM 节点输入预算占模型窗口比例
+      fallback-context-window-tokens: 8192   # 模型未配置窗口时的兜底窗口（Tokens）
+      node-output-max-bytes: 65536           # 单节点输出落库上限（字节）
+      context-json-max-bytes: 262144         # context_json 落库总上限（字节）

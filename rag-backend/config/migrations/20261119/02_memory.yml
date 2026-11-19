@@ -1,0 +1,26 @@
+# =====================================================================
+# 增量配置：检索式长期记忆（2026-11-19）
+# ---------------------------------------------------------------------
+# 目标文件：rag-backend/rag-app/src/main/resources/application-features.yml
+# 分区：memory（今日新增 9 个键）
+# 来源类：RagProperties.Memory（前缀 wgh.rag.memory）
+# 说明：增量覆盖片段，不参与自动加载；合并方式见 config/README.md
+# 未收录：wgh.rag.memory.summary-model-id（null 默认项，保留在代码中，
+#         为空表示取第一个启用的对话模型）
+# 未收录：enabled / top-k / min-score / max-tokens 等既有键（今日未改动）
+# =====================================================================
+wgh:
+  rag:
+    memory:
+      # ===== 摘要（AgentMemorySummarizer） =====
+      llm-summary-enabled: false        # 是否用 LLM 生成记忆摘要；关闭或失败时回退截断
+      summary-max-input-chars: 4000     # 送入摘要模型的原文最大字符数
+      summary-max-tokens: 300           # 摘要输出 Token 上限
+      fallback-summary-chars: 800       # 截断兜底最大字符数
+
+      # ===== TTL / 容量清理（AgentMemoryCleaner） =====
+      cleanup-enabled: true             # 是否启用记忆清理
+      retention-days: 30                # 记忆保留天数（<=0 不按年龄清理）
+      max-entries-per-scope: 200        # 单作用域最大条数（<=0 不按条数清理）
+      cleanup-interval-minutes: 60      # 清理执行间隔（分钟，最小 5）
+      cleanup-batch-size: 200           # 单次清理批量上限

@@ -1,0 +1,16 @@
+# =====================================================================
+# 增量配置：多 Agent 上下文预算（2026-11-19）
+# ---------------------------------------------------------------------
+# 目标文件：rag-backend/rag-app/src/main/resources/application-features.yml
+# 分区：multi-agent（4 个键）
+# 来源类：MultiAgentContextProperties（前缀 wgh.multi-agent.context）
+# 性质：既有键（提交 2afd8ae 引入），今日收敛进配置文件，值未修改
+# 说明：增量覆盖片段，不参与自动加载；合并方式见 config/README.md
+# =====================================================================
+wgh:
+  multi-agent:
+    context:
+      summary-max-tokens: 2000          # 汇总 prompt 的卡片预算 Tokens
+      card-conclusion-max-tokens: 200   # 单张卡片结论预算 Tokens
+      memory-max-messages: 6            # hasMemory 注入的最近消息条数
+      memory-max-tokens: 1000           # hasMemory 注入的历史 Token 上限
