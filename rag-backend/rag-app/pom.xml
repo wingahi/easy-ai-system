@@ -30,6 +30,12 @@
             <groupId>com.wgh</groupId>
             <artifactId>rag-controller</artifactId>
         </dependency>
+        <!-- 代码沙箱：默认关闭，仅在配置 wgh.sandbox.enabled=true 后可用 -->
+        <dependency>
+            <groupId>com.wgh</groupId>
+            <artifactId>rag-sandbox</artifactId>
+            <version>${project.version}</version>
+        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>

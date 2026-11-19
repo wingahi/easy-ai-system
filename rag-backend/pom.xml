@@ -50,6 +50,7 @@
         <module>rag-kb</module>
         <module>rag-chat</module>
         <module>rag-tool</module>
+        <module>rag-sandbox</module>
         <module>rag-agent</module>
         <module>rag-workflow</module>
         <module>rag-agent-multi</module>
