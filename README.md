@@ -50,7 +50,7 @@
 
 ## 3. 能力矩阵
 
-状态口径：**已完成** / **部分完成** / **未实现**。状态判断以代码与提交为准，详细限制见 §8。
+状态口径：**已完成** / **部分完成** / **未实现** / **规划中**（已有成稿规划文档、尚未实施）。状态判断以代码与提交为准，详细限制见 §8。
 
 ### 3.1 知识库与检索
 
@@ -140,6 +140,17 @@
 | 工具结果纳入上下文预算 | 已完成 | 单条工具结果上限 1200 Tokens、单任务累计 3000 Tokens，超出从最旧结果开始折叠；预算只作用于送入模型的副本，前端仍展示完整原文（commit `a458197`） |
 | 工具调用兜底链 | 已完成 | `ToolInvoker` 统一包一层：失败分类（网络 / 限流 / 5xx 可重试，SSRF / 401/403 / 400/422 / 404 不重试）、仅幂等调用重试（最多尝试 2 次含首次，300ms 退避 ±30% 抖动）、按 toolId 熔断（连续 5 次失败开 30s，半开只放行 1 个探针）、任务级预算（50 次 / 120s）（commit `3a52ab6`） |
 | 工作流 LLM 节点输入预算 | 已完成 | `WorkflowContextProperties` + `LlmNodeExecutor` 渲染后按模型窗口裁剪并告警（commit `f27704c`） |
+
+### 3.7 平台演进规划（2026-11-19）
+
+状态口径：**规划中** = 已有成稿规划文档、尚未开始实施。四块互有依赖，阶段编号与验收以规划文档为准。
+
+| 方向 | 状态 | 阶段划分 | 说明 |
+|------|------|----------|------|
+| 任务调度中心 | **规划中** | S0 止血 → S1 后台作业化 → S2 租户策略生效 → S3 集群语义 | 统一承接聊天、工作流、计划任务、单 Agent、多 Agent；后台型走持久化作业 + 租约，交互式走受管 lane；不新增独立调度服务。详见 [design-execution-scheduler-center.md](docs/design/features/platform/design-execution-scheduler-center.md) |
+| 多租户隔离 | **规划中** | 阶段 0 修越权 → 1 租户模型与上下文 → 2 数据面全量隔离 → 3 企业级加固 → 4 混合分层（按需） | 共享表 + `tenant_id` 主线、RLS 兜底、大客户按需独立 schema/DB；复用 G-01～G-15 薄弱点清单。详见 [design-multi-tenancy-isolation-roadmap.md](docs/design/features/platform/design-multi-tenancy-isolation-roadmap.md) |
+| 独立向量数据库 / 搜索引擎 | **规划中** | V0 可替换性基线 → V1 搜索引擎 → V2 独立向量库（按阈值）→ V3 多后端治理 | 现状为每知识库一张 pgvector 物理表且 chunk 原文只存向量表；V0 先补端口与事实层，V1 先接关键词/过滤，V2 再按阈值替换向量后端。详见 [design-vector-store-and-search-engine.md](docs/design/features/platform/design-vector-store-and-search-engine.md) |
+| Kubernetes 级编排 | **规划中** | K0 容器基线 → K1 单副本可编排 → K2 多副本 → K3 生产级 | 只做应用与依赖的部署编排，不把业务调度迁到 K8s；多副本以 S0/A 阶段为硬门槛。详见 [design-kubernetes-orchestration.md](docs/design/features/platform/design-kubernetes-orchestration.md) |
 
 ---
 
@@ -456,9 +467,9 @@ OSS 配置不完整时不阻断启动，仅在真正调用存储操作时返回�
 
 | 类别 | 限制 | 影响 / 建议 |
 |------|------|-------------|
-| 权限体系 | 已提供角色 / 权限管理页面与接口；五类核心资源（知识库 / 聊天窗口 / 工作流 / Prompt 模板 / 工具）已支持 owner + 可见性；无租户隔离，文档级权限仍不在范围内 | 多团队共用与真正的团队边界需后续引入租户 / 成员模型 |
+| 权限体系 | 已提供角色 / 权限管理页面与接口；五类核心资源（知识库 / 聊天窗口 / 工作流 / Prompt 模板 / 工具）已支持 owner + 可见性；无租户隔离，文档级权限仍不在范围内 | 多团队共用与真正的团队边界需后续引入租户 / 成员模型；规划见 [多租户隔离落地规划](docs/design/features/platform/design-multi-tenancy-isolation-roadmap.md) |
 | 可观测性 | 已提供 Prometheus 指标与管理端口（9090）、`X-Request-Id` 日志关联；未接入分布式链路追踪 | 跨服务调用链仍需日志 / 审计辅助 |
-| 部署编排 | 已提供前后端 Dockerfile 与全栈 docker-compose；无 Kubernetes 级编排 | 大规模水平扩展需自行补编排 |
+| 部署编排 | 已提供前后端 Dockerfile 与全栈 docker-compose；无 Kubernetes 级编排 | 大规模水平扩展需自行补编排；规划见 [Kubernetes 级编排规划](docs/design/features/platform/design-kubernetes-orchestration.md) |
 | 限流 | Redis Lua 分布式滑动窗口，故障时降级单机内存 | Redis 故障期间多实例计数不共享、重启清零；建议 Redis 高可用 |
 | Widget | 仅 iframe 注入，无 `postMessage` 双向通信；`frame-ancestors` 需网关 / 静态服务配置 | 宿主页无法读取对话事件；手工 iframe 仍可能绕过 `widget.js`，需 CSP 兜底 |
 | 分享密码 | 失败 5 次锁定 15 分钟（可配置），无验证码 | 换 IP 可继续尝试；强防护可叠加网关限流 / 验证码 |
@@ -468,7 +479,7 @@ OSS 配置不完整时不阻断启动，仅在真正调用存储操作时返回�
 | 多模态 | 视觉模型支持图片输入；扫描版 PDF 按页 OCR；独立图片文件不入库 | OCR 依赖本机 Tesseract 与 `chi_sim+eng` 语言包，纯图片知识库仍需先转 PDF |
 | OpenAI 兼容 | 仅 `/v1/models` 与 `/v1/chat/completions`，`n>1`、`logprobs`、function calling / tools 未支持；`model` 只能映射已启用聊天窗口 | 复杂参数与底层模型直连需走原生 `/api/chat` 接口 |
 | OCR | 依赖本机 `tesseract` 可执行文件与语言包；单页 20 字触发、文档最多 50 页、单页 60s 超时；栏检测优先于表格 | 引擎缺失时静默降级为文本抽取；纯两列表格可能按双栏处理 |
-| 检索 | 单库 PostgreSQL + pgvector，无独立向量库 / 搜索引擎 | 超大规模语料需评估性能上限 |
+| 检索 | 单库 PostgreSQL + pgvector（每知识库一张物理表），关键词路为 pg_trgm，无独立向量库 / 搜索引擎 | 超大规模语料需评估性能上限；替换路径见 [独立向量数据库 / 搜索引擎规划](docs/design/features/platform/design-vector-store-and-search-engine.md) |
 | 模型故障转移 | 普通 RAG、Agent（Planner / Step / Reflection）与工作流 LLM 节点统一复用切链组件，覆盖首个 token / 首个响应前的失败切链；**已产生内容后失败不切链、不回滚、不重发、不拼接第二个模型输出**，直接 `error` 结束 | 已产出内容后的续接策略暂不提供；Agent 恢复 / 重试入口按计划绑定的窗口路由组解析链路 |
 | 存储切换 | `local` ↔ `oss` 切换不自动迁移历史对象 | 需手工迁移或重新上传并重建向量 |
 | OSS 删除 | 删除失败仅 WARN，数据库仍逻辑删除，可能残留孤儿对象 | 需离线清理脚本 |
@@ -494,7 +505,7 @@ OSS 配置不完整时不阻断启动，仅在真正调用存储操作时返回�
 
 ## 9. 路线图 / 后续计划
 
-状态口径：**已完成** / **部分完成** / **在途**（进行中、未交付）/ **未实现**（未开始）。§9.1、§9.2 分别对齐两份来源文档的实际进度，不自行推测；§9.3 收录不属于这两份清单的其他方向。
+状态口径：**已完成** / **部分完成** / **在途**（进行中、未交付）/ **未实现**（未开始）/ **规划中**（已成稿、未开始）。§9.1、§9.2 分别对齐两份来源文档的实际进度，不自行推测；§9.3 收录不属于这两份清单的其他方向；§9.4 为 2026-11-19 新增的平台演进四块规划。
 
 - 来源一：[长任务上下文管理与工具调用兜底 §5.1 优先级清单](docs/design/features/context-management/design-long-task-context-and-tool-fallback.md)
 - 来源二：[缺口开发计划 2026-11-09 任务总表](docs/review/gap-development-plan-2026-11-09.md)
@@ -567,4 +578,15 @@ OSS 配置不完整时不阻断启动，仅在真正调用存储操作时返回�
 | P3 | 反馈 A/B 对比 | 未实现 | 版本化评测集已交付；仍缺实验分流、对照组与显著性分析 |
 | P3 | 图片 OCR | 部分完成 | 扫描版 PDF 已按页 OCR（`TessOcrService`，commit `6ed9d10`）；独立图片文件（PNG / JPG）未接入 |
 
-暂不规划：多租户隔离、独立向量数据库 / 搜索引擎、Kubernetes 级编排。当前设计以单库 PostgreSQL + pgvector 与单实例部署为优先，降低私有化部署与运维成本。
+### 9.4 平台演进四块规划（2026-11-19）
+
+以下四块已完成规划文档，**尚未开始实施**，阶段编号与验收以各自文档为准。此前「暂不规划」的表述已废止。
+
+| 块 | 规划文档 | 阶段 | 前置关系 |
+|----|----------|------|----------|
+| 任务调度中心 | [design-execution-scheduler-center.md](docs/design/features/platform/design-execution-scheduler-center.md) | S0 → S1 → S2 → S3 | 与多租户阶段 0/1 同批；S0 是 K8s 多副本前置 |
+| 多租户隔离 | [design-multi-tenancy-isolation-roadmap.md](docs/design/features/platform/design-multi-tenancy-isolation-roadmap.md) | 阶段 0 → 1 → 2 → 3（阶段 4 按需） | 阶段 0 必须先于任何多副本扩容 |
+| 独立向量数据库 / 搜索引擎 | [design-vector-store-and-search-engine.md](docs/design/features/platform/design-vector-store-and-search-engine.md) | V0 → V1 → V2（按阈值）→ V3 | V0 的事实层（chunk 原文独立化）是替换前置 |
+| Kubernetes 级编排 | [design-kubernetes-orchestration.md](docs/design/features/platform/design-kubernetes-orchestration.md) | K0 → K1 → K2 → K3 | K2 依赖 S0/A 阶段完成 |
+
+对应的现状口径见 §3.7 与 §8；四块互不替代：调度中心解决「谁来执行」，多租户解决「数据归属」，向量/搜索解决「检索容量与质量」，K8s 解决「部署与弹性」。

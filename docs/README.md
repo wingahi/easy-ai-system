@@ -26,6 +26,10 @@
 | [quota/quota-design.md](design/features/quota/quota-design.md) | 配额模块：表结构、接口、配置与调用链 | 2026-11-04 |
 | [observability/design-observability.md](design/features/observability/design-observability.md) | 指标、日志、告警与 Prometheus 接入 | 2026-11-03 |
 | [platform/design-phase5-platform-features.md](design/features/platform/design-phase5-platform-features.md) | 阶段五平台化特性（工具、工作流、多 Agent 等）阶段记录 | 2026-11-06 |
+| [platform/design-execution-scheduler-center.md](design/features/platform/design-execution-scheduler-center.md) | 任务调度中心统一规划：chat / 工作流 / 计划任务 / Agent / 多 Agent 的 lane 划分与 S0–S3 排期 | 2026-11-19 |
+| [platform/design-multi-tenancy-isolation-roadmap.md](design/features/platform/design-multi-tenancy-isolation-roadmap.md) | 多租户隔离落地规划：阶段 0–4 排期、跨块接口与负向测试矩阵 | 2026-11-19 |
+| [platform/design-vector-store-and-search-engine.md](design/features/platform/design-vector-store-and-search-engine.md) | 独立向量数据库 / 搜索引擎规划：现状评估、端口化、V0–V3 路径与切换方案 | 2026-11-19 |
+| [platform/design-kubernetes-orchestration.md](design/features/platform/design-kubernetes-orchestration.md) | Kubernetes 级编排规划：现状差距、目标拓扑、K0–K3 路径与验收 | 2026-11-19 |
 
 ## design/refactoring/ — 重构记录
 
@@ -58,7 +62,7 @@
 | [browser-e2e-report-2026-11-06.md](testing/reports/browser-e2e-report-2026-11-06.md) | 2026-11-06 页面端到端测试报告：用例分布、缺陷修复复验与 BLOCKED 解除记录 | 2026-11-06 |
 | [browser-e2e-report-2026-11-18.md](testing/reports/browser-e2e-report-2026-11-18.md) | 2026-11-18 全量浏览器回归报告：批次 3 迁移与重启、页面 84 条 PASS 84、接口 8 条 PASS 8（补跑被叫停，3 条未完成不计 PASS）、基线 93 条对照与缺陷清单 | 2026-11-18 |
 
-所有浏览器截图及证据位于 [testing/evidence/](testing/evidence/)，文件名保持与报告引用一致（截图未纳入 Git 跟踪，仅保留在工作区）。
+证据截图不入库：`testing/evidence/` 目录仅保留在本地工作区，文件名与报告引用保持一致（截图未纳入 Git 跟踪）。
 
 ## api/ — 接口文档
 

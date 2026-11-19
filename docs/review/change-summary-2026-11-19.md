@@ -1,0 +1,372 @@
+# 今日变更汇总（2026-11-19）
+
+> **基线**：`main` @ `16a143e`（fix(tool): 修正熔断器构造器导致启动失败）
+> **核实依据**：`git status --short`、`git diff --stat`、`git diff`（相对 HEAD），以及 `rag-backend/**/target/surefire-reports` 中 2026-11-19 的单测报告
+> **提交状态**：全部未提交（工作区改动 + 未跟踪新文件），未执行 `git add` / `git commit`
+
+## 1. 概述与变更规模
+
+今日围绕「上下文与长期记忆、多实例共享状态、存储运维、代码沙箱、断点续跑」五条线落地，并补齐前端停止生成与运行中任务页面。
+
+| 维度 | 数值 |
+| --- | --- |
+| 已跟踪文件修改 | 48 个（`git diff --stat`） |
+| 未跟踪文件 | 61 个：56 个代码/测试/前端文件 + 4 份 11-18 设计或分析文档 + 1 个 11-09 遗留 `javac.*.args` |
+| 涉及后端模块 | rag-config、rag-common、rag-kb、rag-chat、rag-agent、rag-agent-multi、rag-workflow、rag-storage、rag-sandbox（新增）、rag-controller、rag-quota、rag-public-access、rag-app |
+| 涉及其他目录 | rag-frontend、deploy/prometheus、docker-compose.yml、docs |
+| 增量 DDL | 无（见第 4 节） |
+| 配置变更 | 今日新增/修改 42 个键；既有配置一并收敛 8 个；2 个空值默认项保留代码（见第 5 节） |
+
+> 说明：`docs/design/features/agent/design-react-task-recovery.md` 等 4 份文档内容日期为 2026-11-18，属于今日实现所依据的分析/设计输入，不计入今日代码变更统计。
+
+## 2. 摘要表
+
+| 主题 | 改动要点 | 影响面 |
+| --- | --- | --- |
+| 上下文与记忆 | 新增记忆摘要器、TTL/容量清理器；新增任务级记忆（TASK + SESSION 镜像）并接入单 Agent、多 Agent；新增 9 个 `wgh.rag.memory.*` 键；异步线程池继承 MDC | 记忆写入量、模型调用成本、Agent 步骤耗时；既有 `enabled/top-k/min-score/max-tokens` 语义不变 |
+| 多实例与可观测 | Redis key 命名空间根（`wgh.rag.redis.key-prefix`）；跨实例取消标记与 3 个停止接口；配额条件自增；新增 14 个指标方法；Prometheus 改 `dns_sd`；compose 支持 `--scale` | 多副本一致性、限流/配额超发、取消延迟；单实例部署行为不变 |
+| 存储维护 | 存储清单接口与 local/oss 实现；local↔oss 异步迁移（幂等、dry-run、SHA-256 校验）；孤儿对象扫描/可选删除；管理端 5 个接口；迁移状态入 Redis | 运维入口新增；不修改数据库与 `file_path`；迁移期间源/目标并存 |
+| 代码沙箱 | 新增 `rag-sandbox` 模块（默认关闭）；sandbox-exec/bwrap/降级三种隔离；语言白名单、超时/输出/内存/并发/限流；接入既有 `ToolExecutor`；审计只记摘要不记源码 | 默认无任何行为变化；启用后新增进程级执行面与审计记录 |
+| 任务恢复 | 三源（Agent/多 Agent/工作流）运行中任务查询与续跑；多 Agent 步骤检查点复用 `wgh_m_agent_step`；工作流按 `wgh_workflow_node_run` 重建检查点；单 Agent 新增 `resumeAfterInterruption`；Redis 单飞锁 | 新增 4 个接口；仅对 RUNNING/PLANNING 生效；HITL 仍走原入口；CHAT 无持久化任务 |
+| 前端 | 停止生成先发后端停止请求再断流；`silent` 请求选项；新增「运行中任务」页与路由/菜单；聊天页未完成任务横幅与一键继续 | 停止在多实例下真正生效；新接口未就绪时静默降级 |
+
+## 3. 详情
+
+### 3.1 上下文与记忆
+
+**目的**：让 Agent 在任务内/会话内复用历史结论，并控制记忆表无限增长；同时避免异步线程丢失日志上下文。
+
+**关键文件与类**
+
+- [RagProperties.java](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-config/src/main/java/com/wgh/rag/config/property/RagProperties.java)：`Memory` 增加摘要与清理两组字段。
+- [AgentMemoryService.java](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/AgentMemoryService.java)：新增 `rememberTask(...)`（TASK 作用域 + 可选 SESSION 镜像）、`summarizeOrTruncate(...)`。
+- 新增 [AgentMemorySummarizer.java](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/AgentMemorySummarizer.java)：LLM 摘要，默认关闭，失败返回 null 回退截断。
+- 新增 [AgentMemoryCleaner.java](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/AgentMemoryCleaner.java)：按年龄与单作用域条数清理，同步删除向量；进程内 `AtomicBoolean` + Postgres 事务级咨询锁单飞。
+- [AgentMemoryMapper.java](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/mapper/AgentMemoryMapper.java)：新增 `physicalDeleteById`、`selectScopeGroups`、`tryAdvisoryXactLock`。
+- 新增 [AgentTaskMemory.java](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-agent/src/main/java/com/wgh/rag/agent/support/AgentTaskMemory.java)：TASK + SESSION 召回合并，按 `FAR_FACT` 走统一预算。
+- [AgentOrchestrator.java](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-agent/src/main/java/com/wgh/rag/agent/service/AgentOrchestrator.java)：步骤 prompt 注入记忆块，步骤/计划完成时写任务记忆。
+- [AgentInstanceExecutor.java](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-agent-multi/src/main/java/com/wgh/rag/agentmulti/support/AgentInstanceExecutor.java)：多 Agent 侧召回与写入。
+- [MdcContext.java](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-common/src/main/java/com/wgh/rag/common/log/MdcContext.java)：新增 `wrap(Executor)`；压缩与 judge 线程池改用它。
+- [RagMetrics.java](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-common/src/main/java/com/wgh/rag/common/metrics/RagMetrics.java)：新增记忆写入/去重/召回/清理计数。
+
+**行为变化与兼容性**
+
+- 既有 `wgh.rag.memory` 的读写语义未变；`AgentMemoryService` 的摘要器与指标均为 `@Autowired(required = false)`，单测可直接 `new`。
+- `rememberTask` 会同时写 TASK 与 SESSION 两条（正文相同、embedding 各自生成），**写入量与向量条数增加**；关闭 `memory.enabled` 时整体跳过。
+- 记忆清理默认开启（`cleanup-enabled=true`，30 天、单作用域 200 条、每小时一次）。会**物理删除**超龄/超量行及对应向量，不经过逻辑删除。
+- 非 Postgres 数据源不支持咨询锁，自动降级为仅进程内单飞（多实例同时清理仍幂等）。
+
+**验证方式与结果**
+
+- 已执行（今日报告）：`AgentMemoryServiceTest` 8/8、`AgentInstanceExecutorFallbackTest` 2/2、`AgentInstanceExecutorFailoverTest` 1/1 通过。
+- `mvn -pl rag-app -am -DskipTests compile` 通过（JDK 21）。
+- **未验证**：LLM 摘要开启后的真实模型调用、清理器定时任务在真实库上的执行效果、记忆注入对回答质量的增益。
+
+**遗留问题**
+
+- 摘要为同步模型调用，位于执行路径上，开启后可能拉长步骤耗时（未实测）。
+- 摘要器默认取“第一个启用的对话模型”，未做成本/能力筛选。
+- 清理器在 Redis/多实例下仅靠数据库咨询锁；数据库为只读副本或连接池受限时是否稳定，未验证。
+
+### 3.2 多实例与可观测
+
+**目的**：让限流、密码锁定、嵌入授权、对话取消、配额计数在多副本下共享一致状态，并让降级可被监控。
+
+**关键文件与类**
+
+- [RagRedisProperties.java](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-config/src/main/java/com/wgh/rag/config/redis/RagRedisProperties.java)：`key-prefix` 默认值由 `wgh:public-access` 改为 `wgh`，启动时注入命名空间。
+- 新增 [RedisKeyNamespace.java](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-config/src/main/java/com/wgh/rag/config/redis/RedisKeyNamespace.java)、[RedisDistributedLock.java](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-config/src/main/java/com/wgh/rag/config/redis/RedisDistributedLock.java)。
+- 新增 [PublicAccessKeys.java](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-public-access/src/main/java/com/wgh/rag/publicaccess/service/PublicAccessKeys.java)；限流/密码/嵌入 key 改为 `{root}:pa:*`。
+- 新增 [ChatCancellationStore.java](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-chat/src/main/java/com/wgh/rag/chat/service/ChatCancellationStore.java)；[ChatStreamCancellation.java](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-chat/src/main/java/com/wgh/rag/chat/service/ChatStreamCancellation.java) 增加共享标记轮询（500ms）。
+- [ChatController.java](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-controller/src/main/java/com/wgh/rag/controller/ChatController.java)：新增 `POST /api/chat/windows/{windowId}/sessions/{sessionId}/stop` 与 `POST /api/chat/share/{shareToken}/sessions/{sessionId}/stop`。
+- [DefaultPublicAccessStore.java](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-public-access/src/main/java/com/wgh/rag/publicaccess/service/DefaultPublicAccessStore.java)：降级/操作指标；`delete` 在 Redis 降级期间不再尝试。
+- [QuotaUsageMapper.java](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-quota/src/main/java/com/wgh/rag/quota/mapper/QuotaUsageMapper.java) / [QuotaService.java](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-quota/src/main/java/com/wgh/rag/quota/service/QuotaService.java)：带上限条件的原子自增，消除“先查后加”超发窗口。
+- [RagMetrics.java](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-common/src/main/java/com/wgh/rag/common/metrics/RagMetrics.java)：新增 `wgh.storage.migration.objects`、`wgh.storage.orphans`、`wgh.state.store.fallbacks`、`wgh.state.store.ops`、`wgh.chat.cancellations`、`wgh.agent.memory.*`。
+- [application.yml](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-app/src/main/resources/application.yml)：`wgh.rag.redis.key-prefix`、`management.metrics.tags.wgh.instance`。
+- [docker-compose.yml](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/docker-compose.yml)：去掉 `container_name`，补 `WGH_REDIS_DATABASE/TIMEOUT/KEY_PREFIX`、`WGH_INSTANCE_ID`。
+- [prometheus.yml](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/deploy/prometheus/prometheus.yml)：静态 targets 改 `dns_sd_configs`，按副本抓取。
+
+**行为变化与兼容性**
+
+- Redis key 由 `wgh:public-access:*`、`wgh:pa:*` 统一为 `{key-prefix}:pa:*`。默认根仍为 `wgh`，**已有 key 名称保持不变**；把 `key-prefix` 设为自定义值会使旧限流/锁定计数失效（一次性）。
+- 显式停止接口为登录态接口（`windowService.getOwnedSession(...)`）；取消标记 TTL 10 分钟，消费即删。
+- 配额对话计数改为数据库条件更新；已超限时返回 429 的行为不变；token 上限仍是累加前读取判断，不是严格原子。
+- compose 允许 `--scale backend=N`，但多副本时 `ports` 映射会冲突，需反向代理或按实例覆盖。
+
+**验证方式与结果**
+
+- 已执行：`PublicAccessUnitTest` 18/18、`PublicAccessRedisSecurityTest` 12/12、`QuotaConcurrencyTest` 1/1、`QuotaApiTest` 7/7、`RedisDistributedLockTest` 7/7 通过（13:57–14:47）。
+- `mvn compile` 通过。
+- **未验证**：真实多副本联调、Prometheus 实际抓取、`wgh.instance` 标签在 K8s 下的取值。
+
+**遗留问题**
+
+- 免登录分享页（`PublicShareChat.vue`）调用的 `/api/chat/share/{token}/sessions/{id}/stop` 在后端只存在于需登录的 `ChatController`，`PublicShareController` 未提供对应接口，预计返回 401 并静默降级为仅本地断连（**未实际验证**）。
+- Redis 不可用时取消/限流降级为单机内存，多实例行为不一致；仅靠 `wgh.state.store.fallbacks` 告警发现。
+- 配额 token 上限仍非原子；高并发下仍可能少量超发。
+- Prometheus `dns_sd` 依赖 Docker DNS 与容器网络，非容器部署不适用。
+
+### 3.3 存储维护
+
+**目的**：支持 local↔oss 存量对象迁移与孤儿对象治理，且不引入迁移进度表、不改业务读取路径。
+
+**关键文件与类**
+
+- 新增 [StorageInventoryService.java](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-storage/src/main/java/com/wgh/rag/storage/service/StorageInventoryService.java)、[StorageObjectInfo.java](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-storage/src/main/java/com/wgh/rag/storage/service/StorageObjectInfo.java)、[StorageBackend.java](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-storage/src/main/java/com/wgh/rag/storage/service/StorageBackend.java)、[StorageBackendFactory.java](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-storage/src/main/java/com/wgh/rag/storage/service/StorageBackendFactory.java)。
+- [LocalFileStorageService.java](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-storage/src/main/java/com/wgh/rag/storage/service/LocalFileStorageService.java) / [AliyunOssFileStorageService.java](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-storage/src/main/java/com/wgh/rag/storage/service/AliyunOssFileStorageService.java)：实现 `listAll/stat/canonicalKey`；OSS 分页列举与历史路径规范化。
+- 新增 [StorageMigrationService.java](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-storage/src/main/java/com/wgh/rag/storage/migration/StorageMigrationService.java)：幂等（大小 + SHA-256 一致则跳过）、dry-run、并发与重试。
+- 新增 [StorageMigrationJobService.java](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/storage/StorageMigrationJobService.java)、[MigrationJobStateStore.java](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/storage/MigrationJobStateStore.java)：状态入 Redis（TTL 默认 24h），跨实例单飞锁。
+- 新增 [StorageOrphanCleanupService.java](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/storage/StorageOrphanCleanupService.java)、[StorageOrphanCleanupScheduler.java](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/storage/StorageOrphanCleanupScheduler.java)。
+- 新增 [StorageMaintenanceController.java](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-controller/src/main/java/com/wgh/rag/controller/StorageMaintenanceController.java)：迁移提交/查询/历史/取消、孤儿扫描 5 个接口（`PERM_AUDIT_VIEW`）。
+- 新增 [StorageMigrationProperties.java](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-storage/src/main/java/com/wgh/rag/storage/properties/StorageMigrationProperties.java)、[StorageMigrationJobProperties.java](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/storage/StorageMigrationJobProperties.java)、[StorageOrphanCleanupProperties.java](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/storage/StorageOrphanCleanupProperties.java)。
+
+**行为变化与兼容性**
+
+- 新增运维接口，默认参数为 `dryRun=true`、孤儿 `delete=false`，不改变既有业务读写。
+- 迁移只搬运对象，不修改 `wgh_knowledge_file.file_path` 等数据库字段；切换存储类型仍需改 `wgh.rag.storage.type`。
+- 幂等判定依赖目标端 `stat` 的 size + SHA-256；目标端不一致对象会被重传。
+- 孤儿判定口径为 `wgh_knowledge_file.file_path`（排除逻辑删除）+ `wgh_upload_session` 中 `UPLOADING` 分片；保护期默认 60 分钟。
+
+**验证方式与结果**
+
+- 已执行：`StorageMigrationServiceTest` 6/6、`MigrationJobStateStoreTest` 6/6、`StorageMigrationJobServiceTest` 13/13、`StorageOrphanCleanupServiceTest` 2/2 通过（14:40–14:46）。
+- `mvn compile` 通过。
+- **未验证**：真实阿里云 OSS 端到端迁移、并发上传与孤儿删除的竞态、Redis 故障降级下的多实例查询。
+
+**遗留问题**
+
+- 迁移不落进度表：进程重启后本实例任务记录丢失（Redis 中状态可查但执行已中断），需重新提交；幂等可保证不重复搬运。
+- Redis 不可用时拒绝启动新迁移（不回退进程内锁），仅本实例任务状态可用。
+- 孤儿扫描在“列举存储”和“查询数据库”之间无快照隔离，保护期只能降低、不能消除误删风险。
+- `StorageMaintenanceController` 类注释仍写“任务状态保存在进程内”，与当前 Redis 状态存储实现不一致（文档偏差）。
+
+### 3.4 代码沙箱
+
+**目的**：为 Agent 工具调用提供受限代码执行能力，默认关闭、默认 fail-closed。
+
+**关键文件与类**
+
+- 新增模块 [rag-sandbox](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-sandbox/pom.xml)，并加入 `rag-backend/pom.xml` 与 `rag-app/pom.xml`。
+- [SandboxProperties.java](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-sandbox/src/main/java/com/wgh/rag/sandbox/config/SandboxProperties.java)、[SandboxConfiguration.java](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-sandbox/src/main/java/com/wgh/rag/sandbox/config/SandboxConfiguration.java)。
+- [SandboxIsolations.java](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-sandbox/src/main/java/com/wgh/rag/sandbox/isolation/SandboxIsolations.java) 及 `SandboxExecIsolation`、`BwrapIsolation`、`DegradedIsolation`。
+- [CodeSandboxService.java](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-sandbox/src/main/java/com/wgh/rag/sandbox/service/CodeSandboxService.java)、[SandboxProcessRunner.java](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-sandbox/src/main/java/com/wgh/rag/sandbox/exec/SandboxProcessRunner.java)、[SandboxToolExecutor.java](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-sandbox/src/main/java/com/wgh/rag/sandbox/tool/SandboxToolExecutor.java)、[SandboxAuditLogger.java](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-sandbox/src/main/java/com/wgh/rag/sandbox/audit/SandboxAuditLogger.java)。
+
+**行为变化与兼容性**
+
+- `wgh.sandbox.enabled=false` 时工具存在但任何执行都返回“代码沙箱未启用”；数据库中默认无 `SANDBOX` 类型 `wgh_tool` 记录，模型默认不可见。
+- `isolation=AUTO` 优先 `sandbox-exec`（macOS）→ `bwrap`（Linux）；都不可用时**拒绝执行**，仅 `allow-degraded-isolation=true` 才退回“临时目录 + ulimit”。
+- 语言白名单默认 `PYTHON`、`JAVASCRIPT`；网络默认拒绝；输出、代码大小、CPU、内存、单文件、并发、每用户每分钟次数均有限制。
+- 审计只写代码 SHA-256 摘要前缀与字节数，不写入源码正文和完整输出；异步写库失败不影响执行。
+
+**验证方式与结果**
+
+- 已执行：`CodeSandboxServiceTest` 10/10 通过（今日 14:01，报告 `tests=10 errors=0 failures=0`）。
+- `mvn compile` 通过。
+- **未验证**：真实 `sandbox-exec`/`bwrap` 隔离下的逃逸与网络阻断效果、生产容器内是否具备对应工具、审计异步落库。
+
+**遗留问题**
+
+- 内存限制为 `ulimit -v` 尽力而为；限流是进程内每用户计数，不跨实例。
+- 降级隔离风险高，默认关闭，文档已声明但无额外二次确认。
+- 未提供管理端开关界面，启用需改配置并重启。
+
+### 3.5 任务恢复
+
+**目的**：服务重启或实例失联后，能够定位未完成任务并从最后一个成功步骤继续，而不是整体重跑。
+
+**关键文件与类**
+
+- 新增 [TaskRecoveryController.java](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-controller/src/main/java/com/wgh/rag/controller/TaskRecoveryController.java)：`/chat/sessions/{id}/pending-task`、`/chat/sessions/{id}/resume-task`、`/admin/tasks/running`、`/admin/tasks/resume`。
+- 新增 [TaskRecoveryService.java](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-controller/src/main/java/com/wgh/rag/controller/service/TaskRecoveryService.java)：三源合并、Redis 单飞锁、异步派发、审计。
+- 新增 [AgentStepCheckpointService.java](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-agent-multi/src/main/java/com/wgh/rag/agentmulti/service/AgentStepCheckpointService.java)：`begin/complete/fail/traceDecision/restoreContext`，元数据写 `wgh_m_agent_step.input_context`，内部轨迹行 `agent_id=__TRACE__`。
+- [MultiAgentRuntime.java](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-agent-multi/src/main/java/com/wgh/rag/agentmulti/runtime/MultiAgentRuntime.java)：新增 `resumeFromCheckpoint`。
+- [CrewCoordinator.java](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-agent-multi/src/main/java/com/wgh/rag/agentmulti/crew/CrewCoordinator.java)、[GraphCoordinator.java](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-agent-multi/src/main/java/com/wgh/rag/agentmulti/graph/GraphCoordinator.java)、[GroupChatCoordinator.java](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-agent-multi/src/main/java/com/wgh/rag/agentmulti/groupchat/GroupChatCoordinator.java)：步骤级检查点与跳过。
+- [AgentOrchestrator.java](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-agent/src/main/java/com/wgh/rag/agent/service/AgentOrchestrator.java)：新增 `resumeAfterInterruption`。
+- [WorkflowEngine.java](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-workflow/src/main/java/com/wgh/rag/workflow/engine/WorkflowEngine.java)：LOOP 输出补 `handle/shouldBreak`，摘要截断保护恢复判定字段。
+- [MultiAgentService.java](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-agent-multi/src/main/java/com/wgh/rag/agentmulti/service/MultiAgentService.java)：对外步骤查询过滤 `__TRACE__` 行。
+
+**行为变化与兼容性**
+
+- 仅 `RUNNING`（及多 Agent `PLANNING`）可恢复；`PAUSED`/`HITL_PENDING` 明确拒绝并提示走人工确认入口；`CHAT` 无可恢复持久化任务。
+- 单 Agent 恢复会把残留 `RUNNING` 步骤复位 `PENDING` 后重跑；多 Agent 已完成步骤跳过并回填上下文；工作流按节点运行轨迹只推进实际选中边。
+- 多 Agent 步骤不再每次新建行，而是按 `(runId, stepKey)` 复用/更新，**`wgh_m_agent_step` 行数增长方式改变**；`__TRACE__` 行对直接查表可见。
+- 恢复通过 Redis 锁互斥；Redis 不可用时直接拒绝（不回退进程内锁）。
+- 工作流节点输出新增 `handle/shouldBreak` 字段，属于新增键，不破坏既有读取。
+
+**验证方式与结果**
+
+- 已执行：`TaskRecoveryServiceTest` 6/6、`AgentStepCheckpointServiceTest` 5/5、`MultiAgentRuntimeTest` 2/2、`CrewCoordinatorLinearFallbackTest` 2/2、`RedisDistributedLockTest` 7/7 通过（14:47–14:48）。
+- `mvn compile` 通过。
+- **未验证**：真实多实例并发恢复、进程崩溃后的事件重放、长任务锁续约在真实网络分区下的表现。
+
+**遗留问题**
+
+- 恢复线程池固定 2 个线程、无可配置项；恢复失败只记日志，无自动重试与告警。
+- 单 Agent 续跑以 `sse=null` 后台执行，前端不接收事件，只能靠轮询刷新。
+- GroupChat 恢复只回放 `SUCCESS` 且 `round < currentRound` 的消息，未完成轮次整体重跑。
+- 工作流恢复依赖历史运行中已写入 `handle` 的节点；改造前产生的中断运行可能缺少该字段（代码有兜底，但未用历史数据验证）。
+
+### 3.6 前端
+
+**目的**：让“停止生成”在多实例下真正取消后端任务；提供运行中任务运维入口与未完成任务继续入口。
+
+**关键文件与类**
+
+- [chatStream.js](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-frontend/src/utils/chatStream.js)：`stopGeneration` 增加 `options.request/key`，先发停止请求（300ms 去重）再断流。
+- [api/index.js](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-frontend/src/api/index.js)：新增 `chatStopSession`、`shareStopSession`、`publicShareStopSession`、`chatPendingTask`、`chatResumeTask`、`adminRunningTasks`、`adminResumeTask`。
+- [request.js](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-frontend/src/utils/request.js)：支持 `silent`，由调用方自行处理错误提示。
+- [RunningTasks.vue](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-frontend/src/views/admin/RunningTasks.vue)、[router/index.js](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-frontend/src/router/index.js)、[Layout.vue](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-frontend/src/components/Layout.vue)：新增 `/admin/tasks` 页面、路由与管理员菜单。
+- [ChatPlayground.vue](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-frontend/src/views/chat/ChatPlayground.vue)：未完成任务横幅、继续按钮、发送/停止/轮询后刷新待办状态。
+- [ShareChat.vue](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-frontend/src/views/chat/ShareChat.vue)、[PublicShareChat.vue](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-frontend/src/views/chat/PublicShareChat.vue)：停止时调用各自 share 停止接口。
+
+**行为变化与兼容性**
+
+- 停止请求失败或接口未就绪不影响本地断连（静默吞掉）。
+- `silent` 只影响提示，不改变成功/失败判定。
+- 新页面/接口在旧后端上会显示“接口暂不可用”告警或静默降级。
+
+**验证方式与结果**
+
+- **未验证**：本次未执行前端构建、未做页面/浏览器测试；接口契约仅按代码核对。
+
+**遗留问题**
+
+- 免登录分享页停止请求路径与后端鉴权不匹配（见 3.2）。
+- 运行中任务页依赖 `admin/tasks` 新接口；后端未部署时页面不可用。
+- 停止请求与本地断连之间的时序、300ms 去重是否覆盖快速切换会话，未做交互验证。
+
+## 4. 增量 SQL
+
+**本次无增量 SQL。**
+
+核实方式与原因：
+
+- `git status --porcelain`、`git diff --name-only`、`git ls-files --others --exclude-standard` 中均无 `*.sql` 文件。
+- 恢复链路复用既有表结构：
+  - 多 Agent 检查点写入 `wgh_m_agent_step` 既有列 `input_context`，不新增表/列；
+  - 工作流恢复复用 `wgh_workflow_run` / `wgh_workflow_node_run`，仅新增输出 JSON 键 `handle/shouldBreak`；
+  - 单 Agent 复用 `wgh_agent_plan` / `wgh_agent_step`；
+  - 长期记忆复用 `wgh_agent_memory`，仅新增物理删除与分组查询；
+  - 存储迁移任务状态放在 Redis，不落库；
+  - 配额使用既有 `wgh_quota_usage`，仅改更新语句。
+
+## 5. 配置变更
+
+### 5.1 今日新增/修改的配置项
+
+| 键名 | 默认值 | 所在类 | 落地状态 |
+| --- | --- | --- | --- |
+| `wgh.rag.memory.llm-summary-enabled` | `false` | `RagProperties.Memory` | 已落到 `application-features.yml` |
+| `wgh.rag.memory.summary-max-input-chars` | `4000` | `RagProperties.Memory` | 已落到 `application-features.yml` |
+| `wgh.rag.memory.summary-max-tokens` | `300` | `RagProperties.Memory` | 已落到 `application-features.yml` |
+| `wgh.rag.memory.fallback-summary-chars` | `800` | `RagProperties.Memory` | 已落到 `application-features.yml` |
+| `wgh.rag.memory.cleanup-enabled` | `true` | `RagProperties.Memory` | 已落到 `application-features.yml` |
+| `wgh.rag.memory.retention-days` | `30` | `RagProperties.Memory` | 已落到 `application-features.yml` |
+| `wgh.rag.memory.max-entries-per-scope` | `200` | `RagProperties.Memory` | 已落到 `application-features.yml` |
+| `wgh.rag.memory.cleanup-interval-minutes` | `60` | `RagProperties.Memory` | 已落到 `application-features.yml` |
+| `wgh.rag.memory.cleanup-batch-size` | `200` | `RagProperties.Memory` | 已落到 `application-features.yml` |
+| `wgh.rag.storage.migration.concurrency` | `4` | `StorageMigrationProperties` | 已落到 `application-features.yml` |
+| `wgh.rag.storage.migration.max-attempts` | `3` | `StorageMigrationProperties` | 已落到 `application-features.yml` |
+| `wgh.rag.storage.migration.retry-backoff-millis` | `200` | `StorageMigrationProperties` | 已落到 `application-features.yml` |
+| `wgh.rag.storage.migration.max-failure-entries` | `200` | `StorageMigrationProperties` | 已落到 `application-features.yml` |
+| `wgh.rag.storage.migration.job-ttl-hours` | `24` | `StorageMigrationJobProperties` | 已落到 `application-features.yml` |
+| `wgh.rag.storage.migration.progress-flush-interval-millis` | `1000` | `StorageMigrationJobProperties` | 已落到 `application-features.yml` |
+| `wgh.rag.storage.migration.progress-flush-batch` | `50` | `StorageMigrationJobProperties` | 已落到 `application-features.yml` |
+| `wgh.rag.storage.migration.cancel-check-interval-millis` | `1000` | `StorageMigrationJobProperties` | 已落到 `application-features.yml` |
+| `wgh.rag.storage.migration.index-limit` | `50` | `StorageMigrationJobProperties` | 已落到 `application-features.yml` |
+| `wgh.rag.storage.migration.lock-ttl-seconds` | `120` | `StorageMigrationJobProperties` | 已落到 `application-features.yml` |
+| `wgh.rag.storage.migration.lock-renew-interval-seconds` | `0` | `StorageMigrationJobProperties` | 已落到 `application-features.yml` |
+| `wgh.rag.storage.orphan-cleanup.enabled` | `true` | `StorageOrphanCleanupProperties` | 已落到 `application-features.yml` |
+| `wgh.rag.storage.orphan-cleanup.delete` | `false` | `StorageOrphanCleanupProperties` | 已落到 `application-features.yml` |
+| `wgh.rag.storage.orphan-cleanup.interval-minutes` | `1440` | `StorageOrphanCleanupProperties` | 已落到 `application-features.yml` |
+| `wgh.rag.storage.orphan-cleanup.min-age-minutes` | `60` | `StorageOrphanCleanupProperties` | 已落到 `application-features.yml` |
+| `wgh.rag.storage.orphan-cleanup.max-report-entries` | `100` | `StorageOrphanCleanupProperties` | 已落到 `application-features.yml` |
+| `wgh.sandbox.enabled` | `false` | `SandboxProperties` | 已落到 `application-features.yml` |
+| `wgh.sandbox.default-timeout-ms` | `5000` | `SandboxProperties` | 已落到 `application-features.yml` |
+| `wgh.sandbox.max-timeout-ms` | `30000` | `SandboxProperties` | 已落到 `application-features.yml` |
+| `wgh.sandbox.max-output-bytes` | `65536` | `SandboxProperties` | 已落到 `application-features.yml` |
+| `wgh.sandbox.max-code-bytes` | `65536` | `SandboxProperties` | 已落到 `application-features.yml` |
+| `wgh.sandbox.cpu-seconds` | `5` | `SandboxProperties` | 已落到 `application-features.yml` |
+| `wgh.sandbox.memory-mb` | `256` | `SandboxProperties` | 已落到 `application-features.yml` |
+| `wgh.sandbox.max-file-bytes` | `1048576` | `SandboxProperties` | 已落到 `application-features.yml` |
+| `wgh.sandbox.max-concurrent` | `2` | `SandboxProperties` | 已落到 `application-features.yml` |
+| `wgh.sandbox.max-requests-per-minute` | `10` | `SandboxProperties` | 已落到 `application-features.yml` |
+| `wgh.sandbox.allowed-languages` | `[PYTHON, JAVASCRIPT]` | `SandboxProperties` | 已落到 `application-features.yml` |
+| `wgh.sandbox.allow-network` | `false` | `SandboxProperties` | 已落到 `application-features.yml` |
+| `wgh.sandbox.isolation` | `AUTO` | `SandboxProperties` | 已落到 `application-features.yml` |
+| `wgh.sandbox.allow-degraded-isolation` | `false` | `SandboxProperties` | 已落到 `application-features.yml` |
+| `wgh.sandbox.audit-to-database` | `true` | `SandboxProperties` | 已落到 `application-features.yml` |
+| `wgh.rag.redis.key-prefix` | `wgh` | `RagRedisProperties` | 已落到 `application.yml`（`${WGH_REDIS_KEY_PREFIX:wgh}`） |
+| `management.metrics.tags.wgh.instance` | `${WGH_INSTANCE_ID:${HOSTNAME:local}}` | `application.yml` | 已落到 `application.yml` |
+
+合计：今日新增/修改 **42** 个键，其中 40 个收敛到 `application-features.yml`、2 个在 `application.yml`。
+
+### 5.2 既有配置一并收敛（今日未改默认值）
+
+| 键名 | 默认值 | 所在类 |
+| --- | --- | --- |
+| `wgh.multi-agent.context.summary-max-tokens` | `2000` | `MultiAgentContextProperties` |
+| `wgh.multi-agent.context.card-conclusion-max-tokens` | `200` | `MultiAgentContextProperties` |
+| `wgh.multi-agent.context.memory-max-messages` | `6` | `MultiAgentContextProperties` |
+| `wgh.multi-agent.context.memory-max-tokens` | `1000` | `MultiAgentContextProperties` |
+| `wgh.workflow.context.node-prompt-max-ratio` | `0.7` | `WorkflowContextProperties` |
+| `wgh.workflow.context.fallback-context-window-tokens` | `8192` | `WorkflowContextProperties` |
+| `wgh.workflow.context.node-output-max-bytes` | `65536` | `WorkflowContextProperties` |
+| `wgh.workflow.context.context-json-max-bytes` | `262144` | `WorkflowContextProperties` |
+
+这 8 个键分别由提交 `2afd8ae`、`9be4a10`、`f27704c` 引入，今日仅按主题收敛，值等于代码默认值。
+
+### 5.3 留在代码、未搬入配置文件的项
+
+| 键名 | 默认值 | 原因 |
+| --- | --- | --- |
+| `wgh.sandbox.work-root` | `""`（空串，回退 `${java.io.tmpdir}/wgh-sandbox`） | 空串默认项；写入 YAML 空值可能改变空白/空值绑定语义，保留代码默认 |
+| `wgh.rag.memory.summary-model-id` | `null` | 空值默认项，表示“取第一个启用的对话模型”；YAML 空值绑定需额外约定，保留代码默认 |
+
+### 5.4 任务恢复
+
+`TaskRecoveryService` 当前**没有可配置项**：恢复线程池大小（2）、进程内互斥、异步派发、锁续约策略均为代码常量，分布式锁 TTL 复用 `RedisDistributedLock.DEFAULT_TTL`（60s）。因此 `application-features.yml` 只保留分区注释，不提供假键。
+
+### 5.5 配置文件引入与验证
+
+- 新建 `rag-backend/rag-app/src/main/resources/application-features.yml`，按 `sandbox / memory / storage-maintenance / multi-agent / workflow-context / task-recovery` 分区。
+- `application.yml` 的 `spring:` 下新增：
+
+```yaml
+  config:
+    import: optional:classpath:application-features.yml
+```
+
+- 校验结果：
+  1. YAML 解析：`application-features.yml` 与 `application.yml` 均通过 `yaml.safe_load`，顶层结构正确。
+  2. 编译：`JAVA_HOME=jdk-21 mvn -pl rag-app -am -DskipTests compile` 退出码 0（构建锁 `/tmp/wgh-maven-build.lockdir` 已释放）。
+  3. 资源：`rag-app/target/classes/` 下已生成两份 YAML，`spring.config.import` 已写入。
+  4. **未验证**：未重启服务，运行时绑定是否与代码默认完全一致尚未通过启动日志确认；从 Spring `spring.config.import` 的优先级看，`application.yml` 中的显式键与 profile 配置仍可覆盖本文件，且本文件不含空值项，预期行为不变。
+
+## 6. 未完成与已知限制
+
+- 长期记忆 LLM 摘要默认关闭；开启后每条记忆额外一次模型调用，成本与耗时未评估。
+- 记忆清理依赖 Postgres 咨询锁，非 Postgres 数据源只保证进程内单飞。
+- 记忆清理为物理删除，误删不可恢复（依赖保留天数与条数阈值）。
+- Redis 不可用时公开访问限流、取消标记、迁移任务状态全部降级为单机内存，多实例不一致。
+- 跨实例取消依赖 500ms 轮询，停止生效存在最多约 0.5 秒延迟。
+- 免登录分享页停止接口与后端鉴权不匹配，预计仅本地断连（未验证）。
+- 配额 token 上限仍为“累加前读取判断”，非严格原子；对话次数已改为条件原子更新。
+- 多副本 `docker compose --scale` 时宿主机端口映射冲突，需反向代理或按实例覆盖。
+- Prometheus 改用 `dns_sd` 后不再适用非容器/单机静态抓取场景。
+- 存储迁移进程重启后任务执行中断，需重新提交（幂等可续跑）。
+- 存储迁移在 Redis 不可用时拒绝启动，不回退进程内锁。
+- 孤儿清理默认只报告；扫描与删除之间无快照隔离，保护期只能降低误删风险。
+- `StorageMaintenanceController` 类注释“任务状态保存在进程内”已过时，实际状态在 Redis。
+- 代码沙箱默认关闭；默认拒绝无隔离执行，降级隔离风险高且默认禁用。
+- 沙箱内存限制为 `ulimit -v` 尽力而为；每用户限流为进程内计数，不跨实例。
+- 沙箱仅在 macOS `sandbox-exec` / Linux `bwrap` 可用时启用强隔离，容器内工具可用性未验证。
+- 任务恢复仅覆盖 RUNNING/PLANNING；PAUSED/HITL 与普通对话不在范围内。
+- 任务恢复线程池固定 2，恢复失败只记日志，无自动重试与告警。
+- 单 Agent 续跑为后台执行（`sse=null`），前端只能轮询感知结果。
+- 多 Agent 检查点在 `wgh_m_agent_step` 中产生 `agent_id=__TRACE__` 内部行，直接查表可见。
+- GroupChat 恢复只回放已完成轮次，未完成轮次整体重跑。
+- 旧工作流运行记录可能缺少 `handle/shouldBreak`，恢复判定有代码兜底但未用历史数据验证。
+- 前端本次未执行构建与页面测试，停止/继续交互未验证。
+- 工作区存在 11-18 的 4 份未跟踪文档与 11-09 的 `javac.20261109_171505.args`，未纳入今日代码变更，也未清理。
+- 本次未重启服务、未打包覆盖 jar，配置引入的运行时效果未验证。
