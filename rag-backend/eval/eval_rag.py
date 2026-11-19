@@ -18,7 +18,9 @@ DS_KEY = "sk-"
 DS_URL = "https://api.deepseek.com/v1/chat/completions"
 QW_KEY = "sk-"
 QW_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
-PDF = "/Users/joe.wen/Desktop/qa-1000.pdf"
+PDF = os.environ.get(
+    "QA_PDF", os.path.join(os.path.dirname(os.path.abspath(__file__)), "qa-1000.pdf")
+)
 
 def http(url, payload=None, headers=None, method=None):
     req = urllib.request.Request(url, data=json.dumps(payload).encode() if payload else None,

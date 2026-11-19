@@ -19,12 +19,12 @@
 
 | # | 结论 | 依据 |
 |---|---|---|
-| 1 | 系统里没有"租户/组织"实体，也没有租户上下文。`wgh_user.tenant_id` 是**死字段**：建表与实体存在，但全仓库无任何读写。 | [01-schema.sql#L1191](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/sql/schema/01-schema.sql#L1191)、[WghUser.java#L41](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-auth/src/main/java/com/wgh/rag/auth/entity/WghUser.java#L41)；全仓库搜索 `setTenantId/getTenantId/tenant-id` 无命中 |
-| 2 | 当前隔离的基本单位是**用户名 `create_by`**，规则是 `create_by = 当前用户 OR visibility <> 'PRIVATE'`，只覆盖 5 张资源表，且只在列表查询时激活。 | [DataScopeContext.java#L27-L32](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-data/src/main/java/com/wgh/rag/data/scope/DataScopeContext.java#L27-L32)、[DataScopeInterceptor.java#L51-L101](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-data/src/main/java/com/wgh/rag/data/scope/DataScopeInterceptor.java#L51-L101) |
-| 3 | `TEAM` 与 `PUBLIC` 语义相同，都表示"所有登录用户可读"，并不存在团队边界。 | [ResourceVisibility.java#L9-L44](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-data/src/main/java/com/wgh/rag/data/scope/ResourceVisibility.java#L9-L44)；前端提示也写明"登录用户可读" [visibility.js#L8](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-frontend/src/utils/visibility.js#L8) |
-| 4 | 多个**子资源入口绕过归属校验**：知识库文件、分片上传初始化、评测数据集、知识库检索测试只校验"父对象存在"，不校验"当前用户可写/可读"。 | [KnowledgeFileService.java#L78-L98](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/KnowledgeFileService.java#L78-L98)、[EvalDatasetService.java#L378-L383](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/EvalDatasetService.java#L378-L383) |
-| 5 | 开放 API（`/v1/**`、`/api/open/**`）的 API Key **不绑定任何用户或租户**，可列出全系统窗口、按 ID 访问任意窗口、按 ID 检索任意知识库。 | [ApiKeyAuthenticationFilter.java#L47-L71](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-public-access/src/main/java/com/wgh/rag/publicaccess/config/ApiKeyAuthenticationFilter.java#L47-L71)、[OpenApiController.java#L111-L143](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-controller/src/main/java/com/wgh/rag/controller/OpenApiController.java#L111-L143)、[OpenAiCompatController.java#L179-L201](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-controller/src/main/java/com/wgh/rag/controller/openai/OpenAiCompatController.java#L179-L201) |
-| 6 | 配额、审计、存储、Redis、向量表都**没有租户维度或命名空间**，无法直接做按租户计量、按租户限流、按租户备份/导出。 | [QuotaService.java#L75-L132](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-quota/src/main/java/com/wgh/rag/quota/service/QuotaService.java#L75-L132)、[AuditLog.java#L14-L49](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-log/src/main/java/com/wgh/rag/log/entity/AuditLog.java#L14-L49)、[StorageKeys.java#L11-L42](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-storage/src/main/java/com/wgh/rag/storage/service/StorageKeys.java#L11-L42) |
+| 1 | 系统里没有"租户/组织"实体，也没有租户上下文。`wgh_user.tenant_id` 是**死字段**：建表与实体存在，但全仓库无任何读写。 | [01-schema.sql](../../rag-backend/sql/schema/01-schema.sql#L1191)、[WghUser.java](../../rag-backend/rag-auth/src/main/java/com/wgh/rag/auth/entity/WghUser.java#L41)；全仓库搜索 `setTenantId/getTenantId/tenant-id` 无命中 |
+| 2 | 当前隔离的基本单位是**用户名 `create_by`**，规则是 `create_by = 当前用户 OR visibility <> 'PRIVATE'`，只覆盖 5 张资源表，且只在列表查询时激活。 | [DataScopeContext.java](../../rag-backend/rag-data/src/main/java/com/wgh/rag/data/scope/DataScopeContext.java#L27-L32)、[DataScopeInterceptor.java](../../rag-backend/rag-data/src/main/java/com/wgh/rag/data/scope/DataScopeInterceptor.java#L51-L101) |
+| 3 | `TEAM` 与 `PUBLIC` 语义相同，都表示"所有登录用户可读"，并不存在团队边界。 | [ResourceVisibility.java](../../rag-backend/rag-data/src/main/java/com/wgh/rag/data/scope/ResourceVisibility.java#L9-L44)；前端提示也写明"登录用户可读" [visibility.js](../../rag-frontend/src/utils/visibility.js#L8) |
+| 4 | 多个**子资源入口绕过归属校验**：知识库文件、分片上传初始化、评测数据集、知识库检索测试只校验"父对象存在"，不校验"当前用户可写/可读"。 | [KnowledgeFileService.java](../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/KnowledgeFileService.java#L78-L98)、[EvalDatasetService.java](../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/EvalDatasetService.java#L378-L383) |
+| 5 | 开放 API（`/v1/**`、`/api/open/**`）的 API Key **不绑定任何用户或租户**，可列出全系统窗口、按 ID 访问任意窗口、按 ID 检索任意知识库。 | [ApiKeyAuthenticationFilter.java](../../rag-backend/rag-public-access/src/main/java/com/wgh/rag/publicaccess/config/ApiKeyAuthenticationFilter.java#L47-L71)、[OpenApiController.java](../../rag-backend/rag-controller/src/main/java/com/wgh/rag/controller/OpenApiController.java#L111-L143)、[OpenAiCompatController.java](../../rag-backend/rag-controller/src/main/java/com/wgh/rag/controller/openai/OpenAiCompatController.java#L179-L201) |
+| 6 | 配额、审计、存储、Redis、向量表都**没有租户维度或命名空间**，无法直接做按租户计量、按租户限流、按租户备份/导出。 | [QuotaService.java](../../rag-backend/rag-quota/src/main/java/com/wgh/rag/quota/service/QuotaService.java#L75-L132)、[AuditLog.java](../../rag-backend/rag-log/src/main/java/com/wgh/rag/log/entity/AuditLog.java#L14-L49)、[StorageKeys.java](../../rag-backend/rag-storage/src/main/java/com/wgh/rag/storage/service/StorageKeys.java#L11-L42) |
 | 7 | **推荐方案**：共享库共享表 + `tenant_id` 作为第一阶段主线，PostgreSQL RLS 作为纵深防御，按租户等级做混合分层（大客户/强合规客户独享 schema 或数据库）作为兜底。 | 见 §5 |
 | 8 | **企业级多租户可用性**：引入上述方案并完成阶段 0–3 后可以支撑；仅靠现状的 resource visibility **只能支撑单企业多用户**，不能支撑多企业隔离。 | 见 §4、§7 |
 
@@ -98,7 +98,7 @@
 - **优点**：同一数据库实例内逻辑隔离；备份可按 schema；权限可按 schema 授予；比独立库省资源。
 - **缺点**：DDL 要广播到所有 schema；`search_path` 与会话绑定，连接池复用时会串 schema；MyBatis-Plus 的全局表名/拦截器需要按租户重写；pgvector 扩展与向量表在每个 schema 下重复创建；租户数上千后 catalog 压力明显。
 - **典型取舍**：租户数量可控（几十到几百）、需要"看起来像独立库"的中大型客户。
-- **对本项目**：`application.yml` 使用 `currentSchema=public` 固定 schema [application.yml#L16](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-app/src/main/resources/application.yml#L16)；改成动态 schema 需要改连接初始化与所有原生 SQL，风险高于共享表。
+- **对本项目**：`application.yml` 使用 `currentSchema=public` 固定 schema [application.yml](../../rag-backend/rag-app/src/main/resources/application.yml#L16)；改成动态 schema 需要改连接初始化与所有原生 SQL，风险高于共享表。
 
 #### 2.2.3 共享表 + `tenant_id`
 
@@ -112,7 +112,7 @@
 - **优点**：数据库强制，应用漏写条件也不越权；策略集中管理；适合作为共享表方案的纵深防御。
 - **缺点**：需要为每个请求设置会话变量（如 `SET LOCAL app.tenant_id`）；连接池复用、异步线程、事务边界都要正确处理；**表 owner / superuser 默认绕过 RLS**，必须使用非 owner 应用角色并 `FORCE ROW LEVEL SECURITY`；调试与慢查询分析更复杂。
 - **典型取舍**：金融、医疗、政企等"必须证明数据库层也隔离"的场景；通常与共享表 `tenant_id` 同时使用，而不是二选一。
-- **对本项目**：`docker-compose.yml` 当前用 `postgres` 超级用户连接 [docker-compose.yml#L11-L13](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/docker-compose.yml#L11-L13)。**在更换应用数据库角色之前，RLS 实际不会生效**。这是引入 RLS 的前置条件，不能忽略。
+- **对本项目**：`docker-compose.yml` 当前用 `postgres` 超级用户连接 [docker-compose.yml](../../docker-compose.yml#L11-L13)。**在更换应用数据库角色之前，RLS 实际不会生效**。这是引入 RLS 的前置条件，不能忽略。
 
 #### 2.2.5 混合/分层
 
@@ -153,22 +153,22 @@
 
 - 单体多模块：`rag-app` 聚合启动，业务拆分为 `rag-auth`、`rag-kb`、`rag-chat`、`rag-workflow`、`rag-agent`、`rag-agent-multi`、`rag-quota`、`rag-storage`、`rag-log`、`rag-public-access`、`rag-data`、`rag-controller` 等。
 - 数据层：MyBatis-Plus + 单 PostgreSQL（`currentSchema=public`）+ pgvector；Redis 单库（`database: 0`）。
-- 部署：[docker-compose.yml](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/docker-compose.yml) 单 `postgres` 实例、单 `redis` 实例、单 `backend` 实例；PostgreSQL 使用 `postgres` 超级用户。
+- 部署：[docker-compose.yml](../../docker-compose.yml) 单 `postgres` 实例、单 `redis` 实例、单 `backend` 实例；PostgreSQL 使用 `postgres` 超级用户。
 - **结论**：部署形态是"单实例单库"，没有任何按租户路由的基础设施。
 
 ### 3.2 认证与用户体系（rag-auth）
 
 #### 3.2.1 双认证轨道
 
-- 本地账号：HS256 内部会话凭证，登录时校验 `wgh_user` 状态、有效期、口令版本；角色/权限实时查库。[OidcAuthenticationFilter.java#L151-L240](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-auth/src/main/java/com/wgh/rag/auth/security/OidcAuthenticationFilter.java#L151-L240)
-- 外部 OIDC：JWKS 验签，用户名取 `username-claim`（默认 `sub`），角色取 `roles-claim` 后映射到 `wgh_role.role_code`。[OidcAuthenticationFilter.java#L103-L145](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-auth/src/main/java/com/wgh/rag/auth/security/OidcAuthenticationFilter.java#L103-L145)、[application.yml#L78-L97](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-app/src/main/resources/application.yml#L78-L97)
-- 登录用户上下文只有 `userId`、`username`、`roles`、`permissions`、`passwordMustChange`，**没有 tenant/org**。[LoginUser.java#L11-L24](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-common/src/main/java/com/wgh/rag/common/security/LoginUser.java#L11-L24)
+- 本地账号：HS256 内部会话凭证，登录时校验 `wgh_user` 状态、有效期、口令版本；角色/权限实时查库。[OidcAuthenticationFilter.java](../../rag-backend/rag-auth/src/main/java/com/wgh/rag/auth/security/OidcAuthenticationFilter.java#L151-L240)
+- 外部 OIDC：JWKS 验签，用户名取 `username-claim`（默认 `sub`），角色取 `roles-claim` 后映射到 `wgh_role.role_code`。[OidcAuthenticationFilter.java](../../rag-backend/rag-auth/src/main/java/com/wgh/rag/auth/security/OidcAuthenticationFilter.java#L103-L145)、[application.yml](../../rag-backend/rag-app/src/main/resources/application.yml#L78-L97)
+- 登录用户上下文只有 `userId`、`username`、`roles`、`permissions`、`passwordMustChange`，**没有 tenant/org**。[LoginUser.java](../../rag-backend/rag-common/src/main/java/com/wgh/rag/common/security/LoginUser.java#L11-L24)
 
 #### 3.2.2 用户表与"死字段"
 
-- `wgh_user.tenant_id VARCHAR(64)` 存在，但没有任何业务代码读写；全仓库搜索 `setTenantId/getTenantId/tenant-id` 无命中。[01-schema.sql#L1185-L1207](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/sql/schema/01-schema.sql#L1185-L1207)、[WghUser.java#L41](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-auth/src/main/java/com/wgh/rag/auth/entity/WghUser.java#L41)
+- `wgh_user.tenant_id VARCHAR(64)` 存在，但没有任何业务代码读写；全仓库搜索 `setTenantId/getTenantId/tenant-id` 无命中。[01-schema.sql](../../rag-backend/sql/schema/01-schema.sql#L1185-L1207)、[WghUser.java](../../rag-backend/rag-auth/src/main/java/com/wgh/rag/auth/entity/WghUser.java#L41)
 - 外部 OIDC 用户**不落 `wgh_user`**（只验签，不建号），因此即使 OIDC 令牌带 `tenant` claim，当前也没有落库与映射逻辑。
-- 本地账号由 `AdminUserController` 创建/禁用/重置口令，账号名唯一；禁用是 `status=0` 而不是删除。[AdminUserController.java#L120-L220](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-controller/src/main/java/com/wgh/rag/controller/AdminUserController.java#L120-L220)
+- 本地账号由 `AdminUserController` 创建/禁用/重置口令，账号名唯一；禁用是 `status=0` 而不是删除。[AdminUserController.java](../../rag-backend/rag-controller/src/main/java/com/wgh/rag/controller/AdminUserController.java#L120-L220)
 
 #### 3.2.3 改造点
 
@@ -183,7 +183,7 @@
 
 ### 3.3 角色与权限（RBAC）
 
-- 表：`wgh_role`、`wgh_permission`、`wgh_user_role`、`wgh_role_permission` 都是**全局表**，无 `tenant_id`。[01-schema.sql#L1215-L1250](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/sql/schema/01-schema.sql#L1215-L1250)
+- 表：`wgh_role`、`wgh_permission`、`wgh_user_role`、`wgh_role_permission` 都是**全局表**，无 `tenant_id`。[01-schema.sql](../../rag-backend/sql/schema/01-schema.sql#L1215-L1250)
 - 权限校验：`@RequiresPermission` + `PermissionAspect`；角色 `admin/editor/viewer` 等为全局角色。
 - 管理接口：`AdminRoleController`、`AdminUserController` 可管理全局角色与用户；`QuotaAdminController` 可管理任意用户配额。
 - **风险**：租户 A 的管理员若拿到全局 admin 角色，就能管理租户 B。多租户下必须区分"平台管理员"和"租户管理员"，并把角色、权限授予、用户管理都加上租户范围。
@@ -196,7 +196,7 @@
 
 #### 3.4.1 归属字段来源
 
-- 所有继承 `BaseEntity` 的实体在插入时由 `MetaObjectHandlerImpl` 自动填充 `createBy = 当前用户名`；**匿名/异步线程回落为 `system`**。[MetaObjectHandlerImpl.java#L21-L44](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-data/src/main/java/com/wgh/rag/data/mybatis/MetaObjectHandlerImpl.java#L21-L44)
+- 所有继承 `BaseEntity` 的实体在插入时由 `MetaObjectHandlerImpl` 自动填充 `createBy = 当前用户名`；**匿名/异步线程回落为 `system`**。[MetaObjectHandlerImpl.java](../../rag-backend/rag-data/src/main/java/com/wgh/rag/data/mybatis/MetaObjectHandlerImpl.java#L21-L44)
 - 因此：
   - `create_by` 是**用户名字符串**，不是 `wgh_user.id` 外键；
   - 后台任务、调度、异步落库写入的资源 owner 是 `system`；
@@ -204,20 +204,20 @@
 
 #### 3.4.2 可见性模型
 
-- 五张资源表有 `visibility`：`wgh_knowledge_base`、`wgh_chat_window`、`wgh_workflow`、`wgh_tool`、`wgh_prompt_template`。[DataScopeContext.java#L27-L32](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-data/src/main/java/com/wgh/rag/data/scope/DataScopeContext.java#L27-L32)
-- 取值 `PRIVATE / TEAM / PUBLIC`；`isShared()` 把 `TEAM` 和 `PUBLIC` 都视为"非所有者可读"。[ResourceVisibility.java#L38-L44](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-data/src/main/java/com/wgh/rag/data/scope/ResourceVisibility.java#L38-L44)
-- 列表查询通过 `DataScopeContext.runWithScope` 激活拦截器，拦截器追加 `(create_by = '当前用户' OR visibility <> 'PRIVATE')`。[DataScopeInterceptor.java#L90-L100](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-data/src/main/java/com/wgh/rag/data/scope/DataScopeInterceptor.java#L90-L100)
-- 详情/更新/删除通过 `DataScopeGuard` 做 owner/visibility 判断：他人 PRIVATE 按 404 处理；他人 TEAM/PUBLIC 可读不可写。[DataScopeGuard.java#L18-L44](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-data/src/main/java/com/wgh/rag/data/scope/DataScopeGuard.java#L18-L44)
+- 五张资源表有 `visibility`：`wgh_knowledge_base`、`wgh_chat_window`、`wgh_workflow`、`wgh_tool`、`wgh_prompt_template`。[DataScopeContext.java](../../rag-backend/rag-data/src/main/java/com/wgh/rag/data/scope/DataScopeContext.java#L27-L32)
+- 取值 `PRIVATE / TEAM / PUBLIC`；`isShared()` 把 `TEAM` 和 `PUBLIC` 都视为"非所有者可读"。[ResourceVisibility.java](../../rag-backend/rag-data/src/main/java/com/wgh/rag/data/scope/ResourceVisibility.java#L38-L44)
+- 列表查询通过 `DataScopeContext.runWithScope` 激活拦截器，拦截器追加 `(create_by = '当前用户' OR visibility <> 'PRIVATE')`。[DataScopeInterceptor.java](../../rag-backend/rag-data/src/main/java/com/wgh/rag/data/scope/DataScopeInterceptor.java#L90-L100)
+- 详情/更新/删除通过 `DataScopeGuard` 做 owner/visibility 判断：他人 PRIVATE 按 404 处理；他人 TEAM/PUBLIC 可读不可写。[DataScopeGuard.java](../../rag-backend/rag-data/src/main/java/com/wgh/rag/data/scope/DataScopeGuard.java#L18-L44)
 
 #### 3.4.3 拦截器边界（重要）
 
-- **只在显式激活期间生效**：`runWithScope` 未被调用的查询（按 ID 取数、调度任务、分享链路、Agent/工作流运行、异步线程）不改写 SQL。[DataScopeContext.java#L15-L58](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-data/src/main/java/com/wgh/rag/data/scope/DataScopeContext.java#L15-L58)
-- **只处理单表 `PlainSelect`**；命中白名单表的 JOIN 直接抛错（失败关闭），UNION/CTE 命中白名单表也抛错。[DataScopeInterceptor.java#L74-L109](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-data/src/main/java/com/wgh/rag/data/scope/DataScopeInterceptor.java#L74-L109)
+- **只在显式激活期间生效**：`runWithScope` 未被调用的查询（按 ID 取数、调度任务、分享链路、Agent/工作流运行、异步线程）不改写 SQL。[DataScopeContext.java](../../rag-backend/rag-data/src/main/java/com/wgh/rag/data/scope/DataScopeContext.java#L15-L58)
+- **只处理单表 `PlainSelect`**；命中白名单表的 JOIN 直接抛错（失败关闭），UNION/CTE 命中白名单表也抛错。[DataScopeInterceptor.java](../../rag-backend/rag-data/src/main/java/com/wgh/rag/data/scope/DataScopeInterceptor.java#L74-L109)
 - **不覆盖子资源**：`wgh_knowledge_file`、`wgh_eval_dataset`、`wgh_kb_connector`、`wgh_upload_session`、`wgh_agent_plan/step`、`wgh_workflow_run/node_run`、`wgh_m_agent_*`、`wgh_chat_session/message` 都不在 5 表白名单内。
 
 #### 3.4.4 当前调用点
 
-`runWithScope` 只出现在 5 处列表/分页：知识库、聊天窗口、工作流、工具、Prompt 模板。[Grep 结果](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/KnowledgeBaseService.java#L42-L54) 等。其余业务查询默认不受可见性约束。
+`runWithScope` 只出现在 5 处列表/分页：知识库、聊天窗口、工作流、工具、Prompt 模板。[KnowledgeBaseService.java](../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/KnowledgeBaseService.java#L42-L54) 等。其余业务查询默认不受可见性约束。
 
 **改造点**：把"租户条件"下沉到统一拦截器（MyBatis-Plus `TenantLineInnerInterceptor` 或扩展现有拦截器），并要求所有按 ID 的读写都经过"父资源租户校验 + 子资源租户校验"。量级 **L**（覆盖面大）。
 
@@ -260,7 +260,7 @@
 | `wgh_upload_session` | `knowledge_base_id`、`create_by` | 无 | `requireSession` 校验 owner | `tenant_id`；init 需校验 KB 可写 |
 | `wgh_agent_memory` | `scope_type`/`scope_id`、`create_by` | 无 | 向量 metadata `scopeKey` | `tenant_id`；`scopeKey` 加租户前缀 |
 
-> 说明：表结构定义集中在 [01-schema.sql](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/sql/schema/01-schema.sql)，上表行号可从上文 `CREATE TABLE` 列表定位；`20261113/01_resource_visibility.sql` 只给 5 张表补了 `visibility`，未涉及租户。
+> 说明：表结构定义集中在 [01-schema.sql](../../rag-backend/sql/schema/01-schema.sql)，上表行号可从上文 `CREATE TABLE` 列表定位；`20261113/01_resource_visibility.sql` 只给 5 张表补了 `visibility`，未涉及租户。
 
 ---
 
@@ -268,14 +268,14 @@
 
 #### 3.6.1 知识库向量表
 
-- 每个知识库一张物理向量表，表名存在 `wgh_knowledge_base.collection_name`，全局唯一。[01-schema.sql#L101](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/sql/schema/01-schema.sql#L101)
-- 新建知识库时 `collection_name = "wgh_kb_" + System.currentTimeMillis()`；重建时 `wgh_kb_<kbId>_<ts>`。[KnowledgeBaseService.java#L77](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/KnowledgeBaseService.java#L77)、[KnowledgeBaseService.java#L159](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/KnowledgeBaseService.java#L159)
+- 每个知识库一张物理向量表，表名存在 `wgh_knowledge_base.collection_name`，全局唯一。[01-schema.sql](../../rag-backend/sql/schema/01-schema.sql#L101)
+- 新建知识库时 `collection_name = "wgh_kb_" + System.currentTimeMillis()`；重建时 `wgh_kb_<kbId>_<ts>`。[KnowledgeBaseService.java](../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/KnowledgeBaseService.java#L77)、[KnowledgeBaseService.java](../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/KnowledgeBaseService.java#L159)
 - 向量表本身没有 `tenant_id`，隔离完全依赖"知识库归属 → collection_name → 表"的链路。只要所有向量访问都先经过知识库鉴权，这条链路是可用的；但一旦有"按 collection 名直接访问"的入口，就会绕过租户。
 
 #### 3.6.2 共享向量表
 
-- 语义缓存：向量写入 `wgh_semantic_cache_vec`，用 metadata `windowId` 过滤；问答对写 `wgh_semantic_cache`。[SemanticCacheService.java#L30-L42](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/SemanticCacheService.java#L30-L42)、[SemanticCacheService.java#L64-L81](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/SemanticCacheService.java#L64-L81)
-- Agent 记忆：向量写入 `wgh_agent_memory_vec`，用 metadata `scopeKey` 过滤；`scopeKey = SESSION:{sessionId}` 或 `TASK:{taskId}`。[AgentMemoryService.java#L31-L46](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/AgentMemoryService.java#L31-L46)、[RagChatService.java#L1691-L1726](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-chat/src/main/java/com/wgh/rag/chat/service/RagChatService.java#L1691-L1726)
+- 语义缓存：向量写入 `wgh_semantic_cache_vec`，用 metadata `windowId` 过滤；问答对写 `wgh_semantic_cache`。[SemanticCacheService.java](../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/SemanticCacheService.java#L30-L42)、[SemanticCacheService.java](../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/SemanticCacheService.java#L64-L81)
+- Agent 记忆：向量写入 `wgh_agent_memory_vec`，用 metadata `scopeKey` 过滤；`scopeKey = SESSION:{sessionId}` 或 `TASK:{taskId}`。[AgentMemoryService.java](../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/AgentMemoryService.java#L31-L46)、[RagChatService.java](../../rag-backend/rag-chat/src/main/java/com/wgh/rag/chat/service/RagChatService.java#L1691-L1726)
 - **风险**：共享向量表没有租户过滤列；当前依赖 `windowId` / `sessionId` 全局唯一且入口已鉴权。多租户下建议在 metadata 与 SQL 条件中都加 `tenantId`，并给 `scopeKey` 加租户前缀，避免未来出现跨租户 ID 碰撞或按 ID 直查。
 
 #### 3.6.3 改造点
@@ -285,7 +285,7 @@
 | 知识库向量表 | 表名加租户前缀（`wgh_kb_t{tenantId}_{kbId}`）或仅依赖 KB 租户；所有 collection 访问必须经 KB 鉴权 |
 | 语义缓存 | 行表与向量 metadata 增加 `tenantId`；查询条件增加 `tenantId` |
 | Agent 记忆 | `scopeKey` 加租户前缀；召回条件增加 `tenantId` |
-| 缓存失效 | `selectWindowKbMappings()` 当前全表扫描所有窗口，多租户下需按租户限定 [SemanticCacheMapper.java#L21](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/mapper/SemanticCacheMapper.java#L21) |
+| 缓存失效 | `selectWindowKbMappings()` 当前全表扫描所有窗口，多租户下需按租户限定 [SemanticCacheMapper.java](../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/mapper/SemanticCacheMapper.java#L21) |
 
 量级 **M**。
 
@@ -295,11 +295,11 @@
 
 - 计数与配置都是**按 `username`**：
   - `wgh_quota_usage` 唯一键 `(username, date_key)`；
-  - `wgh_user_quota_config` 唯一键 `username`。[01-schema.sql#L964-L998](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/sql/schema/01-schema.sql#L964-L998)
-- 解析顺序：用户自定义配置（启用）> 全局默认；周期支持 DAY/MONTH。[QuotaService.java#L70-L87](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-quota/src/main/java/com/wgh/rag/quota/service/QuotaService.java#L70-L87)
-- 计数使用 `INSERT ... ON CONFLICT` 原子累加，并发安全。[QuotaService.java#L90-L132](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-quota/src/main/java/com/wgh/rag/quota/service/QuotaService.java#L90-L132)
-- 兜底用户：无登录上下文落到 `anonymous`；分享链路、异步线程共享同一份匿名配额。[DefaultQuotaUserResolver.java#L17-L24](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-quota/src/main/java/com/wgh/rag/quota/service/DefaultQuotaUserResolver.java#L17-L24)
-- 开放 API 的用量落到 `api_<keyId>`，与真实用户/租户无关。[OpenApiController.java#L145-L160](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-controller/src/main/java/com/wgh/rag/controller/OpenApiController.java#L145-L160)
+  - `wgh_user_quota_config` 唯一键 `username`。[01-schema.sql](../../rag-backend/sql/schema/01-schema.sql#L964-L998)
+- 解析顺序：用户自定义配置（启用）> 全局默认；周期支持 DAY/MONTH。[QuotaService.java](../../rag-backend/rag-quota/src/main/java/com/wgh/rag/quota/service/QuotaService.java#L70-L87)
+- 计数使用 `INSERT ... ON CONFLICT` 原子累加，并发安全。[QuotaService.java](../../rag-backend/rag-quota/src/main/java/com/wgh/rag/quota/service/QuotaService.java#L90-L132)
+- 兜底用户：无登录上下文落到 `anonymous`；分享链路、异步线程共享同一份匿名配额。[DefaultQuotaUserResolver.java](../../rag-backend/rag-quota/src/main/java/com/wgh/rag/quota/service/DefaultQuotaUserResolver.java#L17-L24)
+- 开放 API 的用量落到 `api_<keyId>`，与真实用户/租户无关。[OpenApiController.java](../../rag-backend/rag-controller/src/main/java/com/wgh/rag/controller/OpenApiController.java#L145-L160)
 
 **结论**：当前配额是"用户级"，不能按组织计量；计费维度只有 chat 次数与 token，没有存储、检索次数、向量量等维度。
 
@@ -314,8 +314,8 @@
 
 ### 3.8 存储层（local / OSS）
 
-- Key 规则：`kb/{kbId}/{fileUuid}/{安全化文件名}`；分片：`kb/{kbId}/{uploadUuid}/parts/{index}.part`。[StorageKeys.java#L11-L42](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-storage/src/main/java/com/wgh/rag/storage/service/StorageKeys.java#L11-L42)
-- 本地存储根目录 `WGH_UPLOAD_DIR`；OSS 全局 `key-prefix` 配置，可空。[application.yml#L116-L134](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-app/src/main/resources/application.yml#L116-L134)
+- Key 规则：`kb/{kbId}/{fileUuid}/{安全化文件名}`；分片：`kb/{kbId}/{uploadUuid}/parts/{index}.part`。[StorageKeys.java](../../rag-backend/rag-storage/src/main/java/com/wgh/rag/storage/service/StorageKeys.java#L11-L42)
+- 本地存储根目录 `WGH_UPLOAD_DIR`；OSS 全局 `key-prefix` 配置，可空。[application.yml](../../rag-backend/rag-app/src/main/resources/application.yml#L116-L134)
 - 由于 `kbId` 全局唯一，跨租户**不会发生路径覆盖**；但没有租户前缀，导致：
   - 按租户导出/删除/迁移需要先查库再拼 key；
   - 对象存储生命周期策略无法按租户配置；
@@ -328,9 +328,9 @@
 ### 3.9 缓存 / Redis 命名空间
 
 - Redis 目前只用于公开访问限流与分享密码锁定：
-  - `wgh:pa:rl:{dimension}:{path}:{subject}` [PublicAccessRateLimiter.java#L71-L73](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-public-access/src/main/java/com/wgh/rag/publicaccess/service/PublicAccessRateLimiter.java#L71-L73)
-  - `wgh:pa:pwd:{fail|lock}:{token}:{ip}` [SharePasswordGuard.java#L26](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-public-access/src/main/java/com/wgh/rag/publicaccess/service/SharePasswordGuard.java#L26)
-- Redis 单库 `database: 0`，没有租户前缀/分库。[application.yml#L137-L143](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-app/src/main/resources/application.yml#L137-L143)
+  - `wgh:pa:rl:{dimension}:{path}:{subject}` [PublicAccessRateLimiter.java](../../rag-backend/rag-public-access/src/main/java/com/wgh/rag/publicaccess/service/PublicAccessRateLimiter.java#L71-L73)
+  - `wgh:pa:pwd:{fail|lock}:{token}:{ip}` [SharePasswordGuard.java](../../rag-backend/rag-public-access/src/main/java/com/wgh/rag/publicaccess/service/SharePasswordGuard.java#L26)
+- Redis 单库 `database: 0`，没有租户前缀/分库。[application.yml](../../rag-backend/rag-app/src/main/resources/application.yml#L137-L143)
 - 多租户下需要：
   1. 所有 key 加 `wgh:t:{tenantId}:`；
   2. 按租户限流（API Key、IP、分享 token 的 subject 不能跨租户共享）；
@@ -342,10 +342,10 @@
 
 ### 3.10 审计日志（rag-log）
 
-- `AuditAspect` 记录 `username`、`action`、`resourceType`、`resourceId`、`detail`、`ip`、`status`。[AuditAspect.java#L44-L58](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-log/src/main/java/com/wgh/rag/log/aspect/AuditAspect.java#L44-L58)
-- `AuditLog` 实体没有 `tenantId`。[AuditLog.java#L14-L49](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-log/src/main/java/com/wgh/rag/log/entity/AuditLog.java#L14-L49)
-- 开放 API 调用日志有 `api_key_id`、`username`、`path`，同样没有租户。[01-schema.sql#L1307-L1324](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/sql/schema/01-schema.sql#L1307-L1324)
-- `resourceId` 是"第一个 Long/Integer 参数"的尽力提取，可能不是真实资源 ID；多租户下不能作为可靠归属依据。[AuditAspect.java#L61-L72](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-log/src/main/java/com/wgh/rag/log/aspect/AuditAspect.java#L61-L72)
+- `AuditAspect` 记录 `username`、`action`、`resourceType`、`resourceId`、`detail`、`ip`、`status`。[AuditAspect.java](../../rag-backend/rag-log/src/main/java/com/wgh/rag/log/aspect/AuditAspect.java#L44-L58)
+- `AuditLog` 实体没有 `tenantId`。[AuditLog.java](../../rag-backend/rag-log/src/main/java/com/wgh/rag/log/entity/AuditLog.java#L14-L49)
+- 开放 API 调用日志有 `api_key_id`、`username`、`path`，同样没有租户。[01-schema.sql](../../rag-backend/sql/schema/01-schema.sql#L1307-L1324)
+- `resourceId` 是"第一个 Long/Integer 参数"的尽力提取，可能不是真实资源 ID；多租户下不能作为可靠归属依据。[AuditAspect.java](../../rag-backend/rag-log/src/main/java/com/wgh/rag/log/aspect/AuditAspect.java#L61-L72)
 
 **改造点**：审计表与调用日志增加 `tenant_id`；审计切面从 `TenantContext` 取值；补充"跨租户访问被拒绝"的安全事件。量级 **S**。
 
@@ -357,9 +357,9 @@
 
 #### 3.11.1 鉴权模型
 
-- 独立过滤器只处理 `/api/open/` 与 `/v1/`；校验 Key 哈希、吊销、过期、IP 白名单、路径对应 scope。[ApiKeyAuthenticationFilter.java#L47-L105](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-public-access/src/main/java/com/wgh/rag/publicaccess/config/ApiKeyAuthenticationFilter.java#L47-L105)
-- 认证主体是字符串 `"api_" + key.getId()`，权限只有 `ROLE_API_CLIENT`；**没有 `LoginUser`、没有租户、没有 owner**。[ApiKeyAuthenticationFilter.java#L68-L71](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-public-access/src/main/java/com/wgh/rag/publicaccess/config/ApiKeyAuthenticationFilter.java#L68-L71)
-- scope 只有 `chat:write`、`kb:read`、`model:read`、`usage:read`、`*`；**没有资源范围**。[ApiKeyService.java#L185-L197](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-public-access/src/main/java/com/wgh/rag/publicaccess/service/ApiKeyService.java#L185-L197)
+- 独立过滤器只处理 `/api/open/` 与 `/v1/`；校验 Key 哈希、吊销、过期、IP 白名单、路径对应 scope。[ApiKeyAuthenticationFilter.java](../../rag-backend/rag-public-access/src/main/java/com/wgh/rag/publicaccess/config/ApiKeyAuthenticationFilter.java#L47-L105)
+- 认证主体是字符串 `"api_" + key.getId()`，权限只有 `ROLE_API_CLIENT`；**没有 `LoginUser`、没有租户、没有 owner**。[ApiKeyAuthenticationFilter.java](../../rag-backend/rag-public-access/src/main/java/com/wgh/rag/publicaccess/config/ApiKeyAuthenticationFilter.java#L68-L71)
+- scope 只有 `chat:write`、`kb:read`、`model:read`、`usage:read`、`*`；**没有资源范围**。[ApiKeyService.java](../../rag-backend/rag-public-access/src/main/java/com/wgh/rag/publicaccess/service/ApiKeyService.java#L185-L197)
 
 #### 3.11.2 已验证的越权面
 
@@ -371,7 +371,7 @@
 | `GET /api/open/v1/kb/search` | 直接 `retrieveService.searchMultiple(List.of(kbId), ...)`，**无 KB 可见性校验** | 按 ID 检索任意知识库 |
 | `GET /api/open/v1/usage` | 用量按 `api_<keyId>` 统计 | 无法归属到用户/租户 |
 
-证据：[OpenAiCompatController.java#L179-L201](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-controller/src/main/java/com/wgh/rag/controller/openai/OpenAiCompatController.java#L179-L201)、[OpenApiController.java#L76-L143](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-controller/src/main/java/com/wgh/rag/controller/OpenApiController.java#L76-L143)。
+证据：[OpenAiCompatController.java](../../rag-backend/rag-controller/src/main/java/com/wgh/rag/controller/openai/OpenAiCompatController.java#L179-L201)、[OpenApiController.java](../../rag-backend/rag-controller/src/main/java/com/wgh/rag/controller/OpenApiController.java#L76-L143)。
 
 #### 3.11.3 改造要求
 
@@ -393,30 +393,30 @@
 
 | ID | 严重度 | 问题 | 证据 | 影响 |
 |---|---|---|---|---|
-| G-01 | P0 | 开放 API Key 不绑定用户/租户，可列全系统窗口、按 ID 访问任意窗口与知识库 | [ApiKeyAuthenticationFilter.java#L68-L71](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-public-access/src/main/java/com/wgh/rag/publicaccess/config/ApiKeyAuthenticationFilter.java#L68-L71)、[OpenAiCompatController.java#L179-L201](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-controller/src/main/java/com/wgh/rag/controller/openai/OpenAiCompatController.java#L179-L201)、[OpenApiController.java#L111-L125](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-controller/src/main/java/com/wgh/rag/controller/OpenApiController.java#L111-L125) | 横向越权，多租户不可用 |
-| G-02 | P0 | 知识库文件上传/列表/删除/重切/预览/重建/分片初始化只校验 KB 存在，不校验可写/可读 | [KnowledgeFileService.java#L78-L98](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/KnowledgeFileService.java#L78-L98)、[KnowledgeFileService.java#L240-L245](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/KnowledgeFileService.java#L240-L245)、[KnowledgeFileService.java#L273-L280](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/KnowledgeFileService.java#L273-L280)、[KnowledgeFileService.java#L340-L346](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/KnowledgeFileService.java#L340-L346)、[ChunkUploadService.java#L67-L69](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/ChunkUploadService.java#L67-L69) | 可污染/读取他人知识库 |
-| G-03 | P0 | 评测数据集只校验 KB 存在，不校验可读/可写 | [EvalDatasetService.java#L65-L92](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/EvalDatasetService.java#L65-L92)、[EvalDatasetService.java#L378-L383](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/EvalDatasetService.java#L378-L383) | 可读/改他人评测数据 |
-| G-04 | P1 | 知识库检索测试 `GET /api/kb/{kbId}/search` 无可见性校验 | [KnowledgeBaseController.java#L198-L213](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-controller/src/main/java/com/wgh/rag/controller/KnowledgeBaseController.java#L198-L213) | 可按 ID 检索他人 KB |
-| G-05 | P1 | 数据权限拦截器只覆盖 5 张表，且只在列表查询时激活；`selectById`、原生 SQL、JOIN、异步线程默认不受控 | [DataScopeContext.java#L27-L32](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-data/src/main/java/com/wgh/rag/data/scope/DataScopeContext.java#L27-L32)、[DataScopeInterceptor.java#L51-L101](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-data/src/main/java/com/wgh/rag/data/scope/DataScopeInterceptor.java#L51-L101) | 隔离依赖开发者自觉 |
-| G-06 | P1 | `create_by` 在异步/匿名线程回落 `system`，后台创建的资源无法归属到用户 | [MetaObjectHandlerImpl.java#L37-L44](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-data/src/main/java/com/wgh/rag/data/mybatis/MetaObjectHandlerImpl.java#L37-L44) | 资源"无主"，多租户下无法归属 |
-| G-07 | P1 | `TEAM = PUBLIC`，没有团队/组织边界；`PUBLIC` 对所有登录用户可见 | [ResourceVisibility.java#L9-L44](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-data/src/main/java/com/wgh/rag/data/scope/ResourceVisibility.java#L9-L44) | 多租户下 `PUBLIC` 会造成跨租户泄露 |
-| G-08 | P1 | 多 Agent 运行态接口（stream/state/hitl/cancel/steps）无归属校验。`runId` 为随机串（`mag-` + UUID 前 16 位，[MultiAgentRuntime.java#L254-L256](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-agent-multi/src/main/java/com/wgh/rag/agentmulti/runtime/MultiAgentRuntime.java#L254-L256)），枚举难度较高，但一旦泄露即可被任意登录用户操作 | [MultiAgentController.java#L82-L151](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-controller/src/main/java/com/wgh/rag/controller/MultiAgentController.java#L82-L151) | 运行态越权（缺纵深防御） |
-| G-09 | P1 | 分享链接、API Key 管理列表是全量列表，没有 owner/租户过滤 | [ShareLinkService.java#L270-L283](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-public-access/src/main/java/com/wgh/rag/publicaccess/service/ShareLinkService.java#L270-L283)、[ApiKeyService.java#L210-L220](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-public-access/src/main/java/com/wgh/rag/publicaccess/service/ApiKeyService.java#L210-L220) | 管理端跨租户可见 |
-| G-10 | P1 | 配额、审计、调用日志都没有租户维度 | [01-schema.sql#L964-L998](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/sql/schema/01-schema.sql#L964-L998)、[01-schema.sql#L916-L940](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/sql/schema/01-schema.sql#L916-L940)、[AuditLog.java#L14-L49](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-log/src/main/java/com/wgh/rag/log/entity/AuditLog.java#L14-L49) | 无法按租户计量/审计 |
-| G-11 | P1 | 存储 key、Redis key 没有租户命名空间 | [StorageKeys.java#L11-L42](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-storage/src/main/java/com/wgh/rag/storage/service/StorageKeys.java#L11-L42)、[PublicAccessRateLimiter.java#L71-L73](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-public-access/src/main/java/com/wgh/rag/publicaccess/service/PublicAccessRateLimiter.java#L71-L73) | 导出/删除/限流难以按租户 |
-| G-12 | P2 | `wgh_tag.name` 全局唯一，标签体系跨用户/跨租户共享 | [01-schema.sql#L1111-L1124](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/sql/schema/01-schema.sql#L1111-L1124) | 租户间标签冲突/信息泄露 |
-| G-13 | P2 | 模型配置与价格全局共享，没有 BYOK/租户级模型隔离 | [01-schema.sql#L14-L89](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/sql/schema/01-schema.sql#L14-L89)、[01-schema.sql#L942-L962](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/sql/schema/01-schema.sql#L942-L962) | 一个租户的模型调用成本/额度影响他人 |
-| G-14 | P2 | `wgh_user.tenant_id` 是死字段，容易误以为已支持租户 | [01-schema.sql#L1191](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/sql/schema/01-schema.sql#L1191)、[WghUser.java#L41](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-auth/src/main/java/com/wgh/rag/auth/entity/WghUser.java#L41) | 认知风险 |
-| G-15 | P2 | 数据库连接使用 `postgres` 超级用户；RLS 若直接引入不会生效 | [docker-compose.yml#L7-L20](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/docker-compose.yml#L7-L20) | 安全兜底失效 |
+| G-01 | P0 | 开放 API Key 不绑定用户/租户，可列全系统窗口、按 ID 访问任意窗口与知识库 | [ApiKeyAuthenticationFilter.java](../../rag-backend/rag-public-access/src/main/java/com/wgh/rag/publicaccess/config/ApiKeyAuthenticationFilter.java#L68-L71)、[OpenAiCompatController.java](../../rag-backend/rag-controller/src/main/java/com/wgh/rag/controller/openai/OpenAiCompatController.java#L179-L201)、[OpenApiController.java](../../rag-backend/rag-controller/src/main/java/com/wgh/rag/controller/OpenApiController.java#L111-L125) | 横向越权，多租户不可用 |
+| G-02 | P0 | 知识库文件上传/列表/删除/重切/预览/重建/分片初始化只校验 KB 存在，不校验可写/可读 | [KnowledgeFileService.java](../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/KnowledgeFileService.java#L78-L98)、[KnowledgeFileService.java](../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/KnowledgeFileService.java#L240-L245)、[KnowledgeFileService.java](../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/KnowledgeFileService.java#L273-L280)、[KnowledgeFileService.java](../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/KnowledgeFileService.java#L340-L346)、[ChunkUploadService.java](../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/ChunkUploadService.java#L67-L69) | 可污染/读取他人知识库 |
+| G-03 | P0 | 评测数据集只校验 KB 存在，不校验可读/可写 | [EvalDatasetService.java](../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/EvalDatasetService.java#L65-L92)、[EvalDatasetService.java](../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/EvalDatasetService.java#L378-L383) | 可读/改他人评测数据 |
+| G-04 | P1 | 知识库检索测试 `GET /api/kb/{kbId}/search` 无可见性校验 | [KnowledgeBaseController.java](../../rag-backend/rag-controller/src/main/java/com/wgh/rag/controller/KnowledgeBaseController.java#L198-L213) | 可按 ID 检索他人 KB |
+| G-05 | P1 | 数据权限拦截器只覆盖 5 张表，且只在列表查询时激活；`selectById`、原生 SQL、JOIN、异步线程默认不受控 | [DataScopeContext.java](../../rag-backend/rag-data/src/main/java/com/wgh/rag/data/scope/DataScopeContext.java#L27-L32)、[DataScopeInterceptor.java](../../rag-backend/rag-data/src/main/java/com/wgh/rag/data/scope/DataScopeInterceptor.java#L51-L101) | 隔离依赖开发者自觉 |
+| G-06 | P1 | `create_by` 在异步/匿名线程回落 `system`，后台创建的资源无法归属到用户 | [MetaObjectHandlerImpl.java](../../rag-backend/rag-data/src/main/java/com/wgh/rag/data/mybatis/MetaObjectHandlerImpl.java#L37-L44) | 资源"无主"，多租户下无法归属 |
+| G-07 | P1 | `TEAM = PUBLIC`，没有团队/组织边界；`PUBLIC` 对所有登录用户可见 | [ResourceVisibility.java](../../rag-backend/rag-data/src/main/java/com/wgh/rag/data/scope/ResourceVisibility.java#L9-L44) | 多租户下 `PUBLIC` 会造成跨租户泄露 |
+| G-08 | P1 | 多 Agent 运行态接口（stream/state/hitl/cancel/steps）无归属校验。`runId` 为随机串（`mag-` + UUID 前 16 位，[MultiAgentRuntime.java](../../rag-backend/rag-agent-multi/src/main/java/com/wgh/rag/agentmulti/runtime/MultiAgentRuntime.java#L254-L256)），枚举难度较高，但一旦泄露即可被任意登录用户操作 | [MultiAgentController.java](../../rag-backend/rag-controller/src/main/java/com/wgh/rag/controller/MultiAgentController.java#L82-L151) | 运行态越权（缺纵深防御） |
+| G-09 | P1 | 分享链接、API Key 管理列表是全量列表，没有 owner/租户过滤 | [ShareLinkService.java](../../rag-backend/rag-public-access/src/main/java/com/wgh/rag/publicaccess/service/ShareLinkService.java#L270-L283)、[ApiKeyService.java](../../rag-backend/rag-public-access/src/main/java/com/wgh/rag/publicaccess/service/ApiKeyService.java#L210-L220) | 管理端跨租户可见 |
+| G-10 | P1 | 配额、审计、调用日志都没有租户维度 | [01-schema.sql](../../rag-backend/sql/schema/01-schema.sql#L964-L998)、[01-schema.sql](../../rag-backend/sql/schema/01-schema.sql#L916-L940)、[AuditLog.java](../../rag-backend/rag-log/src/main/java/com/wgh/rag/log/entity/AuditLog.java#L14-L49) | 无法按租户计量/审计 |
+| G-11 | P1 | 存储 key、Redis key 没有租户命名空间 | [StorageKeys.java](../../rag-backend/rag-storage/src/main/java/com/wgh/rag/storage/service/StorageKeys.java#L11-L42)、[PublicAccessRateLimiter.java](../../rag-backend/rag-public-access/src/main/java/com/wgh/rag/publicaccess/service/PublicAccessRateLimiter.java#L71-L73) | 导出/删除/限流难以按租户 |
+| G-12 | P2 | `wgh_tag.name` 全局唯一，标签体系跨用户/跨租户共享 | [01-schema.sql](../../rag-backend/sql/schema/01-schema.sql#L1111-L1124) | 租户间标签冲突/信息泄露 |
+| G-13 | P2 | 模型配置与价格全局共享，没有 BYOK/租户级模型隔离 | [01-schema.sql](../../rag-backend/sql/schema/01-schema.sql#L14-L89)、[01-schema.sql](../../rag-backend/sql/schema/01-schema.sql#L942-L962) | 一个租户的模型调用成本/额度影响他人 |
+| G-14 | P2 | `wgh_user.tenant_id` 是死字段，容易误以为已支持租户 | [01-schema.sql](../../rag-backend/sql/schema/01-schema.sql#L1191)、[WghUser.java](../../rag-backend/rag-auth/src/main/java/com/wgh/rag/auth/entity/WghUser.java#L41) | 认知风险 |
+| G-15 | P2 | 数据库连接使用 `postgres` 超级用户；RLS 若直接引入不会生效 | [docker-compose.yml](../../docker-compose.yml#L7-L20) | 安全兜底失效 |
 
 #### 3.12.1 原生 SQL / JOIN 的具体点位
 
 现有 `DataScopeInterceptor` 对白名单表的 JOIN 是"失败关闭"，但以下原生 SQL 涉及**非白名单表**，不会被拦截，也不会自动带租户条件：
 
-- `ChatMessageMapper` 中 `wgh_chat_message JOIN wgh_chat_session`、再 `JOIN wgh_chat_window` 的统计查询。[ChatMessageMapper.java#L36-L62](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-chat/src/main/java/com/wgh/rag/chat/mapper/ChatMessageMapper.java#L36-L62)
-- `SemanticCacheMapper.selectWindowKbMappings()` 全表扫描 `wgh_chat_window`。[SemanticCacheMapper.java#L21](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/mapper/SemanticCacheMapper.java#L21)
-- `QuotaUsageMapper` / `UserQuotaConfigMapper` 的 `INSERT ... ON CONFLICT`、`UPDATE` 原生 SQL。[QuotaUsageMapper.java#L20-L60](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-quota/src/main/java/com/wgh/rag/quota/mapper/QuotaUsageMapper.java#L20-L60)
-- `RoleMapper` / `PermissionMapper` / `UserRoleMapper` / `RolePermissionMapper` 的 JOIN 原生 SQL。[RolePermissionMapper.java#L23-L37](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-auth/src/main/java/com/wgh/rag/auth/mapper/RolePermissionMapper.java#L23-L37)
+- `ChatMessageMapper` 中 `wgh_chat_message JOIN wgh_chat_session`、再 `JOIN wgh_chat_window` 的统计查询。[ChatMessageMapper.java](../../rag-backend/rag-chat/src/main/java/com/wgh/rag/chat/mapper/ChatMessageMapper.java#L36-L62)
+- `SemanticCacheMapper.selectWindowKbMappings()` 全表扫描 `wgh_chat_window`。[SemanticCacheMapper.java](../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/mapper/SemanticCacheMapper.java#L21)
+- `QuotaUsageMapper` / `UserQuotaConfigMapper` 的 `INSERT ... ON CONFLICT`、`UPDATE` 原生 SQL。[QuotaUsageMapper.java](../../rag-backend/rag-quota/src/main/java/com/wgh/rag/quota/mapper/QuotaUsageMapper.java#L20-L60)
+- `RoleMapper` / `PermissionMapper` / `UserRoleMapper` / `RolePermissionMapper` 的 JOIN 原生 SQL。[RolePermissionMapper.java](../../rag-backend/rag-auth/src/main/java/com/wgh/rag/auth/mapper/RolePermissionMapper.java#L23-L37)
 
 多租户下这些 SQL 必须逐条改造：显式加 `tenant_id`，或保证被 MyBatis-Plus 租户插件覆盖（插件对 JOIN 的别名处理需要验证）。
 
@@ -424,10 +424,10 @@
 
 ### 3.13 其他现状
 
-- **内置资源**：内置工具示例、内置 Prompt 模板被回填为 `PUBLIC`。[01_resource_visibility.sql#L32-L36](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/sql/migrations/20261113/01_resource_visibility.sql#L32-L36)。多租户下应改为"平台级共享"语义，或每个租户初始化一份。
-- **历史数据**：迁移说明明确"历史 `create_by` 多为 `system`，升级后默认仅管理员可见"。[01_resource_visibility.sql#L11-L12](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/sql/migrations/20261113/01_resource_visibility.sql#L11-L12)。多租户改造需要先确定这些无主资源的归属租户。
+- **内置资源**：内置工具示例、内置 Prompt 模板被回填为 `PUBLIC`。[01_resource_visibility.sql](../../rag-backend/sql/migrations/20261113/01_resource_visibility.sql#L32-L36)。多租户下应改为"平台级共享"语义，或每个租户初始化一份。
+- **历史数据**：迁移说明明确"历史 `create_by` 多为 `system`，升级后默认仅管理员可见"。[01_resource_visibility.sql](../../rag-backend/sql/migrations/20261113/01_resource_visibility.sql#L11-L12)。多租户改造需要先确定这些无主资源的归属租户。
 - **公开分享/Widget**：分享链接按 token 访问，不受 `visibility` 影响；这是产品设计，但在多租户下需要"租户是否允许公开分享"的策略开关，否则任何租户都可以把自己的数据公开到互联网。
-- **前端**：`TEAM` 的提示文案已暴露其真实语义"登录用户可读"。[visibility.js#L8](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-frontend/src/utils/visibility.js#L8)
+- **前端**：`TEAM` 的提示文案已暴露其真实语义"登录用户可读"。[visibility.js](../../rag-frontend/src/utils/visibility.js#L8)
 
 ---
 
@@ -731,62 +731,62 @@
 
 ### 9.1 认证与身份
 
-- [OidcAuthenticationFilter.java#L103-L145](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-auth/src/main/java/com/wgh/rag/auth/security/OidcAuthenticationFilter.java#L103-L145)：外部 token 解析、用户名/角色映射
-- [OidcAuthenticationFilter.java#L151-L240](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-auth/src/main/java/com/wgh/rag/auth/security/OidcAuthenticationFilter.java#L151-L240)：本地凭证校验
-- [LoginUser.java#L11-L24](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-common/src/main/java/com/wgh/rag/common/security/LoginUser.java#L11-L24)：登录上下文无租户
-- [SecurityUtils.java#L23-L36](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-common/src/main/java/com/wgh/rag/common/security/SecurityUtils.java#L23-L36)：用户名派生
-- [WghUser.java#L41](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-auth/src/main/java/com/wgh/rag/auth/entity/WghUser.java#L41)：`tenantId` 字段
-- [01-schema.sql#L1185-L1213](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/sql/schema/01-schema.sql#L1185-L1213)：用户表
+- [OidcAuthenticationFilter.java](../../rag-backend/rag-auth/src/main/java/com/wgh/rag/auth/security/OidcAuthenticationFilter.java#L103-L145)：外部 token 解析、用户名/角色映射
+- [OidcAuthenticationFilter.java](../../rag-backend/rag-auth/src/main/java/com/wgh/rag/auth/security/OidcAuthenticationFilter.java#L151-L240)：本地凭证校验
+- [LoginUser.java](../../rag-backend/rag-common/src/main/java/com/wgh/rag/common/security/LoginUser.java#L11-L24)：登录上下文无租户
+- [SecurityUtils.java](../../rag-backend/rag-common/src/main/java/com/wgh/rag/common/security/SecurityUtils.java#L23-L36)：用户名派生
+- [WghUser.java](../../rag-backend/rag-auth/src/main/java/com/wgh/rag/auth/entity/WghUser.java#L41)：`tenantId` 字段
+- [01-schema.sql](../../rag-backend/sql/schema/01-schema.sql#L1185-L1213)：用户表
 
 ### 9.2 可见性与数据权限
 
-- [DataScopeContext.java#L27-L58](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-data/src/main/java/com/wgh/rag/data/scope/DataScopeContext.java#L27-L58)
-- [DataScopeInterceptor.java#L51-L109](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-data/src/main/java/com/wgh/rag/data/scope/DataScopeInterceptor.java#L51-L109)
-- [DataScopeGuard.java#L18-L44](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-data/src/main/java/com/wgh/rag/data/scope/DataScopeGuard.java#L18-L44)
-- [ResourceVisibility.java#L9-L44](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-data/src/main/java/com/wgh/rag/data/scope/ResourceVisibility.java#L9-L44)
-- [MetaObjectHandlerImpl.java#L21-L44](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-data/src/main/java/com/wgh/rag/data/mybatis/MetaObjectHandlerImpl.java#L21-L44)
-- [MybatisPlusConfig.java#L20-L26](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-data/src/main/java/com/wgh/rag/data/mybatis/MybatisPlusConfig.java#L20-L26)
+- [DataScopeContext.java](../../rag-backend/rag-data/src/main/java/com/wgh/rag/data/scope/DataScopeContext.java#L27-L58)
+- [DataScopeInterceptor.java](../../rag-backend/rag-data/src/main/java/com/wgh/rag/data/scope/DataScopeInterceptor.java#L51-L109)
+- [DataScopeGuard.java](../../rag-backend/rag-data/src/main/java/com/wgh/rag/data/scope/DataScopeGuard.java#L18-L44)
+- [ResourceVisibility.java](../../rag-backend/rag-data/src/main/java/com/wgh/rag/data/scope/ResourceVisibility.java#L9-L44)
+- [MetaObjectHandlerImpl.java](../../rag-backend/rag-data/src/main/java/com/wgh/rag/data/mybatis/MetaObjectHandlerImpl.java#L21-L44)
+- [MybatisPlusConfig.java](../../rag-backend/rag-data/src/main/java/com/wgh/rag/data/mybatis/MybatisPlusConfig.java#L20-L26)
 
 ### 9.3 资源服务
 
-- [KnowledgeBaseService.java#L42-L88](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/KnowledgeBaseService.java#L42-L88)
-- [KnowledgeFileService.java#L78-L120](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/KnowledgeFileService.java#L78-L120)
-- [KnowledgeFileService.java#L240-L346](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/KnowledgeFileService.java#L240-L346)
-- [ChunkUploadService.java#L67-L99](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/ChunkUploadService.java#L67-L99)
-- [ChunkUploadService.java#L200-L211](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/ChunkUploadService.java#L200-L211)
-- [EvalDatasetService.java#L65-L92](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/EvalDatasetService.java#L65-L92)
-- [EvalDatasetService.java#L378-L391](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/EvalDatasetService.java#L378-L391)
-- [ConnectorService.java#L240-L264](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/connector/ConnectorService.java#L240-L264)
-- [ChatWindowService.java#L43-L67](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-chat/src/main/java/com/wgh/rag/chat/service/ChatWindowService.java#L43-L67)
-- [ChatWindowService.java#L272-L331](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-chat/src/main/java/com/wgh/rag/chat/service/ChatWindowService.java#L272-L331)
-- [WorkflowService.java#L91-L121](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-workflow/src/main/java/com/wgh/rag/workflow/service/WorkflowService.java#L91-L121)
-- [RunAccessGuard.java#L26-L40](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-controller/src/main/java/com/wgh/rag/controller/support/RunAccessGuard.java#L26-L40)
-- [MultiAgentController.java#L82-L151](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-controller/src/main/java/com/wgh/rag/controller/MultiAgentController.java#L82-L151)
+- [KnowledgeBaseService.java](../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/KnowledgeBaseService.java#L42-L88)
+- [KnowledgeFileService.java](../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/KnowledgeFileService.java#L78-L120)
+- [KnowledgeFileService.java](../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/KnowledgeFileService.java#L240-L346)
+- [ChunkUploadService.java](../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/ChunkUploadService.java#L67-L99)
+- [ChunkUploadService.java](../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/ChunkUploadService.java#L200-L211)
+- [EvalDatasetService.java](../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/EvalDatasetService.java#L65-L92)
+- [EvalDatasetService.java](../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/EvalDatasetService.java#L378-L391)
+- [ConnectorService.java](../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/connector/ConnectorService.java#L240-L264)
+- [ChatWindowService.java](../../rag-backend/rag-chat/src/main/java/com/wgh/rag/chat/service/ChatWindowService.java#L43-L67)
+- [ChatWindowService.java](../../rag-backend/rag-chat/src/main/java/com/wgh/rag/chat/service/ChatWindowService.java#L272-L331)
+- [WorkflowService.java](../../rag-backend/rag-workflow/src/main/java/com/wgh/rag/workflow/service/WorkflowService.java#L91-L121)
+- [RunAccessGuard.java](../../rag-backend/rag-controller/src/main/java/com/wgh/rag/controller/support/RunAccessGuard.java#L26-L40)
+- [MultiAgentController.java](../../rag-backend/rag-controller/src/main/java/com/wgh/rag/controller/MultiAgentController.java#L82-L151)
 
 ### 9.4 配额、审计、存储、缓存
 
-- [QuotaService.java#L70-L132](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-quota/src/main/java/com/wgh/rag/quota/service/QuotaService.java#L70-L132)
-- [DefaultQuotaUserResolver.java#L17-L24](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-quota/src/main/java/com/wgh/rag/quota/service/DefaultQuotaUserResolver.java#L17-L24)
-- [QuotaUsageMapper.java#L20-L60](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-quota/src/main/java/com/wgh/rag/quota/mapper/QuotaUsageMapper.java#L20-L60)
-- [AuditAspect.java#L34-L72](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-log/src/main/java/com/wgh/rag/log/aspect/AuditAspect.java#L34-L72)
-- [AuditLog.java#L14-L49](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-log/src/main/java/com/wgh/rag/log/entity/AuditLog.java#L14-L49)
-- [StorageKeys.java#L11-L42](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-storage/src/main/java/com/wgh/rag/storage/service/StorageKeys.java#L11-L42)
-- [SemanticCacheService.java#L30-L155](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/SemanticCacheService.java#L30-L155)
-- [AgentMemoryService.java#L31-L115](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/AgentMemoryService.java#L31-L115)
-- [PublicAccessRateLimiter.java#L71-L73](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-public-access/src/main/java/com/wgh/rag/publicaccess/service/PublicAccessRateLimiter.java#L71-L73)
+- [QuotaService.java](../../rag-backend/rag-quota/src/main/java/com/wgh/rag/quota/service/QuotaService.java#L70-L132)
+- [DefaultQuotaUserResolver.java](../../rag-backend/rag-quota/src/main/java/com/wgh/rag/quota/service/DefaultQuotaUserResolver.java#L17-L24)
+- [QuotaUsageMapper.java](../../rag-backend/rag-quota/src/main/java/com/wgh/rag/quota/mapper/QuotaUsageMapper.java#L20-L60)
+- [AuditAspect.java](../../rag-backend/rag-log/src/main/java/com/wgh/rag/log/aspect/AuditAspect.java#L34-L72)
+- [AuditLog.java](../../rag-backend/rag-log/src/main/java/com/wgh/rag/log/entity/AuditLog.java#L14-L49)
+- [StorageKeys.java](../../rag-backend/rag-storage/src/main/java/com/wgh/rag/storage/service/StorageKeys.java#L11-L42)
+- [SemanticCacheService.java](../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/SemanticCacheService.java#L30-L155)
+- [AgentMemoryService.java](../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/AgentMemoryService.java#L31-L115)
+- [PublicAccessRateLimiter.java](../../rag-backend/rag-public-access/src/main/java/com/wgh/rag/publicaccess/service/PublicAccessRateLimiter.java#L71-L73)
 
 ### 9.5 开放 API
 
-- [ApiKeyAuthenticationFilter.java#L47-L105](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-public-access/src/main/java/com/wgh/rag/publicaccess/config/ApiKeyAuthenticationFilter.java#L47-L105)
-- [ApiKeyService.java#L185-L220](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-public-access/src/main/java/com/wgh/rag/publicaccess/service/ApiKeyService.java#L185-L220)
-- [OpenApiController.java#L76-L143](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-controller/src/main/java/com/wgh/rag/controller/OpenApiController.java#L76-L143)
-- [OpenAiCompatController.java#L179-L201](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-controller/src/main/java/com/wgh/rag/controller/openai/OpenAiCompatController.java#L179-L201)
-- [ShareLinkService.java#L270-L283](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-public-access/src/main/java/com/wgh/rag/publicaccess/service/ShareLinkService.java#L270-L283)
+- [ApiKeyAuthenticationFilter.java](../../rag-backend/rag-public-access/src/main/java/com/wgh/rag/publicaccess/config/ApiKeyAuthenticationFilter.java#L47-L105)
+- [ApiKeyService.java](../../rag-backend/rag-public-access/src/main/java/com/wgh/rag/publicaccess/service/ApiKeyService.java#L185-L220)
+- [OpenApiController.java](../../rag-backend/rag-controller/src/main/java/com/wgh/rag/controller/OpenApiController.java#L76-L143)
+- [OpenAiCompatController.java](../../rag-backend/rag-controller/src/main/java/com/wgh/rag/controller/openai/OpenAiCompatController.java#L179-L201)
+- [ShareLinkService.java](../../rag-backend/rag-public-access/src/main/java/com/wgh/rag/publicaccess/service/ShareLinkService.java#L270-L283)
 
 ### 9.6 表结构与部署
 
-- [01-schema.sql](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/sql/schema/01-schema.sql)
-- [01_resource_visibility.sql](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/sql/migrations/20261113/01_resource_visibility.sql)
-- [application.yml#L13-L28](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-app/src/main/resources/application.yml#L13-L28)
-- [application.yml#L116-L143](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-app/src/main/resources/application.yml#L116-L143)
-- [docker-compose.yml#L7-L20](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/docker-compose.yml#L7-L20)
+- [01-schema.sql](../../rag-backend/sql/schema/01-schema.sql)
+- [01_resource_visibility.sql](../../rag-backend/sql/migrations/20261113/01_resource_visibility.sql)
+- [application.yml](../../rag-backend/rag-app/src/main/resources/application.yml#L13-L28)
+- [application.yml](../../rag-backend/rag-app/src/main/resources/application.yml#L116-L143)
+- [docker-compose.yml](../../docker-compose.yml#L7-L20)

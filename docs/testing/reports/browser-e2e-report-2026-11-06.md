@@ -308,7 +308,7 @@
 | BUG-03 | 中 | 工作流编辑器缺 AGENT 节点入口，与后端能力不一致 | 已修复 `e74f0c2`；WF-04 |
 | BUG-04 | 高 | 运行实例重建后 KB 级 `chunkCount=0`（jar 未含 307508e 修复） | 已修复并部署；KB-12 |
 | BUG-05 | 低 | 文档版本历史快照段落数为 0，与文件实际 chunk 数不一致 | 已修复 `e74f0c2`；KB-06 |
-| BUG-06 | 低 | 分享密码锁定时，弹窗仅在下次 info 请求更新锁定态；当前轮仅 toast，输入框 disabled 但不显示剩余秒数 | 未修复（仅记录）；[PublicShareChat.vue](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-frontend/src/views/chat/PublicShareChat.vue)；`20261106-13-share-06-password-lock.png` |
+| BUG-06 | 低 | 分享密码锁定时，弹窗仅在下次 info 请求更新锁定态；当前轮仅 toast，输入框 disabled 但不显示剩余秒数 | 未修复（仅记录）；[PublicShareChat.vue](../../../rag-frontend/src/views/chat/PublicShareChat.vue)；`20261106-13-share-06-password-lock.png` |
 
 ## 8. 测试数据清理
 

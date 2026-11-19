@@ -70,4 +70,4 @@ spring:
 
 合计：今日新增/修改 42 个键 + 收敛既有键 8 个。任务恢复（`TaskRecoveryService`）无可配置项，故不设片段；`wgh.sandbox.work-root`、`wgh.rag.memory.summary-model-id` 两个空值默认项保留在代码中。
 
-变更对应的业务背景与逐项说明见 [1.2.0-change-summary-2026-11-19.md](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/docs/version/1.2.0-change-summary-2026-11-19.md)。
+变更对应的业务背景与逐项说明见 [1.2.0-change-summary-2026-11-19.md](../../../docs/version/1.2.0-change-summary-2026-11-19.md)。

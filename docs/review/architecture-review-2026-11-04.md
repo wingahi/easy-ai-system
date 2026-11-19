@@ -49,7 +49,7 @@
 
 #### F-01（P0）会话身份硬编码，跨用户会话可见 / 可删 / 可续聊
 
-> **2026-11-09 复核：已修复。** `RagChatService` 改用 `SecurityUtils.currentUsername()`，`ensureSession` 校验会话归属（[RagChatService.java:1496-L1498](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-chat/src/main/java/com/wgh/rag/chat/service/RagChatService.java#L1496-L1498)）；`ChatController` 不再接收外部 `userIdentifier`。
+> **2026-11-09 复核：已修复。** `RagChatService` 改用 `SecurityUtils.currentUsername()`，`ensureSession` 校验会话归属（[RagChatService.java](../../rag-backend/rag-chat/src/main/java/com/wgh/rag/chat/service/RagChatService.java#L1496-L1498)）；`ChatController` 不再接收外部 `userIdentifier`。
 
 - **现状**
   - `rag-backend/rag-chat/src/main/java/com/wgh/rag/chat/service/RagChatService.java:1361`：`ensureSession(...)` 内部 `String userIdentifier = "default_user";` —— 新会话一律落到固定桶。
@@ -64,7 +64,7 @@
 
 #### F-02（P0）模型配置实体直出，`apiKey` 明文泄露
 
-> **2026-11-09 复核：部分修复。** `LlmModel.apiKey` 已改为 `@JsonProperty(access = WRITE_ONLY)`，不会被序列化返回；但 `Workflow.shareToken`、`ToolConfig.executorConfig` 仍无 `@JsonIgnore`/`WRITE_ONLY`，仍随实体直出（[Workflow.java](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-workflow/src/main/java/com/wgh/rag/workflow/entity/Workflow.java)、[ToolConfig.java](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-tool/src/main/java/com/wgh/rag/tool/entity/ToolConfig.java)）。
+> **2026-11-09 复核：部分修复。** `LlmModel.apiKey` 已改为 `@JsonProperty(access = WRITE_ONLY)`，不会被序列化返回；但 `Workflow.shareToken`、`ToolConfig.executorConfig` 仍无 `@JsonIgnore`/`WRITE_ONLY`，仍随实体直出（[Workflow.java](../../rag-backend/rag-workflow/src/main/java/com/wgh/rag/workflow/entity/Workflow.java)、[ToolConfig.java](../../rag-backend/rag-tool/src/main/java/com/wgh/rag/tool/entity/ToolConfig.java)）。
 
 - **现状**
   - `rag-backend/rag-llm/src/main/java/com/wgh/rag/llm/entity/LlmModel.java:46`：`private String apiKey;`，类上为 `@Data`，**无 `@JsonIgnore`**（全模块检索无 `JsonIgnore`）。

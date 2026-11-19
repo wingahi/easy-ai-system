@@ -1,7 +1,7 @@
 # 功能对照分析：本系统 vs 主流 RAG / Agent 平台
 
 > 分析日期：2026-11-09  
-> 分析范围：`/Users/joe.wen/Desktop/ai-code/wgh-rag-system` 全仓（后端、前端、SQL、文档）  
+> 分析范围：仓库根目录全仓（后端、前端、SQL、文档）  
 > 分析口径：**以代码与数据结构为准**，不采信 README 的单方面表述；对 README 声称与代码实际不一致处单独列出。  
 > 操作约束：全程只读，未修改业务代码、未重启 8080/9090 服务、未执行 Maven 测试、未连接 `wgh_rag` / `wgh_rag_fresh` 数据库、未 commit / push。
 

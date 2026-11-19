@@ -1,6 +1,6 @@
 # 2026-11-18 全量浏览器回归测试报告
 
-> 测试对象：WGH RAG 知识库系统（`/Users/joe.wen/Desktop/ai-code/wgh-rag-system`）
+> 测试对象：WGH RAG 知识库系统（仓库根目录）
 > 测试方式：Playwright（Chrome channel，headless）真实操作页面 + 单列接口级验证
 > 测试库：`wgh_rag_fresh`（旧库 `wgh_rag` 仅观测连接，未执行任何写入）
 > 基线：`docs/testing/test-cases.md` v1.2（§1~§41）+ `docs/testing/reports/browser-e2e-report-2026-11-06.md`（93 条）

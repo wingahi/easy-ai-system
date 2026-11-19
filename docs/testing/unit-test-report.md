@@ -2,7 +2,7 @@
 
 - 执行日期：2026-11-04
 - 执行人：自动化补充测试任务
-- 代码库：`/Users/joe.wen/Desktop/ai-code/wgh-rag-system`（后端 `rag-backend`，前端 `rag-frontend`）
+- 代码库：仓库根目录（后端 `rag-backend`，前端 `rag-frontend`）
 - JDK：`JAVA_HOME=$(/usr/libexec/java_home -v 21)`（JDK 21，符合 CI 硬约束）
 - 构建方式：离线（`-o`）、持锁（`/tmp/wgh-maven-build.lockdir`）、`test` 阶段，未执行 `install/package/clean`，未覆盖运行中服务（8080，PID 41603）的 fat jar
 

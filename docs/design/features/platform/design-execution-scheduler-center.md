@@ -19,7 +19,7 @@
 2. **统一承接的五类执行体**：聊天（RAG/ReAct）、工作流任务（手动/聊天/静默/CRON/Webhook）、计划任务（CRON、连接器同步、上传清理、语义缓存清理）、单 Agent（Planner/Executor/Reflection/HITL）、多 Agent（Crew/Graph/GroupChat）。
 3. **关键判断不变（复用）**：后台型与交互式分开治理——`INTERACTIVE`（进程内受管池、低延迟、按租户公平）、`BACKGROUND`（持久化、租约、重试）、`MAINTENANCE`（advisory lock 单飞）。统一的是准入、策略、作业模型、指标与 lane 抽象，**不统一物理线程池**。
 4. **本次补齐的现状缺口（新增结论）**：
-   - **单 Agent 当前完全跑在 HTTP 请求线程内**：HITL 恢复走 `agentOrchestrator.resume(...)` 同步调用（[AgentController.java#L117-L120](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-controller/src/main/java/com/wgh/rag/controller/AgentController.java#L117-L120)），长计划会长期占用 Tomcat 线程与 DB 连接，且无并发上限——这是与「多 Agent 裸线程」相反的另一类无界问题，之前两份调度文档未单列。
+   - **单 Agent 当前完全跑在 HTTP 请求线程内**：HITL 恢复走 `agentOrchestrator.resume(...)` 同步调用（[AgentController.java](../../../../rag-backend/rag-controller/src/main/java/com/wgh/rag/controller/AgentController.java#L117-L120)），长计划会长期占用 Tomcat 线程与 DB 连接，且无并发上限——这是与「多 Agent 裸线程」相反的另一类无界问题，之前两份调度文档未单列。
    - **计划任务没有「任务」概念**：CRON、连接器、上传清理都是每实例自建线程/调度器（见 §1.2），无执行记录、无重试、无失败可见性，因此「计划任务」只能靠 advisory lock 止血，不能算统一承接。
 5. **落地顺序（复用 A–D，不新造阶段）**：S0 止血（受管池 + 有界队列 + 单飞 + 指标 + 优雅停机 + 单 Agent 移出请求线程）→ S1 后台作业化（作业表 + 后台 lane + 评测/静默工作流/计划任务迁移）→ S2 租户策略全面生效 + 管理端写操作 → S3 集群语义、事件重放与死信。
 6. **与多租户的关系**：调度中心从 S1 起强制携带 `tenant_id`（作业表字段 + 策略表 + 运行槽），S0 阶段允许 `tenant_id=0` 默认桶；不在调度器内定义租户模型。

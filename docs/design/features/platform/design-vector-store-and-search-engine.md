@@ -12,11 +12,11 @@
 
 ## 0. 结论摘要
 
-1. **现状不是「一个向量库」，而是「每个知识库一张 pgvector 物理表」**：建库即建表（`wgh_kb_<ts>`），重建再建新表（`wgh_kb_<id>_<ts>`），表名存 `wgh_knowledge_base.collection_name`（[KnowledgeBaseService.java#L77](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/KnowledgeBaseService.java#L77)、[KnowledgeBaseService.java#L142-L170](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/KnowledgeBaseService.java#L142-L170)）。
-2. **chunk 原文只存在于向量表里**：没有独立的 chunk 表，文本与 metadata 都在 pgvector 表的 `text` / `metadata` 列（[KeywordSearchService.java#L23-L27](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/KeywordSearchService.java#L23-L27)）。**这决定了任何后端替换都不能只迁向量，必须同时解决原文与元数据的唯一副本问题**——这是本块最重要的前置结论。
-3. **检索是「逐知识库串行 fan-out」**：`searchMultiple` 对每个 KB 单独查一次向量表，再做 RRF 融合与可选 Rerank（[RagRetrieveService.java#L99-L122](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/RagRetrieveService.java#L99-L122)、[RagRetrieveService.java#L168-L212](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/RagRetrieveService.java#L168-L212)）。跨 10 个 KB 就是 10 次 SQL + 10 次 HNSW 查询，耗时随 KB 数线性增长。
-4. **关键词路是 pg_trgm 而非 BM25**：`word_similarity(query, text) >= 0.5` + 每表一个 GIN 索引（[KeywordSearchService.java#L47](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/KeywordSearchService.java#L47)、[#L66-L118](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/KeywordSearchService.java#L66-L118)）。没有中文分词、没有字段过滤、没有高亮、没有 BM25 相关性。
-5. **抽象层已经存在但不完整**：`VectorStorePort` / `KeywordSearchPort` 已把业务与 PG 方言隔离；但 `createEmbeddingStore` 直接返回 LangChain4j 的 `EmbeddingStore`，`deleteByFileId` 依赖 `metadata->>'fileId'` 的 PG JSON 语法，换后端必须扩接口（[VectorStorePort.java#L16-L60](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/port/VectorStorePort.java#L16-L60)、[VectorStoreService.java#L105-L133](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/VectorStoreService.java#L105-L133)）。
+1. **现状不是「一个向量库」，而是「每个知识库一张 pgvector 物理表」**：建库即建表（`wgh_kb_<ts>`），重建再建新表（`wgh_kb_<id>_<ts>`），表名存 `wgh_knowledge_base.collection_name`（[KnowledgeBaseService.java](../../../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/KnowledgeBaseService.java#L77)、[KnowledgeBaseService.java](../../../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/KnowledgeBaseService.java#L142-L170)）。
+2. **chunk 原文只存在于向量表里**：没有独立的 chunk 表，文本与 metadata 都在 pgvector 表的 `text` / `metadata` 列（[KeywordSearchService.java](../../../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/KeywordSearchService.java#L23-L27)）。**这决定了任何后端替换都不能只迁向量，必须同时解决原文与元数据的唯一副本问题**——这是本块最重要的前置结论。
+3. **检索是「逐知识库串行 fan-out」**：`searchMultiple` 对每个 KB 单独查一次向量表，再做 RRF 融合与可选 Rerank（[RagRetrieveService.java](../../../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/RagRetrieveService.java#L99-L122)、[RagRetrieveService.java](../../../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/RagRetrieveService.java#L168-L212)）。跨 10 个 KB 就是 10 次 SQL + 10 次 HNSW 查询，耗时随 KB 数线性增长。
+4. **关键词路是 pg_trgm 而非 BM25**：`word_similarity(query, text) >= 0.5` + 每表一个 GIN 索引（[KeywordSearchService.java](../../../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/KeywordSearchService.java#L47)、[KeywordSearchService.java](../../../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/KeywordSearchService.java#L66-L118)）。没有中文分词、没有字段过滤、没有高亮、没有 BM25 相关性。
+5. **抽象层已经存在但不完整**：`VectorStorePort` / `KeywordSearchPort` 已把业务与 PG 方言隔离；但 `createEmbeddingStore` 直接返回 LangChain4j 的 `EmbeddingStore`，`deleteByFileId` 依赖 `metadata->>'fileId'` 的 PG JSON 语法，换后端必须扩接口（[VectorStorePort.java](../../../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/port/VectorStorePort.java#L16-L60)、[VectorStoreService.java](../../../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/VectorStoreService.java#L105-L133)）。
 6. **推荐路线：先补齐「可替换性」，再按收益顺序替换**——
    - **V0**：端口补全 + chunk 原文独立化 + 检索质量/延迟基线 + 规模阈值定义（不引入新组件）；
    - **V1**：先接独立搜索引擎（关键词/过滤/高亮），向量仍留 pgvector（风险最低、收益最快）；
@@ -50,17 +50,17 @@ PostgreSQL（单实例，pgvector + pg_trgm）
 
 | 项 | 现状 | 证据 |
 |---|---|---|
-| 扩展 | `vector` + `pg_trgm`，schema 初始化时创建 | [01-schema.sql#L8-L10](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/sql/schema/01-schema.sql#L8-L10) |
-| 集合命名 | 新建 `wgh_kb_<currentTimeMillis>`；重建 `wgh_kb_<kbId>_<ts>` | [KnowledgeBaseService.java#L77](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/KnowledgeBaseService.java#L77)、[#L158-L160](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/KnowledgeBaseService.java#L158-L160) |
-| 集合指针 | `collection_name` 唯一；`pending_collection` 记录重建目标 | [01-schema.sql#L101-L110](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/sql/schema/01-schema.sql#L101-L110) |
-| 维度 | KB 维度存 `dimension`，随 embedding 模型；默认 1536 | [01-schema.sql#L99-L100](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/sql/schema/01-schema.sql#L99-L100)、[application.yml#L96-L109](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-app/src/main/resources/application.yml#L96-L109) |
-| ANN 索引 | 每表 HNSW（`vector_cosine_ops`，m=16，ef_construction=64），惰性幂等创建 | [VectorStoreService.java#L269-L290](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/VectorStoreService.java#L269-L290) |
-| 句柄缓存 | 进程内 LRU（表名 + 维度），默认 64 | [VectorStoreService.java#L36-L56](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/VectorStoreService.java#L36-L56)、[application.yml#L105](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-app/src/main/resources/application.yml#L105) |
-| 关键词 | `word_similarity >= 0.5`，GIN（`gin_trgm_ops`）惰性创建 | [KeywordSearchService.java#L47](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/KeywordSearchService.java#L47)、[#L106-L118](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/KeywordSearchService.java#L106-L118) |
-| 融合 | RRF，k=60 | [RrfFusion.java#L13-L19](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/RrfFusion.java#L13-L19) |
-| Rerank | 候选放大 `topK*3`，上限 30；失败降级为原序 | [RagRetrieveService.java#L39-L40](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/RagRetrieveService.java#L39-L40)、[#L269-L292](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/RagRetrieveService.java#L269-L292) |
-| 共享向量表 | 语义缓存 `wgh_semantic_cache_vec`；记忆 `wgh_agent_memory_vec` | [SemanticCacheService.java#L32-L42](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/SemanticCacheService.java#L32-L42) |
-| chunk 原文 | 无独立表，存于向量表 `text` 列 | [KeywordSearchService.java#L23-L27](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/KeywordSearchService.java#L23-L27) |
+| 扩展 | `vector` + `pg_trgm`，schema 初始化时创建 | [01-schema.sql](../../../../rag-backend/sql/schema/01-schema.sql#L8-L10) |
+| 集合命名 | 新建 `wgh_kb_<currentTimeMillis>`；重建 `wgh_kb_<kbId>_<ts>` | [KnowledgeBaseService.java](../../../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/KnowledgeBaseService.java#L77)、[KnowledgeBaseService.java](../../../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/KnowledgeBaseService.java#L158-L160) |
+| 集合指针 | `collection_name` 唯一；`pending_collection` 记录重建目标 | [01-schema.sql](../../../../rag-backend/sql/schema/01-schema.sql#L101-L110) |
+| 维度 | KB 维度存 `dimension`，随 embedding 模型；默认 1536 | [01-schema.sql](../../../../rag-backend/sql/schema/01-schema.sql#L99-L100)、[application.yml](../../../../rag-backend/rag-app/src/main/resources/application.yml#L96-L109) |
+| ANN 索引 | 每表 HNSW（`vector_cosine_ops`，m=16，ef_construction=64），惰性幂等创建 | [VectorStoreService.java](../../../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/VectorStoreService.java#L269-L290) |
+| 句柄缓存 | 进程内 LRU（表名 + 维度），默认 64 | [VectorStoreService.java](../../../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/VectorStoreService.java#L36-L56)、[application.yml](../../../../rag-backend/rag-app/src/main/resources/application.yml#L105) |
+| 关键词 | `word_similarity >= 0.5`，GIN（`gin_trgm_ops`）惰性创建 | [KeywordSearchService.java](../../../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/KeywordSearchService.java#L47)、[KeywordSearchService.java](../../../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/KeywordSearchService.java#L106-L118) |
+| 融合 | RRF，k=60 | [RrfFusion.java](../../../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/RrfFusion.java#L13-L19) |
+| Rerank | 候选放大 `topK*3`，上限 30；失败降级为原序 | [RagRetrieveService.java](../../../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/RagRetrieveService.java#L39-L40)、[RagRetrieveService.java](../../../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/RagRetrieveService.java#L269-L292) |
+| 共享向量表 | 语义缓存 `wgh_semantic_cache_vec`；记忆 `wgh_agent_memory_vec` | [SemanticCacheService.java](../../../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/SemanticCacheService.java#L32-L42) |
+| chunk 原文 | 无独立表，存于向量表 `text` 列 | [KeywordSearchService.java](../../../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/KeywordSearchService.java#L23-L27) |
 
 ### 1.3 能力与瓶颈矩阵
 
@@ -134,7 +134,7 @@ PostgreSQL（单实例，pgvector + pg_trgm）
 
 1. **事实层与索引层分离**：原文与元数据落 `wgh_kb_chunk`（关系库），向量与关键词索引都是「可重建的派生数据」。这是允许替换后端的**唯一前提**。
 2. **租户过滤在编排层强制**：所有端口调用都带 `tenantId`，实现必须翻译成后端过滤条件；不允许「靠引擎权限」。
-3. **切换用蓝绿指针，不用原地迁移**：复用现有 `collection_name` / `pending_collection` 的「新建-回填-切换-保留旧」模式（[KnowledgeBaseService.java#L139-L170](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/KnowledgeBaseService.java#L139-L170)）。
+3. **切换用蓝绿指针，不用原地迁移**：复用现有 `collection_name` / `pending_collection` 的「新建-回填-切换-保留旧」模式（[KnowledgeBaseService.java](../../../../rag-backend/rag-kb/src/main/java/com/wgh/rag/kb/service/KnowledgeBaseService.java#L139-L170)）。
 
 ### 2.3 事实层表设计（建议，本次不执行 DDL）
 
