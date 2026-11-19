@@ -4,6 +4,18 @@
 > **核实依据**：`git status --short`、`git diff --stat`、`git diff`（相对 HEAD），以及 `rag-backend/**/target/surefire-reports` 中 2026-11-19 的单测报告
 > **提交状态**：全部未提交（工作区改动 + 未跟踪新文件），未执行 `git add` / `git commit`
 
+## 0. 今日功能清单
+
+- 上下文与长期记忆：新增 LLM 记忆摘要（默认关闭）与 TTL/容量清理器，新增任务级记忆（TASK 作用域 + SESSION 镜像）并接入单/多 Agent，异步线程池继承 MDC。
+- 多实例共享状态：Redis key 增加命名空间根 `wgh.rag.redis.key-prefix`，新增跨实例取消标记与 3 个停止接口，配额改为条件原子自增。
+- 可观测性：新增存储迁移/孤儿、状态存储降级、取消、记忆等 14 个指标方法，Prometheus 改 `dns_sd` 按副本抓取，compose 支持 `--scale`。
+- 停止生成：登录页与分享页停止时先调用后端停止接口再断流，新增 `silent` 请求选项。
+- 运行中任务与断点续跑：单 Agent / 多 Agent / 工作流三源查询与恢复，新增 4 个接口，多 Agent 步骤检查点复用 `wgh_m_agent_step`，工作流按节点运行轨迹重建。
+- 存储维护：新增存储清单接口、local↔oss 异步迁移（幂等、dry-run、SHA-256 校验）、孤儿对象扫描与可选删除、管理端 5 个接口，迁移状态入 Redis。
+- 代码沙箱：新增默认关闭的 `rag-sandbox` 模块，支持 sandbox-exec / bwrap / 降级三种隔离，接入既有 `ToolExecutor`，审计只记摘要。
+- 前端：新增「运行中任务」页面与路由/菜单，聊天页增加未完成任务横幅与一键继续。
+- 配置治理：抽离 `application-features.yml`，今日新增/修改 42 个配置键并收敛 8 个既有键；新增与 `sql/` 同级的 `config/migrations/20261119/` 增量配置片段。
+
 ## 1. 概述与变更规模
 
 今日围绕「上下文与长期记忆、多实例共享状态、存储运维、代码沙箱、断点续跑」五条线落地，并补齐前端停止生成与运行中任务页面。
@@ -13,22 +25,22 @@
 | 已跟踪文件修改 | 48 个（`git diff --stat`） |
 | 未跟踪文件 | 61 个：56 个代码/测试/前端文件 + 4 份 11-18 设计或分析文档 + 1 个 11-09 遗留 `javac.*.args` |
 | 涉及后端模块 | rag-config、rag-common、rag-kb、rag-chat、rag-agent、rag-agent-multi、rag-workflow、rag-storage、rag-sandbox（新增）、rag-controller、rag-quota、rag-public-access、rag-app |
-| 涉及其他目录 | rag-frontend、deploy/prometheus、docker-compose.yml、docs |
+| 涉及其他目录 | rag-frontend、deploy/prometheus、docker-compose.yml、docs、rag-backend/config（新增增量配置目录） |
 | 增量 DDL | 无（见第 4 节） |
-| 配置变更 | 今日新增/修改 42 个键；既有配置一并收敛 8 个；2 个空值默认项保留代码（见第 5 节） |
+| 配置变更 | 今日新增/修改 42 个键；既有配置一并收敛 8 个；2 个空值默认项保留代码。增量片段见 [config/migrations/20261119/](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/config/migrations/20261119)（第 5 节） |
 
 > 说明：`docs/design/features/agent/design-react-task-recovery.md` 等 4 份文档内容日期为 2026-11-18，属于今日实现所依据的分析/设计输入，不计入今日代码变更统计。
 
 ## 2. 摘要表
 
-| 主题 | 改动要点 | 影响面 |
-| --- | --- | --- |
-| 上下文与记忆 | 新增记忆摘要器、TTL/容量清理器；新增任务级记忆（TASK + SESSION 镜像）并接入单 Agent、多 Agent；新增 9 个 `wgh.rag.memory.*` 键；异步线程池继承 MDC | 记忆写入量、模型调用成本、Agent 步骤耗时；既有 `enabled/top-k/min-score/max-tokens` 语义不变 |
-| 多实例与可观测 | Redis key 命名空间根（`wgh.rag.redis.key-prefix`）；跨实例取消标记与 3 个停止接口；配额条件自增；新增 14 个指标方法；Prometheus 改 `dns_sd`；compose 支持 `--scale` | 多副本一致性、限流/配额超发、取消延迟；单实例部署行为不变 |
-| 存储维护 | 存储清单接口与 local/oss 实现；local↔oss 异步迁移（幂等、dry-run、SHA-256 校验）；孤儿对象扫描/可选删除；管理端 5 个接口；迁移状态入 Redis | 运维入口新增；不修改数据库与 `file_path`；迁移期间源/目标并存 |
-| 代码沙箱 | 新增 `rag-sandbox` 模块（默认关闭）；sandbox-exec/bwrap/降级三种隔离；语言白名单、超时/输出/内存/并发/限流；接入既有 `ToolExecutor`；审计只记摘要不记源码 | 默认无任何行为变化；启用后新增进程级执行面与审计记录 |
-| 任务恢复 | 三源（Agent/多 Agent/工作流）运行中任务查询与续跑；多 Agent 步骤检查点复用 `wgh_m_agent_step`；工作流按 `wgh_workflow_node_run` 重建检查点；单 Agent 新增 `resumeAfterInterruption`；Redis 单飞锁 | 新增 4 个接口；仅对 RUNNING/PLANNING 生效；HITL 仍走原入口；CHAT 无持久化任务 |
-| 前端 | 停止生成先发后端停止请求再断流；`silent` 请求选项；新增「运行中任务」页与路由/菜单；聊天页未完成任务横幅与一键继续 | 停止在多实例下真正生效；新接口未就绪时静默降级 |
+| 主题 | 改动要点 | 影响面 | 对应增量 SQL | 对应增量配置 |
+| --- | --- | --- | --- | --- |
+| 上下文与记忆 | 新增记忆摘要器、TTL/容量清理器；新增任务级记忆（TASK + SESSION 镜像）并接入单 Agent、多 Agent；新增 9 个 `wgh.rag.memory.*` 键；异步线程池继承 MDC | 记忆写入量、模型调用成本、Agent 步骤耗时；既有 `enabled/top-k/min-score/max-tokens` 语义不变 | 无新增；复用既有 [05_agent_memory.sql](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/sql/migrations/20261118/05_agent_memory.sql)（旧库执行） | [02_memory.yml](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/config/migrations/20261119/02_memory.yml) |
+| 多实例与可观测 | Redis key 命名空间根（`wgh.rag.redis.key-prefix`）；跨实例取消标记与 3 个停止接口；配额条件自增；新增 14 个指标方法；Prometheus 改 `dns_sd`；compose 支持 `--scale` | 多副本一致性、限流/配额超发、取消延迟；单实例部署行为不变 | 无（状态存 Redis，复用既有表） | [06_app-runtime.yml](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/config/migrations/20261119/06_app-runtime.yml) |
+| 存储维护 | 存储清单接口与 local/oss 实现；local↔oss 异步迁移（幂等、dry-run、SHA-256 校验）；孤儿对象扫描/可选删除；管理端 5 个接口；迁移状态入 Redis | 运维入口新增；不修改数据库与 `file_path`；迁移期间源/目标并存 | 无新增；孤儿判定复用既有 [03_upload_session.sql](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/sql/migrations/20261118/03_upload_session.sql) 建的表 | [03_storage-maintenance.yml](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/config/migrations/20261119/03_storage-maintenance.yml) |
+| 代码沙箱 | 新增 `rag-sandbox` 模块（默认关闭）；sandbox-exec/bwrap/降级三种隔离；语言白名单、超时/输出/内存/并发/限流；接入既有 `ToolExecutor`；审计只记摘要不记源码 | 默认无任何行为变化；启用后新增进程级执行面与审计记录 | 无（审计写既有 `wgh_audit_log`） | [01_sandbox.yml](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/config/migrations/20261119/01_sandbox.yml) |
+| 任务恢复 | 三源（Agent/多 Agent/工作流）运行中任务查询与续跑；多 Agent 步骤检查点复用 `wgh_m_agent_step`；工作流按 `wgh_workflow_node_run` 重建检查点；单 Agent 新增 `resumeAfterInterruption`；Redis 单飞锁 | 新增 4 个接口；仅对 RUNNING/PLANNING 生效；HITL 仍走原入口；CHAT 无持久化任务 | 无（复用既有表结构，见第 4 节） | 无专项配置；`TaskRecoveryService` 无可配置项，工作流预算见 [05_workflow-context.yml](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/config/migrations/20261119/05_workflow-context.yml) |
+| 前端 | 停止生成先发后端停止请求再断流；`silent` 请求选项；新增「运行中任务」页与路由/菜单；聊天页未完成任务横幅与一键继续 | 停止在多实例下真正生效；新接口未就绪时静默降级 | 无 | 无 |
 
 ## 3. 详情
 
@@ -237,82 +249,54 @@
 
 ## 4. 增量 SQL
 
-**本次无增量 SQL。**
+**今日无新增增量 SQL。**
 
-核实方式与原因：
+`git status --porcelain`、`git diff --name-only`、`git ls-files --others --exclude-standard` 中均无 `*.sql` 文件。今日代码依赖的是 `rag-backend/sql/migrations/20261118/` 下的既有增量脚本（仅旧库需要执行；新库直接执行 `sql/schema/01-schema.sql` + `sql/seed/02-data.sql` 即得到同等结构）：
 
-- `git status --porcelain`、`git diff --name-only`、`git ls-files --others --exclude-standard` 中均无 `*.sql` 文件。
-- 恢复链路复用既有表结构：
-  - 多 Agent 检查点写入 `wgh_m_agent_step` 既有列 `input_context`，不新增表/列；
-  - 工作流恢复复用 `wgh_workflow_run` / `wgh_workflow_node_run`，仅新增输出 JSON 键 `handle/shouldBreak`；
-  - 单 Agent 复用 `wgh_agent_plan` / `wgh_agent_step`；
-  - 长期记忆复用 `wgh_agent_memory`，仅新增物理删除与分组查询；
-  - 存储迁移任务状态放在 Redis，不落库；
-  - 配额使用既有 `wgh_quota_usage`，仅改更新语句。
+| 文件 | 用途 | 与今日改动的关系 |
+| --- | --- | --- |
+| [01_eval_dataset_versioning.sql](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/sql/migrations/20261118/01_eval_dataset_versioning.sql) | 评测数据集版本化：新增 `wgh_eval_dataset` / `wgh_eval_case` / `wgh_eval_result` 三表及索引 | 今日未改动该链路，仅作为库基线的一部分 |
+| [02_kb_connector.sql](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/sql/migrations/20261118/02_kb_connector.sql) | URL/HTTP 数据源连接器：新增 `wgh_kb_connector` / `wgh_kb_connector_run` 及索引 | 今日未改动该链路 |
+| [03_upload_session.sql](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/sql/migrations/20261118/03_upload_session.sql) | 大文件分片上传会话：新增 `wgh_upload_session` 及索引 | 存储维护的孤儿判定引用其中 `UPLOADING` 分片，不新增表/列 |
+| [04_llm_model_capability.sql](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/sql/migrations/20261118/04_llm_model_capability.sql) | LLM 能力画像：`wgh_llm_model` 增加 `capability_tier` / `supports_tools` 列与索引 | 今日未改动该链路 |
+| [05_agent_memory.sql](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/sql/migrations/20261118/05_agent_memory.sql) | 检索式记忆：新增 `wgh_agent_memory` 表与三个索引（向量由 PgVector 首次使用时自动建表） | 今日摘要/清理/任务级记忆复用该表，仅新增物理删除与分组查询语句 |
+
+今日改动未引入新表/新列的原因：
+
+- 多 Agent 检查点写入 `wgh_m_agent_step` 既有列 `input_context`，不新增表/列；
+- 工作流恢复复用 `wgh_workflow_run` / `wgh_workflow_node_run`，仅新增输出 JSON 键 `handle/shouldBreak`；
+- 单 Agent 复用 `wgh_agent_plan` / `wgh_agent_step`；
+- 长期记忆复用 `wgh_agent_memory`；
+- 存储迁移任务状态放在 Redis，不落库；
+- 配额使用既有 `wgh_quota_usage`，仅改更新语句。
 
 ## 5. 配置变更
 
-### 5.1 今日新增/修改的配置项
+今日配置改动按分区落在与 `rag-backend/sql/` 同级的 `rag-backend/config/migrations/20261119/` 增量片段中，只含今日新增/变更的键，逐键默认值与所属类见片段内注释。片段值与 `application-features.yml`、`application.yml` 已逐键比对一致（YAML 解析后按 key 比较，无差异）。
 
-| 键名 | 默认值 | 所在类 | 落地状态 |
-| --- | --- | --- | --- |
-| `wgh.rag.memory.llm-summary-enabled` | `false` | `RagProperties.Memory` | 已落到 `application-features.yml` |
-| `wgh.rag.memory.summary-max-input-chars` | `4000` | `RagProperties.Memory` | 已落到 `application-features.yml` |
-| `wgh.rag.memory.summary-max-tokens` | `300` | `RagProperties.Memory` | 已落到 `application-features.yml` |
-| `wgh.rag.memory.fallback-summary-chars` | `800` | `RagProperties.Memory` | 已落到 `application-features.yml` |
-| `wgh.rag.memory.cleanup-enabled` | `true` | `RagProperties.Memory` | 已落到 `application-features.yml` |
-| `wgh.rag.memory.retention-days` | `30` | `RagProperties.Memory` | 已落到 `application-features.yml` |
-| `wgh.rag.memory.max-entries-per-scope` | `200` | `RagProperties.Memory` | 已落到 `application-features.yml` |
-| `wgh.rag.memory.cleanup-interval-minutes` | `60` | `RagProperties.Memory` | 已落到 `application-features.yml` |
-| `wgh.rag.memory.cleanup-batch-size` | `200` | `RagProperties.Memory` | 已落到 `application-features.yml` |
-| `wgh.rag.storage.migration.concurrency` | `4` | `StorageMigrationProperties` | 已落到 `application-features.yml` |
-| `wgh.rag.storage.migration.max-attempts` | `3` | `StorageMigrationProperties` | 已落到 `application-features.yml` |
-| `wgh.rag.storage.migration.retry-backoff-millis` | `200` | `StorageMigrationProperties` | 已落到 `application-features.yml` |
-| `wgh.rag.storage.migration.max-failure-entries` | `200` | `StorageMigrationProperties` | 已落到 `application-features.yml` |
-| `wgh.rag.storage.migration.job-ttl-hours` | `24` | `StorageMigrationJobProperties` | 已落到 `application-features.yml` |
-| `wgh.rag.storage.migration.progress-flush-interval-millis` | `1000` | `StorageMigrationJobProperties` | 已落到 `application-features.yml` |
-| `wgh.rag.storage.migration.progress-flush-batch` | `50` | `StorageMigrationJobProperties` | 已落到 `application-features.yml` |
-| `wgh.rag.storage.migration.cancel-check-interval-millis` | `1000` | `StorageMigrationJobProperties` | 已落到 `application-features.yml` |
-| `wgh.rag.storage.migration.index-limit` | `50` | `StorageMigrationJobProperties` | 已落到 `application-features.yml` |
-| `wgh.rag.storage.migration.lock-ttl-seconds` | `120` | `StorageMigrationJobProperties` | 已落到 `application-features.yml` |
-| `wgh.rag.storage.migration.lock-renew-interval-seconds` | `0` | `StorageMigrationJobProperties` | 已落到 `application-features.yml` |
-| `wgh.rag.storage.orphan-cleanup.enabled` | `true` | `StorageOrphanCleanupProperties` | 已落到 `application-features.yml` |
-| `wgh.rag.storage.orphan-cleanup.delete` | `false` | `StorageOrphanCleanupProperties` | 已落到 `application-features.yml` |
-| `wgh.rag.storage.orphan-cleanup.interval-minutes` | `1440` | `StorageOrphanCleanupProperties` | 已落到 `application-features.yml` |
-| `wgh.rag.storage.orphan-cleanup.min-age-minutes` | `60` | `StorageOrphanCleanupProperties` | 已落到 `application-features.yml` |
-| `wgh.rag.storage.orphan-cleanup.max-report-entries` | `100` | `StorageOrphanCleanupProperties` | 已落到 `application-features.yml` |
-| `wgh.sandbox.enabled` | `false` | `SandboxProperties` | 已落到 `application-features.yml` |
-| `wgh.sandbox.default-timeout-ms` | `5000` | `SandboxProperties` | 已落到 `application-features.yml` |
-| `wgh.sandbox.max-timeout-ms` | `30000` | `SandboxProperties` | 已落到 `application-features.yml` |
-| `wgh.sandbox.max-output-bytes` | `65536` | `SandboxProperties` | 已落到 `application-features.yml` |
-| `wgh.sandbox.max-code-bytes` | `65536` | `SandboxProperties` | 已落到 `application-features.yml` |
-| `wgh.sandbox.cpu-seconds` | `5` | `SandboxProperties` | 已落到 `application-features.yml` |
-| `wgh.sandbox.memory-mb` | `256` | `SandboxProperties` | 已落到 `application-features.yml` |
-| `wgh.sandbox.max-file-bytes` | `1048576` | `SandboxProperties` | 已落到 `application-features.yml` |
-| `wgh.sandbox.max-concurrent` | `2` | `SandboxProperties` | 已落到 `application-features.yml` |
-| `wgh.sandbox.max-requests-per-minute` | `10` | `SandboxProperties` | 已落到 `application-features.yml` |
-| `wgh.sandbox.allowed-languages` | `[PYTHON, JAVASCRIPT]` | `SandboxProperties` | 已落到 `application-features.yml` |
-| `wgh.sandbox.allow-network` | `false` | `SandboxProperties` | 已落到 `application-features.yml` |
-| `wgh.sandbox.isolation` | `AUTO` | `SandboxProperties` | 已落到 `application-features.yml` |
-| `wgh.sandbox.allow-degraded-isolation` | `false` | `SandboxProperties` | 已落到 `application-features.yml` |
-| `wgh.sandbox.audit-to-database` | `true` | `SandboxProperties` | 已落到 `application-features.yml` |
-| `wgh.rag.redis.key-prefix` | `wgh` | `RagRedisProperties` | 已落到 `application.yml`（`${WGH_REDIS_KEY_PREFIX:wgh}`） |
-| `management.metrics.tags.wgh.instance` | `${WGH_INSTANCE_ID:${HOSTNAME:local}}` | `application.yml` | 已落到 `application.yml` |
+### 5.1 增量配置文件
 
-合计：今日新增/修改 **42** 个键，其中 40 个收敛到 `application-features.yml`、2 个在 `application.yml`。
+| 增量配置文件 | 分区 | 键数 | 性质 | 合并目标 |
+| --- | --- | --- | --- | --- |
+| [01_sandbox.yml](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/config/migrations/20261119/01_sandbox.yml) | 代码沙箱（`SandboxProperties`） | 15 | 新增 | `application-features.yml` |
+| [02_memory.yml](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/config/migrations/20261119/02_memory.yml) | 检索式长期记忆（`RagProperties.Memory`） | 9 | 新增 | `application-features.yml` |
+| [03_storage-maintenance.yml](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/config/migrations/20261119/03_storage-maintenance.yml) | 存储迁移与孤儿清理（`StorageMigration*` / `StorageOrphanCleanupProperties`） | 16 | 新增 | `application-features.yml` |
+| [04_multi-agent.yml](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/config/migrations/20261119/04_multi-agent.yml) | 多 Agent 上下文预算（`MultiAgentContextProperties`） | 4 | 既有键收敛，值未变 | `application-features.yml` |
+| [05_workflow-context.yml](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/config/migrations/20261119/05_workflow-context.yml) | 工作流节点上下文预算（`WorkflowContextProperties`） | 4 | 既有键收敛，值未变 | `application-features.yml` |
+| [06_app-runtime.yml](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/config/migrations/20261119/06_app-runtime.yml) | 多实例运行标识（`RagRedisProperties` / Actuator 指标标签） | 2 | 新增/修改 | `application.yml` |
+
+合计：今日新增/修改 **42** 个键（40 个落 `application-features.yml`、2 个落 `application.yml`），另收敛既有键 8 个。
+
+- 目录组织与 `sql/migrations/` 对称：`config/migrations/YYYYMMDD/NN_<分区>.yml`，一个日期一个目录，只放增量键，不复制整份配置。
+- 片段不参与自动加载，属于变更记录与合并素材；合并方式（手工合并 / 追加 `spring.config.import`）见 [config/README.md](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/config/README.md)。
+- `sandbox`、`memory` 两个分区各排除一个空值默认项，见 5.3。
 
 ### 5.2 既有配置一并收敛（今日未改默认值）
 
-| 键名 | 默认值 | 所在类 |
-| --- | --- | --- |
-| `wgh.multi-agent.context.summary-max-tokens` | `2000` | `MultiAgentContextProperties` |
-| `wgh.multi-agent.context.card-conclusion-max-tokens` | `200` | `MultiAgentContextProperties` |
-| `wgh.multi-agent.context.memory-max-messages` | `6` | `MultiAgentContextProperties` |
-| `wgh.multi-agent.context.memory-max-tokens` | `1000` | `MultiAgentContextProperties` |
-| `wgh.workflow.context.node-prompt-max-ratio` | `0.7` | `WorkflowContextProperties` |
-| `wgh.workflow.context.fallback-context-window-tokens` | `8192` | `WorkflowContextProperties` |
-| `wgh.workflow.context.node-output-max-bytes` | `65536` | `WorkflowContextProperties` |
-| `wgh.workflow.context.context-json-max-bytes` | `262144` | `WorkflowContextProperties` |
+8 个既有键随本次配置抽离一并收敛，值为代码默认值，明细见 [04_multi-agent.yml](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/config/migrations/20261119/04_multi-agent.yml) 与 [05_workflow-context.yml](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/config/migrations/20261119/05_workflow-context.yml)：
+
+- `wgh.multi-agent.context`：`summary-max-tokens=2000`、`card-conclusion-max-tokens=200`、`memory-max-messages=6`、`memory-max-tokens=1000`（`MultiAgentContextProperties`）。
+- `wgh.workflow.context`：`node-prompt-max-ratio=0.7`、`fallback-context-window-tokens=8192`、`node-output-max-bytes=65536`、`context-json-max-bytes=262144`（`WorkflowContextProperties`）。
 
 这 8 个键分别由提交 `2afd8ae`、`9be4a10`、`f27704c` 引入，今日仅按主题收敛，值等于代码默认值。
 
@@ -330,6 +314,7 @@
 ### 5.5 配置文件引入与验证
 
 - 新建 `rag-backend/rag-app/src/main/resources/application-features.yml`，按 `sandbox / memory / storage-maintenance / multi-agent / workflow-context / task-recovery` 分区。
+- 新建与 `rag-backend/sql/` 同级的 `rag-backend/config/migrations/20261119/`，按上述分区存放今日增量片段（`01_sandbox.yml` … `06_app-runtime.yml`），并附 [config/README.md](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/rag-backend/config/README.md) 说明目录约定与合并方式；片段不参与自动加载。
 - `application.yml` 的 `spring:` 下新增：
 
 ```yaml
@@ -338,10 +323,11 @@
 ```
 
 - 校验结果：
-  1. YAML 解析：`application-features.yml` 与 `application.yml` 均通过 `yaml.safe_load`，顶层结构正确。
-  2. 编译：`JAVA_HOME=jdk-21 mvn -pl rag-app -am -DskipTests compile` 退出码 0（构建锁 `/tmp/wgh-maven-build.lockdir` 已释放）。
-  3. 资源：`rag-app/target/classes/` 下已生成两份 YAML，`spring.config.import` 已写入。
-  4. **未验证**：未重启服务，运行时绑定是否与代码默认完全一致尚未通过启动日志确认；从 Spring `spring.config.import` 的优先级看，`application.yml` 中的显式键与 profile 配置仍可覆盖本文件，且本文件不含空值项，预期行为不变。
+  1. YAML 解析：`application-features.yml`、`application.yml` 与 `config/migrations/20261119/` 下 6 个片段均通过 `yaml.safe_load`，顶层结构正确。
+  2. 片段取值：6 个片段按 key 展平后与 `application-features.yml` / `application.yml` 逐键比对，无差异（共 50 个键：42 个今日新增/修改 + 8 个既有收敛）。
+  3. 编译：`JAVA_HOME=jdk-21 mvn -pl rag-app -am -DskipTests compile` 退出码 0（构建锁 `/tmp/wgh-maven-build.lockdir` 已释放）。
+  4. 资源：`rag-app/target/classes/` 下已生成两份 YAML，`spring.config.import` 已写入。
+  5. **未验证**：未重启服务，运行时绑定是否与代码默认完全一致尚未通过启动日志确认；从 Spring `spring.config.import` 的优先级看，`application.yml` 中的显式键与 profile 配置仍可覆盖本文件，且本文件不含空值项，预期行为不变。
 
 ## 6. 未完成与已知限制
 

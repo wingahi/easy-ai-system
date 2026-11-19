@@ -70,8 +70,8 @@
 | URL 数据源连接器（单页抓取 + 增量同步） | 已完成 | `ConnectorController` / `ConnectorService` / `UrlConnector`；单个 http/https 页面抓取、Jsoup 正文抽取、SSRF 逐跳校验；按 `content_hash` 判重，内容未变返回 `UNCHANGED` 不重复入库，内容变化生成新文件并逻辑删除旧文件，404/410 清理旧文件；每次同步留运行记录；定时同步默认关闭，需显式 `WGH_CONNECTOR_SCHEDULER_ENABLED=true`（commit `855f61f`） |
 | 可插拔文件存储（local / OSS） | 已完成 | 独立 `rag-storage` 模块，`FileStorageService` + 本地 / 阿里云 OSS 实现 |
 | 大文件分片上传与断点续传 | 已完成 | 三段式接口：`POST /api/kb/{kbId}/files/chunk/init` → `POST /api/kb/files/chunk/{sessionId}`（按序号上传分片）→ `POST .../complete`；合并后按整文件 `content_hash` 走原有判重与入库链路；页面内断线续传（进度来自会话表）；会话按创建者归属校验，他人会话按不存在处理（`3001`）；24 小时未完成会话自动清理，阈值可配（`WGH_UPLOAD_CLEANUP_*`，commit `140375a`） |
-| `local` ↔ `oss` 历史对象自动迁移 | **未实现** | 切换本身已支持，但旧对象仍留在原存储后端，需手工迁移或重新上传并重建向量 |
-| OSS 删除失败后的孤儿对象清理 | **未实现** | 删除失败仅记录 WARN，数据库仍完成逻辑删除，对象可能残留 |
+| `local` ↔ `oss` 历史对象自动迁移 | 已完成 | 提供历史对象迁移服务与管理端异步作业（提交 `e4155c6`）：任务状态与取消标记存 Redis（TTL 24h），跨实例单飞锁；需在管理端显式发起，不做自动触发 |
+| OSS 删除失败后的孤儿对象清理 | 已完成 | 定期扫描对象存储与库内记录比对并输出孤儿报告（提交 `e4155c6`）；默认只报告不删除（`delete=false`），最后修改时间 60 分钟内受保护 |
 | 独立图片 OCR | **未实现** | 扫描版 PDF 已按页 OCR；独立图片文件（PNG / JPG）仍不解析入库 |
 
 ### 3.2 对话与开放接入
@@ -100,6 +100,9 @@
 | 工作流表达式节点 | 已完成 | `EXPRESSION` 节点基于 `SimpleEvaluationContext` 的受限 SpEL 沙箱：仅允许字面量、`#input` / `#last` / `#loop` / `#vars` / `#nodes`、算术/比较/逻辑/三元与白名单 `#fn.*`；拒绝 `T()`、`new`、`@bean`、赋值与实例方法；表达式长度上限 2000 字符；保存时做必填与语法校验（commit `e27723f`） |
 | 工作流单步调试 | 已完成 | `POST /api/workflows/{id}/debug/step` 按节点推进并返回输入快照（渲染后配置 + 直接上游输出）与输出；游标（frontier / pendingIn / 已执行数）持久化在运行记录，可带 `runId` 续跑；HITL 节点停在 `PAUSED`；开关 `wgh.workflow.debug.enabled` 默认关闭（commit `e27723f`） |
 | 模型故障转移（Agent / 工作流） | 已完成 | Planner / StepExecutor / ReflectionEngine 与工作流 LLM 节点复用 `rag-llm` 的 `BlockingModelFailover`：首响应前失败切下一个模型，已产出内容后不切链；SSE 下发 `model_switch` |
+| 任务恢复（检查点与继续执行） | 已完成 | 多 Agent 步骤检查点按 `(runId, stepKey)` 跳过已完成步骤，管理端「运行中任务」三源合并单 Agent / 多 Agent / 工作流并支持继续执行与取消（提交 `9c6b6d9`）；前端新增运行中任务入口与停止生成（提交 `710ff1a`）。限制：恢复为 at-least-once，副作用已发生但检查点未落库时可能重复执行；`CHAT` 类型没有持久任务源；旧数据缺 `stepKey` 时按未完成重跑 |
+| Agent 长期记忆（任务级） | 已完成 | 新增 `TASK:taskId` 作用域并镜像到 `SESSION`，召回按统一预算组装为 `FAR_FACT`；可选 LLM 摘要默认关闭；按 TTL 30 天与单作用域 200 条自动清理，清理器用咨询锁单飞（提交 `ae3bbda`） |
+| 代码沙箱 | 已完成（默认关闭） | 新增 `rag-sandbox` 模块：Python / JavaScript 执行、超时与输出上限、CPU / 内存限制、审计、默认拒绝网络（提交 `a4071db`）；需显式 `wgh.sandbox.enabled=true` 开启；隔离优先 `sandbox-exec` / `bwrap`，均不可用时 fail-closed；macOS `sandbox-exec` 已被 Apple 标记 deprecated，风险等级为中 |
 
 ### 3.4 平台治理
 
@@ -110,11 +113,12 @@
 | 多用户与权限体系 | 已完成 | OIDC + 本地账号双认证，RBAC（`@RequiresPermission` / `PermissionAspect`）；租户隔离与知识库/文档级全量权限不在范围内 |
 | 资源归属与可见性 | 已完成 | 知识库 / 聊天窗口 / 工作流 / Prompt 模板 / 工具五类资源新增 `visibility`（`PRIVATE` 默认 / `TEAM` / `PUBLIC`），owner 复用 `create_by`；读他人 `PRIVATE` 按不存在处理（业务码 `3001`），写他人 `TEAM`/`PUBLIC` 返回权限不足（业务码 `1004`），均为 HTTP 200 + 业务码；列表/分页由 `DataScopeInterceptor` 显式过滤，内置 Prompt 模板固定 `PUBLIC`（commit `59c5eee`） |
 | 角色与权限管理页面 | 已完成 | `AdminRoleController`（`/api/admin/roles`、`/api/admin/permissions`）+ `RoleManagement.vue`、`UserManagement.vue` |
-| 配额模块与前后端页面 | 已完成 | 独立 `rag-quota` 模块；全局默认 + 按用户日/月配置，超限 429；`QuotaManagement.vue` / `MyQuota.vue` |
-| Redis 8.10.1 接入 | 已完成 | 分布式限流、分享密码失败锁定（成功清零）、嵌入授权、API Key IP 白名单；不可用时降级为单机内存 |
+| 配额模块与前后端页面 | 已完成 | 独立 `rag-quota` 模块；全局默认 + 按用户日/月配置，超限 429；对话计数改为「带 limit 条件的原子 UPDATE」，多实例并发不超发（提交 `e02981f`）；`QuotaManagement.vue` / `MyQuota.vue` |
+| Redis 8.10.1 接入 | 已完成 | 分布式限流、分享密码失败锁定（成功清零）、嵌入授权、API Key IP 白名单；统一到 Redis 命名空间（根 `WGH_REDIS_KEY_PREFIX`），不可用时降级单机内存并计降级次数（提交 `e02981f`） |
+| 多实例共享状态与跨实例取消 | 已完成 | 聊天取消标记、限流与授权统一落 Redis；新增显式停止接口，停止生成在任意实例生效，`CHAT` 会话可在其它副本被取消（提交 `e02981f`）；新增通用 Redis 分布式锁，供存储迁移与任务恢复复用 |
 | 审计与成本统计 | 已完成 | `@Audit` 异步记录写操作；角色 / Agent / 多 Agent / 配额等管理写操作已覆盖（资源标识落 `detail`）；模型价格表 + 消息成本 / 模型名回填；管理端聚合统计 |
 | 安全整改 | 已完成 | 首登强制改密（`password_must_change`）、审计日志敏感信息脱敏、409 映射、`WGH_INIT_ADMIN_PASSWORD` 注入 |
-| 可观测性（Prometheus + 独立 9090） | 已完成 | `RagMetrics` 业务指标 + `/actuator/prometheus`；管理端口默认 `9090`，业务端口不暴露 `/actuator` |
+| 可观测性（Prometheus + 独立 9090） | 已完成 | `RagMetrics` 业务指标 + `/actuator/prometheus`；管理端口默认 `9090`，业务端口不暴露 `/actuator`；指标新增实例维度标签 `wgh.instance`，Prometheus 改为按副本发现（提交 `e02981f`） |
 | Compose 内置 PostgreSQL(pgvector) | 已完成 | `docker-compose.yml` 内置 `pgvector/pgvector:pg15`，空卷首启执行 `schema/01-schema.sql` / `seed/02-data.sql` |
 
 ### 3.5 模型与工程
@@ -130,6 +134,7 @@
 | 常量统一抽取 | 已完成 | 各模块 `constant` 包；权限码、角色码、状态值、SSE 事件名、存储 key 前缀等改引用常量 |
 | JDK 21 统一 | 已完成 | `maven.compiler.release=21` + Enforcer 强制 JDK 21，CI 与本地一致 |
 | 测试用例与设计文档补全 | 已完成 | JUnit 5 + Mockito；`scripts/` 提供 e2e / 冒烟 / 压测；`docs/testing/test-cases.md`、`docs/design/**/*.md` 已补齐 |
+| 配置分层（`application-features.yml`） | 已完成 | 功能开关与运行参数抽离到独立文件，由 `application.yml` 以 `optional:classpath` 引入；所有值等于代码默认值，文件缺失不影响启动；同时落地 Redis 命名空间根与实例指标标签（提交 `ca92e04`） |
 
 ### 3.6 上下文与工具治理（2026-11-18）
 
@@ -324,6 +329,8 @@ docker compose ps
 
 ## 6. 配置说明
 
+功能开关与运行参数集中在 `application-features.yml`，由 `application.yml` 以 `optional:classpath` 引入；文件内所有值等于代码默认值，缺失不影响启动，敏感项仍由环境变量注入。
+
 ### 6.1 认证与初始化管理员
 
 | 配置 | 默认 | 说明 |
@@ -481,8 +488,8 @@ OSS 配置不完整时不阻断启动，仅在真正调用存储操作时返回�
 | OCR | 依赖本机 `tesseract` 可执行文件与语言包；单页 20 字触发、文档最多 50 页、单页 60s 超时；栏检测优先于表格 | 引擎缺失时静默降级为文本抽取；纯两列表格可能按双栏处理 |
 | 检索 | 单库 PostgreSQL + pgvector（每知识库一张物理表），关键词路为 pg_trgm，无独立向量库 / 搜索引擎 | 超大规模语料需评估性能上限；替换路径见 [独立向量数据库 / 搜索引擎规划](docs/design/features/platform/design-vector-store-and-search-engine.md) |
 | 模型故障转移 | 普通 RAG、Agent（Planner / Step / Reflection）与工作流 LLM 节点统一复用切链组件，覆盖首个 token / 首个响应前的失败切链；**已产生内容后失败不切链、不回滚、不重发、不拼接第二个模型输出**，直接 `error` 结束 | 已产出内容后的续接策略暂不提供；Agent 恢复 / 重试入口按计划绑定的窗口路由组解析链路 |
-| 存储切换 | `local` ↔ `oss` 切换不自动迁移历史对象 | 需手工迁移或重新上传并重建向量 |
-| OSS 删除 | 删除失败仅 WARN，数据库仍逻辑删除，可能残留孤儿对象 | 需离线清理脚本 |
+| 存储切换 | 已提供历史对象迁移作业（提交 `e4155c6`），但切换本身不自动触发迁移；任务状态与取消标记存 Redis（TTL 24h），跨实例单飞 | 需在管理端显式发起并等待完成；Redis 不可用时无法落任务状态 |
+| OSS 删除 | 删除失败仍只记 WARN，数据库完成逻辑删除，可能残留孤儿对象；已提供孤儿扫描与清理（提交 `e4155c6`） | 默认仅报告（`delete=false`），需显式开启；最后修改时间 60 分钟内的对象受保护 |
 | 大文件上传（2026-11-18） | 已支持分片上传与页面内断线续传；不做跨页面刷新恢复（刷新后需重新选择文件，会话本身仍可复用）；OSS 未使用原生 multipart，分片先落对象存储、合并后仍走单次 `putObject`；单文件存储上限代码默认 200MB，但 `application.yml` 的 `wgh.storage.*.max-file-size-mb` 显式配 50（可用 `WGH_STORAGE_MAX_FILE_MB` 覆盖），单次直传仍受 servlet multipart 50MB 限制，解析侧 `wgh.file.max-single-file-mb` 仍默认 50MB | 传 200MB 文件需走分片并同时调大存储与解析两处上限 |
 | 多实例 JWKS | `JwksProvider` 缓存为进程内，多实例不共享 | 单实例部署假设；多实例需接受轮换后的刷新时间差 |
 | 移动端 / 国际化 | 仅桌面端布局，无 i18n | — |
@@ -495,7 +502,9 @@ OSS 配置不完整时不阻断启动，仅在真正调用存储操作时返回�
 | 上下文与工具兜底（2026-11-18） | 工具熔断为单实例内存态，重启即清空，按 toolId 生效且不跨节点、不跨任务；历史 Token 裁剪按估算值而非精确 tokenizer；工具结果预算只作用于送入模型的副本，前端仍显示完整原文；`RagChatService` 的工具循环暂无集成测试覆盖 | 多实例部署各自持有熔断状态；估算误差会用少量真实窗口余量兜底 |
 | 多 Agent 故障转移（2026-11-18） | 单 Agent、工作流 LLM 节点与多 Agent（worker / manager，commit `2afd8ae`）均已接 `BlockingModelFailover`；已产出内容后失败仍不切链 | 已产出内容后的续接策略暂不提供 |
 | 工作流上下文（2026-11-18） | 工作流 LLM 节点输入预算已交付（commit `f27704c`）；节点输出与 `context_json` 已加落库上限并按摘要截断（commit `9be4a10`） | 超长节点输出只保留摘要与受限原文，完整内容需回查节点输出或日志 |
-| 检索式记忆（2026-11-18） | 仅接入 `SESSION` 作用域，任务级 / 跨会话记忆未接；无 TTL 与清理策略，记忆会持续累积；记忆向量表按首次写入的 embedding 维度建立，更换维度需重建 | 长期使用需补 TTL 清理与维度变更重建流程 |
+| 检索式记忆（2026-11-18） | 已接入 `SESSION` 与 `TASK` 作用域，任务结果镜像到会话；可选 LLM 摘要默认关闭（`llm-summary-enabled=false`）；清理默认保留 30 天、单作用域 200 条、每小时执行一次（提交 `ae3bbda`） | 记忆向量表按首次写入的 embedding 维度建立，更换维度需重建；开启 LLM 摘要会为每条记忆增加一次模型调用 |
+| 任务恢复（2026-11-19） | 恢复为 at-least-once：工具副作用已发生但检查点未落库时，重跑会重复执行；旧数据缺 `stepKey` 的步骤无法命中跳过逻辑，按未完成重跑；`CHAT` 类型没有持久任务源，继续执行返回「暂无可恢复的持久化任务」 | 写操作类工具需人工确认；恢复前建议核对运行记录与工具调用日志 |
+| 代码沙箱（2026-11-19） | 默认关闭（`wgh.sandbox.enabled=false`）；隔离优先 `sandbox-exec` / `bwrap`，均不可用时 fail-closed，仅显式允许才降级；macOS `sandbox-exec` 已被 Apple 标记 deprecated，属用户态沙箱、风险等级中；CPU / 内存限制为尽力而为 | 生产建议仅在 Linux + bwrap 或容器内开启，并保持默认拒绝网络 |
 | map-reduce 分段摘要（2026-11-18） | 仅在普通聊天链路生效，Agent / 多 Agent / 工作流链路未接；暂无集成测试覆盖 | 长任务链路仍需单独接入与回归 |
 | 多 Agent 黑板（2026-11-18） | 已提供共享黑板读写接口，但 GroupChat 汇总未使用黑板，仍按对话消息汇总 | 需要跨 Agent 共享中间结论时需显式写入黑板 |
 | 模型能力画像（2026-11-18） | 后端有 `LlmModel` 能力画像与切链降级策略；管理端模型表单未暴露能力档位与 function calling 字段 | 需通过接口或数据库配置，页面暂不支持 |
@@ -537,7 +546,7 @@ OSS 配置不完整时不阻断启动，仅在真正调用存储操作时返回�
 
 | 项 | 状态 | 说明 |
 |----|------|------|
-| 检索式记忆 | 已完成 | 会话级检索式记忆（commit `239c490`）；当前仅接 `SESSION` 作用域，无 TTL 清理，向量表按首次写入的 embedding 维度建立、换维度需重建 |
+| 检索式记忆 | 已完成 | 会话级检索式记忆（commit `239c490`）；新增 `TASK` 作用域并镜像到 `SESSION`、可选 LLM 摘要、TTL 30 天与单作用域 200 条清理（提交 `ae3bbda`）；摘要默认关闭，向量表按首次写入的 embedding 维度建立、换维度需重建 |
 | map-reduce 分段摘要 | 已完成 | 单条 chunk 饱和时触发分段摘要（commit `5bf6ce2`）；只在普通聊天链路生效，暂无集成测试 |
 | 多 Agent 共享黑板 | 已完成 | 共享黑板读写接口（commit `a70753d`）；GroupChat 汇总尚未使用黑板 |
 | 模型能力画像 | 已完成 | `LlmModel` 能力画像 + 切链降级策略（commit `d6cdee3`）；管理端模型表单未暴露能力档位与 function calling 字段 |
@@ -560,8 +569,8 @@ OSS 配置不完整时不阻断启动，仅在真正调用存储操作时返回�
 | T09 | 工作流表达式节点 + 单步调试 | 已完成 | `EXPRESSION` 受限 SpEL 节点 + `POST /api/workflows/{id}/debug/step`（commit `e27723f`）；不支持任意脚本执行 |
 | T10 | 大文件分片上传 / 断点续传 | 已完成 | 三段式接口、顺序分片、`content_hash` 判重、会话归属校验、24h 清理（commit `140375a`） |
 | T11 | 模型提供商扩展（Azure / Bedrock / Ollama） | 已完成 | Azure OpenAI / Ollama 等扩展已交付（commit `028f1bc`）；Bedrock 未做 |
-| T12 | 多实例与可观测 | 未实现（未开始） | Redis 共享、JWKS 缓存共享、分布式链路追踪、k8s / 备份脚本 |
-| T13 | Agent 长期记忆 / 代码沙箱 | 未实现（未开始） | 依赖 T09 执行节点，建议延后 |
+| T12 | 多实例与可观测 | 已完成（2026-11-19） | Redis 统一命名空间共享状态、跨实例取消、配额原子自增、实例维度指标与部署配置（提交 `e02981f`）；JWKS 缓存共享与分布式链路追踪仍未实现（见 §9.3），k8s / 备份脚本见平台演进规划 |
+| T13 | Agent 长期记忆 / 代码沙箱 | 已完成（2026-11-19） | 任务级长期记忆（`TASK` + `SESSION`、摘要与 TTL/容量清理，提交 `ae3bbda`）；新增 `rag-sandbox` 代码沙箱模块（提交 `a4071db`），默认关闭、需显式开启；macOS 隔离已 deprecated |
 
 ### 9.3 其他后续方向
 
@@ -571,9 +580,9 @@ OSS 配置不完整时不阻断启动，仅在真正调用存储操作时返回�
 |--------|------|----------|------|
 | P0 | 模型故障转移补全 | 已完成（首 token 前切链） | 普通 RAG 首个 token 前的连接失败 / 超时 / 4xx / 5xx 已进入切链；部分输出后失败与全部候选失败均有明确错误收口（commit `e496f71`）；切链逻辑已抽成 `rag-llm` 的 `FailoverAttempt` / `StreamingModelFailover` / `BlockingModelFailover` / `ModelFailoverService`（commit `8e357bb`） |
 | P1 | Agent / 工作流接入故障转移 | 已完成 | Planner / StepExecutor / ReflectionEngine 与工作流 LLM 节点复用 `BlockingModelFailover`；Agent 恢复 / 重试入口回查窗口路由组（commit `8e357bb`） |
-| P1 | 存储迁移与孤儿对象清理 | 未实现 | `local` ↔ `oss` 历史对象迁移工具；按 `file_path` 比对清理 OSS 残留对象 |
-| P2 | 多实例 JWKS 缓存共享 | 未实现 | 将 JWKS 缓存放至 Redis 或共享缓存，统一密钥轮换后的刷新时机（T12 范围） |
-| P2 | 分布式链路追踪 | 未实现 | 在现有 Prometheus + `X-Request-Id` 基础上接入 Tracing（T12 范围） |
+| P1 | 存储迁移与孤儿对象清理 | 已完成（2026-11-19） | `local` ↔ `oss` 迁移服务 + Redis 任务状态 + 管理端接口（提交 `e4155c6`）；孤儿扫描默认只报告，需显式开启删除 |
+| P2 | 多实例 JWKS 缓存共享 | 未实现 | 将 JWKS 缓存放至 Redis 或共享缓存，统一密钥轮换后的刷新时机（T12 剩项） |
+| P2 | 分布式链路追踪 | 未实现 | 在现有 Prometheus + `X-Request-Id` 基础上接入 Tracing（T12 剩项） |
 | P2 | 整站爬取与多源接入 | 未实现 | robots.txt 校验、站点爬取 / Sitemap、PDF / RSS / 第三方文档源同步；单页 URL 连接器已交付（T08 未做部分） |
 | P3 | 反馈 A/B 对比 | 未实现 | 版本化评测集已交付；仍缺实验分流、对照组与显著性分析 |
 | P3 | 图片 OCR | 部分完成 | 扫描版 PDF 已按页 OCR（`TessOcrService`，commit `6ed9d10`）；独立图片文件（PNG / JPG）未接入 |
