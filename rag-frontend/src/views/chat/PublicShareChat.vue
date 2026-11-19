@@ -125,7 +125,7 @@ import { stopGeneration } from '../../utils/chatStream'
 import {
   publicShareInfo, publicShareUnlock, publicShareSessions, publicShareCreateSession,
   publicShareDeleteSession, publicShareMessages, publicShareKbSearch, streamPublicShareChat,
-  setPublicShareEmbedGrant
+  publicShareStopSession, setPublicShareEmbedGrant
 } from '../../api'
 
 const route = useRoute()
@@ -276,7 +276,12 @@ const deleteSession = async (s) => {
 const stop = () => {
   if (!streaming.value) return
   const last = messages.value[messages.value.length - 1]
-  stopGeneration(streamer, streaming, last?.role === 'ASSISTANT' ? last : null)
+  const sessionId = currentSessionId.value
+  stopGeneration(streamer, streaming, last?.role === 'ASSISTANT' ? last : null, {
+    // 免登录分享页同样走 share 路径，token 取自路由参数，密码随请求头携带
+    key: sessionId ? `share:${token}:${sessionId}` : '',
+    request: sessionId ? () => publicShareStopSession(token, sessionId, password.value) : null
+  })
   nextTick(scroll)
 }
 

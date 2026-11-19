@@ -47,8 +47,10 @@ const handleAuthCode = (code, message) => {
 request.interceptors.response.use(
   response => {
     const res = response.data
+    // silent 配置：由调用方自行处理业务/网络错误提示（用于未就绪的接口做降级）
+    const silent = response.config?.silent === true
     if (res.code !== BUSINESS_CODE.SUCCESS) {
-      if (!handleAuthCode(res.code, res.message)) {
+      if (!handleAuthCode(res.code, res.message) && !silent) {
         ElMessage.error(res.message || '请求失败')
       }
       return Promise.reject(new Error(res.message))
@@ -58,7 +60,8 @@ request.interceptors.response.use(
   error => {
     const code = error.response?.data?.code
     const message = error.response?.data?.message
-    if (!handleAuthCode(code, message)) {
+    const silent = error.config?.silent === true
+    if (!handleAuthCode(code, message) && !silent) {
       if (error.response?.status === HTTP_STATUS.UNAUTHORIZED || error.response?.status === HTTP_STATUS.FORBIDDEN) {
         ElMessage.error(message || '无权访问')
       } else {

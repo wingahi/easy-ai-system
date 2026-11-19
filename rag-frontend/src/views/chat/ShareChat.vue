@@ -124,7 +124,7 @@ import {
   windowGetByShareToken, streamShareApi,
   shareSessions, shareCreateSession, shareDeleteSession, shareMessages,
   agentGetPlanBySession, agentGetPlanState, agentCancelPlan, agentRetryStep, agentSkipStep,
-  shareWorkflowState, streamShareWorkflowHitl, shareWorkflowCancel
+  shareWorkflowState, streamShareWorkflowHitl, shareWorkflowCancel, shareStopSession
 } from '../../api'
 
 const route = useRoute()
@@ -748,7 +748,12 @@ const onWorkflowCancel = async (runId) => {
 const stop = () => {
   if (!streaming.value) return
   const last = messages.value[messages.value.length - 1]
-  stopGeneration(streamer, streaming, last?.role === 'ASSISTANT' ? last : null)
+  const sessionId = currentSessionId.value
+  stopGeneration(streamer, streaming, last?.role === 'ASSISTANT' ? last : null, {
+    // 登录态分享页走 share 路径，shareToken 取自路由参数
+    key: sessionId ? `share:${token}:${sessionId}` : '',
+    request: sessionId ? () => shareStopSession(token, sessionId) : null
+  })
   nextTick(scroll)
 }
 

@@ -148,6 +148,9 @@ export const chatUploadImage = (file) => {
   formData.append('file', file)
   return request.post('/chat/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' } })
 }
+// 停止生成：通知后端取消任务（多实例下依赖后端取消标记，前端随后仍会中断 SSE）
+export const chatStopSession = (windowId, sessionId) =>
+  request.post(`/chat/windows/${windowId}/sessions/${sessionId}/stop`, null, { silent: true })
 
 // Prompt 模板中心
 export const promptTemplatePage = (params) => request.get('/prompt-templates', { params })
@@ -242,6 +245,10 @@ export function streamChatApi(windowId, message, sessionId, imageUrls) {
   
   return { doStream, abort: () => controller.abort() }
 }
+
+// 分享页停止生成（登录态）：通知后端取消任务
+export const shareStopSession = (shareToken, sessionId) =>
+  request.post(`/chat/share/${shareToken}/sessions/${sessionId}/stop`, null, { silent: true })
 
 // 分享页面 SSE（需登录，userIdentifier 取当前登录用户名）
 export function streamShareApi(shareToken, message, sessionId) {
@@ -598,6 +605,17 @@ export function streamMultiAgentHitl(runId, userInput, onEvent, onDone, onError)
 }
 
 
+// ===== 任务恢复：会话继续 / 管理端运行中任务 =====
+// 契约接口可能尚未在后端就绪，调用方统一按 silent 处理，失败时降级（不弹全局错误）
+export const chatPendingTask = (sessionId) =>
+  request.get(`/chat/sessions/${sessionId}/pending-task`, { silent: true })
+export const chatResumeTask = (sessionId) =>
+  request.post(`/chat/sessions/${sessionId}/resume-task`, null, { silent: true })
+export const adminRunningTasks = (params) =>
+  request.get('/admin/tasks/running', { params, silent: true })
+export const adminResumeTask = (data) =>
+  request.post('/admin/tasks/resume', data, { silent: true })
+
 // ===== 管理端：审计 / 配额 / 成本 =====
 export const adminAuditLogs = (params) => request.get('/admin/audit-logs', { params })
 export const adminCostStats = (params) => request.get('/admin/stats/cost', { params })
@@ -687,6 +705,12 @@ export const publicShareMessages = (token, params, password) =>
   request.get(`/public/share/${token}/messages`, { params, ...publicShareConfig(password) })
 export const publicShareKbSearch = (token, data, password) =>
   request.post(`/public/share/${token}/kb/search`, data, publicShareConfig(password))
+// 免登录分享页停止生成：与公开访问接口共用访客/密码/嵌入授权头
+export const publicShareStopSession = (token, sessionId, password) =>
+  request.post(`/chat/share/${token}/sessions/${sessionId}/stop`, null, {
+    silent: true,
+    ...publicShareConfig(password)
+  })
 
 /** 分享页匿名 SSE 问答 */
 export function streamPublicShareChat(token, message, sessionId, password, imageUrls) {

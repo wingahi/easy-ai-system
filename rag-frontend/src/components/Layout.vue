@@ -61,6 +61,11 @@
           <template #title>审计与统计</template>
         </el-menu-item>
 
+        <el-menu-item v-if="userStore.isAdmin" index="/admin/tasks">
+          <el-icon><Timer /></el-icon>
+          <template #title>运行中任务</template>
+        </el-menu-item>
+
         <el-menu-item index="/open-access">
           <el-icon><Link /></el-icon>
           <template #title>开放平台</template>
@@ -131,7 +136,7 @@ import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { 
   FolderOpened, Cpu, ChatDotRound, SetUp, Share, Connection,
-  Fold, Expand, SwitchButton, DataAnalysis, Odometer, Link, User, UserFilled
+  Fold, Expand, SwitchButton, DataAnalysis, Odometer, Link, User, UserFilled, Timer
 } from '@element-plus/icons-vue'
 import { useUserStore } from '../stores/user'
 
