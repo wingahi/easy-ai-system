@@ -1,6 +1,6 @@
-# 增量配置片段（config/）
+# 增量配置片段（config/migrations/）
 
-本目录与同级的 `sql/` 目录对称，存放**按日期归档的增量配置片段**，用于记录每一次改动新增/变更了哪些配置键、值是什么、落在哪个配置文件。
+本目录与 `sql/migrations/` 对称，存放**按日期归档的增量配置片段**，用于记录每一次改动新增/变更了哪些配置键、值是什么、落在哪个配置文件。
 
 与 `sql/migrations/` 的区别只有一处：SQL 片段变更的是数据库，配置片段变更的是应用配置；组织约定完全一致。
 
@@ -70,4 +70,4 @@ spring:
 
 合计：今日新增/修改 42 个键 + 收敛既有键 8 个。任务恢复（`TaskRecoveryService`）无可配置项，故不设片段；`wgh.sandbox.work-root`、`wgh.rag.memory.summary-model-id` 两个空值默认项保留在代码中。
 
-变更对应的业务背景与逐项说明见 [change-summary-2026-11-19.md](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/docs/review/change-summary-2026-11-19.md)。
+变更对应的业务背景与逐项说明见 [1.3.0-change-summary-2026-11-19.md](file:///Users/joe.wen/Desktop/ai-code/wgh-rag-system/docs/version/1.3.0-change-summary-2026-11-19.md)。
