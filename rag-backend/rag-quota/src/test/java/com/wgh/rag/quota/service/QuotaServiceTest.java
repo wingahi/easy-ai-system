@@ -103,11 +103,12 @@ class QuotaServiceTest {
     void defaultAllowsUnderLimit() {
         when(userQuotaConfigMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
         when(quotaUsageMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(usage(10, 1000));
+        when(quotaUsageMapper.incrementChatAtomically(anyString(), anyString(), anyInt())).thenReturn(1);
 
         quotaService.checkAndIncrementChat("alice");
 
         String dayKey = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd"));
-        verify(quotaUsageMapper).upsertIncrement(eq("alice"), eq(dayKey), eq(1), eq(0L));
+        verify(quotaUsageMapper).incrementChatAtomically(eq("alice"), eq(dayKey), eq(200));
     }
 
     // ========== 2. 用户覆盖生效 ==========
@@ -133,14 +134,13 @@ class QuotaServiceTest {
         when(userQuotaConfigMapper.selectOne(any(LambdaQueryWrapper.class)))
                 .thenReturn(config("alice", "DAY", 3, 0, true));
         when(quotaUsageMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(usage(3, 0));
+        when(quotaUsageMapper.incrementChatAtomically(anyString(), anyString(), anyInt())).thenReturn(0);
 
         assertThatThrownBy(() -> quotaService.checkAndIncrementChat("alice"))
                 .isInstanceOf(BusinessException.class)
                 .satisfies(e -> assertThat(((BusinessException) e).getCode())
                         .isEqualTo(ResultCode.QUOTA_EXCEEDED.getCode()))
                 .hasMessageContaining("对话次数已达上限");
-
-        verify(quotaUsageMapper, never()).upsertIncrement(anyString(), anyString(), anyInt(), anyLong());
     }
 
     @Test
@@ -177,11 +177,12 @@ class QuotaServiceTest {
         when(userQuotaConfigMapper.selectOne(any(LambdaQueryWrapper.class)))
                 .thenReturn(config("alice", "MONTH", 100, 0, true));
         when(quotaUsageMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
+        when(quotaUsageMapper.incrementChatAtomically(anyString(), anyString(), anyInt())).thenReturn(1);
 
         quotaService.checkAndIncrementChat("alice");
 
         String monthKey = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy-MM"));
-        verify(quotaUsageMapper).upsertIncrement(eq("alice"), eq(monthKey), eq(1), eq(0L));
+        verify(quotaUsageMapper).incrementChatAtomically(eq("alice"), eq(monthKey), eq(100));
     }
 
     // ========== 5. 配置缺失/禁用回退 ==========
@@ -273,7 +274,7 @@ class QuotaServiceTest {
     void dbFailureIsSwallowed() {
         when(userQuotaConfigMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
         when(quotaUsageMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
-        when(quotaUsageMapper.upsertIncrement(anyString(), anyString(), anyInt(), anyLong()))
+        when(quotaUsageMapper.incrementChatAtomically(anyString(), anyString(), anyInt()))
                 .thenThrow(new RuntimeException("db down"));
 
         quotaService.checkAndIncrementChat("alice"); // 不抛出
@@ -336,8 +337,8 @@ class QuotaServiceTest {
         AtomicInteger increments = new AtomicInteger();
         when(userQuotaConfigMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
         when(quotaUsageMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
-        when(quotaUsageMapper.upsertIncrement(anyString(), anyString(), eq(1), eq(0L)))
-                .thenAnswer(inv -> increments.incrementAndGet());
+        when(quotaUsageMapper.incrementChatAtomically(anyString(), anyString(), anyInt()))
+                .thenAnswer(inv -> increments.incrementAndGet() > 0 ? 1 : 0);
 
         ExecutorService pool = Executors.newFixedThreadPool(threads);
         CountDownLatch start = new CountDownLatch(1);
@@ -372,6 +373,7 @@ class QuotaServiceTest {
         when(userQuotaConfigMapper.selectOne(any(LambdaQueryWrapper.class)))
                 .thenReturn(config("alice", "DAY", 2, 0, true));
         when(quotaUsageMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(usage(2, 0));
+        when(quotaUsageMapper.incrementChatAtomically(anyString(), anyString(), anyInt())).thenReturn(0);
 
         BusinessException ex = (BusinessException) org.assertj.core.api.Assertions
                 .catchThrowable(() -> quotaService.checkAndIncrementChat("alice"));

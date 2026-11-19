@@ -4,6 +4,7 @@ import com.wgh.rag.common.metrics.RagMetrics;
 import com.wgh.rag.common.result.ResultCode;
 import com.wgh.rag.publicaccess.config.PublicAccessProperties;
 import com.wgh.rag.publicaccess.exception.PublicAccessException;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.LinkedHashMap;
@@ -16,6 +17,7 @@ import java.util.Map;
  * 避免并发请求同时读到未超限计数导致超发；Redis 不可用时由
  * {@link DefaultPublicAccessStore} 自动降级为单机内存滑动窗口。</p>
  */
+@Slf4j
 @Component
 public class PublicAccessRateLimiter {
 
@@ -52,6 +54,8 @@ public class PublicAccessRateLimiter {
         long remaining = store.acquireSliding(key, System.currentTimeMillis(), WINDOW_MS, limitPerMinute);
         if (remaining < 0) {
             metrics.recordRateLimitRejected(dimension);
+            log.debug("公开访问限流拒绝: dimension={}, path={}, limitPerMinute={}, store={}",
+                    dimension, path, limitPerMinute, store.distributed() ? "redis" : "memory");
             Map<String, Object> data = new LinkedHashMap<>();
             data.put("dimension", dimension);
             data.put("limitPerMinute", limitPerMinute);
@@ -69,13 +73,8 @@ public class PublicAccessRateLimiter {
     }
 
     static String buildKey(String dimension, String subject, String path) {
-        return "wgh:pa:rl:" + sanitize(dimension) + ":" + sanitize(path) + ":" + sanitize(subject);
-    }
-
-    private static String sanitize(String value) {
-        if (value == null || value.isBlank()) {
-            return "-";
-        }
-        return value.trim().replaceAll("[^A-Za-z0-9._:/-]", "_");
+        // 命名空间：{root}:pa:rl:{dimension}:{path}:{subject}（root 默认 wgh）
+        return PublicAccessKeys.rateLimit() + ":" + PublicAccessKeys.sanitize(dimension)
+                + ":" + PublicAccessKeys.sanitize(path) + ":" + PublicAccessKeys.sanitize(subject);
     }
 }

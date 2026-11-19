@@ -23,8 +23,6 @@ import java.util.UUID;
 @Component
 public class EmbedAccessService {
 
-    private static final String GRANT_PREFIX = "wgh:pa:embed:grant:";
-
     private final PublicAccessStore store;
     private final PublicAccessProperties properties;
     private final ClientIpResolver clientIpResolver;
@@ -150,6 +148,6 @@ public class EmbedAccessService {
     }
 
     private String grantKey(String token, String grant) {
-        return GRANT_PREFIX + token + ":" + grant;
+        return PublicAccessKeys.embedGrant() + ":" + token + ":" + grant;
     }
 }

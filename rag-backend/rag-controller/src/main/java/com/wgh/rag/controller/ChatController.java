@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wgh.rag.auth.constant.AuthConstants;
 import com.wgh.rag.controller.support.RunAccessGuard;
 import com.wgh.rag.chat.service.ChatImageService;
+import com.wgh.rag.chat.service.ChatCancellationStore;
 import com.wgh.rag.chat.service.ChatWindowService;
 import com.wgh.rag.chat.service.ChatWorkflowService;
 import com.wgh.rag.chat.service.FeedbackService;
@@ -56,6 +57,8 @@ public class ChatController {
     private final SkillFileService skillFileService;
     private final ToolExecutionEngine toolExecutionEngine;
     private final RunAccessGuard runAccessGuard;
+    /** 跨实例取消标记：显式停止写入 Redis，由流式实例轮询感知 */
+    private final ChatCancellationStore chatCancellationStore;
 
     // ===== 管理端：聊天窗口 =====
 
@@ -224,6 +227,26 @@ public class ChatController {
             return (List<String>) list;
         }
         return null;
+    }
+
+    // ===== 显式停止生成（多实例） =====
+
+    @Operation(summary = "停止会话当前的流式生成（显式停止，多实例生效）")
+    @PostMapping("/windows/{windowId}/sessions/{sessionId}/stop")
+    public Result<Void> stopSession(@PathVariable Long windowId, @PathVariable Long sessionId) {
+        windowService.getById(windowId);
+        windowService.getOwnedSession(windowId, sessionId, currentUsername());
+        chatCancellationStore.cancel(ChatCancellationStore.sessionKey(sessionId), "explicit");
+        return Result.success();
+    }
+
+    @Operation(summary = "分享页面：停止会话当前的流式生成（显式停止，多实例生效）")
+    @PostMapping("/share/{shareToken}/sessions/{sessionId}/stop")
+    public Result<Void> shareStopSession(@PathVariable String shareToken, @PathVariable Long sessionId) {
+        ChatWindow window = windowService.getByShareToken(shareToken);
+        windowService.getOwnedSession(window.getId(), sessionId, currentUsername());
+        chatCancellationStore.cancel(ChatCancellationStore.sessionKey(sessionId), "explicit");
+        return Result.success();
     }
 
     // ===== 分享页面（需登录；userIdentifier 取当前登录用户名，与 shareToken 解耦） =====

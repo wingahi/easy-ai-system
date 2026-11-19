@@ -23,8 +23,6 @@ import java.util.function.LongSupplier;
 @Component
 public class SharePasswordGuard {
 
-    private static final String KEY_PREFIX = "wgh:pa:pwd:";
-
     private final PublicAccessStore store;
     private final PublicAccessProperties properties;
     private final LongSupplier clock;
@@ -111,10 +109,10 @@ public class SharePasswordGuard {
     }
 
     static String failKey(String token, String clientIp) {
-        return KEY_PREFIX + "fail:" + token + ":" + clientIp;
+        return PublicAccessKeys.sharePassword() + ":fail:" + token + ":" + clientIp;
     }
 
     static String lockKey(String token, String clientIp) {
-        return KEY_PREFIX + "lock:" + token + ":" + clientIp;
+        return PublicAccessKeys.sharePassword() + ":lock:" + token + ":" + clientIp;
     }
 }

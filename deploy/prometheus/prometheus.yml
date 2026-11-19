@@ -3,10 +3,15 @@ global:
   evaluation_interval: 15s
 
 scrape_configs:
+  # 多副本：backend 的 DNS 会解析出多个容器地址，使用 dns_sd 逐副本抓取；
+  # 单副本时同样有效（仅一个地址）。
   - job_name: wgh-rag-backend
     metrics_path: /actuator/prometheus
-    static_configs:
-      # 管理端口仅在容器网络内暴露，宿主机默认不映射
-      - targets: ["backend:9090"]
-        labels:
-          service: wgh-rag-backend
+    dns_sd_configs:
+      - names: ["backend"]
+        type: A
+        port: 9090
+        refresh_interval: 30s
+    relabel_configs:
+      - target_label: service
+        replacement: wgh-rag-backend

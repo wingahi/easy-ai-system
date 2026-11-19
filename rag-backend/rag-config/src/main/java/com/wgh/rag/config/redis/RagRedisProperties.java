@@ -1,5 +1,6 @@
 package com.wgh.rag.config.redis;
 
+import jakarta.annotation.PostConstruct;
 import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Configuration;
@@ -35,6 +36,17 @@ public class RagRedisProperties {
     /** 访问密码；为空表示无密码 */
     private String password;
 
-    /** 公开访问模块统一 key 前缀 */
-    private String keyPrefix = "wgh:public-access";
+    /**
+     * 共享状态 key 的系统命名空间根。
+     *
+     * <p>业务 key 统一以 {@code {keyPrefix}:} 开头（如 {@code wgh:pa:rl:...}），
+     * 多环境共用同一 Redis 时可通过该前缀区分；默认 {@code wgh}，与既有 key 保持一致。</p>
+     */
+    private String keyPrefix = "wgh";
+
+    /** 启动时把命名空间根注入共享 key 构造器 */
+    @PostConstruct
+    void applyKeyNamespace() {
+        RedisKeyNamespace.configure(keyPrefix);
+    }
 }

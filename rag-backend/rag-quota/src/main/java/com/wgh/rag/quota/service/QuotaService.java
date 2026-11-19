@@ -26,7 +26,7 @@ import java.util.List;
  * 解析规则：用户自定义配置（wgh_user_quota_config 且启用）&gt; 全局默认
  * （wgh.rag.quota.chat-daily-limit / token-daily-limit，周期为自然日）。
  * <p>
- * 计数通过 INSERT ... ON CONFLICT 原子累加，并发下用量统计不丢失。
+ * 计数通过数据库条件更新原子累加（带 limit 判断），多实例并发下不会超发。
  */
 @Slf4j
 @Service
@@ -90,6 +90,10 @@ public class QuotaService {
 
     /**
      * 发送前检查并计数一次对话：超限抛 BusinessException(429)；通过则当期 chat_count +1。
+     * <p>
+     * 计数由数据库「带 limit 条件的原子 UPDATE」完成（{@link QuotaUsageMapper#incrementChatAtomically}），
+     * 并发多实例不会因「先查后加」而超发；token 上限仍在累加前读取判断。
+     * </p>
      */
     public void checkAndIncrementChat(String username) {
         EffectiveQuota quota = resolve(username);
@@ -97,24 +101,27 @@ public class QuotaService {
         String periodLabel = UserQuotaConfig.PERIOD_MONTH.equalsIgnoreCase(quota.getPeriod()) ? "本月" : "今日";
 
         QuotaUsage usage = usageOf(username, periodKey);
-        if (usage != null) {
-            if (quota.getChatLimit() != null && quota.getChatLimit() > 0
-                    && usage.getChatCount() != null && usage.getChatCount() >= quota.getChatLimit()) {
-                metrics.recordQuotaExceeded(QuotaConstants.DIMENSION_CHAT);
-                throw new BusinessException(ResultCode.QUOTA_EXCEEDED,
-                        periodLabel + "对话次数已达上限（" + quota.getChatLimit() + " 条），请下期再试");
-            }
-            if (quota.getTokenLimit() != null && quota.getTokenLimit() > 0
-                    && usage.getTokenUsed() != null && usage.getTokenUsed() >= quota.getTokenLimit()) {
-                metrics.recordQuotaExceeded(QuotaConstants.DIMENSION_TOKEN);
-                throw new BusinessException(ResultCode.QUOTA_EXCEEDED,
-                        periodLabel + " token 用量已达上限（" + quota.getTokenLimit() + "），请下期再试");
-            }
+        if (usage != null
+                && quota.getTokenLimit() != null && quota.getTokenLimit() > 0
+                && usage.getTokenUsed() != null && usage.getTokenUsed() >= quota.getTokenLimit()) {
+            metrics.recordQuotaExceeded(QuotaConstants.DIMENSION_TOKEN);
+            throw new BusinessException(ResultCode.QUOTA_EXCEEDED,
+                    periodLabel + " token 用量已达上限（" + quota.getTokenLimit() + "），请下期再试");
         }
+        int chatLimit = quota.getChatLimit() == null ? 0 : quota.getChatLimit();
         try {
-            quotaUsageMapper.upsertIncrement(username, periodKey, 1, 0);
+            boolean allowed = quotaUsageMapper.incrementChatAtomically(username, periodKey, chatLimit) > 0;
+            if (!allowed) {
+                metrics.recordQuotaExceeded(QuotaConstants.DIMENSION_CHAT);
+                log.info("配额对话计数被拒绝: username={}, periodKey={}, limit={}", username, periodKey, chatLimit);
+                throw new BusinessException(ResultCode.QUOTA_EXCEEDED,
+                        periodLabel + "对话次数已达上限（" + chatLimit + " 条），请下期再试");
+            }
+            log.debug("配额对话计数: username={}, periodKey={}, limit={}", username, periodKey, chatLimit);
+        } catch (BusinessException e) {
+            throw e;
         } catch (Exception e) {
-            log.warn("配额对话计数失败: username={}, reason={}", username, e.getMessage());
+            log.warn("配额对话计数失败: username={}, periodKey={}, reason={}", username, periodKey, e.getMessage());
         }
     }
 

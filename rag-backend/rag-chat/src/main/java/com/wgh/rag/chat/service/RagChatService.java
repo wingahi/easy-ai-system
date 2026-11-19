@@ -107,6 +107,8 @@ public class RagChatService {
     private final com.wgh.rag.kb.mapper.KnowledgeBaseMapper knowledgeBaseMapper;
     private final ModelRouter modelRouter;
     private final RagMetrics metrics;
+    /** 跨实例取消标记：显式停止写入 Redis，流式线程轮询感知 */
+    private final ChatCancellationStore chatCancellationStore;
 
     /**
      * 流式聊天 - SSE
@@ -163,8 +165,10 @@ public class RagChatService {
 
         // 构建 SseEmitter
         SseEmitter emitter = new SseEmitter(ChatConstants.SSE_TIMEOUT_MS);
-        // 单次对话的取消句柄：客户端断开或显式取消时置位，流式回调据此短路
-        ChatStreamCancellation cancellation = new ChatStreamCancellation();
+        // 单次对话的取消句柄：客户端断开或显式取消时置位，流式回调据此短路。
+        // 传入会话级共享 key，使显式停止请求落到任意实例都能被本流感知（Redis 不可用时退回进程内）。
+        ChatStreamCancellation cancellation = new ChatStreamCancellation(
+                ChatCancellationStore.sessionKey(session.getId()), chatCancellationStore);
         emitter.onTimeout(() -> {
             log.warn("SSE连接超时，取消生成: session={}", session.getId());
             cancellation.cancel();

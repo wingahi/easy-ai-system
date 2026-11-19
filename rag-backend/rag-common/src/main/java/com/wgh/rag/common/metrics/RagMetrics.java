@@ -57,6 +57,27 @@ public class RagMetrics {
     /** 工作流节点失败次数（nodeType: LLM/TOOL/RETRIEVAL/...） */
     public static final String WORKFLOW_NODE_FAILURES = "wgh.workflow.node.failures";
 
+    /** 存储迁移对象数（result: copied/skipped/planned/failed） */
+    public static final String STORAGE_MIGRATION_OBJECTS = "wgh.storage.migration.objects";
+    /** 存储孤儿对象数（action: detected/deleted/delete_failed/skipped_young） */
+    public static final String STORAGE_ORPHANS = "wgh.storage.orphans";
+
+    /** 共享状态存储降级次数（store: public-access/cancellation；reason: disabled/error） */
+    public static final String STATE_STORE_FALLBACKS = "wgh.state.store.fallbacks";
+    /** 共享状态存储操作数（store；op: rate-limit/increment/get/set/delete/cancel；backend: redis/memory） */
+    public static final String STATE_STORE_OPS = "wgh.state.store.ops";
+    /** 对话取消次数（source: client-disconnect/explicit；backend: redis/memory） */
+    public static final String CHAT_CANCELLATIONS = "wgh.chat.cancellations";
+
+    /** 长期记忆写入条数（scope: SESSION/TASK） */
+    public static final String AGENT_MEMORY_WRITES = "wgh.agent.memory.writes";
+    /** 长期记忆去重跳过条数（scope: SESSION/TASK） */
+    public static final String AGENT_MEMORY_DEDUP_SKIPS = "wgh.agent.memory.dedup.skips";
+    /** 长期记忆召回命中条数（scope: SESSION/TASK） */
+    public static final String AGENT_MEMORY_RECALL_HITS = "wgh.agent.memory.recall.hits";
+    /** 长期记忆清理删除条数（kind: age/capacity） */
+    public static final String AGENT_MEMORY_CLEANUP_DELETED = "wgh.agent.memory.cleanup.deleted";
+
     private final MeterRegistry registry;
 
     public RagMetrics(MeterRegistry registry) {
@@ -182,6 +203,76 @@ public class RagMetrics {
 
     public void recordWorkflowNodeFailure(String nodeType) {
         counter(WORKFLOW_NODE_FAILURES, "nodeType", nodeType == null ? "unknown" : nodeType).increment();
+    }
+
+    // ==================== 存储运维 ====================
+
+    /** 存储迁移结果计数（result 为有限枚举，避免高基数标签）。 */
+    public void recordStorageMigration(String result, long count) {
+        if (count > 0) {
+            counter(STORAGE_MIGRATION_OBJECTS, "result", result == null ? "unknown" : result).increment(count);
+        }
+    }
+
+    /** 存储孤儿对象计数（action 为有限枚举）。 */
+    public void recordStorageOrphans(String action, long count) {
+        if (count > 0) {
+            counter(STORAGE_ORPHANS, "action", action == null ? "unknown" : action).increment(count);
+        }
+    }
+
+    // ==================== 多实例共享状态 ====================
+
+    /**
+     * 共享状态存储（限流/取消等）降级到进程内实现时计数。
+     * <p>仅在状态机切换时上报一次，避免 Redis 故障期间每个请求都 +1 造成尖刺。</p>
+     */
+    public void recordStateStoreFallback(String store, String reason) {
+        counter(STATE_STORE_FALLBACKS,
+                "store", store == null ? "unknown" : store,
+                "reason", reason == null ? "unknown" : reason).increment();
+    }
+
+    /** 共享状态存储操作计数（backend 区分 redis / memory，用于确认多实例是否真正共享） */
+    public void recordStateStoreOperation(String store, String op, String backend) {
+        counter(STATE_STORE_OPS,
+                "store", store == null ? "unknown" : store,
+                "op", op == null ? "unknown" : op,
+                "backend", backend == null ? "unknown" : backend).increment();
+    }
+
+    /** 对话取消计数（backend 区分取消标记是否写入共享存储） */
+    public void recordChatCancellation(String source, String backend) {
+        counter(CHAT_CANCELLATIONS,
+                "source", source == null ? "unknown" : source,
+                "backend", backend == null ? "unknown" : backend).increment();
+    }
+
+    // ==================== 长期记忆 ====================
+
+    /** 记忆写入成功（scope 为 SESSION/TASK 有限枚举）。 */
+    public void recordMemoryWrite(String scope) {
+        counter(AGENT_MEMORY_WRITES, "scope", safeScope(scope)).increment();
+    }
+
+    /** 同作用域正文重复导致的写入跳过。 */
+    public void recordMemoryDedupSkip(String scope) {
+        counter(AGENT_MEMORY_DEDUP_SKIPS, "scope", safeScope(scope)).increment();
+    }
+
+    /** 召回命中条数（0 也记录，便于观察召回失败与空命中）。 */
+    public void recordMemoryRecallHits(String scope, int hits) {
+        counter(AGENT_MEMORY_RECALL_HITS, "scope", safeScope(scope)).increment(Math.max(hits, 0));
+    }
+
+    /** 清理删除条数（kind: age/capacity）。 */
+    public void recordMemoryCleanupDeleted(String kind, int deleted) {
+        if (deleted <= 0) return;
+        counter(AGENT_MEMORY_CLEANUP_DELETED, "kind", kind == null ? "unknown" : kind).increment(deleted);
+    }
+
+    private static String safeScope(String scope) {
+        return scope == null || scope.isBlank() ? "unknown" : scope;
     }
 
     private Counter counter(String name, String... tags) {

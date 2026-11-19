@@ -106,7 +106,8 @@ class ModelFailoverStreamTest {
                 llmModelService, semanticCacheService,
                 org.mockito.Mockito.mock(com.wgh.rag.kb.service.AgentMemoryService.class),
                 chatImageService, promptTemplateService,
-                knowledgeBaseMapper, modelRouter, metrics);
+                knowledgeBaseMapper, modelRouter, metrics,
+                org.mockito.Mockito.mock(ChatCancellationStore.class));
         session = org.mockito.Mockito.mock(ChatSession.class);
         window = org.mockito.Mockito.mock(ChatWindow.class);
     }

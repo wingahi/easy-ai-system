@@ -48,7 +48,9 @@ services:
       context: ./rag-backend
       dockerfile: Dockerfile
     image: wgh-rag-backend:local
-    container_name: wgh-rag-backend
+    # 多副本：不设置 container_name，否则 `docker compose up --scale backend=N` 会因名称冲突失败。
+    # 副本 >1 时宿主机端口映射会冲突，请改为仅 expose + 反向代理（或按实例覆盖 ports）。
+    # 例：docker compose up -d --scale backend=2
     # 管理端口 9090 只在容器网络内暴露给 Prometheus，不映射到宿主机
     ports:
       - "${WGH_BACKEND_PORT:-8080}:8080"
@@ -56,16 +58,22 @@ services:
       WGH_PROFILE: ${WGH_PROFILE:-prod}
       SERVER_PORT: 8080
       WGH_MANAGEMENT_PORT: 9090
+      # 实例标识（写入 metrics tag，便于区分副本；不设置时 Prometheus 按 target 区分）
+      WGH_INSTANCE_ID: ${WGH_INSTANCE_ID:-}
       # 数据源唯一真相是 POSTGRES_*；应用侧统一用 SPRING_DATASOURCE_*（优先级最高）
       # 切外部库：把 POSTGRES_HOST/PORT/DB/USER/PASSWORD 指向外部实例即可
       SPRING_DATASOURCE_URL: jdbc:postgresql://${POSTGRES_HOST:-postgres}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-wgh_rag}?currentSchema=public&stringtype=unspecified
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-postgres}
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:?必须设置 POSTGRES_PASSWORD}
       PROD_DB_POOL_MAX: ${PROD_DB_POOL_MAX:-50}
+      # 多副本共享限流计数/密码锁定/嵌入授权/取消标记：所有副本必须连同一个 Redis
       WGH_REDIS_ENABLED: "true"
       WGH_REDIS_HOST: redis
       WGH_REDIS_PORT: 6379
+      WGH_REDIS_DATABASE: ${WGH_REDIS_DATABASE:-0}
+      WGH_REDIS_TIMEOUT: ${WGH_REDIS_TIMEOUT:-2s}
       WGH_REDIS_PASSWORD: ${WGH_REDIS_PASSWORD:-}
+      WGH_REDIS_KEY_PREFIX: ${WGH_REDIS_KEY_PREFIX:-wgh}
       WGH_PGVECTOR_SKIP_EXT: ${WGH_PGVECTOR_SKIP_EXT:-false}
       # ===== 以下密钥生产环境必须注入，不得使用示例值 =====
       WGH_AUTH_LOCAL_JWT_SECRET: ${WGH_AUTH_LOCAL_JWT_SECRET:?必须设置 WGH_AUTH_LOCAL_JWT_SECRET}

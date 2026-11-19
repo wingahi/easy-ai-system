@@ -42,6 +42,11 @@
             <groupId>com.wgh</groupId>
             <artifactId>rag-quota</artifactId>
         </dependency>
+        <!-- RedisCommandPort：跨实例取消标记复用公开访问的 Redis 封装 -->
+        <dependency>
+            <groupId>com.wgh</groupId>
+            <artifactId>rag-config</artifactId>
+        </dependency>
         <dependency>
             <groupId>dev.langchain4j</groupId>
             <artifactId>langchain4j-reactor</artifactId>

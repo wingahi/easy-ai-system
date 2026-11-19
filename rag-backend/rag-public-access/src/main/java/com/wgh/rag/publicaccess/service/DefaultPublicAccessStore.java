@@ -1,7 +1,9 @@
 package com.wgh.rag.publicaccess.service;
 
+import com.wgh.rag.common.metrics.RagMetrics;
 import com.wgh.rag.config.redis.RedisCommandPort;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
@@ -18,7 +20,9 @@ import java.util.concurrent.ThreadLocalRandom;
  * Redis 优先、单机内存兜底的公开访问存储实现。
  *
  * <p>限流与计数均通过 Lua 脚本在 Redis 端原子执行；Redis 不可用时自动回退到
- * 进程内实现并输出 WARN 日志。降级期间不同实例各自计数，属于已知限制。</p>
+ * 进程内实现并输出 WARN 日志。降级期间不同实例各自计数，属于已知限制，
+ * 因此降级状态同时暴露为 {@code wgh.state.store.fallbacks} 指标，
+ * 便于在多副本部署下告警；{@link #distributed()} 在降级时返回 false。</p>
  */
 @Slf4j
 @Component
@@ -57,12 +61,23 @@ public class DefaultPublicAccessStore implements PublicAccessStore {
     private final Map<String, Deque<Long>> slidingWindows = new ConcurrentHashMap<>();
     private final Map<String, Entry> entries = new ConcurrentHashMap<>();
 
+    /** 可选：用于把降级状态暴露为指标（单测直接构造时为 null） */
+    private volatile RagMetrics metrics;
+
     private volatile long redisDownUntil;
     private volatile long lastWarnAt;
     private volatile boolean disabledWarned;
 
     public DefaultPublicAccessStore(RedisCommandPort redis) {
         this.redis = redis;
+    }
+
+    /**
+     * 指标为可选依赖：不参与构造器注入，避免影响无 Spring 容器的单测。
+     */
+    @Autowired(required = false)
+    public void setMetrics(RagMetrics metrics) {
+        this.metrics = metrics;
     }
 
     @Override
@@ -82,12 +97,14 @@ public class DefaultPublicAccessStore implements PublicAccessStore {
                         List.of(key),
                         List.of(String.valueOf(nowMillis), String.valueOf(windowMillis), String.valueOf(limit), member));
                 if (remaining != null) {
+                    recordOperation("rate-limit", "redis");
                     return remaining;
                 }
             } catch (RuntimeException e) {
                 markRedisDown(nowMillis, e);
             }
         }
+        recordOperation("rate-limit", "memory");
         return acquireSlidingInMemory(key, nowMillis, windowMillis, limit);
     }
 
@@ -102,12 +119,14 @@ public class DefaultPublicAccessStore implements PublicAccessStore {
                 if (value != null) {
                     // 同步内存计数，Redis 短暂故障时保持连续
                     entries.put(key, new Entry(String.valueOf(value), nowMillis + ttlMillis));
+                    recordOperation("increment", "redis");
                     return value;
                 }
             } catch (RuntimeException e) {
                 markRedisDown(nowMillis, e);
             }
         }
+        recordOperation("increment", "memory");
         Entry entry = entries.get(key);
         long next = 1L;
         if (entry != null && entry.expiresAt > nowMillis) {
@@ -141,16 +160,19 @@ public class DefaultPublicAccessStore implements PublicAccessStore {
             try {
                 String value = redis.get(key);
                 if (value != null) {
+                    recordOperation("get", "redis");
                     return Optional.of(value);
                 }
                 // Redis 可访问且 key 不存在时以 Redis 为准，避免外部清理（如运维删除锁定键）后
                 // 仍读到进程内镜像，导致多实例行为不一致
                 entries.remove(key);
+                recordOperation("get", "redis");
                 return Optional.empty();
             } catch (RuntimeException e) {
                 markRedisDown(nowMillis, e);
             }
         }
+        recordOperation("get", "memory");
         Entry entry = entries.get(key);
         if (entry == null || entry.expiresAt <= nowMillis) {
             if (entry != null) {
@@ -168,11 +190,13 @@ public class DefaultPublicAccessStore implements PublicAccessStore {
             try {
                 redis.set(key, value, Duration.ofMillis(ttlMillis));
                 entries.put(key, new Entry(value, nowMillis + ttlMillis));
+                recordOperation("set", "redis");
                 return;
             } catch (RuntimeException e) {
                 markRedisDown(nowMillis, e);
             }
         }
+        recordOperation("set", "memory");
         entries.put(key, new Entry(value, nowMillis + ttlMillis));
         cleanup(nowMillis);
     }
@@ -180,13 +204,16 @@ public class DefaultPublicAccessStore implements PublicAccessStore {
     @Override
     public void delete(String key) {
         entries.remove(key);
-        if (redis.enabled()) {
+        if (redis.enabled() && System.currentTimeMillis() >= redisDownUntil) {
             try {
                 redis.delete(key);
+                recordOperation("delete", "redis");
+                return;
             } catch (RuntimeException e) {
                 markRedisDown(System.currentTimeMillis(), e);
             }
         }
+        recordOperation("delete", "memory");
     }
 
     private long acquireSlidingInMemory(String key, long nowMillis, long windowMillis, int limit) {
@@ -208,7 +235,11 @@ public class DefaultPublicAccessStore implements PublicAccessStore {
         if (!redis.enabled()) {
             if (!disabledWarned) {
                 disabledWarned = true;
-                log.warn("Redis 未启用，公开访问限流/密码锁定降级为单机内存模式");
+                log.warn("Redis 未启用，公开访问限流/密码锁定降级为单机内存模式（多实例计数将不一致）");
+                RagMetrics m = metrics;
+                if (m != null) {
+                    m.recordStateStoreFallback("public-access", "disabled");
+                }
             }
             return false;
         }
@@ -216,12 +247,26 @@ public class DefaultPublicAccessStore implements PublicAccessStore {
     }
 
     private void markRedisDown(long nowMillis, RuntimeException e) {
+        boolean wasUp = nowMillis >= redisDownUntil;
         redisDownUntil = nowMillis + REDIS_DOWN_BACKOFF_MILLIS;
+        if (wasUp) {
+            RagMetrics m = metrics;
+            if (m != null) {
+                m.recordStateStoreFallback("public-access", "error");
+            }
+        }
         long now = System.currentTimeMillis();
         if (now - lastWarnAt >= WARN_INTERVAL_MILLIS) {
             lastWarnAt = now;
             log.warn("Redis 不可用，公开访问限流/密码锁定降级为单机内存模式，{} 秒内不再重试 Redis: {}",
                     REDIS_DOWN_BACKOFF_MILLIS / 1000, e.getMessage());
+        }
+    }
+
+    private void recordOperation(String op, String backend) {
+        RagMetrics m = metrics;
+        if (m != null) {
+            m.recordStateStoreOperation("public-access", op, backend);
         }
     }
 
