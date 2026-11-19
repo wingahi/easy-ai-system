@@ -14,6 +14,9 @@ import com.wgh.rag.agentmulti.dto.GraphNode;
 import com.wgh.rag.agentmulti.entity.MultiAgentRun;
 import com.wgh.rag.agentmulti.entity.MultiAgentStep;
 import com.wgh.rag.agentmulti.runtime.MultiAgentRuntime;
+import com.wgh.rag.agentmulti.service.AgentStepCheckpointService;
+import com.wgh.rag.agentmulti.service.AgentStepCheckpointService.CheckpointSession;
+import com.wgh.rag.agentmulti.service.AgentStepCheckpointService.StepDecision;
 import com.wgh.rag.agentmulti.service.MultiAgentService;
 import com.wgh.rag.agentmulti.support.AgentInstanceExecutor;
 import com.wgh.rag.agentmulti.support.SseEventSender;
@@ -41,6 +44,7 @@ import java.util.stream.Collectors;
 public class GraphCoordinator {
 
     private final MultiAgentService service;
+    private final AgentStepCheckpointService checkpointService;
     private final AgentInstanceExecutor agentExecutor;
     private final SseEventSender sse;
     private final ObjectMapper objectMapper;
@@ -49,6 +53,12 @@ public class GraphCoordinator {
 
     public void execute(MultiAgentRun run, List<AgentInstance> agents,
                         DAGGraph graph, MultiAgentContext ctx, SseEmitter emitter) {
+        execute(run, agents, graph, ctx, emitter, checkpointService.open(run.getRunId()));
+    }
+
+    public void execute(MultiAgentRun run, List<AgentInstance> agents,
+                        DAGGraph graph, MultiAgentContext ctx, SseEmitter emitter,
+                        CheckpointSession session) {
         if (graph == null || graph.getNodes() == null || graph.getNodes().isEmpty()) {
             sse.send(emitter, MultiAgentEvents.MULTI_AGENT_ERROR, Map.of("runId", run.getRunId(), "error", "Graph 为空"));
             return;
@@ -68,7 +78,7 @@ public class GraphCoordinator {
         if (frontier.isEmpty()) frontier.add(graph.getNodes().get(0).getId());
 
         Set<String> visited = new HashSet<>();
-        int stepIdx = 0;
+        Map<String, Integer> visits = new HashMap<>();
 
         // 初始化所有 LOOP 节点的迭代计数
         for (GraphNode n : graph.getNodes()) {
@@ -82,6 +92,8 @@ public class GraphCoordinator {
 
             String type = node.getType() == null ? "" : node.getType();
             boolean terminate = false;
+            int visit = visits.merge(nodeId, 1, Integer::sum);
+            String traceKey = "node:" + nodeId + ":iter:" + visit + ":trace";
 
             switch (type) {
                 case WorkflowConstants.NODE_START -> {
@@ -95,22 +107,43 @@ public class GraphCoordinator {
                         continue;
                     }
                     String input = buildNodeInput(node, ctx, run.getUserGoal());
-                    AgentInstanceResult result = agentExecutor.execute(agent, input, ctx, emitter);
+                    String stepKey = "node:" + nodeId + ":iter:" + visit;
+                    StepDecision decision = checkpointService.begin(session, stepKey, nodeId,
+                            agent.getAgentId(), agent.getRole(), null, input);
+                    AgentInstanceResult result;
+                    if (decision.skip()) {
+                        result = restoreResult(decision.step());
+                    } else {
+                        try {
+                            result = agentExecutor.execute(agent, input, ctx, emitter);
+                            checkpointService.complete(session, decision.step(), result);
+                        } catch (Exception e) {
+                            checkpointService.fail(session, decision.step(), e.getMessage());
+                            throw e;
+                        }
+                    }
                     ctx.put(nodeId + ".text", result.getOutput());
                     ctx.put(agent.getAgentId() + ".text", result.getOutput());
                     ctx.setVars("lastOutput", result.getOutput());
-
-                    persistStep(run, agent, node, result, stepIdx++);
                 }
                 case WorkflowConstants.NODE_CONDITION -> {
                     String rendered = node.getExpression();
                     // VariableResolver 需要 RunContext；这里用简化的 VariableResolver.render（不 import RunContext）
                     // 直接复用 workflow 的 VariableResolver.render 会需要 RunContext，我们改用 MultiAgentContext.render
-                    String expr = ctx.render(node.getExpression());
-                    boolean bool = conditionEvaluator.evaluate(expr);
+                    Map<String, Object> trace = checkpointService.traceDecision(session, traceKey);
+                    boolean bool;
+                    if (trace != null && trace.get("result") != null) {
+                        bool = Boolean.TRUE.equals(trace.get("result"));
+                        ctx.put(nodeId + ".rendered", trace.get("rendered"));
+                    } else {
+                        String expr = ctx.render(node.getExpression());
+                        bool = conditionEvaluator.evaluate(expr);
+                        ctx.put(nodeId + ".rendered", expr);
+                        checkpointService.saveTrace(session, traceKey, nodeId, "CONDITION", null,
+                                Map.of("result", bool, "rendered", expr));
+                    }
                     ctx.put(nodeId + ".result", bool);
                     ctx.put(nodeId + ".condition", bool);
-                    ctx.put(nodeId + ".rendered", expr);
 
                     // 只激活匹配 handle
                     List<GraphEdge> edges = outEdges.getOrDefault(nodeId, List.of());
@@ -126,10 +159,21 @@ public class GraphCoordinator {
                     continue;
                 }
                 case WorkflowConstants.NODE_LOOP -> {
-                    int iteration = ctx.incrementLoop(nodeId);
+                    Map<String, Object> trace = checkpointService.traceDecision(session, traceKey);
+                    int iteration;
+                    boolean breakNow;
+                    if (trace != null && trace.get("iteration") instanceof Number n) {
+                        iteration = n.intValue();
+                        breakNow = Boolean.TRUE.equals(trace.get("shouldBreak"));
+                    } else {
+                        iteration = ctx.incrementLoop(nodeId);
+                        int max = node.getMaxIterations() != null ? node.getMaxIterations() : 3;
+                        breakNow = iteration >= max || evalBreakCondition(node, ctx);
+                        checkpointService.saveTrace(session, traceKey, nodeId, "LOOP", null,
+                                Map.of("iteration", iteration, "shouldBreak", breakNow,
+                                        "handle", breakNow ? "done" : "loop"));
+                    }
                     ctx.put(nodeId + ".iteration", iteration);
-                    int max = node.getMaxIterations() != null ? node.getMaxIterations() : 3;
-                    boolean breakNow = iteration >= max || evalBreakCondition(node, ctx);
                     ctx.put(nodeId + ".breaked", breakNow);
 
                     // 走 done 或 loop 边
@@ -149,7 +193,7 @@ public class GraphCoordinator {
                     MultiAgentStep step = new MultiAgentStep();
                     step.setRunId(run.getRunId());
                     step.setAgentId("HITL");
-                    step.setStepIndex(stepIdx++);
+                    step.setStepIndex(session.nextIndex());
                     step.setStatus(MultiAgentConstants.STATUS_HITL_PENDING);
                     step.setHitlExpectedInput(prompt);
                     // 记录暂停节点，供 resume 定位后继（ctx 内存状态在 resume 时已重建；列类型为 JSONB）
@@ -385,6 +429,13 @@ public class GraphCoordinator {
             return ctx.render(node.getInputTemplate());
         }
         return fallback != null ? fallback : "";
+    }
+
+    private AgentInstanceResult restoreResult(MultiAgentStep step) {
+        return AgentInstanceResult.builder()
+                .output(step.getOutputText())
+                .thought(step.getThought())
+                .build();
     }
 
     private void persistStep(MultiAgentRun run, AgentInstance agent, GraphNode node,

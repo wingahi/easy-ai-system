@@ -12,6 +12,8 @@ import com.wgh.rag.agentmulti.entity.MultiAgentRun;
 import com.wgh.rag.agentmulti.entity.MultiAgentStep;
 import com.wgh.rag.agentmulti.mapper.MultiAgentRunMapper;
 import com.wgh.rag.agentmulti.mapper.MultiAgentStepMapper;
+import com.wgh.rag.agentmulti.service.AgentStepCheckpointService;
+import com.wgh.rag.agentmulti.service.AgentStepCheckpointService.CheckpointSession;
 import com.wgh.rag.agentmulti.service.MultiAgentService;
 import com.wgh.rag.agentmulti.support.SseEventSender;
 import com.wgh.rag.agentmulti.crew.CrewCoordinator;
@@ -48,6 +50,7 @@ public class MultiAgentRuntime {
     private final SseEventSender sse;
 
     private final MultiAgentService multiAgentService;
+    private final AgentStepCheckpointService checkpointService;
 
     private final CrewCoordinator crewCoordinator;
     private final GraphCoordinator graphCoordinator;
@@ -62,10 +65,33 @@ public class MultiAgentRuntime {
             sse.send(emitter, MultiAgentEvents.MULTI_AGENT_ERROR, Map.of("runId", runId, "error", "Run 不存在"));
             return runId;
         }
+        return runInternal(run, emitter, checkpointService.open(runId), false);
+    }
 
+    /**
+     * 崩溃恢复：从 (runId, stepKey) 检查点继续。已完成步骤只回填上下文，不重新执行、不重发卡片。
+     */
+    public String resumeFromCheckpoint(String runId, SseEmitter emitter) {
+        MultiAgentRun run = loadRun(runId);
+        if (run == null) {
+            sse.send(emitter, MultiAgentEvents.MULTI_AGENT_ERROR, Map.of("runId", runId, "error", "Run 不存在"));
+            return runId;
+        }
+        if (!MultiAgentConstants.STATUS_RUNNING.equals(run.getStatus())
+                && !"PLANNING".equals(run.getStatus())) {
+            sse.send(emitter, MultiAgentEvents.MULTI_AGENT_ERROR,
+                    Map.of("runId", runId, "error", "Run 非可恢复状态: " + run.getStatus()));
+            return runId;
+        }
+        return runInternal(run, emitter, checkpointService.open(runId), true);
+    }
+
+    private String runInternal(MultiAgentRun run, SseEmitter emitter,
+                               CheckpointSession session, boolean resume) {
+        String runId = run.getRunId();
         List<AgentInstance> agents = parseAgents(run.getAgentsJson());
 
-        sse.send(emitter, MultiAgentEvents.MULTI_AGENT_START,
+        sse.send(emitter, resume ? MultiAgentEvents.MULTI_AGENT_RESUME : MultiAgentEvents.MULTI_AGENT_START,
                 "runId", run.getRunId(),
                 "executionMode", run.getExecutionMode(),
                 "agentCount", agents.size(),
@@ -79,30 +105,32 @@ public class MultiAgentRuntime {
         // 构建 ctx
         MultiAgentContext ctx = new MultiAgentContext(objectMapper);
         ctx.put("runId", run.getRunId());
+        ctx.put("sessionId", run.getSessionId());
         ctx.put("input", run.getUserGoal() == null ? "" : run.getUserGoal());
         ctx.setVars("input", run.getUserGoal() == null ? "" : run.getUserGoal());
+        if (resume) {
+            checkpointService.restoreContext(session, ctx);
+        }
 
         try {
             switch (run.getExecutionMode() == null ? "" : run.getExecutionMode()) {
                 case "CREW_SEQUENTIAL", "CREW_HIERARCHICAL", "CREW_PARALLEL" -> {
-                    crewCoordinator.execute(run, agents, ctx, emitter);
+                    crewCoordinator.execute(run, agents, ctx, emitter, session);
                 }
                 case "GRAPH_ROUTED" -> {
                     DAGGraph graph = parseGraphFromCrewConfig(run);
-                    graphCoordinator.execute(run, agents, graph, ctx, emitter);
+                    graphCoordinator.execute(run, agents, graph, ctx, emitter, session);
                 }
                 case "GROUP_CHAT_ROUND_ROBIN", "GROUP_CHAT_DYNAMIC_ROUTER" -> {
-                    groupChatCoordinator.execute(run, agents, ctx, emitter);
+                    groupChatCoordinator.execute(run, agents, ctx, emitter, session);
                 }
                 default -> throw new IllegalStateException("未知 executionMode: " + run.getExecutionMode());
             }
 
             // 兜底：如果 Coordinator 没设置终态
-            if (runMapper.selectById(run.getId()) != null) {
-                MultiAgentRun latest = runMapper.selectById(run.getId());
-                if (MultiAgentConstants.STATUS_RUNNING.equals(latest.getStatus())) {
-                    finishRun(latest, MultiAgentConstants.STATUS_COMPLETED, null);
-                }
+            MultiAgentRun latest = runMapper.selectById(run.getId());
+            if (latest != null && MultiAgentConstants.STATUS_RUNNING.equals(latest.getStatus())) {
+                finishRun(latest, MultiAgentConstants.STATUS_COMPLETED, null);
             }
         } catch (PauseSignal pause) {
             // HITL —— run.status 已由 coordinator 置为 PAUSED
@@ -136,6 +164,7 @@ public class MultiAgentRuntime {
         List<AgentInstance> agents = parseAgents(run.getAgentsJson());
         MultiAgentContext ctx = new MultiAgentContext(objectMapper);
         ctx.put("runId", run.getRunId());
+        ctx.put("sessionId", run.getSessionId());
         ctx.put("input", run.getUserGoal());
         ctx.setVars("input", run.getUserGoal());
 

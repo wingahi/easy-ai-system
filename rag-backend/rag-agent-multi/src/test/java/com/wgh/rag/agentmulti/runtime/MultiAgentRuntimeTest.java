@@ -6,6 +6,7 @@ import com.wgh.rag.agentmulti.graph.GraphCoordinator;
 import com.wgh.rag.agentmulti.groupchat.GroupChatCoordinator;
 import com.wgh.rag.agentmulti.mapper.MultiAgentRunMapper;
 import com.wgh.rag.agentmulti.mapper.MultiAgentStepMapper;
+import com.wgh.rag.agentmulti.service.AgentStepCheckpointService;
 import com.wgh.rag.agentmulti.service.MultiAgentService;
 import com.wgh.rag.agentmulti.support.SseEventSender;
 import org.junit.jupiter.api.BeforeEach;
@@ -35,6 +36,8 @@ class MultiAgentRuntimeTest {
     @Mock
     private MultiAgentService multiAgentService;
     @Mock
+    private AgentStepCheckpointService checkpointService;
+    @Mock
     private CrewCoordinator crewCoordinator;
     @Mock
     private GraphCoordinator graphCoordinator;
@@ -46,7 +49,7 @@ class MultiAgentRuntimeTest {
     @BeforeEach
     void setUp() {
         runtime = new MultiAgentRuntime(runMapper, stepMapper, new ObjectMapper(), sse,
-                multiAgentService, crewCoordinator, graphCoordinator, groupChatCoordinator);
+                multiAgentService, checkpointService, crewCoordinator, graphCoordinator, groupChatCoordinator);
     }
 
     /** newRunId：连续生成 100 个互不重复 */

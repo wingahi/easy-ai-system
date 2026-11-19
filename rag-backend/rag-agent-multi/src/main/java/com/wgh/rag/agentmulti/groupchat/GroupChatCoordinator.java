@@ -10,6 +10,9 @@ import com.wgh.rag.agentmulti.dto.AgentInstanceResult;
 import com.wgh.rag.agentmulti.entity.MultiAgentRun;
 import com.wgh.rag.agentmulti.entity.MultiAgentStep;
 import com.wgh.rag.agentmulti.runtime.MultiAgentRuntime;
+import com.wgh.rag.agentmulti.service.AgentStepCheckpointService;
+import com.wgh.rag.agentmulti.service.AgentStepCheckpointService.CheckpointSession;
+import com.wgh.rag.agentmulti.service.AgentStepCheckpointService.StepDecision;
 import com.wgh.rag.agentmulti.service.MultiAgentService;
 import com.wgh.rag.agentmulti.support.AgentInstanceExecutor;
 import com.wgh.rag.agentmulti.support.SseEventSender;
@@ -33,6 +36,7 @@ import java.util.stream.Collectors;
 public class GroupChatCoordinator {
 
     private final MultiAgentService service;
+    private final AgentStepCheckpointService checkpointService;
     private final AgentInstanceExecutor agentExecutor;
     private final GroupChatManager manager;
     private final SseEventSender sse;
@@ -40,6 +44,11 @@ public class GroupChatCoordinator {
 
     public void execute(MultiAgentRun run, List<AgentInstance> agents,
                         MultiAgentContext ctx, SseEmitter emitter) {
+        execute(run, agents, ctx, emitter, checkpointService.open(run.getRunId()));
+    }
+
+    public void execute(MultiAgentRun run, List<AgentInstance> agents,
+                        MultiAgentContext ctx, SseEmitter emitter, CheckpointSession session) {
         MessageBus bus = new MessageBus(agents, emitter);
 
         // userProxy 先广播用户 Goal
@@ -47,6 +56,17 @@ public class GroupChatCoordinator {
 
         int maxRounds = run.getMaxRounds() != null ? run.getMaxRounds() : 10;
         int round = run.getCurrentRound() != null ? run.getCurrentRound() : 0;
+
+        // 恢复：把已完成的早期轮次静默回放到 MessageBus，供 pickNextSpeaker/summarizer 使用
+        for (MultiAgentStep step : session.steps()) {
+            if (!"SUCCESS".equals(step.getStatus()) || AgentStepCheckpointService.TRACE_AGENT_ID.equals(step.getAgentId())) {
+                continue;
+            }
+            if (step.getRound() != null && step.getRound() < round) {
+                bus.broadcast(step.getAgentId(),
+                        MessageBus.ChatMessage.assistant(step.getAgentId(), step.getOutputText()));
+            }
+        }
 
         try {
             while (round < maxRounds && !MultiAgentConstants.STATUS_CANCELLED.equals(run.getStatus())) {
@@ -86,30 +106,44 @@ public class GroupChatCoordinator {
                     throw new MultiAgentRuntime.PauseSignal("HITL 暂停（GroupChat speaker=" + nextAgentId + "）");
                 }
 
-                sse.send(emitter, MultiAgentEvents.AGENT_TURN_START,
-                        "runId", run.getRunId(),
-                        "agentId", speaker.getAgentId(),
-                        "agentName", speaker.getName(),
-                        "round", round);
+                String stepKey = "round:" + round + ":agent:" + speaker.getAgentId();
+                String input = buildGroupChatInput(speaker, run.getUserGoal(), bus.getHistory(nextAgentId));
+                StepDecision decision = checkpointService.begin(session, stepKey, null,
+                        speaker.getAgentId(), speaker.getRole(), round, input);
+                if (decision.skip()) {
+                    AgentInstanceResult restored = restoreResult(decision.step());
+                    bus.broadcast(speaker.getAgentId(),
+                            MessageBus.ChatMessage.assistant(speaker.getAgentId(), restored.getOutput()));
+                    ctx.put(speaker.getAgentId() + ".text", restored.getOutput());
+                } else {
+                    sse.send(emitter, MultiAgentEvents.AGENT_TURN_START,
+                            "runId", run.getRunId(),
+                            "agentId", speaker.getAgentId(),
+                            "agentName", speaker.getName(),
+                            "round", round);
 
-                // 用 bus 里该 agent 的历史拼对话上下文（简化：直接 userGoal 作为输入）
-                AgentInstanceResult result = agentExecutor.execute(
-                        speaker,
-                        buildGroupChatInput(speaker, run.getUserGoal(), bus.getHistory(nextAgentId)),
-                        ctx, emitter);
+                    // 用 bus 里该 agent 的历史拼对话上下文（简化：直接 userGoal 作为输入）
+                    AgentInstanceResult result;
+                    try {
+                        result = agentExecutor.execute(speaker, input, ctx, emitter);
+                        checkpointService.complete(session, decision.step(), result);
+                    } catch (Exception e) {
+                        checkpointService.fail(session, decision.step(), e.getMessage());
+                        throw e;
+                    }
 
-                bus.broadcast(speaker.getAgentId(),
-                        MessageBus.ChatMessage.assistant(speaker.getAgentId(), result.getOutput()));
-                if (approvedOnce) ctx.setVars("hitlApprovedAgent", "");
+                    bus.broadcast(speaker.getAgentId(),
+                            MessageBus.ChatMessage.assistant(speaker.getAgentId(), result.getOutput()));
+                    if (approvedOnce) ctx.setVars("hitlApprovedAgent", "");
 
-                ctx.put(speaker.getAgentId() + ".text", result.getOutput());
-                persistStep(run, speaker, result, round);
+                    ctx.put(speaker.getAgentId() + ".text", result.getOutput());
 
-                sse.send(emitter, MultiAgentEvents.AGENT_TURN_END,
-                        "runId", run.getRunId(),
-                        "agentId", speaker.getAgentId(),
-                        "round", round,
-                        "output", result.getOutput());
+                    sse.send(emitter, MultiAgentEvents.AGENT_TURN_END,
+                            "runId", run.getRunId(),
+                            "agentId", speaker.getAgentId(),
+                            "round", round,
+                            "output", result.getOutput());
+                }
 
                 round++;
                 run.setCurrentRound(round);
@@ -133,9 +167,22 @@ public class GroupChatCoordinator {
                         对话历史摘要：
                         %s
                         """.formatted(buildHistorySummary(bus.getAllHistory()));
-                AgentInstanceResult summaryResult = agentExecutor.execute(
-                        summarizer, summaryInput, ctx, emitter);
-                finalAnswer = summaryResult.getOutput();
+                String summaryKey = "stage:group_summary";
+                StepDecision summaryDecision = checkpointService.begin(session, summaryKey, null,
+                        summarizer.getAgentId(), summarizer.getRole(), round, summaryInput);
+                if (summaryDecision.skip()) {
+                    finalAnswer = summaryDecision.step().getOutputText();
+                } else {
+                    AgentInstanceResult summaryResult;
+                    try {
+                        summaryResult = agentExecutor.execute(summarizer, summaryInput, ctx, emitter);
+                        checkpointService.complete(session, summaryDecision.step(), summaryResult);
+                    } catch (Exception e) {
+                        checkpointService.fail(session, summaryDecision.step(), e.getMessage());
+                        throw e;
+                    }
+                    finalAnswer = summaryResult.getOutput();
+                }
             } else {
                 finalAnswer = extractLastAgentMessage(bus.getAllHistory());
             }
@@ -172,6 +219,13 @@ public class GroupChatCoordinator {
     }
 
     // ==================== 辅助 ====================
+
+    private AgentInstanceResult restoreResult(MultiAgentStep step) {
+        return AgentInstanceResult.builder()
+                .output(step.getOutputText())
+                .thought(step.getThought())
+                .build();
+    }
 
     private String buildGroupChatInput(AgentInstance speaker, String userGoal,
                                         List<MessageBus.ChatMessage> agentHistory) {

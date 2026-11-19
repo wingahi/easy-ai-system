@@ -173,6 +173,8 @@ public class WorkflowEngine {
                 }
                 Map<String, Object> output = new LinkedHashMap<>();
                 output.put("iteration", nextIteration);
+                output.put("shouldBreak", shouldBreak);
+                output.put("handle", shouldBreak ? "done" : "loop");
                 ctx.getNodeOutputs().put(nodeId, output);
                 appendNodeRun(run, node, nextIteration, output, 0L, WorkflowConstants.STATUS_SUCCESS, null);
 
@@ -247,6 +249,12 @@ public class WorkflowEngine {
             }
 
             long duration = System.currentTimeMillis() - t0;
+            // LOOP 首次进入：记录 handle/shouldBreak，供崩溃恢复时判定实际走向
+            if (WorkflowConstants.NODE_LOOP.equals(node.getType())) {
+                boolean breakNow = NodeConfigSupport.intConfig(node, "maxIterations", 3) <= 0;
+                result.getOutput().put("shouldBreak", breakNow);
+                result.getOutput().put("handle", breakNow ? "done" : "loop");
+            }
             ctx.getNodeOutputs().put(node.getId(), result.getOutput());
             Object text = result.getOutput().get("text");
             updateLastOutput(ctx, result.getOutput());
@@ -552,6 +560,8 @@ public class WorkflowEngine {
                 }
                 Map<String, Object> output = new LinkedHashMap<>();
                 output.put("iteration", iteration);
+                output.put("shouldBreak", shouldBreak);
+                output.put("handle", shouldBreak ? "done" : "loop");
                 ctx.getNodeOutputs().put(nodeId, output);
 
                 appendNodeRun(run, node, iteration, output, 0L, "SUCCESS", null);
@@ -616,6 +626,12 @@ public class WorkflowEngine {
             }
 
             long duration = System.currentTimeMillis() - t0;
+            // LOOP 首次进入：记录 handle/shouldBreak，供崩溃恢复时判定实际走向
+            if (WorkflowConstants.NODE_LOOP.equals(node.getType())) {
+                boolean breakNow = NodeConfigSupport.intConfig(node, "maxIterations", 3) <= 0;
+                result.getOutput().put("shouldBreak", breakNow);
+                result.getOutput().put("handle", breakNow ? "done" : "loop");
+            }
             ctx.getNodeOutputs().put(node.getId(), result.getOutput());
             Object text = result.getOutput().get("text");
             updateLastOutput(ctx, result.getOutput());
@@ -882,11 +898,15 @@ public class WorkflowEngine {
         return summary;
     }
 
+    /** 恢复判定依赖的轻量决策字段，摘要/截断时不允许丢弃。 */
+    private static final java.util.Set<String> PROTECTED_OUTPUT_KEYS = java.util.Set.of(
+            "text", "truncated", "originalBytes", "result", "handle", "shouldBreak", "iteration", "maxIterations");
+
     /** 去掉摘要中最后一个非 text 字段；没有可去字段时返回 false。 */
     private boolean removeLastNonTextField(Map<String, Object> summary) {
         String last = null;
         for (String key : summary.keySet()) {
-            if (!"text".equals(key) && !"truncated".equals(key) && !"originalBytes".equals(key)) last = key;
+            if (!PROTECTED_OUTPUT_KEYS.contains(key)) last = key;
         }
         return last != null && summary.remove(last) != null;
     }

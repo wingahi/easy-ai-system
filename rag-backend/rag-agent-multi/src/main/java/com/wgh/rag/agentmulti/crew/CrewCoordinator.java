@@ -16,6 +16,9 @@ import com.wgh.rag.agentmulti.dto.GraphEdge;
 import com.wgh.rag.agentmulti.dto.GraphNode;
 import com.wgh.rag.agentmulti.entity.MultiAgentRun;
 import com.wgh.rag.agentmulti.entity.MultiAgentStep;
+import com.wgh.rag.agentmulti.service.AgentStepCheckpointService;
+import com.wgh.rag.agentmulti.service.AgentStepCheckpointService.CheckpointSession;
+import com.wgh.rag.agentmulti.service.AgentStepCheckpointService.StepDecision;
 import com.wgh.rag.agentmulti.service.MultiAgentService;
 import com.wgh.rag.agentmulti.support.AgentInstanceExecutor;
 import com.wgh.rag.agentmulti.support.AgentResultCardBuilder;
@@ -50,6 +53,7 @@ public class CrewCoordinator {
     private static final int THREAD_POOL_MAX = 8;
 
     private final MultiAgentService service;
+    private final AgentStepCheckpointService checkpointService;
     private final AgentInstanceExecutor agentExecutor;
     private final SseEventSender sse;
     private final ObjectMapper objectMapper;
@@ -59,6 +63,11 @@ public class CrewCoordinator {
 
     public void execute(MultiAgentRun run, List<AgentInstance> agents,
                         MultiAgentContext ctx, SseEmitter emitter) {
+        execute(run, agents, ctx, emitter, checkpointService.open(run.getRunId()));
+    }
+
+    public void execute(MultiAgentRun run, List<AgentInstance> agents,
+                        MultiAgentContext ctx, SseEmitter emitter, CheckpointSession session) {
         String mode = run.getExecutionMode();
         CrewConfig crewCfg = parseCrewConfig(run.getCrewConfigJson());
         DAGGraph graph = crewCfg.graph;
@@ -70,9 +79,9 @@ public class CrewCoordinator {
         }
 
         switch (mode) {
-            case "CREW_SEQUENTIAL" -> runSequential(run, agents, graph, ctx, emitter);
-            case "CREW_HIERARCHICAL" -> runHierarchical(run, agents, crewCfg, ctx, emitter);
-            case "CREW_PARALLEL" -> runParallel(run, agents, graph, ctx, emitter);
+            case "CREW_SEQUENTIAL" -> runSequential(run, agents, graph, ctx, emitter, session);
+            case "CREW_HIERARCHICAL" -> runHierarchical(run, agents, crewCfg, ctx, emitter, session);
+            case "CREW_PARALLEL" -> runParallel(run, agents, graph, ctx, emitter, session);
             default -> throw new IllegalStateException("未知 crew mode: " + mode);
         }
 
@@ -90,7 +99,8 @@ public class CrewCoordinator {
     // ==================== SEQUENTIAL ====================
 
     private void runSequential(MultiAgentRun run, List<AgentInstance> agents,
-                                DAGGraph graph, MultiAgentContext ctx, SseEmitter emitter) {
+                                DAGGraph graph, MultiAgentContext ctx, SseEmitter emitter,
+                                CheckpointSession session) {
         if (graph == null || graph.getNodes() == null || graph.getNodes().isEmpty()) return;
         Map<String, AgentInstance> agentMap = indexAgents(agents);
         Map<String, GraphNode> nodeMap = graph.getNodes().stream()
@@ -108,7 +118,6 @@ public class CrewCoordinator {
             frontier.add(graph.getNodes().get(0).getId());
         }
 
-        int stepIdx = 0;
         while (!frontier.isEmpty()) {
             // 取一个；支持多个 start node
             String nodeId = frontier.remove(0);
@@ -123,13 +132,25 @@ public class CrewCoordinator {
                     continue;
                 }
                 String input = buildNodeInput(node, ctx, run.getUserGoal());
-                AgentInstanceResult result = agentExecutor.execute(agent, input, ctx, emitter);
+                String stepKey = "node:" + nodeId + ":iter:1";
+                StepDecision decision = checkpointService.begin(session, stepKey, nodeId,
+                        agent.getAgentId(), agent.getRole(), null, input);
+                AgentInstanceResult result;
+                if (decision.skip()) {
+                    result = restoreResult(decision.step());
+                } else {
+                    try {
+                        result = agentExecutor.execute(agent, input, ctx, emitter);
+                        checkpointService.complete(session, decision.step(), result);
+                    } catch (Exception e) {
+                        checkpointService.fail(session, decision.step(), e.getMessage());
+                        throw e;
+                    }
+                }
 
                 ctx.put(nodeId + ".text", result.getOutput());
                 ctx.put(agent.getAgentId() + ".text", result.getOutput());
                 ctx.setVars("lastOutput", result.getOutput());
-
-                persistStep(run, agent, node, result, stepIdx++);
             }
 
             // 后继入队（CONDITION 根据 sourceHandle）
@@ -151,7 +172,8 @@ public class CrewCoordinator {
     // ==================== HIERARCHICAL ====================
 
     private void runHierarchical(MultiAgentRun run, List<AgentInstance> agents,
-                                 CrewConfig crewCfg, MultiAgentContext ctx, SseEmitter emitter) {
+                                 CrewConfig crewCfg, MultiAgentContext ctx, SseEmitter emitter,
+                                 CheckpointSession session) {
         Map<String, AgentInstance> agentMap = indexAgents(agents);
         String managerId = crewCfg.managerAgentId != null
                 ? crewCfg.managerAgentId
@@ -175,10 +197,22 @@ public class CrewCoordinator {
                         .map(a -> "- " + a.getName() + " (" + a.getRole() + ") — " + a.getGoal())
                         .collect(Collectors.joining("\n")));
 
-        AgentInstanceResult managerResult = agentExecutor.execute(manager, managerPrompt, ctx, emitter);
+        StepDecision planStep = checkpointService.begin(session, "stage:manager_plan", null,
+                manager.getAgentId(), manager.getRole(), null, managerPrompt);
+        AgentInstanceResult managerResult;
+        if (planStep.skip()) {
+            managerResult = restoreResult(planStep.step());
+        } else {
+            try {
+                managerResult = agentExecutor.execute(manager, managerPrompt, ctx, emitter);
+                checkpointService.complete(session, planStep.step(), managerResult);
+            } catch (Exception e) {
+                checkpointService.fail(session, planStep.step(), e.getMessage());
+                throw e;
+            }
+        }
         ctx.put(manager.getAgentId() + ".text", managerResult.getOutput());
         ctx.blackboard().put("plan.manager", managerResult.getOutput());
-        persistStep(run, manager, null, managerResult, 0);
 
         // Workers 执行（串行 + 并行可选 —— 这里默认并行，数量少直接顺序执行也可）
         final AgentInstance finalManager = manager;
@@ -186,7 +220,6 @@ public class CrewCoordinator {
                 .filter(a -> !a.getAgentId().equals(finalManager.getAgentId()))
                 .collect(Collectors.toList());
 
-        AtomicInteger idx = new AtomicInteger(1);
         List<AgentResultCard> workerCards = new ArrayList<>();
         for (AgentInstance worker : workers) {
             String input = """
@@ -195,14 +228,29 @@ public class CrewCoordinator {
 
                     用户目标：%s
                     """.formatted(truncate(managerResult.getOutput()), run.getUserGoal());
-            AgentInstanceResult r = agentExecutor.execute(worker, input, ctx, emitter);
+            String stepKey = "worker:" + worker.getAgentId();
+            StepDecision decision = checkpointService.begin(session, stepKey, null,
+                    worker.getAgentId(), worker.getRole(), null, input);
+            AgentInstanceResult r;
+            if (decision.skip()) {
+                r = restoreResult(decision.step());
+                Object restoredCard = ctx.blackboard().get("card." + worker.getAgentId()).orElse(null);
+                if (restoredCard instanceof AgentResultCard card) workerCards.add(card);
+            } else {
+                try {
+                    r = agentExecutor.execute(worker, input, ctx, emitter);
+                    checkpointService.complete(session, decision.step(), r);
+                } catch (Exception e) {
+                    checkpointService.fail(session, decision.step(), e.getMessage());
+                    throw e;
+                }
+            }
             ctx.put(worker.getAgentId() + ".text", r.getOutput());
             if (r.getCard() != null) {
                 workerCards.add(r.getCard());
                 ctx.blackboard().put("card." + worker.getAgentId(), r.getCard());
                 ctx.put(worker.getAgentId() + ".card", AgentResultCardBuilder.format(r.getCard()));
             }
-            persistStep(run, worker, null, r, idx.getAndIncrement());
         }
 
         // Manager 汇总
@@ -218,10 +266,22 @@ public class CrewCoordinator {
                 AgentResultCardBuilder.merge(cardsFromBlackboard(ctx, workerCards),
                         contextProperties.getSummaryMaxTokens()));
 
-        AgentInstanceResult finalResult = agentExecutor.execute(manager, summaryPrompt, ctx, emitter);
+        StepDecision summaryStep = checkpointService.begin(session, "stage:manager_summary", null,
+                manager.getAgentId(), manager.getRole(), null, summaryPrompt);
+        AgentInstanceResult finalResult;
+        if (summaryStep.skip()) {
+            finalResult = restoreResult(summaryStep.step());
+        } else {
+            try {
+                finalResult = agentExecutor.execute(manager, summaryPrompt, ctx, emitter);
+                checkpointService.complete(session, summaryStep.step(), finalResult);
+            } catch (Exception e) {
+                checkpointService.fail(session, summaryStep.step(), e.getMessage());
+                throw e;
+            }
+        }
         ctx.put(manager.getAgentId() + ".summary", finalResult.getOutput());
         run.setOutputText(finalResult.getOutput());
-        persistStep(run, manager, null, finalResult, idx.get());
     }
 
     // ==================== PARALLEL ====================
@@ -236,7 +296,8 @@ public class CrewCoordinator {
     }
 
     private void runParallel(MultiAgentRun run, List<AgentInstance> agents,
-                              DAGGraph graph, MultiAgentContext ctx, SseEmitter emitter) {
+                              DAGGraph graph, MultiAgentContext ctx, SseEmitter emitter,
+                              CheckpointSession session) {
         if (graph == null || graph.getNodes() == null || graph.getNodes().isEmpty()) return;
 
         Map<String, AgentInstance> agentMap = indexAgents(agents);
@@ -267,7 +328,6 @@ public class CrewCoordinator {
             outEdges.computeIfAbsent(edge.getSource(), k -> new ArrayList<>()).add(edge);
         }
 
-        AtomicInteger stepIdx = new AtomicInteger(0);
         Set<String> submitted = ConcurrentHashMap.newKeySet();
 
         ThreadPoolExecutor executor = new ThreadPoolExecutor(
@@ -297,7 +357,7 @@ public class CrewCoordinator {
                     if (!submitted.add(nodeId)) continue;
 
                     executor.submit(() -> executeParallelNode(run, agents, ctx, emitter,
-                            agentMap, nodeMap, outEdges, nodeId, pendingIn, frontier, submitted, stepIdx));
+                            agentMap, nodeMap, outEdges, nodeId, pendingIn, frontier, submitted, session));
                 }
             } catch (Throwable t) {
                 log.error("Crew Parallel dispatcher 异常", t);
@@ -321,7 +381,7 @@ public class CrewCoordinator {
                                       String nodeId,
                                       Map<String, Integer> pendingIn,
                                       Deque<String> frontier, Set<String> submitted,
-                                      AtomicInteger stepIdx) {
+                                      CheckpointSession session) {
         try {
             GraphNode node = nodeMap.get(nodeId);
             if (node == null) return;
@@ -329,10 +389,23 @@ public class CrewCoordinator {
                 AgentInstance agent = agentMap.get(node.getAgentId());
                 if (agent != null) {
                     String input = buildNodeInput(node, ctx, run.getUserGoal());
-                    AgentInstanceResult result = agentExecutor.execute(agent, input, ctx, emitter);
+                    String stepKey = "node:" + nodeId + ":iter:1";
+                    StepDecision decision = checkpointService.begin(session, stepKey, nodeId,
+                            agent.getAgentId(), agent.getRole(), null, input);
+                    AgentInstanceResult result;
+                    if (decision.skip()) {
+                        result = restoreResult(decision.step());
+                    } else {
+                        try {
+                            result = agentExecutor.execute(agent, input, ctx, emitter);
+                            checkpointService.complete(session, decision.step(), result);
+                        } catch (Exception e) {
+                            checkpointService.fail(session, decision.step(), e.getMessage());
+                            throw e;
+                        }
+                    }
                     ctx.put(nodeId + ".text", result.getOutput());
                     ctx.put(agent.getAgentId() + ".text", result.getOutput());
-                    persistStep(run, agent, node, result, stepIdx.getAndIncrement());
                 }
             }
 
@@ -349,6 +422,13 @@ public class CrewCoordinator {
         } finally {
             submitted.remove(nodeId);
         }
+    }
+
+    private AgentInstanceResult restoreResult(MultiAgentStep step) {
+        return AgentInstanceResult.builder()
+                .output(step.getOutputText())
+                .thought(step.getThought())
+                .build();
     }
 
     // ==================== 收尾 ====================

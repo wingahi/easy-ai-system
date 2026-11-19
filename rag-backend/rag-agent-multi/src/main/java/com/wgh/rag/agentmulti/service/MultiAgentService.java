@@ -124,7 +124,9 @@ public class MultiAgentService {
 
     public Map<String, Object> getRunState(String runId) {
         MultiAgentRun run = loadRun(runId);
-        List<MultiAgentStep> steps = listSteps(runId);
+        List<MultiAgentStep> steps = listSteps(runId).stream()
+                .filter(s -> !AgentStepCheckpointService.TRACE_AGENT_ID.equals(s.getAgentId()))
+                .toList();
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("run", run);
         result.put("steps", steps);

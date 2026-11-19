@@ -5,6 +5,9 @@ import com.wgh.rag.agentmulti.context.MultiAgentContext;
 import com.wgh.rag.agentmulti.dto.AgentInstance;
 import com.wgh.rag.agentmulti.dto.AgentInstanceResult;
 import com.wgh.rag.agentmulti.entity.MultiAgentRun;
+import com.wgh.rag.agentmulti.entity.MultiAgentStep;
+import com.wgh.rag.agentmulti.service.AgentStepCheckpointService;
+import com.wgh.rag.agentmulti.service.AgentStepCheckpointService.StepDecision;
 import com.wgh.rag.agentmulti.service.MultiAgentService;
 import com.wgh.rag.agentmulti.support.AgentInstanceExecutor;
 import com.wgh.rag.agentmulti.support.SseEventSender;
@@ -39,6 +42,8 @@ class CrewCoordinatorLinearFallbackTest {
     @Mock
     private MultiAgentService service;
     @Mock
+    private AgentStepCheckpointService checkpointService;
+    @Mock
     private AgentInstanceExecutor agentExecutor;
     @Mock
     private SseEventSender sse;
@@ -51,9 +56,11 @@ class CrewCoordinatorLinearFallbackTest {
 
     @BeforeEach
     void setUp() {
-        coordinator = new CrewCoordinator(service, agentExecutor, sse,
+        coordinator = new CrewCoordinator(service, checkpointService, agentExecutor, sse,
                 new ObjectMapper(), conditionEvaluator, variableResolver,
                 new com.wgh.rag.agentmulti.config.MultiAgentContextProperties());
+        when(checkpointService.begin(any(), any(), any(), any(), any(), any(), any()))
+                .thenAnswer(inv -> new StepDecision(new MultiAgentStep(), false));
     }
 
     private MultiAgentRun newRun(String agentsJson) {
@@ -93,7 +100,7 @@ class CrewCoordinatorLinearFallbackTest {
         verify(sse).send(eq(null), eq("multi_agent_complete"), any(Object[].class));
     }
 
-    /** 无 graph：每步结果持久化（run_id 写入步骤，依赖 VARCHAR run_id 列） */
+    /** 无 graph：每步结果通过检查点服务持久化（begin + complete），不再走 service.insertStep */
     @Test
     void execute_emptyGraph_persistsEachStep() {
         String agentsJson = "[{\"agentId\":\"a\",\"name\":\"A\"},{\"agentId\":\"b\",\"name\":\"B\"}]";
@@ -105,6 +112,8 @@ class CrewCoordinatorLinearFallbackTest {
 
         coordinator.execute(run, agents, new MultiAgentContext(new ObjectMapper()), null);
 
-        verify(service, times(2)).insertStep(any());
+        verify(checkpointService, times(2)).begin(any(), any(), any(), any(), any(), any(), any());
+        verify(checkpointService, times(2)).complete(any(), any(), any());
+        verify(service, times(0)).insertStep(any());
     }
 }
