@@ -18,6 +18,7 @@
 | [agent/multi-agent-detail-design.md](design/features/agent/multi-agent-detail-design.md) | 多 Agent 详细设计 | 2026-10-28 |
 | [workflow/workflow-design.md](design/features/workflow/workflow-design.md) | 工作流引擎、节点执行器与模板市场 | 2026-10-28 |
 | [rag-retrieval/design-rag-retrieval-enhancement.md](design/features/rag-retrieval/design-rag-retrieval-enhancement.md) | 混合检索、重排、查询变换与语义缓存 | 2026-11-02 |
+| [chat/design-rag-chat-refactoring.md](design/features/chat/design-rag-chat-refactoring.md) | rag-chat 重构设计：复杂度热点、模式选型、步骤链与终态执行器、service 分包与行为不变式 | 2026-11-20 |
 | [context-management/design-long-task-context-and-tool-fallback.md](design/features/context-management/design-long-task-context-and-tool-fallback.md) | 长任务上下文管理（预算/压缩/记忆/缓存布局）与工具调用兜底链设计 | 2026-11-18 |
 | [knowledge-base/design-document-formats.md](design/features/knowledge-base/design-document-formats.md) | 文档解析格式支持范围与解析链路 | 2026-11-02 |
 | [storage/design-file-storage.md](design/features/storage/design-file-storage.md) | 文件存储抽象：本地与阿里云 OSS | 2026-11-03 |
@@ -30,6 +31,7 @@
 | [platform/design-multi-tenancy-isolation-roadmap.md](design/features/platform/design-multi-tenancy-isolation-roadmap.md) | 多租户隔离落地规划：阶段 0–4 排期、跨块接口与负向测试矩阵 | 2026-11-19 |
 | [platform/design-vector-store-and-search-engine.md](design/features/platform/design-vector-store-and-search-engine.md) | 独立向量数据库 / 搜索引擎规划：现状评估、端口化、V0–V3 路径与切换方案 | 2026-11-19 |
 | [platform/design-kubernetes-orchestration.md](design/features/platform/design-kubernetes-orchestration.md) | Kubernetes 级编排规划：现状差距、目标拓扑、K0–K3 路径与验收 | 2026-11-19 |
+| [platform/design-module-partition-and-dependency-boundaries.md](design/features/platform/design-module-partition-and-dependency-boundaries.md) | 模块职责重划分与依赖边界：依赖矩阵、调度中心切入阻碍、目标划分（P0–P4）与 `rag-chat` 合流门 | 2026-11-20 |
 
 ## design/refactoring/ — 重构记录
 
