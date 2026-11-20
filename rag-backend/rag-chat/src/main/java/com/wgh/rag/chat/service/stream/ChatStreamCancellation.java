@@ -1,5 +1,6 @@
-package com.wgh.rag.chat.service;
+package com.wgh.rag.chat.service.stream;
 
+import com.wgh.rag.chat.service.ChatCancellationStore;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -19,7 +20,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * 写入共享存储而误伤同一会话的下一次生成。轮询默认 500ms，对 Redis 压力可忽略。</p>
  */
 @Slf4j
-final class ChatStreamCancellation {
+public final class ChatStreamCancellation {
 
     /** 共享取消标记轮询间隔：兼顾取消延迟与 Redis 压力 */
     private static final long SHARED_POLL_INTERVAL_MILLIS = 500L;
@@ -32,11 +33,11 @@ final class ChatStreamCancellation {
     private volatile Runnable cancelHook;
     private volatile long nextSharedCheckAt;
 
-    ChatStreamCancellation() {
+    public ChatStreamCancellation() {
         this(null, null);
     }
 
-    ChatStreamCancellation(String sharedKey, ChatCancellationStore sharedStore) {
+    public ChatStreamCancellation(String sharedKey, ChatCancellationStore sharedStore) {
         this.sharedKey = sharedKey;
         this.sharedStore = sharedStore;
         if (sharedStore != null && sharedKey != null) {
@@ -45,7 +46,7 @@ final class ChatStreamCancellation {
         }
     }
 
-    boolean isCancelled() {
+    public boolean isCancelled() {
         if (cancelled.get()) {
             return true;
         }
@@ -57,7 +58,7 @@ final class ChatStreamCancellation {
      * 注册取消终态回调（绑定当前模型尝试，用于持久化已生成的部分内容）。
      * 若注册前已取消，则立即执行一次。
      */
-    void onCancel(Runnable hook) {
+    public void onCancel(Runnable hook) {
         this.cancelHook = hook;
         if (cancelled.get()) {
             runHookOnce();
@@ -67,7 +68,7 @@ final class ChatStreamCancellation {
     /**
      * 触发取消：置位后执行终态落库，并保证只执行一次。
      */
-    void cancel() {
+    public void cancel() {
         cancel("client-disconnect");
     }
 
@@ -76,7 +77,7 @@ final class ChatStreamCancellation {
      * <p>只有 {@code explicit} 才写入共享标记：正常完成/断连也会触发本地取消，
      * 若写入 Redis 会误伤同一会话的下一次生成。</p>
      */
-    void cancel(String source) {
+    public void cancel(String source) {
         cancelled.set(true);
         if ("explicit".equals(source) && sharedStore != null && sharedKey != null) {
             boolean shared = sharedStore.cancel(sharedKey, source);
@@ -92,7 +93,7 @@ final class ChatStreamCancellation {
      *
      * @return true 表示本次是首个终态，调用方可以落库；false 表示已由取消路径处理
      */
-    boolean markFinalized() {
+    public boolean markFinalized() {
         return finalized.compareAndSet(false, true);
     }
 

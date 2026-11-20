@@ -2,11 +2,11 @@ package com.wgh.rag.chat.service;
 
 import com.wgh.rag.chat.constant.ChatConstants;
 import com.wgh.rag.chat.constant.ChatEvents;
-import com.wgh.rag.chat.entity.ChatMessage;
 import com.wgh.rag.chat.entity.ChatSession;
 import com.wgh.rag.chat.entity.ChatWindow;
-import com.wgh.rag.chat.mapper.ChatMessageMapper;
-import com.wgh.rag.chat.mapper.ChatSessionMapper;
+import com.wgh.rag.chat.service.session.ChatMessageStore;
+import com.wgh.rag.chat.service.session.ChatSessionStore;
+import com.wgh.rag.chat.service.stream.ChatSsePublisher;
 import com.wgh.rag.common.exception.BusinessException;
 import com.wgh.rag.workflow.constant.WorkflowEvents;
 import com.wgh.rag.workflow.entity.WorkflowRun;
@@ -33,8 +33,8 @@ public class ChatWorkflowService {
     private static final long SSE_TIMEOUT_MS = ChatConstants.SSE_TIMEOUT_MS;
 
     private final WorkflowService workflowService;
-    private final ChatMessageMapper messageMapper;
-    private final ChatSessionMapper sessionMapper;
+    private final ChatMessageStore messageStore;
+    private final ChatSessionStore sessionStore;
 
     /**
      * 聊天窗口触发工作流：复用当前请求的 SSE 通道，每条用户消息运行一次完整工作流。
@@ -54,7 +54,7 @@ public class ChatWorkflowService {
         if (sessionId != null && !sessionId.equals(run.getSessionId())) {
             throw new BusinessException("工作流运行不属于当前会话");
         }
-        ChatSession session = sessionId != null ? sessionMapper.selectById(sessionId) : null;
+        ChatSession session = sessionStore.findById(sessionId);
 
         SseEmitter emitter = new SseEmitter(SSE_TIMEOUT_MS);
         StreamContext ctx = new StreamContext(emitter, session, new AtomicBoolean(false));
@@ -108,7 +108,7 @@ public class ChatWorkflowService {
             output = "工作流执行完成，但没有产出文本内容。";
         }
         if (ctx.session != null) {
-            saveAssistantMessage(ctx.session, output);
+            messageStore.saveWorkflowMessage(ctx.session, output);
         } else {
             log.warn("工作流完成但会话缺失，跳过 assistant 消息落库: runId={}", payload.get("runId"));
         }
@@ -123,38 +123,12 @@ public class ChatWorkflowService {
         safeComplete(ctx.emitter);
     }
 
-    private void saveAssistantMessage(ChatSession session, String content) {
-        try {
-            ChatMessage msg = new ChatMessage();
-            msg.setSessionId(session.getId());
-            msg.setRole(ChatConstants.ROLE_ASSISTANT);
-            msg.setContent(content);
-            msg.setMessageType(ChatConstants.MESSAGE_TYPE_TEXT);
-            messageMapper.insert(msg);
-
-            ChatSession update = new ChatSession();
-            update.setId(session.getId());
-            update.setMessageCount(session.getMessageCount() != null ? session.getMessageCount() + 2 : 2);
-            sessionMapper.updateById(update);
-        } catch (Exception e) {
-            log.error("保存工作流 assistant 消息失败: session={}", session.getId(), e);
-        }
-    }
-
     private void safeSend(SseEmitter emitter, String eventName, Object data) {
-        try {
-            emitter.send(SseEmitter.event().name(eventName).data(data));
-        } catch (Exception e) {
-            log.warn("工作流 SSE 下发失败（客户端可能已断开）: event={}, reason={}", eventName, e.getMessage());
-        }
+        ChatSsePublisher.sendQuietly(emitter, eventName, data);
     }
 
     private void safeComplete(SseEmitter emitter) {
-        try {
-            emitter.complete();
-        } catch (Exception e) {
-            log.warn("工作流 SSE 关闭失败: {}", e.getMessage());
-        }
+        ChatSsePublisher.completeQuietly(emitter);
     }
 
     /** 单次运行的事件流上下文（终态只处理一次） */

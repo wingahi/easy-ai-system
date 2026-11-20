@@ -1,7 +1,7 @@
 package com.wgh.rag.chat.compression;
 
 import com.wgh.rag.chat.mapper.ChatSessionMapper;
-import com.wgh.rag.chat.service.ContextCompressionService;
+import com.wgh.rag.chat.service.prompt.ContextCompressionService;
 import com.wgh.rag.config.property.RagProperties;
 import com.wgh.rag.llm.entity.LlmModel;
 import com.wgh.rag.llm.factory.ModelCacheManager;

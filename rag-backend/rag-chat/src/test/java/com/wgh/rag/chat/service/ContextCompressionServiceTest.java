@@ -3,6 +3,7 @@ package com.wgh.rag.chat.service;
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.wgh.rag.chat.entity.ChatSession;
 import com.wgh.rag.chat.mapper.ChatSessionMapper;
+import com.wgh.rag.chat.service.prompt.ContextCompressionService;
 import com.wgh.rag.config.property.RagProperties;
 import com.wgh.rag.llm.entity.LlmModel;
 import com.wgh.rag.llm.factory.ModelCacheManager;

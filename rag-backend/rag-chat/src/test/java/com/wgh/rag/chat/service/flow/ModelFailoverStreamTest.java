@@ -1,4 +1,4 @@
-package com.wgh.rag.chat.service;
+package com.wgh.rag.chat.service.flow;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wgh.rag.agent.config.AgentProperties;
@@ -12,6 +12,16 @@ import com.wgh.rag.chat.evaluation.LlmJudgeService;
 import com.wgh.rag.chat.mapper.ChatMessageMapper;
 import com.wgh.rag.chat.mapper.ChatSessionMapper;
 import com.wgh.rag.chat.mapper.ChatWindowMapper;
+import com.wgh.rag.chat.service.ChatCancellationStore;
+import com.wgh.rag.chat.service.ChatImageService;
+import com.wgh.rag.chat.service.ChatWorkflowService;
+import com.wgh.rag.chat.service.PromptTemplateService;
+import com.wgh.rag.chat.service.cost.ChatCostSettler;
+import com.wgh.rag.chat.service.evaluation.ChatEvaluationService;
+import com.wgh.rag.chat.service.prompt.ChatContextBudgetService;
+import com.wgh.rag.chat.service.prompt.ContextCompressionService;
+import com.wgh.rag.chat.service.session.ChatMessageStore;
+import com.wgh.rag.chat.service.stream.ChatStreamCancellation;
 import com.wgh.rag.config.property.RagProperties;
 import com.wgh.rag.kb.mapper.KnowledgeBaseMapper;
 import com.wgh.rag.kb.service.RagRetrieveService;
@@ -90,24 +100,27 @@ class ModelFailoverStreamTest {
     @Mock private ModelRouter modelRouter;
     @Mock private RagMetrics metrics;
 
-    private RagChatService service;
+    private ChatAnswerStreamer streamer;
     private ChatSession session;
     private ChatWindow window;
 
     @BeforeEach
     void setUp() {
-        service = new RagChatService(
-                windowMapper, sessionMapper, messageMapper, ragRetrieveService, modelCacheManager,
-                ragProperties, objectMapper, contextCompressionService, llmJudgeService,
-                judgeModelSelector, toolExecutionEngine,
-                org.mockito.Mockito.mock(com.wgh.rag.tool.fallback.ToolInvoker.class), toolConfigService,
-                agentOrchestrator,
-                agentProperties, chatWorkflowService, quotaService, modelPriceService,
-                llmModelService, semanticCacheService,
-                org.mockito.Mockito.mock(com.wgh.rag.kb.service.AgentMemoryService.class),
-                chatImageService, promptTemplateService,
-                knowledgeBaseMapper, modelRouter, metrics,
-                org.mockito.Mockito.mock(ChatCancellationStore.class));
+        ChatMessageStore messageStore = new ChatMessageStore(messageMapper, sessionMapper, objectMapper,
+                org.mockito.Mockito.mock(com.wgh.rag.kb.service.AgentMemoryService.class));
+        ChatCostSettler costSettler = new ChatCostSettler(modelRouter, modelPriceService, quotaService,
+                messageMapper, metrics);
+        ChatEvaluationService evaluationService = new ChatEvaluationService(llmJudgeService, judgeModelSelector,
+                objectMapper, messageMapper);
+        streamer = new ChatAnswerStreamer(
+                modelCacheManager,
+                org.mockito.Mockito.mock(com.wgh.rag.tool.fallback.ToolInvoker.class),
+                messageStore,
+                costSettler,
+                evaluationService,
+                org.mockito.Mockito.mock(ChatContextBudgetService.class),
+                semanticCacheService,
+                metrics);
         session = org.mockito.Mockito.mock(ChatSession.class);
         window = org.mockito.Mockito.mock(ChatWindow.class);
     }
@@ -125,7 +138,7 @@ class ModelFailoverStreamTest {
         AtomicReference<LlmModel> actualModel = new AtomicReference<>();
         List<LlmModel> switched = new ArrayList<>();
 
-        service.startAttempt(context(List.of(primary, backup), emitter, actualModel, switched), 0);
+        streamer.start(context(List.of(primary, backup), emitter, actualModel, switched), 0);
 
         assertThat(actualModel.get()).isEqualTo(backup);
         assertThat(switched).containsExactly(backup);
@@ -150,7 +163,7 @@ class ModelFailoverStreamTest {
         AtomicReference<LlmModel> actualModel = new AtomicReference<>();
         List<LlmModel> switched = new ArrayList<>();
 
-        service.startAttempt(context(List.of(primary, backup), emitter, actualModel, switched), 0);
+        streamer.start(context(List.of(primary, backup), emitter, actualModel, switched), 0);
 
         assertThat(emitter.eventsOf("content")).isEmpty();
         assertThat(emitter.eventsOf("done")).isEmpty();
@@ -181,7 +194,7 @@ class ModelFailoverStreamTest {
         AtomicReference<LlmModel> actualModel = new AtomicReference<>();
         List<LlmModel> switched = new ArrayList<>();
 
-        service.startAttempt(context(List.of(primary, backup), emitter, actualModel, switched), 0);
+        streamer.start(context(List.of(primary, backup), emitter, actualModel, switched), 0);
 
         assertThat(switched).isEmpty();
         assertThat(actualModel.get()).isEqualTo(primary);
@@ -211,7 +224,7 @@ class ModelFailoverStreamTest {
         AtomicReference<LlmModel> actualModel = new AtomicReference<>();
         List<LlmModel> switched = new ArrayList<>();
 
-        service.startAttempt(context(List.of(primary, backup), emitter, actualModel, switched), 0);
+        streamer.start(context(List.of(primary, backup), emitter, actualModel, switched), 0);
 
         assertThat(switched).containsExactly(backup);
         assertThat(emitter.eventsOf("done")).hasSize(1);
@@ -239,7 +252,7 @@ class ModelFailoverStreamTest {
         List<LlmModel> switched = new ArrayList<>();
         ChatStreamCancellation cancellation = new ChatStreamCancellation();
 
-        service.startAttempt(context(List.of(primary), emitter, actualModel, switched, cancellation), 0);
+        streamer.start(context(List.of(primary), emitter, actualModel, switched, cancellation), 0);
 
         assertThat(cancellation.isCancelled()).isTrue();
         assertThat(emitter.textOf("content")).containsExactly("第一段");
@@ -273,7 +286,7 @@ class ModelFailoverStreamTest {
         AtomicReference<LlmModel> actualModel = new AtomicReference<>();
         List<LlmModel> switched = new ArrayList<>();
 
-        service.startAttempt(context(List.of(primary), emitter, actualModel, switched, cancellation), 0);
+        streamer.start(context(List.of(primary), emitter, actualModel, switched, cancellation), 0);
 
         assertThat(emitter.textOf("content")).containsExactly("A");
         assertThat(emitter.eventsOf("done")).isEmpty();
@@ -294,7 +307,7 @@ class ModelFailoverStreamTest {
         AtomicReference<LlmModel> actualModel = new AtomicReference<>();
         List<LlmModel> switched = new ArrayList<>();
 
-        service.startAttempt(context(List.of(primary), emitter, actualModel, switched), 0);
+        streamer.start(context(List.of(primary), emitter, actualModel, switched), 0);
 
         assertThat(emitter.eventsOf("done")).hasSize(1);
         com.wgh.rag.chat.entity.ChatMessage saved = captureInsertedMessage();
@@ -312,43 +325,45 @@ class ModelFailoverStreamTest {
 
     // ==================== 辅助方法 ====================
 
-    private RagChatService.FailoverContext context(List<LlmModel> chain, SseEmitter emitter,
-                                                   AtomicReference<LlmModel> actualModel,
-                                                   List<LlmModel> switched) {
+    private ChatTurnContext context(List<LlmModel> chain, SseEmitter emitter,
+                                    AtomicReference<LlmModel> actualModel,
+                                    List<LlmModel> switched) {
         return context(chain, emitter, actualModel, switched, new ChatStreamCancellation());
     }
 
-    private RagChatService.FailoverContext context(List<LlmModel> chain, SseEmitter emitter,
-                                                   AtomicReference<LlmModel> actualModel,
-                                                   List<LlmModel> switched,
-                                                   ChatStreamCancellation cancellation) {
-        return new RagChatService.FailoverContext(
-                chain,
-                ChatRequest.builder().messages(new ArrayList<>(List.of(UserMessage.from("hi")))).build(),
-                List.of(),
-                new ArrayList<>(List.of(UserMessage.from("hi"))),
-                emitter,
-                List.of(),
-                null,
-                EvaluationScheme.NONE,
-                session,
-                window,
-                "hi",
-                new int[]{0},
-                5,
-                Map.of(),
-                1L,
-                new long[]{0L, 0L},
-                "tester",
-                actualModel,
-                (m, reason) -> {
-                    switched.add(m);
-                    actualModel.set(m);
-                },
-                new RagChatService.ChatMetricContext(new AtomicReference<>("rag"),
-                        new AtomicBoolean(false), System.nanoTime()),
-                cancellation,
-                new com.wgh.rag.tool.fallback.ToolTaskBudget(50, 120_000));
+    private ChatTurnContext context(List<LlmModel> chain, SseEmitter emitter,
+                                    AtomicReference<LlmModel> actualModel,
+                                    List<LlmModel> switched,
+                                    ChatStreamCancellation cancellation) {
+        ChatTurnContext ctx = ChatTurnContext.builder()
+                .window(window)
+                .session(session)
+                .userMessage("hi")
+                .emitter(emitter)
+                .shareMode(false)
+                .quotaUsername("tester")
+                .imageUrls(List.of())
+                .metricCtx(new ChatMetricContext(new AtomicReference<>("rag"),
+                        new AtomicBoolean(false), System.nanoTime()))
+                .cancellation(cancellation)
+                .build();
+        ctx.kbIds = List.of();
+        ctx.modelChain = chain;
+        ctx.request = ChatRequest.builder()
+                .messages(new ArrayList<>(List.of(UserMessage.from("hi")))).build();
+        ctx.toolSpecs = List.of();
+        ctx.messages = new ArrayList<>(List.of(UserMessage.from("hi")));
+        ctx.retrievedMatches = List.of();
+        ctx.evaluationScheme = EvaluationScheme.NONE;
+        ctx.maxToolRounds = 5;
+        ctx.toolRegistry = Map.of();
+        ctx.actualModel = actualModel;
+        ctx.onModelSwitch = (m, reason) -> {
+            switched.add(m);
+            actualModel.set(m);
+        };
+        ctx.toolBudget = new com.wgh.rag.tool.fallback.ToolTaskBudget(50, 120_000);
+        return ctx;
     }
 
     private static LlmModel model(long id, String name) {

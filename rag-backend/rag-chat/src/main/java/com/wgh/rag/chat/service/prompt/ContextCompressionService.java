@@ -1,4 +1,4 @@
-package com.wgh.rag.chat.service;
+package com.wgh.rag.chat.service.prompt;
 
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.wgh.rag.chat.compression.CompressionContext;

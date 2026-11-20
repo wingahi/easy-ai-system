@@ -1,6 +1,6 @@
 package com.wgh.rag.chat;
 
-import com.wgh.rag.chat.service.ContextCompressionService;
+import com.wgh.rag.chat.service.prompt.ContextCompressionService;
 import dev.langchain4j.data.message.*;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
