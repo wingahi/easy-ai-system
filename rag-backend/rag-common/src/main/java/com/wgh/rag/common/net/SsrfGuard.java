@@ -1,4 +1,4 @@
-package com.wgh.rag.tool.security;
+package com.wgh.rag.common.net;
 
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -27,7 +27,9 @@ import java.util.Set;
  *   （{@code wgh.tool.ssrf.allow-private-network}，仅限内网集成场景，开启即承担风险）。</li>
  * </ol>
  *
- * <p>重定向与响应大小上限由调用方（{@link com.wgh.rag.tool.executor.HttpToolExecutor}）按本组件配置逐跳执行。
+ * <p>重定向与响应大小上限由调用方（如 HTTP 工具执行器、URL 数据源抓取连接器）按本组件配置逐跳执行。
+ *
+ * <p>配置键前缀保留 {@code wgh.tool.ssrf.*}（历史契约），迁入 rag-common 后不改配置名以免影响现有部署。
  */
 @Slf4j
 @Component

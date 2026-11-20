@@ -1,8 +1,8 @@
 package com.wgh.rag.kb.connector;
 
 import com.sun.net.httpserver.HttpServer;
-import com.wgh.rag.tool.security.SsrfBlockedException;
-import com.wgh.rag.tool.security.SsrfGuard;
+import com.wgh.rag.common.net.SsrfBlockedException;
+import com.wgh.rag.common.net.SsrfGuard;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;

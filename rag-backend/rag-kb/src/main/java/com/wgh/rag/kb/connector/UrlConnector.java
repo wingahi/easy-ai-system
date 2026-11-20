@@ -1,7 +1,7 @@
 package com.wgh.rag.kb.connector;
 
-import com.wgh.rag.tool.security.SsrfBlockedException;
-import com.wgh.rag.tool.security.SsrfGuard;
+import com.wgh.rag.common.net.SsrfBlockedException;
+import com.wgh.rag.common.net.SsrfGuard;
 import lombok.extern.slf4j.Slf4j;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;

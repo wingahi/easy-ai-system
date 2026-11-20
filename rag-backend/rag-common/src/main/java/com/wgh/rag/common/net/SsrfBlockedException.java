@@ -1,4 +1,4 @@
-package com.wgh.rag.tool.security;
+package com.wgh.rag.common.net;
 
 /**
  * SSRF 防护校验失败异常（协议/主机/IP/重定向/解析不通过）。

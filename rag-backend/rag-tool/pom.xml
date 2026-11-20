@@ -14,9 +14,10 @@
     <description>工具管理模块 - ToolConfig / MCP / Function Calling 等扩展工具配置</description>
 
     <dependencies>
+        <!-- SsrfGuard 已下沉到 rag-common.net，工具执行器与连接器共用 -->
         <dependency>
             <groupId>com.wgh</groupId>
-            <artifactId>rag-context</artifactId>
+            <artifactId>rag-common</artifactId>
         </dependency>
         <dependency>
             <groupId>com.wgh</groupId>
@@ -40,10 +41,6 @@
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>
             <optional>true</optional>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-web</artifactId>
         </dependency>
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
@@ -76,6 +73,38 @@
 
     <build>
         <plugins>
+            <!-- 依赖方向约束：rag-tool 是领域层纯库，不得依赖 web starter（P1 已删除该声明），
+                 也不得依赖 rag-llm（沿用 SPI 反转）、rag-kb 与任何执行域模块。
+                 「不得 import web 类型」属包级约束，待 P2 后以 ArchUnit 规则表达。 -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>enforce-tool-module-boundary</id>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <bannedDependencies>
+                                    <searchTransitive>false</searchTransitive>
+                                    <excludes>
+                                        <exclude>org.springframework.boot:spring-boot-starter-web</exclude>
+                                        <exclude>com.wgh:rag-llm</exclude>
+                                        <exclude>com.wgh:rag-kb</exclude>
+                                        <exclude>com.wgh:rag-chat</exclude>
+                                        <exclude>com.wgh:rag-agent</exclude>
+                                        <exclude>com.wgh:rag-workflow</exclude>
+                                        <exclude>com.wgh:rag-agent-multi</exclude>
+                                    </excludes>
+                                    <message>依赖方向约束：rag-tool 禁止直接依赖 spring-boot-starter-web / rag-llm / rag-kb / 执行域模块。</message>
+                                </bannedDependencies>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>

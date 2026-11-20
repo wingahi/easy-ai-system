@@ -13,7 +13,7 @@ import com.wgh.rag.kb.mapper.KbConnectorMapper;
 import com.wgh.rag.kb.mapper.KbConnectorRunMapper;
 import com.wgh.rag.kb.service.KnowledgeBaseService;
 import com.wgh.rag.kb.service.KnowledgeFileService;
-import com.wgh.rag.tool.security.SsrfBlockedException;
+import com.wgh.rag.common.net.SsrfBlockedException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;

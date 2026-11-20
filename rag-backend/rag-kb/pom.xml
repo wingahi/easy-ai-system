@@ -16,6 +16,10 @@
     <dependencies>
         <dependency>
             <groupId>com.wgh</groupId>
+            <artifactId>rag-common</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.wgh</groupId>
             <artifactId>rag-data</artifactId>
         </dependency>
         <dependency>
@@ -31,11 +35,7 @@
             <groupId>com.wgh</groupId>
             <artifactId>rag-llm</artifactId>
         </dependency>
-        <!-- URL 数据源抓取复用 rag-tool 的 SsrfGuard（协议/内网/重定向/体积校验） -->
-        <dependency>
-            <groupId>com.wgh</groupId>
-            <artifactId>rag-tool</artifactId>
-        </dependency>
+        <!-- URL 数据源抓取的 SSRF 校验走 rag-common.net.SsrfGuard，不再依赖 rag-tool -->
         <dependency>
             <groupId>dev.langchain4j</groupId>
             <artifactId>langchain4j-pgvector</artifactId>
@@ -110,6 +110,36 @@
 
     <build>
         <plugins>
+            <!-- 依赖方向约束：rag-kb 是领域层，禁止反向依赖执行域（chat / agent / workflow / agent-multi）、
+                 调度层与 rag-tool（SSRF 工具已下沉到 rag-common.net，见 P1）。 -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>enforce-domain-layer-boundary</id>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <bannedDependencies>
+                                    <searchTransitive>false</searchTransitive>
+                                    <excludes>
+                                        <exclude>com.wgh:rag-tool</exclude>
+                                        <exclude>com.wgh:rag-chat</exclude>
+                                        <exclude>com.wgh:rag-agent</exclude>
+                                        <exclude>com.wgh:rag-workflow</exclude>
+                                        <exclude>com.wgh:rag-agent-multi</exclude>
+                                        <exclude>com.wgh:rag-scheduler</exclude>
+                                    </excludes>
+                                    <message>依赖方向约束：rag-kb 禁止直接依赖 rag-tool / rag-chat / rag-agent / rag-workflow / rag-agent-multi / rag-scheduler。</message>
+                                </bannedDependencies>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
             <!-- 测试插件（与 rag-app 保持一致） -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>

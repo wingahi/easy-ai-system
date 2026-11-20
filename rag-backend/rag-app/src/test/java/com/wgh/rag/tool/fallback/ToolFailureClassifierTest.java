@@ -38,7 +38,7 @@ class ToolFailureClassifierTest {
                 .isEqualTo(ToolFailureKind.NETWORK);
         assertThat(ToolFailureClassifier.classify("Error: SsrfBlockedException - blocked"))
                 .isEqualTo(ToolFailureKind.SSRF);
-        assertThat(ToolFailureClassifier.classify("Error: com.wgh.rag.tool.security.SsrfBlockedException - blocked"))
+        assertThat(ToolFailureClassifier.classify("Error: com.wgh.rag.common.net.SsrfBlockedException - blocked"))
                 .isEqualTo(ToolFailureKind.SSRF);
         assertThat(ToolFailureClassifier.classify("Error: IllegalArgumentException - bad arg"))
                 .isEqualTo(ToolFailureKind.BAD_PARAM);

@@ -41,10 +41,6 @@
         </dependency>
         <dependency>
             <groupId>com.wgh</groupId>
-            <artifactId>rag-chat</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>com.wgh</groupId>
             <artifactId>rag-config</artifactId>
         </dependency>
         <dependency>
@@ -101,6 +97,32 @@
 
     <build>
         <plugins>
+            <!-- 依赖方向约束：rag-agent-multi 与 rag-chat 并列，不得反向依赖 rag-chat（历史声明漂移已在 P1 删除），
+                 也不得依赖调度层。 -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>enforce-execution-domain-order</id>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <bannedDependencies>
+                                    <searchTransitive>false</searchTransitive>
+                                    <excludes>
+                                        <exclude>com.wgh:rag-chat</exclude>
+                                        <exclude>com.wgh:rag-scheduler</exclude>
+                                    </excludes>
+                                    <message>依赖方向约束：rag-agent-multi 禁止直接依赖 rag-chat / rag-scheduler。</message>
+                                </bannedDependencies>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
             <!-- 测试插件（与 rag-app 保持一致） -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>

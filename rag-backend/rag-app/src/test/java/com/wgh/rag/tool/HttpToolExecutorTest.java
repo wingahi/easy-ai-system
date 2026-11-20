@@ -4,7 +4,7 @@ import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 import com.wgh.rag.tool.executor.HttpToolExecutor;
-import com.wgh.rag.tool.security.SsrfGuard;
+import com.wgh.rag.common.net.SsrfGuard;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.data.message.ToolExecutionResultMessage;
 import org.junit.jupiter.api.AfterEach;

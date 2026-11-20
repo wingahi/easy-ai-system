@@ -16,10 +16,6 @@
     <dependencies>
         <dependency>
             <groupId>com.wgh</groupId>
-            <artifactId>rag-context</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>com.wgh</groupId>
             <artifactId>rag-config</artifactId>
         </dependency>
         <dependency>
@@ -102,6 +98,35 @@
 
     <build>
         <plugins>
+            <!-- 依赖方向约束：rag-workflow 只允许依赖 rag-agent 及以下模块，禁止依赖 rag-chat /
+                 rag-agent-multi（与之并列或在其上层）与调度层。
+                 注：此处 spring-boot-starter-web 仅因存量 SseEmitter 而保留；「执行域不得依赖 web 类型」
+                 属包级约束，待 P2 改用 ExecutionEventSink 后再以 ArchUnit 规则表达。 -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>enforce-execution-domain-order</id>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <bannedDependencies>
+                                    <searchTransitive>false</searchTransitive>
+                                    <excludes>
+                                        <exclude>com.wgh:rag-chat</exclude>
+                                        <exclude>com.wgh:rag-agent-multi</exclude>
+                                        <exclude>com.wgh:rag-scheduler</exclude>
+                                    </excludes>
+                                    <message>依赖方向约束：rag-workflow 禁止直接依赖 rag-chat / rag-agent-multi / rag-scheduler。</message>
+                                </bannedDependencies>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
             <!-- 测试插件（与 rag-agent-multi 保持一致） -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>

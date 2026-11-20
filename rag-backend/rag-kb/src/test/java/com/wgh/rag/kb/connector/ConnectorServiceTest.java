@@ -7,7 +7,7 @@ import com.wgh.rag.kb.mapper.KbConnectorMapper;
 import com.wgh.rag.kb.mapper.KbConnectorRunMapper;
 import com.wgh.rag.kb.service.KnowledgeBaseService;
 import com.wgh.rag.kb.service.KnowledgeFileService;
-import com.wgh.rag.tool.security.SsrfBlockedException;
+import com.wgh.rag.common.net.SsrfBlockedException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;

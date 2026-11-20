@@ -1,7 +1,7 @@
 package com.wgh.rag.tool;
 
-import com.wgh.rag.tool.security.SsrfBlockedException;
-import com.wgh.rag.tool.security.SsrfGuard;
+import com.wgh.rag.common.net.SsrfBlockedException;
+import com.wgh.rag.common.net.SsrfGuard;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
