@@ -1,8 +1,8 @@
 # 模块职责重划分与依赖边界（面向统一调度中心切入与多实例部署）
 
-> **版本**：v1.1
+> **版本**：v1.3
 > **日期**：2026-11-20
-> **修订**：v1.1 新增 §4.7（`rag-controller` 按业务域分包的结构与分组依据）；v1.0 初稿（模块职责、依赖矩阵、目标划分与 P0–P4）。
+> **修订**：v1.3 记录 P1 依赖净化落地（声明漂移清理、`SsrfGuard` 下沉、Enforcer 规则）并复核两项待办；v1.2 新增 §4.8（P0 `rag-execution` 契约模块落地与命名取舍）；v1.1 新增 §4.7（`rag-controller` 按业务域分包）；v1.0 初稿。
 > **性质**：分析与方案文档。不修改业务代码、不移动包、不改配置、不执行 DDL、不做 git 操作。
 > **范围**：`rag-backend` 下 19 个 Maven 模块的职责、依赖方向、职责重叠，以及为「统一调度中心」切入所需的目标划分与搬迁路径。
 > **复用来源（结论以此为准，本文不重新论证）**：
@@ -17,7 +17,7 @@
 
 ## 0. 结论摘要
 
-1. **编译期无环，但分层只到「层」，没到「次序」**。现有模块图是一张 DAG（无 Maven 环、无模块直接 import `rag-controller`），但「编排层」内部 4 个模块（`rag-chat` / `rag-agent` / `rag-workflow` / `rag-agent-multi`）互相依赖，没有任何声明式的先后次序；同时存在 3 处「声明了依赖却完全没用」的漂移（`rag-chat→rag-context`、`rag-workflow→rag-context`、`rag-agent-multi→rag-chat`）。
+1. **编译期无环，但分层只到「层」，没到「次序」**。现有模块图是一张 DAG（无 Maven 环、无模块直接 import `rag-controller`），但「编排层」内部 4 个模块（`rag-chat` / `rag-agent` / `rag-workflow` / `rag-agent-multi`）互相依赖，没有任何声明式的先后次序；同时存在 3 处「声明了依赖却完全没用」的漂移（`rag-chat→rag-context`、`rag-workflow→rag-context`、`rag-agent-multi→rag-chat`），已于 P1 清理（见 §5 P1 落地结果）。
 2. **真正阻碍调度中心切入的不是模块数量，而是「执行」这件事没有归属模块**：
    - 执行入口分散在 7 个 Controller / 6 个 Service（§3 B2）；
    - 执行发生在 HTTP 请求线程（单 Agent HITL、评测）或裸 `new Thread`（聊天、多 Agent）；
@@ -77,7 +77,7 @@
 | `rag-auth` | 29 / 2172 | `SecurityConfig`、`OidcAuthenticationFilter`、`LocalTokenService`、`PermissionAspect`、`JwksProvider` | `rag-controller`、`rag-public-access` | 认证上下文为 `ThreadLocal`，异步边界需显式传递 |
 | `rag-quota` | 11 / 660 | `QuotaService`、`EffectiveQuota`、`QuotaAdminGuard` | `rag-chat`、`rag-controller` | 「先查后加」非原子；与调度准入无顺序约定 |
 | `rag-llm` | 36 / 2605 | `ModelRouter`、`ChatModelFactoryRegistry`、`ModelCacheManager`、`ModelPriceService`、`TokenEstimator` | kb / agent / workflow / chat / controller | 进程内模型缓存（可接受，平台级） |
-| `rag-tool` | 26 / 3067 | `ToolExecutionEngine`、`HttpToolExecutor`、`McpToolExecutor`、`FunctionCallingToolExecutor`、`ToolInvoker`、`ToolCircuitBreaker`、`SsrfGuard`、`SkillLlmClient` | chat / agent / workflow / agent-multi / kb（仅 `SsrfGuard`）/ sandbox | pom 声明 `spring-boot-starter-web` 但 0 处使用；熔断器为进程内状态 |
+| `rag-tool` | 26 / 3067 | `ToolExecutionEngine`、`HttpToolExecutor`、`McpToolExecutor`、`FunctionCallingToolExecutor`、`ToolInvoker`、`ToolCircuitBreaker`、`SkillLlmClient`（`SsrfGuard` 已于 P1 下沉到 `rag-common.net`） | chat / agent / workflow / agent-multi / sandbox | P1 已移除未使用的 `spring-boot-starter-web` 与 `rag-context` 声明；熔断器为进程内状态 |
 | `rag-kb` | 106 / 11443 | `KnowledgeBaseService`、`KnowledgeFileService`、`RagRetrieveService`、`SemanticCacheService`、`QueryTransformService`、`RerankService`、`EvalDatasetService`、`RetrievalEvaluationService`、`ConnectorService`、`ConnectorScheduler`、`UploadSessionCleaner`、`AgentMemoryService`、`AgentMemoryCleaner`、`StorageMigrationJobService`、`StorageOrphanCleanupScheduler`、`VectorStorePort`、`KeywordSearchPort`、`parser/*`、`splitter/*` | chat / agent / workflow / agent-multi / public-access / controller | 一个模块承担 7 类职责（KB CRUD / 文档流水线 / 检索 / 缓存 / 评测 / 连接器 / 存储维护）；含 4 个每实例调度器（连接器、上传清理、记忆清理、孤儿清理）+ 1 个静态线程池 |
 | `rag-chat` | 41 / 5738（重构进行中） | `RagChatService`、`ChatWorkflowService`、`ChatWindowService`、`ContextCompressionService`、`PromptTemplateService`、`FeedbackService`、`LlmJudgeService`、`RetrievalMetricsCalculator`、`ChatCancellationStore`、`ChatImageService`、`SkillLlmClientImpl`；重构新增 `ChatSsePublisher`、`ChatMessageStore`、`ChatSessionStore`、`ChatContextBudgetService`、`ChatEvaluationService`、`ChatCostSettler`、`ChatPromptAssembler`、`ChatToolLoader`、`ChatCitationAssembler` | controller / public-access | **冻结区**：裸线程、配额先于准入、`SseEmitter` 出现在 service 签名 |
 | `rag-agent` | 20 / 2423 | `AgentOrchestrator`、`Planner`、`StepExecutor`、`ReflectionEngine`、`HitlGate`、`PlanLifecycleService`、`AgentTaskMemory` | chat / workflow / controller | 计划执行无并发上限；恢复入口依赖调用方同步等待 |
@@ -103,15 +103,17 @@
 | `rag-auth` | D/U | D/U | | | | D/U | — | | | | | | | | | | | |
 | `rag-quota` | D/U | D/U | | | | | | — | | | | | | | | | | |
 | `rag-llm` | | D/U | D/U | | | | | | — | | | | | | | | | |
-| `rag-tool` | D/U | D/U | D/U | **D** | | | | | | — | | | | | | | | |
-| `rag-kb` | D/U | D/U | D/U | | D/U | | | | D/U | D/U | — | | | | | | | |
-| `rag-chat` | D/U | D/U | D/U | **D** | | | | D/U | D/U | D/U | D/U | — | D/U | D/U | | | | |
+| `rag-tool` | D/U | D/U | D/U | | | | | | | — | | | | | | | | |
+| `rag-kb` | D/U | D/U | D/U | | D/U | | | | D/U | | — | | | | | | | |
+| `rag-chat` | D/U | D/U | D/U | | | | | D/U | D/U | D/U | D/U | — | D/U | D/U | | | | |
 | `rag-agent` | D/U | D/U | D/U | D/U | | | | | D/U | D/U | D/U | | — | | | | | |
-| `rag-workflow` | D/U | D/U | D/U | **D** | | | | | D/U | D/U | D/U | | D/U | — | | | | |
-| `rag-agent-multi` | D/U | D/U | D/U | D/U | | | | | D/U | D/U | D/U | **D** | D/U | D/U | — | | | |
+| `rag-workflow` | D/U | D/U | D/U | | | | | | D/U | D/U | D/U | | D/U | — | | | | |
+| `rag-agent-multi` | D/U | D/U | D/U | D/U | | | | | D/U | D/U | D/U | | D/U | D/U | — | | | |
 | `rag-public-access` | D/U | D/U | D/U | | | | D/U | | | | D/U | D/U | | | | — | | |
 | `rag-controller` | D/U | D/U | D/U | | | D/U | D/U | D/U | D/U | D/U | D/U | D/U | D/U | D/U | D/U | D/U | — | |
 | `rag-app` | | D | | | | D | D | | | | | | | | | | D | — |
+
+> P1 落地后（2026-11-20）上表已按实际 import 扫描校正：`rag-tool→rag-context`、`rag-chat→rag-context`、`rag-workflow→rag-context`、`rag-agent-multi→rag-chat` 与 `rag-kb→rag-tool` 均已不再声明，见 §5 P1 落地结果。
 
 ### 2.3 依赖问题清单
 
@@ -122,7 +124,7 @@
 ```
 rag-chat        → rag-workflow, rag-agent
 rag-workflow    → rag-agent
-rag-agent-multi → rag-workflow, rag-agent, rag-chat（chat 实际未使用）
+rag-agent-multi → rag-workflow, rag-agent（对 chat 的未使用声明已于 P1 删除）
 rag-public-access → rag-chat, rag-kb
 ```
 
@@ -134,8 +136,9 @@ rag-public-access → rag-chat, rag-kb
 |---|---|---|
 | `rag-controller/.../service/TaskRecoveryService.java` | 接入层持有 `AgentOrchestrator`、`WorkflowEngine`、`MultiAgentRuntime`、`RagChatService`，并自带 2 线程执行器、Redis 锁、按类型 switch 续跑 | 运行编排与恢复属于执行域，不属于 HTTP 接入层；同时它直连 5 个 Mapper，违反 [design-overview.md](../../design-overview.md) §3.4「接入层禁止直接访问 Mapper」 |
 | `rag-public-access` → `rag-chat` / `rag-kb` | 分享/API Key 域直接依赖 `ChatSessionMapper`、`ChatWindowService`、`KnowledgeBaseMapper`（`ShareLinkService`） | 适配型模块硬绑业务实现，业务改签名即连带改分享域 |
-| `rag-kb` → `rag-tool` | 仅为 `SsrfBlockedException` / `SsrfGuard` 两个类 | 两个领域层的横向耦合；安全工具应有独立落点 |
-| `rag-chat` service 返回 `SseEmitter` | `RagChatService#streamChat`、`ChatWorkflowService` 的签名里直接出现 web 类型 | 执行域反向依赖 web 层，导致「无 HTTP 连接就不能运行」 |
+| `rag-kb` → `rag-tool` | 仅为 `SsrfBlockedException` / `SsrfGuard` 两个类 | 两个领域层的横向耦合；安全工具应有独立落点。**P1 已消除**：两个类下沉到 `rag-common.net`，`rag-kb` 不再依赖 `rag-tool` |
+| `rag-public-access` → `rag-chat` / `rag-kb` | 分享/API Key 域直接依赖 `ChatSessionMapper`、`ChatWindowService`、`KnowledgeBaseMapper`（`ShareLinkService`），pom 中显式声明两者 | 适配型模块硬绑业务实现，业务改签名即连带改分享域。**复核结论（2026-11-20）**：仍然存在，按 §5 P1 的界定留到 P2 合流门之后处理 |
+| `rag-chat` service 返回 `SseEmitter` | `RagChatService#streamChat`、`ChatWorkflowService` 的签名里直接出现 web 类型 | 执行域反向依赖 web 层，导致「无 HTTP 连接就不能运行」。**复核结论（2026-11-20）**：仍然存在（`RagChatService#streamChat`/`streamShareChat`、`ChatWorkflowService#hitlConfirm` 签名未变），留到 P2 合流后处理 |
 
 **（3）职责重叠**
 
@@ -149,12 +152,16 @@ rag-public-access → rag-chat, rag-kb
 | 事件 sink | `rag-common.DomainEventPublisher`、`rag-agent.AgentEventPublisher`（薄包装） | 已有统一出口雏形，但签名是 `BiConsumer`，无法携带 `seq`/`executionId`，不能支撑重放 |
 | SSE/Web 关注点 | 4 个非 web 模块 import `SseEmitter`；`rag-kb` / `rag-chat` 的 service 接受 `MultipartFile`；`rag-public-access` 含 servlet filter 与 security config | 「执行库」与「接入层」边界被 web 类型穿透 |
 
-**（4）声明漂移（可直接清理）**
+**（4）声明漂移（P1 已清理）**
 
-- `rag-chat` 声明 `rag-context`，0 处 import。
-- `rag-workflow` 声明 `rag-context`，0 处 import。
-- `rag-agent-multi` 声明 `rag-chat`，0 处 import。
-- `rag-tool` 声明 `spring-boot-starter-web`，0 处 web 类型使用。
+| 声明 | 实际使用 | 处理 |
+|---|---|---|
+| `rag-chat` → `rag-context` | 0 处 import | P1 删除 |
+| `rag-workflow` → `rag-context` | 0 处 import | P1 删除 |
+| `rag-agent-multi` → `rag-chat` | 0 处 import | P1 删除 |
+| `rag-tool` → `spring-boot-starter-web` | 0 处 web 类型使用 | P1 删除 |
+| `rag-tool` → `rag-context` | 0 处 import（本次扫描新发现，矩阵中原本即标为 `D` 无 `U`） | P1 删除 |
+| `rag-kb` → `rag-tool` | 仅 `SsrfGuard` / `SsrfBlockedException` | P1 将两个类下沉到 `rag-common.net` 后删除 |
 
 ---
 
@@ -275,7 +282,7 @@ rag-public-access → rag-chat, rag-kb
 
 | 处置 | 模块 | 说明 |
 |---|---|---|
-| **新增** | `rag-execution` | 作业抽象与执行契约。纯库，只依赖 `rag-common`（且不得 import web 包）。见 §4.4 |
+| **新增** | `rag-execution` | 作业抽象与执行契约。纯库，零依赖（仅 JDK 21，刻意不依赖 `rag-common` 以隔离 web 传递依赖）。见 §4.4、§4.8 |
 | **新增** | `rag-scheduler` | 调度实现：三 lane、准入、`wgh_execution_job` 持久化与租约、策略缓存、公平队列、运行时快照、触发器归属。只依赖 `rag-execution` + `rag-data` + `rag-config` |
 | **新增（拆分）** | `rag-document` | 从 `rag-kb` 拆出 `parser/*` 与 `splitter/*`（Tika/PDF/Excel 解析、OCR、切分策略、规范化）。**只依赖 `rag-common`**，不依赖 `rag-kb`/`rag-storage`/`rag-llm`，避免成环。文件处理流水线（`KnowledgeFileService`）、分片上传与 `INGEST_FILE` handler 仍留在 `rag-kb`，由 `rag-kb` 调用本模块 |
 | **新增（拆分）** | `rag-eval` | 从 `rag-kb` 拆出：`EvalDataset*`、`RetrievalEvaluationService`、评测结果归档。依赖 `rag-kb`（检索）+ `rag-llm`。rag-chat 重构合流后并入 `LlmJudgeService` 等 |
@@ -302,16 +309,16 @@ rag-public-access → rag-chat, rag-kb
 | `rag-storage` | `rag-common` | `rag-kb`（迁移任务目前在 kb，迁移后不得反向） | 存储抽象不得感知 KB |
 | `rag-log` / `rag-auth` / `rag-quota` | `rag-common`、`rag-data`（auth 另含 log） | 执行域 / 调度层 | — |
 | `rag-llm` | `rag-data`、`rag-config` | 执行域 / 调度层 | — |
-| `rag-tool` | `rag-context`、`rag-data`、`rag-config` | `rag-llm`（沿用 SPI 反转）、执行域 | 移除 web starter |
+| `rag-tool` | `rag-common`、`rag-data`、`rag-config` | `rag-llm`（沿用 SPI 反转）、`rag-kb`、执行域、web starter | P1 已移除 web starter 与未使用的 `rag-context` 声明 |
 | `rag-document` | `rag-common`（仅工具类） | `rag-kb`、`rag-storage`、`rag-llm`、执行域、web 类型 | 纯解析/切分算法库；不得回写业务表 |
-| `rag-kb` | `rag-data`、`rag-storage`、`rag-config`、`rag-llm`、`rag-document` | `rag-chat`、`rag-agent`、`rag-workflow`、`rag-scheduler`、web 类型 | 不得出现 `SseEmitter` / `MultipartFile` / `jakarta.servlet` |
+| `rag-kb` | `rag-data`、`rag-storage`、`rag-config`、`rag-llm`、`rag-document` | `rag-tool`（P1 起，SSRF 工具已下沉）、`rag-chat`、`rag-agent`、`rag-workflow`、`rag-scheduler`、web 类型 | 不得出现 `SseEmitter` / `MultipartFile` / `jakarta.servlet` |
 | `rag-eval` | `rag-kb`、`rag-llm`、`rag-execution` | `rag-chat`（迁入前置除外）、web 类型 | 只暴露 `EvalPort` 与 `EVAL_RUN` handler |
 | `rag-agent` | `rag-kb`、`rag-tool`、`rag-llm`、`rag-context`、`rag-execution` | `rag-workflow`、`rag-chat`、`rag-agent-multi`、`rag-scheduler`、web 类型 | 执行域最底层；HITL 状态机自持 |
 | `rag-workflow` | `rag-agent`、`rag-kb`、`rag-tool`、`rag-llm`、`rag-execution` | `rag-chat`、`rag-agent-multi`、`rag-scheduler`、web 类型 | 引擎不得创建 `SseEmitter`，只接受 `ExecutionEventSink` |
 | `rag-chat` | `rag-agent`、`rag-workflow`、`rag-kb`、`rag-tool`、`rag-quota`、`rag-execution` | `rag-agent-multi`、`rag-scheduler`、web 类型（service 层） | **冻结区**：改动需与重构线合流 |
 | `rag-agent-multi` | `rag-agent`、`rag-workflow`、`rag-tool`、`rag-execution` | `rag-chat`（删除未使用声明）、`rag-scheduler`、web 类型 | 与 `rag-chat` 并列，互不依赖 |
 | `rag-public-access` | `rag-common`、`rag-data`、`rag-auth`、`rag-config`、`rag-chat`、`rag-kb` | `rag-controller`、`rag-scheduler`、servlet/security web 类型 | 纯领域库 |
-| `rag-execution` | `rag-common`（仅 result/exception/metrics），JDK，micrometer | 所有业务模块、`rag-data`、`rag-controller`、`org.springframework.web`、`jakarta.servlet` | 契约层，不含实现 |
+| `rag-execution` | 无（仅 JDK 21） | 所有业务模块、`rag-common`、`rag-data`、`rag-controller`、`org.springframework.web`、`jakarta.servlet` | 契约层，不含实现；零依赖是为了让调度层与执行域都能单向依赖它而不引入 web |
 | `rag-scheduler` | `rag-execution`、`rag-data`、`rag-config`、`rag-log` | `rag-chat`、`rag-agent`、`rag-workflow`、`rag-agent-multi`、`rag-kb`、`rag-document`、`rag-eval`、`rag-controller` | 只认 `JobHandler` / `RunAdapter` 接口与 `job_type` 字符串；`RunCoordinator`（统一查询/续跑/取消）在此实现，不感知具体引擎 |
 | `rag-controller` | 全部业务模块 + `rag-scheduler`（管理端只读） | `rag-app` | 唯一组合根；不得直连 Mapper（存量迁移后） |
 | `rag-app` | `rag-controller` + 显式业务模块（用于装配） | — | 显式声明被装配模块，不靠传递依赖 |
@@ -324,6 +331,8 @@ rag-agent  <  rag-workflow  <  rag-chat
 ```
 
 即 `agent` 不得依赖 `workflow`/`chat`/`multi`；`workflow` 不得依赖 `chat`/`multi`；`chat` 与 `multi` 互不依赖。这条偏序是防止「未来某天给 Agent 加工作流调用」直接成环的唯一手段。
+
+**P1 落地状态（2026-11-20）**：上述「禁止」中可在工件级表达的条目，已通过 `maven-enforcer-plugin` 的 `bannedDependencies`（`searchTransitive=false`，随 `validate` 阶段校验）落在各模块 `pom.xml`：`rag-agent`（workflow/chat/multi/scheduler）、`rag-workflow`（chat/multi/scheduler）、`rag-chat`（multi/scheduler）、`rag-agent-multi`（chat/scheduler）、`rag-kb`（tool/chat/agent/workflow/multi/scheduler）、`rag-tool`（web starter/llm/kb/执行域）。根 `pom.xml` 由 P0 线占用，故规则写在模块级。web 类型约束（`SseEmitter`/`MultipartFile`/`jakarta.servlet`）属包级规则，存量未清理，P2 后再以 ArchUnit 表达；当前以 pom 注释记录目标态。
 
 ### 4.4 执行契约（`rag-execution`）最小接口集
 
@@ -350,12 +359,12 @@ rag-agent  <  rag-workflow  <  rag-chat
 
 | 约束 | 手段 | 说明 |
 |---|---|---|
-| 模块级禁止依赖 | Maven Enforcer `bannedDependencies`（沿用现有 `enforce-public-access-not-consumed` 写法） | 为 `rag-execution` / `rag-scheduler` / `rag-kb` / `rag-document` / `rag-eval` 各加一条 execution |
+| 模块级禁止依赖 | Maven Enforcer `bannedDependencies`（沿用现有 `enforce-public-access-not-consumed` 写法） | P1 已落地 6 条：`rag-tool` / `rag-kb` / `rag-agent` / `rag-workflow` / `rag-chat` / `rag-agent-multi`。`rag-execution` / `rag-scheduler` / `rag-document` / `rag-eval` 待对应模块拆分（P3/P4）后补 |
 | 包级禁止 import | ArchUnit 测试（新增测试依赖，只在 P0 加规则，不写业务测试） | 规则：执行域不得 import `org.springframework.web..`、`jakarta.servlet..`；`rag-scheduler` 不得 import 执行域包 |
-| 执行域偏序 | Enforcer + 依赖图断言 | `rag-agent` 的 pom 出现 workflow/chat/multi 即失败 |
-| 显式组合根 | `rag-app` 的 pom 显式列出被装配模块 | 避免「加了模块但没生效」 |
+| 执行域偏序 | Enforcer + 依赖图断言 | `rag-agent` 的 pom 出现 workflow/chat/multi 即失败（P1 已生效） |
+| 显式组合根 | `rag-app` 的 pom 显式列出被装配模块 | 避免「加了模块但没生效」（P1 未执行，见 §9.7） |
 
-> 说明：ArchUnit 目前不在依赖里。P0 只引入 Enforcer 模块级规则即可获得 80% 收益；包级规则可在 P2 执行域改造时再引入。
+> 说明：ArchUnit 目前不在依赖里。P0 只引入 Enforcer 模块级规则即可获得 80% 收益；包级规则可在 P2 执行域改造时再引入。根 `pom.xml` 由 P0 线并行占用，P1 的规则全部写在模块 `pom.xml` 中，不修改父 POM。
 
 ### 4.6 多实例语义落点
 
@@ -427,12 +436,54 @@ com.wgh.rag.controller
 
 **扫描路径**：`@SpringBootApplication` 扫描根为 `com.wgh.rag`，子包天然被覆盖；`GlobalExceptionHandler` 未限定 `basePackages`，`OpenAiErrorHandler` 的 `assignableTypes` 与 `OpenAiCompatController` 同包迁移，均无需额外配置。
 
+### 4.8 P0 落地：`rag-execution` 契约模块
+
+> 状态：**已落地（2026-11-20）**。模块已注册进根 POM，零业务模块引用，全仓 `-DskipTests compile` 通过。
+
+**模块坐标**：`rag-backend/rag-execution`，包根 `com.wgh.rag.execution`，无任何依赖（仅 JDK 21）。
+
+```text
+com.wgh.rag.execution
+├── api      ExecutionFacade（提交/查询/取消/订阅）
+├── job      JobHandler、JobContext、ExecutionCancellationToken
+├── model    ExecutionLane、ExecutionStatus、ExecutionRequest、ExecutionHandle、
+│            ExecutionSnapshot、ExecutionLease、JobPayload
+├── event    ExecutionEvent、ExecutionEventSink、ExecutionEventTypes
+├── run      RunAdapter、RunRegistry
+└── error    ExecutionErrorCodes、ExecutionException、
+             ExecutionCancelledException、LeaseLostException
+```
+
+| 契约 | 关键方法 / 结构 | 支撑阶段 |
+|---|---|---|
+| `ExecutionFacade` | `submit` / `query` / `cancel` / `attach` | P2 交互式统一、P3 后台提交 |
+| `JobHandler` | `jobType()` / `execute(JobContext)` / `cancel(JobContext)` | P3 各域作业化 |
+| `JobContext` | `executionId` / `request` / `payload` / `events` / `cancellation` / `heartbeat` | P2、P3 |
+| `ExecutionEventSink` | `emit(ExecutionEvent)` / `close()` | P2 剥离 `SseEmitter`、S3 重放 |
+| `ExecutionRequest` | 作业类型、lane、租户、属主、bizKey、payload、priority、scheduledAt、timeout | P2、P3 |
+| `ExecutionLease` | 持有者、获取/过期/续租时间、`isExpired` | P3 租约 |
+| `ExecutionCancellationToken` | `isCancelled` / `reason` / `throwIfCancellationRequested` | P2、P3 |
+| `RunAdapter` / `RunRegistry` | `runType` / `load` / `resume` / `cancel`；注册与查找 | P3/P4 替代 `TaskRecoveryService` 的 switch |
+| `ExecutionErrorCodes` | 8 个错误码，与 §3.8 对齐 | P2、P3 |
+
+**命名与取舍（需要拍板时以此为准）**：
+
+1. **零依赖而非依赖 `rag-common`**：`rag-common` 携带 `spring-boot-starter-web`，一旦依赖会把 web 传进执行契约层；契约自带错误码与异常体系，不引入 `Result`/`BusinessException`。
+2. **`tenantId` 默认 `default`**：单租户调用方不必显式构造；多租户阶段由 `TenantContext` 填充，契约不变。
+3. **`timeout = null` 表示车道默认值**：不在契约里写死时长，避免与三车道的策略配置冲突。
+4. **`RunRegistry` 不提供 `resume`**：续跑必须构造带租约/事件/取消的 `JobContext`，只能由调度层协调器完成；§4.4 的 `resume` 职责落在 `RunAdapter#resume`。
+5. **`attach` 返回 `AutoCloseable`**：SSE 断开即释放订阅；`fromSeq` 为 S3 事件重放预留。
+6. **事件类型只收通用 7 类**（started/progress/waiting_input/completed/failed/cancelled/heartbeat）：业务事件由执行体自定义 type，避免把对话或工作流细节写进契约。
+7. **`JobPayload.schemaVersion` 默认 1**：为 P3 跨进程 payload 演进预留；不兼容时置 `DEAD(INCOMPATIBLE_PAYLOAD)`。
+
+**接线点（P2/P3 再做，本轮不做）**：调度层实现 `ExecutionFacade` 与 `RunRegistry`；各执行域实现 `JobHandler` / `RunAdapter`；接入层实现 SSE 版 `ExecutionEventSink`。
+
 ---
 
 ## 5. 分阶段搬迁步骤
 
 > 每个阶段标注：**动作** / **可编译性** / **回滚方式** / **验收** / **冲突面**。
-> 「可编译」指每一步结束时 `mvn -q -DskipTests compile` 通过（本次不执行，仅作为约束）。
+> 「可编译」指每一步结束时 `mvn -q -DskipTests compile` 通过（P0、P1 已执行，P2–P4 未执行）。
 
 ### P0 契约先行（无行为变化）
 
@@ -442,17 +493,37 @@ com.wgh.rag.controller
 | 可编译 | 是（零引用） |
 | 回滚 | 删除模块 + 删 POM 条目 |
 | 验收 | 构建通过；新增模块不含任何实现类；依赖图与 §2.2 完全一致 |
+| 状态 | **已落地（2026-11-20）**：`rag-backend/rag-execution` 已注册，零业务引用，全仓 `-DskipTests compile` 通过；详见 §4.8 |
 | 冲突面 | 无（不触碰 `rag-chat`） |
 
 ### P1 依赖净化（无行为变化）
 
 | 项 | 内容 |
 |---|---|
-| 动作 | 1) 删除 4 处声明漂移（`rag-chat→rag-context`、`rag-workflow→rag-context`、`rag-agent-multi→rag-chat`、`rag-tool` 的 web starter）；2) `SsrfGuard` 从 `rag-tool` 下沉到 `rag-common`（包级移动，无逻辑改动）；3) `rag-app` 改为显式声明被装配模块；4) 把 `TaskRecoveryService` 的「按类型 switch」抽成 `RunAdapter` 形状，但实现先委托原逻辑并暂留在 `rag-controller`（行为不变，P4 再随各域迁走） |
+| 动作 | 1) 删除 5 处未使用声明（`rag-chat→rag-context`、`rag-workflow→rag-context`、`rag-agent-multi→rag-chat`、`rag-tool→spring-boot-starter-web`、`rag-tool→rag-context`）；2) `SsrfGuard` / `SsrfBlockedException` 从 `rag-tool` 下沉到 `rag-common.net`，`rag-kb` 不再依赖 `rag-tool`；3) 在 6 个模块补 Enforcer 依赖方向约束；4) `rag-app` 改为显式声明被装配模块；5) 把 `TaskRecoveryService` 的「按类型 switch」抽成 `RunAdapter` 形状，但实现先委托原逻辑并暂留在 `rag-controller` |
 | 可编译 | 是 |
 | 回滚 | 逐个 commit 反向 revert（每项独立提交） |
 | 验收 | 依赖图与 §4.3 的「禁止」列无冲突；`TaskRecoveryController` 行为不变 |
+| 状态 | **部分落地（2026-11-20）**：1)–3) 已完成并验证；4)、5) 本轮未执行（见下表说明） |
 | 冲突面 | 低。`TaskRecoveryService` 在 `rag-controller`，不在冻结区 |
+
+**P1 落地结果（2026-11-20）**
+
+| 改动 | 落点 | 验证 |
+|---|---|---|
+| 删除 `rag-chat→rag-context` | `rag-backend/rag-chat/pom.xml` | 全仓 `-DskipTests compile` 通过；`rag-chat` 的 `src/main`、`src/test` 均无 `com.wgh.rag.context` import |
+| 删除 `rag-workflow→rag-context` | `rag-backend/rag-workflow/pom.xml` | 同上，0 处 import |
+| 删除 `rag-agent-multi→rag-chat` | `rag-backend/rag-agent-multi/pom.xml` | 同上，0 处 import |
+| 删除 `rag-tool→spring-boot-starter-web` | `rag-backend/rag-tool/pom.xml` | `rag-tool` 无 `org.springframework.web` / `jakarta.servlet` / `MultipartFile` 引用；编译通过 |
+| 删除 `rag-tool→rag-context`（本轮扫描新发现） | `rag-backend/rag-tool/pom.xml` | 0 处 import |
+| `SsrfGuard` / `SsrfBlockedException` 下沉 | 新位置 `rag-backend/rag-common/src/main/java/com/wgh/rag/common/net/`；旧 `rag-tool/.../tool/security/` 已删除 | 代码逐行搬移（仅包名与 javadoc 引用调整，配置键 `wgh.tool.ssrf.*` 保持不变）；调用点 `HttpToolExecutor`、`UrlConnector`、`ConnectorService` 及 4 个测试文件同步改 import |
+| 切断 `rag-kb→rag-tool` | `rag-backend/rag-kb/pom.xml`（删 `rag-tool`，补显式 `rag-common`） | `rag-kb` 的 `src/main`、`src/test` 均无 `com.wgh.rag.tool` import；`rag-kb` `test-compile` 通过 |
+| Enforcer 依赖方向约束（6 条） | `rag-tool`、`rag-kb`、`rag-agent`、`rag-workflow`、`rag-chat`、`rag-agent-multi` 的 `pom.xml` | `mvn validate` 全部 `BannedDependencies passed`；全仓编译通过 |
+| web 类型约束 | 无法用工件级 Enforcer 表达（存量 `SseEmitter` 未清理） | 以 `rag-agent` / `rag-workflow` / `rag-tool` 的 pom 注释记录目标态，待 P2/P4 引入 ArchUnit |
+| `rag-app` 显式装配 | 未改 `rag-backend/rag-app/pom.xml` | 本轮范围未包含（且根 POM 由 P0 线占用），保留在 §9.7 待拍板 |
+| `TaskRecoveryService` → `RunAdapter` 形状 | 未改 | 依赖 P2/P4 的 `RunRegistry` 落地，属后续阶段 |
+
+> 构建口径：JDK 21（`/usr/libexec/java_home -v 21`）、持 `/tmp/wgh-maven-build.lockdir`、离线 `-o`、`-DskipTests compile`（未执行 `package`/`install`，未覆盖运行中服务的 jar）。
 
 ### P2 交互式执行统一（S0 止血）
 
@@ -569,7 +640,7 @@ P0 ──► P1 ──► P2 ──► P3 ──► P4
 | **rag-chat 并行重构冲突（最大风险）** | P2 的唯一 chat 改动点正好是重构区（`streamChat` 线程创建、配额顺序、SSE 出口）；工作区已有 9 个新类，行号与结构仍在变 | P0/P1/P3/P4 完全不碰 chat；P2 在合流后按「方法名 + 语义」做 1–3 行替换；优先在 `ChatSsePublisher` 增加 `ExecutionEventSink` 实现（新增方法，不改既有调用）；控制器侧过渡方案只用于不阻塞，不作为验收依据 |
 | 交互式 lane 引入拒绝策略 | 现有前端无 429 处理，行为从「无限排队」变为「快速失败」 | 灰度提高上限；同步补前端 429/503；`Retry-After` |
 | `rag-kb` 拆分（106 文件 / 11.4k 行） | 移动即冲突，尤其 parser/splitter 与入库链路 | 放到 P4 最后；先拆包再拆模块；每步独立可编译；保留 `@Deprecated` 转发类一版 |
-| `SsrfGuard` 下沉改包名 | 影响 `rag-kb.connector` 与 `rag-tool.security` 调用点、以及可能的反射配置 | 只移动类不实现；包名旧引用一次性替换；编译验证 |
+| `SsrfGuard` 下沉改包名 | 影响 `rag-kb.connector` 与 `rag-tool.security` 调用点、以及可能的反射配置 | 只移动类不实现；包名旧引用一次性替换；编译验证。**P1 已完成**：落到 `com.wgh.rag.common.net`，无反射配置引用，全仓编译通过 |
 | 执行契约过度设计 | `rag-execution` 膨胀成第二个业务模块 | §4.4 明确「只定义签名」；新增类型需在评审中说明对应 S0–S3 的哪条验收 |
 | 作业 payload 演进 | 旧作业新代码无法执行 | `payload.schemaVersion`；不兼容置 `DEAD(INCOMPATIBLE_PAYLOAD)`（沿用既有结论） |
 | `rag-public-access` 纯库化 | filter 上移会改变安全链注册顺序 | 先移动类、保持 Bean 名与 `@Order` 不变；安全回归用例覆盖 |
@@ -591,10 +662,21 @@ P0 ──► P1 ──► P2 ──► P3 ──► P4
 2. **未验证多副本行为**：仓库只有单副本 compose，所有多实例结论来自代码路径。
 3. **`rag-chat` 重构的最终形态未知**：工作区已可见 9 个新协作类与 `RagChatService` 的大幅瘦身，但重构尚未提交、也未合流；`streamChat` 的线程创建点、配额顺序、`ChatSsePublisher` 是否会被替换为端口，都可能继续变化。P2 的合流点需在该线合并后复核。
 4. **`rag-kb` 拆分粒度待确认**：`rag-document` 是否只含 `parser`/`splitter`（本文按此划分，文件处理流水线与分片上传留在 `rag-kb`）、`rag-eval` 是否包含 judge，需要在 P4 启动前与负责人确认。
-5. **`SsrfGuard` 归属**：下沉到 `rag-common` 还是独立 `rag-net` 小模块，取决于是否还有其它网络防护工具类；当前只有两类调用，优先 `rag-common`。
-6. **`rag-tool` 的 web starter 是否真无用**：已确认 0 处 `org.springframework.web` import，但可能存在 Spring 自动配置依赖（如 Jackson 配置）；移除前需一次完整启动验证。
-7. **`rag-app` 显式装配的收益**：会让 `rag-app` 的 POM 变长，但能防止「模块加了却没生效」；是否采用需团队确认。
+5. **`SsrfGuard` 归属**：**已定（P1）**——下沉到 `rag-common` 的 `com.wgh.rag.common.net`，未新建独立 `rag-net` 模块；当前调用方为 `rag-tool.HttpToolExecutor` 与 `rag-kb` 的 URL 连接器。
+6. **`rag-tool` 的 web starter 是否真无用**：**已移除（P1）**。静态扫描 0 处 `org.springframework.web` / `jakarta.servlet` / `MultipartFile`，全仓 `-DskipTests compile` 通过；但因 `rag-common` 仍传递携带 web starter，运行时依赖面未变，完整启动验证仍建议在 P2 前后补一次。
+7. **`rag-app` 显式装配的收益**：**仍未执行（P1 本轮未纳入）**。会让 `rag-app` 的 POM 变长，但能防止「模块加了却没生效」；是否采用需团队确认。
 8. **ArchUnit 引入时机**：P0 只加 Enforcer 模块级规则；包级规则是否值得引入测试依赖，待 P2 评估。
+
+---
+
+## 10. 修订记录
+
+| 日期 | 版本 | 修订内容 |
+|---|---|---|
+| 2026-11-20 | v1.3 | **P1 依赖净化落地**：删除 5 处未使用声明（新增确认 `rag-tool→rag-context`）；`SsrfGuard`/`SsrfBlockedException` 下沉到 `rag-common.net` 并切断 `rag-kb→rag-tool`；在 6 个模块 `pom.xml` 增加 Enforcer 依赖方向约束（未改根 POM）；全仓 `-DskipTests compile` 通过。同步校正 §2.1/§2.2/§2.3 的矩阵与漂移清单，补齐 §4.3/§4.5 落地状态，更新 §9.5–§9.7。**复核未改动**：`rag-public-access→rag-chat/rag-kb` 硬绑、`rag-chat` service 签名暴露 `SseEmitter` 两项结论仍然成立，按计划留到 P2 合流门之后。`rag-app` 显式装配与 `TaskRecoveryService→RunAdapter` 形状本轮未执行。 |
+| 2026-11-20 | v1.2 | 新增 §4.8（P0 `rag-execution` 契约模块落地与命名取舍）。 |
+| 2026-11-20 | v1.1 | 新增 §4.7（`rag-controller` 按业务域分包的结构与分组依据）。 |
+| 2026-11-20 | v1.0 | 初稿：模块职责、依赖矩阵、目标划分与 P0–P4。 |
 
 ---
 
