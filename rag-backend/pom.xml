@@ -39,6 +39,7 @@
 
     <modules>
         <module>rag-common</module>
+        <module>rag-execution</module>
         <module>rag-data</module>
         <module>rag-log</module>
         <module>rag-auth</module>

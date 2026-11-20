@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>com.wgh</groupId>
+        <artifactId>rag-backend</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>rag-execution</artifactId>
+    <name>rag-execution</name>
+    <description>执行契约模块 - 作业抽象、提交/查询/取消、执行事件与租约值对象（纯契约，不含实现）</description>
+
+    <dependencies>
+        <!--
+          刻意不声明任何依赖：
+          1) 不依赖 rag-common，避免把 spring-boot-starter-web 传递进执行契约层；
+          2) 不依赖 Spring / LangChain4j / MyBatis-Plus / 任何执行域模块；
+          3) 仅使用 JDK 21 类型，保证调度层与执行域可各自单向依赖本模块。
+        -->
+    </dependencies>
+</project>
