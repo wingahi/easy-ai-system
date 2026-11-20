@@ -1,5 +1,15 @@
 package com.wgh.rag.controller;
 
+import com.wgh.rag.controller.admin.AdminRoleController;
+import com.wgh.rag.controller.admin.AdminUserController;
+import com.wgh.rag.controller.admin.ModelPriceController;
+import com.wgh.rag.controller.agent.AgentController;
+import com.wgh.rag.controller.agent.MultiAgentController;
+import com.wgh.rag.controller.chat.ChatController;
+import com.wgh.rag.controller.chat.PromptTemplateController;
+import com.wgh.rag.controller.publicaccess.ApiKeyAdminController;
+import com.wgh.rag.controller.publicaccess.ShareLinkAdminController;
+import com.wgh.rag.controller.workflow.WorkflowController;
 import com.wgh.rag.auth.constant.AuthConstants;
 import com.wgh.rag.auth.mapper.PermissionMapper;
 import com.wgh.rag.auth.mapper.RoleMapper;
@@ -109,7 +119,7 @@ class AdminEndpointPermissionTest {
         loginAs("viewer", Set.of(AuthConstants.PERM_TOOL_USE));
         List<ToolConfig> tools = new ArrayList<>(List.of(toolWithExecutorConfig()));
 
-        ChatController.maskExecutorConfig(tools);
+        invokeMaskExecutorConfig(tools);
 
         assertThat(tools.get(0).getExecutorConfig()).isNull();
     }
@@ -119,9 +129,20 @@ class AdminEndpointPermissionTest {
         loginAs("admin", Set.of(AuthConstants.PERM_CHAT_MANAGE));
         List<ToolConfig> tools = new ArrayList<>(List.of(toolWithExecutorConfig()));
 
-        ChatController.maskExecutorConfig(tools);
+        invokeMaskExecutorConfig(tools);
 
         assertThat(tools.get(0).getExecutorConfig()).isNotNull();
+    }
+
+    /** Controller 已按业务域分包，包级可见的 maskExecutorConfig 通过反射调用，保持其可见性不变。 */
+    private static void invokeMaskExecutorConfig(List<ToolConfig> tools) {
+        try {
+            Method method = ChatController.class.getDeclaredMethod("maskExecutorConfig", List.class);
+            method.setAccessible(true);
+            method.invoke(null, tools);
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException("调用 ChatController.maskExecutorConfig 失败", e);
+        }
     }
 
     @Test

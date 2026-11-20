@@ -1,5 +1,10 @@
 package com.wgh.rag.controller;
 
+import com.wgh.rag.controller.admin.AdminRoleController;
+import com.wgh.rag.controller.admin.AdminUserController;
+import com.wgh.rag.controller.agent.AgentController;
+import com.wgh.rag.controller.agent.MultiAgentController;
+import com.wgh.rag.controller.quota.QuotaAdminController;
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.wgh.rag.agentmulti.entity.MultiAgentCrew;

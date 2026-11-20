@@ -1,5 +1,6 @@
 package com.wgh.rag.controller;
 
+import com.wgh.rag.controller.agent.AgentController;
 import com.wgh.rag.agent.config.AgentProperties;
 import com.wgh.rag.agent.entity.AgentPlan;
 import com.wgh.rag.agent.mapper.AgentPlanMapper;

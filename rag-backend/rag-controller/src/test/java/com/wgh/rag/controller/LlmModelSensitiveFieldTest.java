@@ -1,5 +1,6 @@
 package com.wgh.rag.controller;
 
+import com.wgh.rag.controller.admin.LlmModelController;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wgh.rag.auth.constant.AuthConstants;
 import com.wgh.rag.common.result.Result;

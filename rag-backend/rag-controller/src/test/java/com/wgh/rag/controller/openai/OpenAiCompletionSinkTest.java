@@ -1,4 +1,4 @@
-package com.wgh.rag.controller.openai;
+package com.wgh.rag.controller.publicaccess.openai;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wgh.rag.chat.constant.ChatEvents;

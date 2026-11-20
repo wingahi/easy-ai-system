@@ -1,5 +1,6 @@
 package com.wgh.rag.controller;
 
+import com.wgh.rag.controller.agent.MultiAgentController;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wgh.rag.agentmulti.dto.RunCreateRequest;
 import com.wgh.rag.agentmulti.entity.MultiAgentRun;

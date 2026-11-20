@@ -1,4 +1,4 @@
-package com.wgh.rag.controller.openai;
+package com.wgh.rag.controller.publicaccess.openai;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
