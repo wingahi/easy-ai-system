@@ -1,12 +1,11 @@
 package com.wgh.rag.publicaccess;
 
-import com.wgh.rag.chat.mapper.ChatSessionMapper;
-import com.wgh.rag.chat.service.ChatWindowService;
 import com.wgh.rag.common.exception.BusinessException;
 import com.wgh.rag.common.metrics.RagMetrics;
 import com.wgh.rag.common.result.ResultCode;
+import com.wgh.rag.common.share.ChatShareTargetPort;
+import com.wgh.rag.common.share.KnowledgeBaseShareTargetPort;
 import com.wgh.rag.config.redis.RedisCommandPort;
-import com.wgh.rag.kb.mapper.KnowledgeBaseMapper;
 import com.wgh.rag.publicaccess.config.PublicAccessProperties;
 import com.wgh.rag.publicaccess.entity.ApiKey;
 import com.wgh.rag.publicaccess.entity.ShareLink;
@@ -195,8 +194,8 @@ class PublicAccessRedisSecurityTest {
         DefaultPublicAccessStore store = new DefaultPublicAccessStore(RedisCommandPort.disabled());
         SharePasswordGuard guard = new SharePasswordGuard(store, properties, now::get);
         ShareLinkService service = new ShareLinkService(
-                mock(ShareLinkMapper.class), mock(ChatWindowService.class),
-                mock(ChatSessionMapper.class), mock(KnowledgeBaseMapper.class), properties, guard);
+                mock(ShareLinkMapper.class), mock(ChatShareTargetPort.class),
+                mock(KnowledgeBaseShareTargetPort.class), properties, guard);
 
         ShareLink link = new ShareLink();
         link.setToken("lock-1");

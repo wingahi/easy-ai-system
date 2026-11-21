@@ -1,0 +1,147 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>com.wgh</groupId>
+        <artifactId>rag-backend</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>rag-document</artifactId>
+    <name>rag-document</name>
+    <description>文档处理模块 - 多格式解析、清洗与切分（不含入库编排、向量检索与知识库聚合）</description>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.wgh</groupId>
+            <artifactId>rag-common</artifactId>
+        </dependency>
+        <!-- 切分参数与 OCR 配置来自 rag-config 的配置属性 -->
+        <dependency>
+            <groupId>com.wgh</groupId>
+            <artifactId>rag-config</artifactId>
+        </dependency>
+        <!-- 语义切分需要 embedding 模型（ModelCacheManager），失败时降级段落切分 -->
+        <dependency>
+            <groupId>com.wgh</groupId>
+            <artifactId>rag-llm</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.pdfbox</groupId>
+            <artifactId>pdfbox</artifactId>
+            <version>3.0.4</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.poi</groupId>
+            <artifactId>poi</artifactId>
+            <version>5.2.5</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.poi</groupId>
+            <artifactId>poi-ooxml</artifactId>
+            <version>5.2.5</version>
+        </dependency>
+        <!-- HWPF（.doc）解析在 poi-scratchpad，原先由 tika-parsers 传递提供 -->
+        <dependency>
+            <groupId>org.apache.poi</groupId>
+            <artifactId>poi-scratchpad</artifactId>
+            <version>5.2.5</version>
+        </dependency>
+        <!-- HTML / EML 正文清洗（jsoup）与 EML 邮件解析（Jakarta Mail） -->
+        <dependency>
+            <groupId>org.jsoup</groupId>
+            <artifactId>jsoup</artifactId>
+            <version>1.18.3</version>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.angus</groupId>
+            <artifactId>jakarta.mail</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- ====== 测试依赖 ====== -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+            <exclusions>
+                <exclusion>
+                    <groupId>org.mockito</groupId>
+                    <artifactId>mockito-core</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!-- 依赖方向约束：文档处理是叶子域，禁止反向依赖知识库、评测、执行域、调度层、
+                 公开访问适配层与接入层。 -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>enforce-document-leaf-boundary</id>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <bannedDependencies>
+                                    <searchTransitive>false</searchTransitive>
+                                    <excludes>
+                                        <exclude>com.wgh:rag-kb</exclude>
+                                        <exclude>com.wgh:rag-eval</exclude>
+                                        <exclude>com.wgh:rag-tool</exclude>
+                                        <exclude>com.wgh:rag-chat</exclude>
+                                        <exclude>com.wgh:rag-agent</exclude>
+                                        <exclude>com.wgh:rag-workflow</exclude>
+                                        <exclude>com.wgh:rag-agent-multi</exclude>
+                                        <exclude>com.wgh:rag-execution</exclude>
+                                        <exclude>com.wgh:rag-scheduler</exclude>
+                                        <exclude>com.wgh:rag-public-access</exclude>
+                                        <exclude>com.wgh:rag-controller</exclude>
+                                        <exclude>com.wgh:rag-app</exclude>
+                                    </excludes>
+                                    <message>依赖方向约束：rag-document 是叶子域，禁止依赖知识库/评测/执行域/调度层/公开访问/接入层模块。</message>
+                                </bannedDependencies>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <includes>
+                        <include>**/*Test.java</include>
+                        <include>**/*Tests.java</include>
+                    </includes>
+                    <excludes>
+                        <exclude>**/*IntegrationTest.java</exclude>
+                    </excludes>
+                    <useSystemClassLoader>false</useSystemClassLoader>
+                    <argLine>-Dnet.bytebuddy.experimental=true</argLine>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

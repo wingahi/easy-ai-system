@@ -35,48 +35,22 @@
             <groupId>com.wgh</groupId>
             <artifactId>rag-llm</artifactId>
         </dependency>
+        <!-- 文档解析与切分已拆到 rag-document，rag-kb 只保留入库编排与检索 -->
+        <dependency>
+            <groupId>com.wgh</groupId>
+            <artifactId>rag-document</artifactId>
+        </dependency>
+        <!-- 分享链接端口定义在中立模块 rag-common.share，rag-kb 只提供实现，不依赖 rag-public-access -->
         <!-- URL 数据源抓取的 SSRF 校验走 rag-common.net.SsrfGuard，不再依赖 rag-tool -->
         <dependency>
             <groupId>dev.langchain4j</groupId>
             <artifactId>langchain4j-pgvector</artifactId>
         </dependency>
-        <dependency>
-            <groupId>org.apache.tika</groupId>
-            <artifactId>tika-core</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.apache.tika</groupId>
-            <artifactId>tika-parsers-standard-package</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>com.alibaba</groupId>
-            <artifactId>easyexcel</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.apache.poi</groupId>
-            <artifactId>poi</artifactId>
-            <version>5.2.5</version>
-        </dependency>
-        <dependency>
-            <groupId>org.apache.poi</groupId>
-            <artifactId>poi-ooxml</artifactId>
-            <version>5.2.5</version>
-        </dependency>
-        <dependency>
-            <groupId>org.apache.pdfbox</groupId>
-            <artifactId>pdfbox</artifactId>
-            <version>3.0.4</version>
-        </dependency>
-        <!-- HTML 解析（pptx 复用 POI，json 复用 Jackson） -->
+        <!-- HTML 抓取/正文清洗（connector 的 URL 数据源） -->
         <dependency>
             <groupId>org.jsoup</groupId>
             <artifactId>jsoup</artifactId>
             <version>1.18.3</version>
-        </dependency>
-        <!-- EML 邮件解析（Jakarta Mail 实现，API 由 Boot BOM 管理） -->
-        <dependency>
-            <groupId>org.eclipse.angus</groupId>
-            <artifactId>jakarta.mail</artifactId>
         </dependency>
         <dependency>
             <groupId>org.projectlombok</groupId>
@@ -127,13 +101,14 @@
                                     <searchTransitive>false</searchTransitive>
                                     <excludes>
                                         <exclude>com.wgh:rag-tool</exclude>
+                                        <exclude>com.wgh:rag-eval</exclude>
                                         <exclude>com.wgh:rag-chat</exclude>
                                         <exclude>com.wgh:rag-agent</exclude>
                                         <exclude>com.wgh:rag-workflow</exclude>
                                         <exclude>com.wgh:rag-agent-multi</exclude>
                                         <exclude>com.wgh:rag-scheduler</exclude>
                                     </excludes>
-                                    <message>依赖方向约束：rag-kb 禁止直接依赖 rag-tool / rag-chat / rag-agent / rag-workflow / rag-agent-multi / rag-scheduler。</message>
+                                    <message>依赖方向约束：rag-kb 禁止直接依赖 rag-tool / rag-eval / rag-chat / rag-agent / rag-workflow / rag-agent-multi / rag-scheduler。</message>
                                 </bannedDependencies>
                             </rules>
                         </configuration>

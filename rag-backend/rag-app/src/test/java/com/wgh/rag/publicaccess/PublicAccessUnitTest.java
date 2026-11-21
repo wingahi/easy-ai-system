@@ -1,11 +1,10 @@
 package com.wgh.rag.publicaccess;
 
 import com.baomidou.mybatisplus.core.conditions.Wrapper;
-import com.wgh.rag.chat.mapper.ChatSessionMapper;
-import com.wgh.rag.chat.service.ChatWindowService;
 import com.wgh.rag.common.exception.BusinessException;
 import com.wgh.rag.common.result.ResultCode;
-import com.wgh.rag.kb.mapper.KnowledgeBaseMapper;
+import com.wgh.rag.common.share.ChatShareTargetPort;
+import com.wgh.rag.common.share.KnowledgeBaseShareTargetPort;
 import com.wgh.rag.publicaccess.config.PublicAccessProperties;
 import com.wgh.rag.publicaccess.entity.ApiKey;
 import com.wgh.rag.publicaccess.entity.ShareLink;
@@ -37,14 +36,13 @@ import static org.mockito.Mockito.*;
 class PublicAccessUnitTest {
 
     private final ShareLinkMapper shareLinkMapper = mock(ShareLinkMapper.class);
-    private final ChatWindowService windowService = mock(ChatWindowService.class);
-    private final ChatSessionMapper sessionMapper = mock(ChatSessionMapper.class);
-    private final KnowledgeBaseMapper knowledgeBaseMapper = mock(KnowledgeBaseMapper.class);
+    private final ChatShareTargetPort chatTargets = mock(ChatShareTargetPort.class);
+    private final KnowledgeBaseShareTargetPort knowledgeBaseTargets = mock(KnowledgeBaseShareTargetPort.class);
     private final PublicAccessProperties properties = new PublicAccessProperties();
     private final DefaultPublicAccessStore store = new DefaultPublicAccessStore(RedisCommandPort.disabled());
     private final SharePasswordGuard passwordGuard = new SharePasswordGuard(store, properties);
     private final ShareLinkService shareLinkService = new ShareLinkService(
-            shareLinkMapper, windowService, sessionMapper, knowledgeBaseMapper, properties, passwordGuard);
+            shareLinkMapper, chatTargets, knowledgeBaseTargets, properties, passwordGuard);
 
     private final ApiKeyMapper apiKeyMapper = mock(ApiKeyMapper.class);
     private final ApiKeyService apiKeyService = new ApiKeyService(apiKeyMapper);
@@ -154,6 +152,7 @@ class PublicAccessUnitTest {
         req.setScope("WINDOW");
         req.setTargetId(10L);
         req.setExpiresAt(LocalDateTime.now().plusDays(properties.getShareMaxExpireDays() + 1));
+        when(chatTargets.windowExists(10L)).thenReturn(true);
         BusinessException e = assertThrows(BusinessException.class,
                 () -> shareLinkService.create(req, "tester"));
         assertTrue(e.getMessage().contains("有效期超过上限"));
@@ -165,6 +164,7 @@ class PublicAccessUnitTest {
         ShareLink req = new ShareLink();
         req.setScope("window");
         req.setTargetId(10L);
+        when(chatTargets.windowExists(10L)).thenReturn(true);
         when(shareLinkMapper.insert(any(ShareLink.class))).thenReturn(1);
         ShareLink created = shareLinkService.create(req, "tester");
         assertTrue(created.getToken().startsWith("s_"));
@@ -181,7 +181,7 @@ class PublicAccessUnitTest {
         ShareLink req = new ShareLink();
         req.setScope("KB");
         req.setTargetId(99L);
-        when(knowledgeBaseMapper.selectById(99L)).thenReturn(null);
+        when(knowledgeBaseTargets.exists(99L)).thenReturn(false);
         BusinessException e = assertThrows(BusinessException.class,
                 () -> shareLinkService.create(req, "tester"));
         assertEquals("知识库不存在", e.getMessage());

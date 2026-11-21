@@ -1,7 +1,7 @@
 package com.wgh.rag.kb;
 
 import com.wgh.rag.config.property.RagProperties;
-import com.wgh.rag.kb.splitter.TextSplitter;
+import com.wgh.rag.document.splitter.TextSplitter;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;

@@ -32,15 +32,7 @@
             <groupId>com.wgh</groupId>
             <artifactId>rag-config</artifactId>
         </dependency>
-        <!-- 分享链接范围校验需要窗口/会话；KB 范围需要知识库 -->
-        <dependency>
-            <groupId>com.wgh</groupId>
-            <artifactId>rag-chat</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>com.wgh</groupId>
-            <artifactId>rag-kb</artifactId>
-        </dependency>
+        <!-- 聊天/知识库只通过 rag-common 的 com.wgh.rag.common.share 端口访问，不再直接依赖 rag-chat / rag-kb -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>

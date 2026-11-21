@@ -74,12 +74,23 @@ class RagApplicationIntegrationTest {
                 .andExpect(status().isUnauthorized());
     }
 
-    /** 验证访问不存在的分享链接无需鉴权，返回 HTTP 200 而非 401。 */
+    /** 验证登录态分享页 /api/chat/share/** 未鉴权时返回 401（该路径不是匿名公开入口）。 */
     @Test
-    @DisplayName("分享接口不需要鉴权")
-    void shareEndpoint_noAuth() throws Exception {
-        // /api/chat/share/{token} 不存在 token → Service 返回 Result 但 HTTP 200（不 401）
+    @DisplayName("登录态分享页 - 未鉴权返回 401")
+    void authenticatedSharePage_requiresAuth() throws Exception {
+        // /api/chat/share/{token} 是登录态分享页（userIdentifier 取当前登录用户），
+        // 匿名public分享入口在 /api/public/share/{token}
         mockMvc.perform(get("/api/chat/share/nonexistent_token_xxx"))
-                .andExpect(status().isOk());
+                .andExpect(status().isUnauthorized());
+    }
+
+    /** 验证匿名公开分享入口无需登录可达，但不存在的 token 仍由业务层校验并返回错误码。 */
+    @Test
+    @DisplayName("匿名公开分享入口 - 无需鉴权但仍校验 token")
+    void anonymousPublicShareEndpoint_reachableWithoutAuth() throws Exception {
+        mockMvc.perform(get("/api/public/share/nonexistent_token_xxx"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(
+                        com.wgh.rag.common.result.ResultCode.RESOURCE_NOT_FOUND.getCode()));
     }
 }

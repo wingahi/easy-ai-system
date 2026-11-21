@@ -1,0 +1,9 @@
+package com.wgh.rag.eval.mapper;
+
+import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+import com.wgh.rag.eval.entity.KbGroundTruth;
+import org.apache.ibatis.annotations.Mapper;
+
+@Mapper
+public interface KbGroundTruthMapper extends BaseMapper<KbGroundTruth> {
+}

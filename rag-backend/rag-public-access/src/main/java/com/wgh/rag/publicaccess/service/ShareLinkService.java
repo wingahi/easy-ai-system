@@ -3,13 +3,11 @@ package com.wgh.rag.publicaccess.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
-import com.wgh.rag.chat.entity.ChatSession;
-import com.wgh.rag.chat.mapper.ChatSessionMapper;
-import com.wgh.rag.chat.service.ChatWindowService;
 import com.wgh.rag.common.exception.BusinessException;
 import com.wgh.rag.common.result.PageResult;
 import com.wgh.rag.common.result.ResultCode;
-import com.wgh.rag.kb.mapper.KnowledgeBaseMapper;
+import com.wgh.rag.common.share.ChatShareTargetPort;
+import com.wgh.rag.common.share.KnowledgeBaseShareTargetPort;
 import com.wgh.rag.publicaccess.config.PublicAccessProperties;
 import com.wgh.rag.publicaccess.entity.ShareLink;
 import com.wgh.rag.publicaccess.mapper.ShareLinkMapper;
@@ -39,9 +37,8 @@ public class ShareLinkService {
     private static final Set<String> SCOPES = Set.of(SCOPE_WINDOW, SCOPE_SESSION, SCOPE_KB);
 
     private final ShareLinkMapper shareLinkMapper;
-    private final ChatWindowService windowService;
-    private final ChatSessionMapper sessionMapper;
-    private final KnowledgeBaseMapper knowledgeBaseMapper;
+    private final ChatShareTargetPort chatTargets;
+    private final KnowledgeBaseShareTargetPort knowledgeBaseTargets;
     private final PublicAccessProperties properties;
     private final SharePasswordGuard passwordGuard;
 
@@ -62,19 +59,23 @@ public class ShareLinkService {
 
         Long windowId;
         if (SCOPE_KB.equals(scope)) {
-            if (knowledgeBaseMapper.selectById(req.getTargetId()) == null) {
+            if (!knowledgeBaseTargets.exists(req.getTargetId())) {
                 throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "知识库不存在");
             }
             windowId = null;
         } else if (SCOPE_SESSION.equals(scope)) {
-            ChatSession session = sessionMapper.selectById(req.getTargetId());
-            if (session == null || !"ACTIVE".equals(session.getStatus())) {
+            ChatShareTargetPort.SessionTarget session = chatTargets.findSession(req.getTargetId()).orElse(null);
+            if (session == null || !"ACTIVE".equals(session.status())) {
                 throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "会话不存在或已归档");
             }
-            windowId = session.getChatWindowId();
-            windowService.getById(windowId);
+            windowId = session.windowId();
+            if (!chatTargets.windowExists(windowId)) {
+                throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "聊天窗口不存在");
+            }
         } else {
-            windowService.getById(req.getTargetId());
+            if (!chatTargets.windowExists(req.getTargetId())) {
+                throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "聊天窗口不存在");
+            }
             windowId = req.getTargetId();
         }
 
