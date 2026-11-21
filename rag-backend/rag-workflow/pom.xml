@@ -43,6 +43,11 @@
             <artifactId>rag-agent</artifactId>
             <!-- AGENT 节点执行器依赖：复用 Planner + StepExecutor 做轻量同步 Agent 编排 -->
         </dependency>
+        <!-- 执行契约：后台作业通过 ExecutionFacade 提交，只依赖接口不依赖调度实现 -->
+        <dependency>
+            <groupId>com.wgh</groupId>
+            <artifactId>rag-execution</artifactId>
+        </dependency>
 
         <dependency>
             <groupId>com.baomidou</groupId>

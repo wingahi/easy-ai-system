@@ -48,13 +48,16 @@
         <module>rag-context</module>
         <module>rag-storage</module>
         <module>rag-llm</module>
+        <module>rag-document</module>
         <module>rag-kb</module>
+        <module>rag-eval</module>
         <module>rag-chat</module>
         <module>rag-tool</module>
         <module>rag-sandbox</module>
         <module>rag-agent</module>
         <module>rag-workflow</module>
         <module>rag-agent-multi</module>
+        <module>rag-scheduler</module>
         <module>rag-public-access</module>
         <module>rag-controller</module>
         <module>rag-app</module>
@@ -108,6 +111,11 @@
             </dependency>
             <dependency>
                 <groupId>com.wgh</groupId>
+                <artifactId>rag-execution</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.wgh</groupId>
                 <artifactId>rag-config</artifactId>
                 <version>${project.version}</version>
             </dependency>
@@ -128,7 +136,17 @@
             </dependency>
             <dependency>
                 <groupId>com.wgh</groupId>
+                <artifactId>rag-document</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.wgh</groupId>
                 <artifactId>rag-kb</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.wgh</groupId>
+                <artifactId>rag-eval</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
@@ -154,6 +172,11 @@
             <dependency>
                 <groupId>com.wgh</groupId>
                 <artifactId>rag-agent-multi</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.wgh</groupId>
+                <artifactId>rag-scheduler</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>

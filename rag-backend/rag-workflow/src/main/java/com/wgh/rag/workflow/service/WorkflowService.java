@@ -412,6 +412,24 @@ public class WorkflowService {
 
     /** 无 SSE 的静默运行（定时 / Webhook 触发使用），返回运行记录（异步执行中）。 */
     public WorkflowRun runHeadless(Long workflowId, String input) {
+        HeadlessRun headless = prepareHeadlessRun(workflowId, input);
+        workflowExecutor.execute(() -> executeHeadless(headless, false));
+        return headless.run();
+    }
+
+    /**
+     * 无 SSE 的同步运行（调度层后台作业使用）：执行完成后返回运行记录。
+     *
+     * <p>与 {@link #runHeadless(Long, String)} 共用准备与执行逻辑，区别只在调用线程：
+     * 本方法不切线程，作业的租约、超时与取消由调度层负责。
+     */
+    public WorkflowRun runHeadlessBlocking(Long workflowId, String input) {
+        HeadlessRun headless = prepareHeadlessRun(workflowId, input);
+        executeHeadless(headless, true);
+        return headless.run();
+    }
+
+    private HeadlessRun prepareHeadlessRun(Long workflowId, String input) {
         Workflow wf = getById(workflowId);
         if (wf.getStatus() != null && wf.getStatus() == 0) {
             throw new BusinessException("工作流已停用，无法运行");
@@ -430,19 +448,30 @@ public class WorkflowService {
         run.setTotalNodes(graph.getNodes().size());
         run.setStartTime(LocalDateTime.now());
         runMapper.insert(run);
+        return new HeadlessRun(run, graph, input == null ? "" : input, vr);
+    }
 
+    private void executeHeadless(HeadlessRun headless, boolean propagateFailure) {
         BiConsumer<String, Map<String, Object>> sink = (event, payload) -> { /* 静默触发，无 SSE 订阅 */ };
-        workflowExecutor.execute(() -> {
-            try {
-                engine.run(run, graph, input, vr, sink);
-            } catch (PauseSignal pause) {
-                log.info("触发运行 {} 在 HITL 节点暂停，等待人工确认", run.getId());
-            } catch (Exception e) {
-                log.error("触发运行失败 runId={}", run.getId(), e);
-                markRunFailed(run.getId(), e.getMessage());
+        try {
+            engine.run(headless.run(), headless.graph(), headless.input(), headless.validation(), sink);
+        } catch (PauseSignal pause) {
+            log.info("触发运行 {} 在 HITL 节点暂停，等待人工确认", headless.run().getId());
+        } catch (Exception e) {
+            log.error("触发运行失败 runId={}", headless.run().getId(), e);
+            markRunFailed(headless.run().getId(), e.getMessage());
+            if (propagateFailure) {
+                if (e instanceof RuntimeException runtimeException) {
+                    throw runtimeException;
+                }
+                throw new IllegalStateException(e.getMessage(), e);
             }
-        });
-        return run;
+        }
+    }
+
+    /** 静默运行的一次准备结果。 */
+    private record HeadlessRun(WorkflowRun run, WorkflowGraph graph, String input,
+                               GraphValidator.GraphValidationResult validation) {
     }
 
     /** HITL 确认后从断点续跑，返回新的 SSE 通道。 */

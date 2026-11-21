@@ -1,0 +1,259 @@
+package com.wgh.rag.scheduler.job;
+
+import com.wgh.rag.execution.model.ExecutionLane;
+import com.wgh.rag.execution.model.ExecutionRequest;
+import com.wgh.rag.execution.model.ExecutionSnapshot;
+import com.wgh.rag.execution.model.ExecutionStatus;
+import com.wgh.rag.execution.model.JobPayload;
+import com.wgh.rag.scheduler.entity.ExecutionJob;
+import com.wgh.rag.scheduler.mapper.ExecutionJobMapper;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DuplicateKeyException;
+import org.springframework.stereotype.Component;
+
+import java.time.Duration;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
+
+/**
+ * 作业持久化门面。
+ *
+ * <p>所有状态迁移都通过 Mapper 的条件 UPDATE 完成，并在返回「影响行数为 0」时视为租约丢失；
+ * 这里不缓存任何状态，确保跨实例读取的是数据库事实。
+ */
+@Slf4j
+@Component
+public class JobStore {
+
+    private static final int MAX_ERROR_MESSAGE = 2000;
+
+    private final ExecutionJobMapper mapper;
+
+    private final JobPayloadCodec codec;
+
+    public JobStore(ExecutionJobMapper mapper, JobPayloadCodec codec) {
+        this.mapper = mapper;
+        this.codec = codec;
+    }
+
+    /**
+     * 提交作业。
+     *
+     * <p>带 {@code bizKey} 时按 (jobType, bizKey) 幂等：已存在则直接返回既有记录，不重复插入。
+     *
+     * @param request        执行请求
+     * @param maxAttempts    最大尝试次数
+     * @param timeoutSeconds 超时秒数，可为 {@code null}
+     * @return 已持久化的作业
+     */
+    public ExecutionJob submit(ExecutionRequest request, int maxAttempts, Integer timeoutSeconds) {
+        String bizKey = request.bizKey();
+        if (bizKey != null && !bizKey.isBlank()) {
+            ExecutionJob existing = mapper.selectByBizKey(request.jobType(), bizKey);
+            if (existing != null) {
+                return existing;
+            }
+        }
+        ExecutionJob job = new ExecutionJob();
+        job.setExecutionId(UUID.randomUUID().toString());
+        job.setJobType(request.jobType());
+        job.setLane(request.lane());
+        job.setTenantId(request.tenantId());
+        job.setOwnerUserId(request.ownerUserId());
+        job.setBizKey(bizKey);
+        JobPayload payload = request.payload();
+        job.setPayloadJson(codec.toJson(payload.data()));
+        job.setPayloadSchemaVersion(payload.schemaVersion());
+        job.setPriority(request.priority());
+        job.setStatus(ExecutionStatus.PENDING);
+        job.setScheduledAt(toLocal(request.scheduledAt()));
+        job.setAttempt(0);
+        job.setMaxAttempts(Math.max(1, maxAttempts));
+        job.setTimeoutSeconds(timeoutSeconds);
+        job.setCancelRequested(0);
+        job.setVersion(0);
+        try {
+            mapper.insert(job);
+            return job;
+        } catch (DuplicateKeyException e) {
+            ExecutionJob existing = bizKey == null ? null : mapper.selectByBizKey(request.jobType(), bizKey);
+            if (existing == null) {
+                throw e;
+            }
+            log.debug("作业已存在，按幂等键复用 jobType={} bizKey={} executionId={}",
+                    request.jobType(), bizKey, existing.getExecutionId());
+            return existing;
+        }
+    }
+
+    /** 按执行标识查作业。 */
+    public Optional<ExecutionJob> find(String executionId) {
+        if (executionId == null || executionId.isBlank()) {
+            return Optional.empty();
+        }
+        return Optional.ofNullable(mapper.selectByExecutionId(executionId));
+    }
+
+    /** 按执行标识查快照。 */
+    public Optional<ExecutionSnapshot> query(String executionId) {
+        return find(executionId).map(this::toSnapshot);
+    }
+
+    /**
+     * 请求取消。
+     *
+     * @return {@code true} 表示已置取消标记或已置终态
+     */
+    public boolean cancel(String executionId, String reason) {
+        Optional<ExecutionJob> found = find(executionId);
+        if (found.isEmpty()) {
+            return false;
+        }
+        ExecutionJob job = found.get();
+        if (job.getStatus() != null && job.getStatus().isTerminal()) {
+            return false;
+        }
+        if (mapper.cancelPending(job.getId(), reason) > 0) {
+            return true;
+        }
+        return mapper.requestCancel(job.getId(), reason) > 0;
+    }
+
+    /** 领取一条到期作业。 */
+    public Optional<ExecutionJob> claim(ExecutionLane lane, String owner, Duration leaseTtl) {
+        Long id = mapper.claimNext(lane.name(), owner, seconds(leaseTtl));
+        if (id == null) {
+            return Optional.empty();
+        }
+        return Optional.ofNullable(mapper.selectById(id));
+    }
+
+    public boolean markRunning(Long id, String owner) {
+        return mapper.markRunning(id, owner) > 0;
+    }
+
+    public boolean renewLease(Long id, String owner, Duration leaseTtl) {
+        return mapper.renewLease(id, owner, seconds(leaseTtl)) > 0;
+    }
+
+    public boolean complete(Long id, String owner, Map<String, Object> result) {
+        return mapper.complete(id, owner, codec.toJson(result)) > 0;
+    }
+
+    /**
+     * 落失败态。
+     *
+     * @param status  FAILED（可重试）或 DEAD（死信）
+     * @param retryAt 下次可领取时间；DEAD 时传 {@code null}
+     */
+    public boolean fail(Long id, String owner, ExecutionStatus status, String errorCode, String errorMessage,
+                        Instant retryAt) {
+        LocalDateTime notBefore = retryAt == null ? null : toLocal(retryAt);
+        LocalDateTime finishTime = status == ExecutionStatus.DEAD ? LocalDateTime.now() : null;
+        return mapper.fail(id, owner, status.name(), errorCode, truncate(errorMessage), notBefore, finishTime) > 0;
+    }
+
+    /** 持有者落取消终态。 */
+    public boolean cancelOwned(Long id, String owner, String reason) {
+        return mapper.cancelOwned(id, owner, reason) > 0;
+    }
+
+    /** 放弃本次领取（单飞锁未抢到 / Redis 不可用），按延迟回到 PENDING。 */
+    public boolean releaseClaim(Long id, String owner, Duration delay) {
+        LocalDateTime notBefore = toLocal(Instant.now().plus(delay == null ? Duration.ZERO : delay));
+        return mapper.releaseClaim(id, owner, notBefore) > 0;
+    }
+
+    /** 是否已请求取消。 */
+    public boolean isCancelRequested(Long id) {
+        Integer flag = mapper.selectCancelRequested(id);
+        return flag != null && flag == 1;
+    }
+
+    public long countPending(ExecutionLane lane) {
+        return mapper.countPending(lane.name());
+    }
+
+    public long countTenantActive(String tenantId, ExecutionLane lane) {
+        return mapper.countTenantActive(tenantId, lane.name());
+    }
+
+    public int reclaimExpired() {
+        return mapper.reclaimExpired();
+    }
+
+    public int requeueFailed() {
+        return mapper.requeueFailed();
+    }
+
+    public int expireQueued(Duration queueTimeout) {
+        return mapper.expireQueued(seconds(queueTimeout));
+    }
+
+    /** 作业 → 统一快照。 */
+    public ExecutionSnapshot toSnapshot(ExecutionJob job) {
+        Map<String, Object> result = safeResult(job.getResultJson());
+        String runId = result.get("runId") instanceof String value ? value : null;
+        return new ExecutionSnapshot(
+                job.getExecutionId(),
+                runId,
+                job.getJobType(),
+                job.getLane(),
+                job.getStatus(),
+                job.getTenantId(),
+                job.getOwnerUserId(),
+                job.getBizKey(),
+                job.getAttempt() == null ? 0 : job.getAttempt(),
+                Map.of(),
+                job.getErrorCode(),
+                toInstant(job.getScheduledAt()),
+                toInstant(job.getStartTime()),
+                toInstant(job.getFinishTime()));
+    }
+
+    /**
+     * 作业负载。
+     *
+     * @throws IllegalArgumentException payload 无法解析，调用方应按 {@code INCOMPATIBLE_PAYLOAD} 处置
+     */
+    public JobPayload payloadOf(ExecutionJob job) {
+        int schemaVersion = job.getPayloadSchemaVersion() == null
+                ? JobPayload.CURRENT_SCHEMA_VERSION : job.getPayloadSchemaVersion();
+        return new JobPayload(schemaVersion, codec.fromJson(job.getPayloadJson()));
+    }
+
+    private Map<String, Object> safeResult(String json) {
+        try {
+            return new LinkedHashMap<>(codec.fromJson(json));
+        } catch (IllegalArgumentException e) {
+            return Map.of();
+        }
+    }
+
+    private static long seconds(Duration duration) {
+        if (duration == null || duration.isZero() || duration.isNegative()) {
+            return 60L;
+        }
+        return Math.max(1L, duration.toSeconds());
+    }
+
+    private static LocalDateTime toLocal(Instant instant) {
+        return instant == null ? LocalDateTime.now() : LocalDateTime.ofInstant(instant, ZoneId.systemDefault());
+    }
+
+    private static Instant toInstant(LocalDateTime time) {
+        return time == null ? null : time.atZone(ZoneId.systemDefault()).toInstant();
+    }
+
+    private static String truncate(String message) {
+        if (message == null || message.length() <= MAX_ERROR_MESSAGE) {
+            return message;
+        }
+        return message.substring(0, MAX_ERROR_MESSAGE);
+    }
+}

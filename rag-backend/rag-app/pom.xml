@@ -30,6 +30,11 @@
             <groupId>com.wgh</groupId>
             <artifactId>rag-controller</artifactId>
         </dependency>
+        <!-- 统一调度中心：提供 ExecutionFacade、三车道与后台作业循环（可通过 wgh.scheduler.enabled 关闭） -->
+        <dependency>
+            <groupId>com.wgh</groupId>
+            <artifactId>rag-scheduler</artifactId>
+        </dependency>
         <!-- 代码沙箱：默认关闭，仅在配置 wgh.sandbox.enabled=true 后可用 -->
         <dependency>
             <groupId>com.wgh</groupId>

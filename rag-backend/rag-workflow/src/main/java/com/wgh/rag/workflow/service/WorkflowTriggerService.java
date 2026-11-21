@@ -3,12 +3,18 @@ package com.wgh.rag.workflow.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wgh.rag.common.exception.BusinessException;
 import com.wgh.rag.common.result.ResultCode;
+import com.wgh.rag.execution.api.ExecutionFacade;
+import com.wgh.rag.execution.model.ExecutionHandle;
+import com.wgh.rag.execution.model.ExecutionLane;
+import com.wgh.rag.execution.model.ExecutionRequest;
 import com.wgh.rag.workflow.entity.WorkflowRun;
 import com.wgh.rag.workflow.entity.WorkflowTrigger;
+import com.wgh.rag.workflow.job.WorkflowRunJobHandler;
 import com.wgh.rag.workflow.mapper.WorkflowTriggerMapper;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 import org.springframework.scheduling.support.CronExpression;
@@ -16,7 +22,10 @@ import org.springframework.scheduling.support.CronTrigger;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -36,16 +45,19 @@ public class WorkflowTriggerService {
     private final WorkflowTriggerMapper triggerMapper;
     private final WorkflowService workflowService;
     private final ThreadPoolTaskScheduler triggerScheduler;
+    private final ObjectProvider<ExecutionFacade> executionFacadeProvider;
 
     /** triggerId → 已注册的调度任务 */
     private final Map<Long, ScheduledFuture<?>> scheduledTasks = new ConcurrentHashMap<>();
 
     public WorkflowTriggerService(WorkflowTriggerMapper triggerMapper,
                                   WorkflowService workflowService,
-                                  @Qualifier("workflowTriggerScheduler") ThreadPoolTaskScheduler triggerScheduler) {
+                                  @Qualifier("workflowTriggerScheduler") ThreadPoolTaskScheduler triggerScheduler,
+                                  ObjectProvider<ExecutionFacade> executionFacadeProvider) {
         this.triggerMapper = triggerMapper;
         this.workflowService = workflowService;
         this.triggerScheduler = triggerScheduler;
+        this.executionFacadeProvider = executionFacadeProvider;
     }
 
     /** 启动时加载所有启用的 CRON 触发器。 */
@@ -185,10 +197,40 @@ public class WorkflowTriggerService {
             if (t == null || t.getStatus() == null || t.getStatus() != 1) {
                 return;
             }
-            fire(t, null);
+            ExecutionFacade facade = executionFacadeProvider.getIfAvailable();
+            if (facade == null) {
+                // 调度中心尚未装配（过渡期）：保持既有行为，避免定时触发静默失效
+                fire(t, null);
+                return;
+            }
+            submitBackground(facade, t);
         } catch (Exception e) {
             log.error("定时触发工作流失败 triggerId={}", triggerId, e);
         }
+    }
+
+    /**
+     * 提交后台作业（BACKGROUND lane），由调度层负责领取、租约与重试。
+     *
+     * <p>幂等键按「触发器 + 秒级 slot」生成：多副本在同一秒触发时只会留下一条作业记录。
+     */
+    private void submitBackground(ExecutionFacade facade, WorkflowTrigger t) {
+        String input = t.getInputText() == null ? "" : t.getInputText();
+        String bizKey = "workflow-trigger:" + t.getId() + ":"
+                + Instant.now().truncatedTo(ChronoUnit.SECONDS).getEpochSecond();
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put(WorkflowRunJobHandler.PAYLOAD_WORKFLOW_ID, String.valueOf(t.getWorkflowId()));
+        payload.put(WorkflowRunJobHandler.PAYLOAD_INPUT, input);
+        payload.put(WorkflowRunJobHandler.PAYLOAD_TRIGGER_ID, String.valueOf(t.getId()));
+        ExecutionRequest request = ExecutionRequest.builder(WorkflowRunJobHandler.JOB_TYPE, ExecutionLane.BACKGROUND)
+                .bizKey(bizKey)
+                .payload(payload)
+                .build();
+        ExecutionHandle handle = facade.submit(request);
+        t.setLastFireTime(LocalDateTime.now());
+        t.setFireCount(t.getFireCount() == null ? 1 : t.getFireCount() + 1);
+        triggerMapper.updateById(t);
+        log.info("工作流定时触发已提交后台作业 triggerId={} executionId={}", t.getId(), handle.executionId());
     }
 
     /** 类型规范化与字段校验。 */

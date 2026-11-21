@@ -472,10 +472,16 @@ public class WorkflowEngine {
                 new ThreadPoolExecutor.AbortPolicy());
 
         try {
-            // 调度线程：持续从 frontier 取节点、判断 pendingIn、提交给 worker
-            Thread dispatcher = new Thread(MdcContext.wrap(() -> {
+            // 调度循环：原实现起线程后立即 join，线程无并行价值；改为内联执行并保留 5 分钟截止，
+            // 避免嵌套提交到统一线程池造成池饥饿
+            long deadlineNanos = System.nanoTime() + TimeUnit.MINUTES.toNanos(5);
+            Runnable dispatcher = () -> {
                 try {
                     while (true) {
+                        if (System.nanoTime() > deadlineNanos) {
+                            log.warn("工作流调度超时 runId={}", run.getId());
+                            return;
+                        }
                         String nodeId;
                         synchronized (frontier) {
                             while (frontier.isEmpty() && submitted.isEmpty()) {
@@ -511,14 +517,8 @@ public class WorkflowEngine {
                 } catch (Throwable t) {
                     log.error("工作流调度线程异常", t);
                 }
-            }), "wf-dispatcher-" + run.getId());
-            dispatcher.start();
-            try {
-                dispatcher.join(5 * 60 * 1000L); // 最多等 5 分钟
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                log.warn("工作流调度线程被中断 runId={}", run.getId());
-            }
+            };
+            dispatcher.run();
         } finally {
             executor.shutdownNow();
             latch.countDown();

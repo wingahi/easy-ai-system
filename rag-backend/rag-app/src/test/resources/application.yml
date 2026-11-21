@@ -31,6 +31,10 @@ mybatis-plus:
 wgh:
   db:
     dialect: h2
+  # 测试环境用 H2，作业表 SQL（SKIP LOCKED / make_interval / JSONB）无法执行；
+  # 关闭调度循环，避免上下文启动时反复报错。作业表相关逻辑不在 H2 覆盖范围内。
+  scheduler:
+    enabled: false
   auth:
     oidc:
       issuer: ""

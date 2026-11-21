@@ -1,0 +1,65 @@
+package com.wgh.rag.scheduler.execution;
+
+import com.wgh.rag.execution.event.ExecutionEventSink;
+import com.wgh.rag.execution.job.ExecutionCancellationToken;
+import com.wgh.rag.execution.job.JobContext;
+import com.wgh.rag.execution.model.ExecutionRequest;
+
+/**
+ * 调度层注入给 {@code JobHandler} 的运行上下文。
+ *
+ * <p>执行期不允许回读 HTTP 请求上下文；租户、属主、负载都在提交时冻结在
+ * {@link #request()} 中。心跳动作由调度层提供：后台作业续约数据库租约与单飞锁，
+ * 交互式执行则为无操作。
+ */
+public class JobContextImpl implements JobContext {
+
+    private final String executionId;
+
+    private final ExecutionRequest request;
+
+    private final ExecutionEventSink events;
+
+    private final ExecutionCancellationToken cancellation;
+
+    private final Runnable heartbeatAction;
+
+    public JobContextImpl(String executionId,
+                          ExecutionRequest request,
+                          ExecutionEventSink events,
+                          ExecutionCancellationToken cancellation,
+                          Runnable heartbeatAction) {
+        this.executionId = executionId;
+        this.request = request;
+        this.events = events;
+        this.cancellation = cancellation;
+        this.heartbeatAction = heartbeatAction;
+    }
+
+    @Override
+    public String executionId() {
+        return executionId;
+    }
+
+    @Override
+    public ExecutionRequest request() {
+        return request;
+    }
+
+    @Override
+    public ExecutionEventSink events() {
+        return events;
+    }
+
+    @Override
+    public ExecutionCancellationToken cancellation() {
+        return cancellation;
+    }
+
+    @Override
+    public void heartbeat() {
+        if (heartbeatAction != null) {
+            heartbeatAction.run();
+        }
+    }
+}
