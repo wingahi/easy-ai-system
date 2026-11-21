@@ -114,8 +114,15 @@
 | `SEMCACHE_CLEANUP` | MAINTENANCE | `semcache-cleanup:{yyyyMMddHH}` | 保留策略 | 幂等 |
 | `KB_REBUILD` | BACKGROUND | `kb:{kbId}:rebuild:{targetCollection}` | kbId、targetCollection、目标模型/维度 | 同 kb 只允许一个重建（复用 `rebuild_status` CAS） |
 | `VECTOR_BACKFILL` | BACKGROUND | `vector:{collection}:{batchNo}` | collection、游标、目标后端 | 按批次幂等 |
+| `QUOTA_REFUND` | MAINTENANCE | `QUOTA_REFUND:recurring:{bucket}` | 无（扫描 `wgh_quota_charge`） | 桶内幂等；执行侧单飞 |
 
 > `KB_REBUILD` / `VECTOR_BACKFILL` 是向量库规划（[design-vector-store-and-search-engine.md](design-vector-store-and-search-engine.md)）的执行载体；本文只约定它们走 BACKGROUND，不定义回填细节。
+>
+> **周期提交约定（2026-11-20 新增）**：需要按固定间隔提交的维护作业实现 `rag-execution` 的 `RecurringJob`，
+> 由 `JobDispatcher` 按 `epochMillis / interval` 分桶提交，`bizKey=jobType:recurring:{bucket}`；
+> 多实例同桶由 `(job_type, biz_key)` 唯一键去重，执行侧仍复用租约与维护车道 Redis 单飞。
+> 业务侧不新增 `@Scheduled`，也不用进程内锁；Redis 只做锁，不作为待执行数据的存储。
+> 首个落地为配额退款补偿 `QUOTA_REFUND`。
 
 ### 2.3 作业生命周期（复用状态机，补充「提交即失败」边界）
 

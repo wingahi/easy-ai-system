@@ -56,14 +56,14 @@
 
 | 能力 | 状态 | 说明 |
 |------|------|------|
-| 文档解析（12 种格式） | 已完成 | PDF / DOC / DOCX / XLS / XLSX / CSV / TXT / MD / PPTX / HTML / JSON / EML；统一由 `DocumentParserDispatcher` 分发并抽取元数据 |
-| PDF 版面分析与表格还原 | 已完成 | `PdfLayoutAnalyzer` 识别双栏阅读顺序，`TableExtractor` 将表格还原为 Markdown；栏检测优先于表格，纯两列表格可能按双栏处理 |
-| 扫描版 PDF OCR | 已完成 | `TessOcrService` 按页兜底，单页文字少于阈值（默认 20 字）触发；依赖本机 `tesseract` 与 `chi_sim+eng` 语言包，缺失或超时降级为文本抽取（`WGH_OCR_*`） |
-| 新增文档格式（PPTX / HTML / JSON / EML） | 已完成 | `PptxParser` / `HtmlParser` / `JsonParser` / `EmlParser` + 统一元数据与大小上限 |
-| 文本切分（9 种策略） | 已完成 | AUTO / RECURSIVE / CHAPTER / PARAGRAPH / FAQ / LENGTH / CUSTOM / STRUCTURED（标题感知）/ SEMANTIC（语义断句） |
+| 文档解析（12 种格式） | 已完成 | 位于 `rag-document`：PDF / DOC / DOCX / XLS / XLSX / CSV / TXT / MD / PPTX / HTML / JSON / EML；统一由 `DocumentParserDispatcher` 分发并抽取元数据 |
+| PDF 版面分析与表格还原 | 已完成 | `rag-document` 的 `PdfLayoutAnalyzer` 识别双栏阅读顺序，`TableExtractor` 将表格还原为 Markdown；栏检测优先于表格，纯两列表格可能按双栏处理 |
+| 扫描版 PDF OCR | 已完成 | `rag-document` 的 `TessOcrService` 按页兜底，单页文字少于阈值（默认 20 字）触发；依赖本机 `tesseract` 与 `chi_sim+eng` 语言包，缺失或超时降级为文本抽取（`WGH_OCR_*`） |
+| 新增文档格式（PPTX / HTML / JSON / EML） | 已完成 | `rag-document` 的 `PptxParser` / `HtmlParser` / `JsonParser` / `EmlParser` + 统一元数据与大小上限 |
+| 文本切分（9 种策略） | 已完成 | `rag-document` 的 AUTO / RECURSIVE / CHAPTER / PARAGRAPH / FAQ / LENGTH / CUSTOM / STRUCTURED（标题感知）/ SEMANTIC（语义断句） |
 | 查询变换 / 混合检索 / RRF / Rerank | 已完成 | REWRITE / MULTI_QUERY / HYDE；向量余弦 + pg_trgm 关键词召回；RRF(k=60) 融合；可选 Rerank；聊天窗口可单独配置 `hybridEnabled` / `queryTransformMode` / `rewriteModelId`，混合检索按“窗口开启或全局开启”生效，窗口关闭不能覆盖全局开启（2026-11-18，commit `8b52b5f`） |
-| 检索指标与离线评测 | 已完成 | 覆盖率 / 命中率；ground truth 标注后计算 Recall@K / Precision@K / MRR / NDCG；生成侧多 judge 评估 Faithfulness / Answer Relevancy / Context Precision / Context Recall（缺参考答案时显式标记不可计算）；`eval/eval_recall.py` 复用同一标注 |
-| 评测数据集版本化与 CI 检索门禁 | 已完成 | 数据集 / 用例 / 结果三表；用例每次变更按“写时复制”生成新版本，旧版本只读；按版本评测并归档指标与逐查询明细，支持跨版本指标差值与逐查询 Recall 差值；CI 用固定 fixture 在无 Key、无网络、无真实模型条件下校验五项阈值（commit `adbdafe`） |
+| 检索指标与离线评测 | 已完成 | `rag-eval`：覆盖率 / 命中率；ground truth 标注后计算 Recall@K / Precision@K / MRR / NDCG；生成侧多 judge 评估 Faithfulness / Answer Relevancy / Context Precision / Context Recall（缺参考答案时显式标记不可计算）；`eval/eval_recall.py` 复用同一标注 |
+| 评测数据集版本化与 CI 检索门禁 | 已完成 | `rag-eval`：数据集 / 用例 / 结果三表；用例每次变更按“写时复制”生成新版本，旧版本只读；按版本评测并归档指标与逐查询明细，支持跨版本指标差值与逐查询 Recall 差值；CI 用固定 fixture 在无 Key、无网络、无真实模型条件下校验五项阈值（commit `adbdafe`） |
 | 检索来源结构化与 [Sn] 引用溯源 | 已完成 | `sources` 扩展 `kbId` / `kbName` / `fileId` / `fileName` / `chunkIndex` / `pageNo` / `charStart` / `charEnd` / `score` / `snippet`（压缩空白后前 120 字），按文件名去重保留最高分；上下文按文档分配 `[Sn]` 编号（同文档多段共用），system prompt 要求按编号引用；前端 `SourcePanel.vue` 展开原文并高亮对应卡片（commit `96dfc42`） |
 | 知识库标签 | 已完成 | `TagService` / `TagController`；知识库与文件多标签绑定及管理界面 |
 | 文档版本 | 已完成 | `FileVersionService` + 版本列表 / 回滚；回滚生成新版本，不覆盖旧版本 |
@@ -113,7 +113,7 @@
 | 多用户与权限体系 | 已完成 | OIDC + 本地账号双认证，RBAC（`@RequiresPermission` / `PermissionAspect`）；租户隔离与知识库/文档级全量权限不在范围内 |
 | 资源归属与可见性 | 已完成 | 知识库 / 聊天窗口 / 工作流 / Prompt 模板 / 工具五类资源新增 `visibility`（`PRIVATE` 默认 / `TEAM` / `PUBLIC`），owner 复用 `create_by`；读他人 `PRIVATE` 按不存在处理（业务码 `3001`），写他人 `TEAM`/`PUBLIC` 返回权限不足（业务码 `1004`），均为 HTTP 200 + 业务码；列表/分页由 `DataScopeInterceptor` 显式过滤，内置 Prompt 模板固定 `PUBLIC`（commit `59c5eee`） |
 | 角色与权限管理页面 | 已完成 | `AdminRoleController`（`/api/admin/roles`、`/api/admin/permissions`）+ `RoleManagement.vue`、`UserManagement.vue` |
-| 配额模块与前后端页面 | 已完成 | 独立 `rag-quota` 模块；全局默认 + 按用户日/月配置，超限 429；对话计数改为「带 limit 条件的原子 UPDATE」，多实例并发不超发（提交 `e02981f`）；`QuotaManagement.vue` / `MyQuota.vue` |
+| 配额模块与前后端页面 | 已完成 | 独立 `rag-quota` 模块；全局默认 + 按用户日/月配置，超限 429；对话计数改为「带 limit 条件的原子 UPDATE」，多实例并发不超发（提交 `e02981f`）；扣费流水 `wgh_quota_charge` 与退款补偿作业 `QUOTA_REFUND`（2026-11-20）；`QuotaManagement.vue` / `MyQuota.vue` |
 | Redis 8.10.1 接入 | 已完成 | 分布式限流、分享密码失败锁定（成功清零）、嵌入授权、API Key IP 白名单；统一到 Redis 命名空间（根 `WGH_REDIS_KEY_PREFIX`），不可用时降级单机内存并计降级次数（提交 `e02981f`） |
 | 多实例共享状态与跨实例取消 | 已完成 | 聊天取消标记、限流与授权统一落 Redis；新增显式停止接口，停止生成在任意实例生效，`CHAT` 会话可在其它副本被取消（提交 `e02981f`）；新增通用 Redis 分布式锁，供存储迁移与任务恢复复用 |
 | 审计与成本统计 | 已完成 | `@Audit` 异步记录写操作；角色 / Agent / 多 Agent / 配额等管理写操作已覆盖（资源标识落 `detail`）；模型价格表 + 消息成本 / 模型名回填；管理端聚合统计 |
@@ -128,9 +128,12 @@
 | 模型管理 | 已完成 | DB 动态模型 + OpenAI / DASHSCOPE / DeepSeek / Azure OpenAI / Ollama / 智谱 GLM / 自建 OpenAI 兼容端点，能力由 `ProviderCatalog` 统一描述；缓存热更新 |
 | 模型路由与故障转移 | 已完成 | `ModelRouter#resolveChain` + `rag-llm/failover` 通用组件：`StreamingModelFailover` 驱动普通 RAG 流式切链（首 token 前 `onError` 切下一候选，独立输出缓冲 + `active`/CAS 防重复切链），`BlockingModelFailover` 驱动 Agent 与工作流 LLM 节点（首响应前失败切链）；全部候选失败返回明确业务错误，已产出内容后失败不切链、不拼接两段输出；三类链路均下发 `model_switch` |
 | 多实例 JWKS 缓存共享 | **未实现** | `JwksProvider` 为进程内缓存，密钥轮换后各实例刷新时间不一致 |
-| `rag-public-access` 独立模块 + Enforcer 禁反向依赖 | 已完成 | 分享 / Widget / API Key 实现层独立；Controller 留在 `rag-controller`，依赖方向受 Enforcer 约束 |
+| `rag-public-access` 独立模块 + Enforcer 禁反向依赖 | 已完成 | 分享 / Widget / API Key 实现层独立；Controller 留在 `rag-controller`，依赖方向受 Enforcer 约束；与 chat/kb 通过 `rag-common` 的 `ChatShareTargetPort` / `KnowledgeBaseShareTargetPort` 解耦 |
 | `rag-storage` 独立模块（local / OSS 可插拔） | 已完成 | `FileStorageService` + `LocalFileStorageService` / `AliyunOssFileStorageService` |
 | `rag-agent-multi` Controller 迁入 `rag-controller` | 已完成 | `rag-agent-multi` 已无 Controller，`MultiAgentController` 位于 `rag-controller` |
+| `rag-execution` 契约 + `rag-scheduler` 调度层（P0–P3） | 已完成 | `rag-execution` 零依赖契约（`JobHandler` / `RunAdapter` / 车道 / 事件 / `ExecutionStreamSink`）；`rag-scheduler` 提供三车道、`wgh_execution_job`、租约、Redis 单飞与周期作业提交；`WORKFLOW_RUN`、`QUOTA_REFUND` 两个 handler 已接入 |
+| `rag-document` / `rag-eval` 拆分（P4） | 已完成 | 解析 / 切分从 `rag-kb` 拆到 `rag-document`，评测数据集与召回评测拆到 `rag-eval`；`rag-kb` 收窄为知识库 / 文件生命周期、入库编排、向量化与检索增强；`rag-controller` 仅保留 REST / SSE 适配 |
+| `rag-chat` 传输无关重构 | 已完成 | service 层移除 `SseEmitter`，统一使用 `ExecutionStreamSink`；`ChatEventPublisher` / `ChatStreamHandle` 负责事件与取消；SSE 适配器 `SseExecutionStreamSink` 仅在 `rag-controller` |
 | 常量统一抽取 | 已完成 | 各模块 `constant` 包；权限码、角色码、状态值、SSE 事件名、存储 key 前缀等改引用常量 |
 | JDK 21 统一 | 已完成 | `maven.compiler.release=21` + Enforcer 强制 JDK 21，CI 与本地一致 |
 | 测试用例与设计文档补全 | 已完成 | JUnit 5 + Mockito；`scripts/` 提供 e2e / 冒烟 / 压测；`docs/testing/test-cases.md`、`docs/design/**/*.md` 已补齐 |
@@ -148,11 +151,11 @@
 
 ### 3.7 平台演进规划（2026-11-19）
 
-状态口径：**规划中** = 已有成稿规划文档、尚未开始实施。四块互有依赖，阶段编号与验收以规划文档为准。
+状态口径：**已完成** / **部分完成** / **规划中**（已有成稿规划文档、尚未开始实施）。四块互有依赖，阶段编号与验收以规划文档为准。
 
 | 方向 | 状态 | 阶段划分 | 说明 |
 |------|------|----------|------|
-| 任务调度中心 | **规划中** | S0 止血 → S1 后台作业化 → S2 租户策略生效 → S3 集群语义 | 统一承接聊天、工作流、计划任务、单 Agent、多 Agent；后台型走持久化作业 + 租约，交互式走受管 lane；不新增独立调度服务。详见 [design-execution-scheduler-center.md](docs/design/features/platform/design-execution-scheduler-center.md) |
+| 任务调度中心 | **部分完成（S1 已落地）** | S0 止血 → S1 后台作业化 → S2 租户策略生效 → S3 集群语义 | `rag-execution` 契约、`rag-scheduler` 三车道、`wgh_execution_job` 作业表、租约与 Redis 单飞、`RecurringJob` 周期提交已落地；`WORKFLOW_RUN`、`QUOTA_REFUND` 已作业化，聊天仍走统一异步执行器；S2 租户策略与 S3 集群语义未完成。详见 [design-execution-scheduler-center.md](docs/design/features/platform/design-execution-scheduler-center.md) |
 | 多租户隔离 | **规划中** | 阶段 0 修越权 → 1 租户模型与上下文 → 2 数据面全量隔离 → 3 企业级加固 → 4 混合分层（按需） | 共享表 + `tenant_id` 主线、RLS 兜底、大客户按需独立 schema/DB；复用 G-01～G-15 薄弱点清单。详见 [design-multi-tenancy-isolation-roadmap.md](docs/design/features/platform/design-multi-tenancy-isolation-roadmap.md) |
 | 独立向量数据库 / 搜索引擎 | **规划中** | V0 可替换性基线 → V1 搜索引擎 → V2 独立向量库（按阈值）→ V3 多后端治理 | 现状为每知识库一张 pgvector 物理表且 chunk 原文只存向量表；V0 先补端口与事实层，V1 先接关键词/过滤，V2 再按阈值替换向量后端。详见 [design-vector-store-and-search-engine.md](docs/design/features/platform/design-vector-store-and-search-engine.md) |
 | Kubernetes 级编排 | **规划中** | K0 容器基线 → K1 单副本可编排 → K2 多副本 → K3 生产级 | 只做应用与依赖的部署编排，不把业务调度迁到 K8s；多副本以 S0/A 阶段为硬门槛。详见 [design-kubernetes-orchestration.md](docs/design/features/platform/design-kubernetes-orchestration.md) |
@@ -163,27 +166,36 @@
 
 ### 4.1 模块结构
 
+`rag-backend` 共 24 个 Maven 模块（1 个父 POM + 23 个子模块）。
+
 ```text
 wgh-rag-system/
-├── rag-backend/                  # Spring Boot 多模块（Java 21）
-│   ├── rag-common/               # 纯契约层：Result / 异常 / 指标 / 安全契约
+├── rag-backend/                  # Spring Boot 多模块（Java 21，23 个子模块 + 父 POM）
+│   ├── rag-common/               # 公共契约与基础配置：Result / 异常 / 指标 / 安全契约 / 分享端口 / 执行器配置
+│   ├── rag-execution/            # 零依赖执行契约：JobHandler / RunAdapter / 车道 / 事件 / sink
 │   ├── rag-data/                 # BaseEntity / MyBatis-Plus 配置 / 类型处理器
 │   ├── rag-log/                  # @Audit 切面与审计日志
 │   ├── rag-auth/                 # OIDC 资源服务器 + 本地登录 + 用户/角色/权限
-│   ├── rag-quota/                # 配额模块（全局默认 + 按用户日/月）
+│   ├── rag-quota/                # 配额、扣费流水与退款补偿作业
 │   ├── rag-config/               # 配置属性映射
+│   ├── rag-context/              # 上下文预算装配（按类型 + 优先级）
 │   ├── rag-storage/              # 可插拔文件存储：local / 阿里云 OSS
-│   ├── rag-llm/                  # 动态模型、厂商工厂、缓存热更新、模型路由
-│   ├── rag-kb/                   # 上传 → 解析 → 切分 → 向量化 → 检索增强 → 评测
-│   ├── rag-chat/                 # 窗口/会话、上下文压缩、流式 RAG、分享、反馈
+│   ├── rag-llm/                  # 动态模型、厂商工厂、缓存热更新、模型路由 / 故障转移
+│   ├── rag-document/             # 文档解析（12 格式 / PDF 版面 / OCR / 表格）与 9 种切分
+│   ├── rag-kb/                   # 知识库 / 文件生命周期、入库编排、向量化与检索增强
+│   ├── rag-eval/                 # 评测数据集版本化、召回 / 生成侧评测（依赖 rag-kb）
+│   ├── rag-chat/                 # 窗口/会话、上下文压缩、流式 RAG（传输无关）、分享、反馈
 │   ├── rag-tool/                 # HTTP / MCP / Skill / 函数调用工具
+│   ├── rag-sandbox/              # Python / JavaScript 代码沙箱（默认关闭）
 │   ├── rag-agent/                # 单 Agent：Planner / Executor / Reflection / HITL
+│   ├── rag-workflow/             # 工作流引擎 + WORKFLOW_RUN 后台作业 Handler
 │   ├── rag-agent-multi/          # 多 Agent：Crew / Graph / GroupChat / runtime
-│   ├── rag-workflow/             # 工作流引擎：节点执行器、触发器、模板
+│   ├── rag-scheduler/            # 调度层：三车道、准入、作业表、租约、单飞、周期提交
 │   ├── rag-public-access/        # 分享 / Widget / 开放 API 实现层（无 Controller）
-│   ├── rag-controller/           # REST 层（含 /api/public、/api/open/v1）
-│   ├── rag-app/                  # 启动模块 + application*.yml + 集成测试
-│   ├── sql/                      # schema/01-schema.sql（37 张表）/ seed/02-data.sql
+│   ├── rag-controller/           # REST 适配器：Controller + SSE sink（不含业务实现）
+│   ├── rag-app/                  # 启动模块 + application*.yml + 集成测试 + 显式装配
+│   ├── config/                   # 配置增量片段（config/migrations/，非自动加载）
+│   ├── sql/                      # schema/01-schema.sql（46 张表）/ seed/02-data.sql / migrations/
 │   ├── eval/                     # eval_recall.py（Recall@K）、eval_rag.py（含 LLM Judge）
 │   └── scripts/                  # e2e / 冒烟 / 压测脚本
 ├── rag-frontend/                 # Vue 3 前端（含 public/widget.js）
@@ -192,10 +204,15 @@ wgh-rag-system/
 
 关键依赖约束：
 
-- `rag-common` 不依赖任何内部模块，也不含实体 / Mapper / MyBatis 配置；
-- `rag-public-access` 依赖方向固定为 `rag-controller → rag-public-access`，并由 Enforcer 禁止反向依赖；
+- `rag-common` 不依赖任何内部模块，也不含实体 / Mapper / MyBatis 配置；它同时承载公共契约、跨模块端口（`ChatShareTargetPort` / `KnowledgeBaseShareTargetPort`）与统一异步执行器配置；
+- `rag-execution` 是零依赖契约层，只定义 `JobHandler` / `RunAdapter` / 车道 / 事件 / `ExecutionStreamSink` 等类型，不依赖任何业务模块；
+- `rag-scheduler` 只依赖 `rag-execution`、`rag-data`、`rag-config` 与基础库，不依赖任何执行域实现；执行域模块只依赖 `rag-execution`，不依赖 `rag-scheduler`；
+- 执行域偏序为 `rag-agent → rag-workflow → {rag-chat, rag-agent-multi}`，`rag-chat` 与 `rag-agent-multi` 互不依赖；
+- `rag-public-access` 依赖方向固定为 `rag-controller → rag-public-access`，并与 `rag-chat` / `rag-kb` 通过 `rag-common` 端口解耦，由 Enforcer 禁止反向依赖；
 - `rag-storage` 仅依赖 `rag-common`，上层业务通过 `FileStorageService` 抽象使用；
-- `rag-auth` 持有用户 / 角色 / 权限实体与 Mapper，供 Controller 的 RBAC 管理接口使用。
+- `rag-auth` 持有用户 / 角色 / 权限实体与 Mapper，供 Controller 的 RBAC 管理接口使用；
+- `rag-kb` 已不再承载解析 / 切分与评测：解析 / 切分在 `rag-document`，评测在 `rag-eval`（`rag-eval → rag-kb`）；
+- `rag-controller` 仅做 REST / SSE 适配，不包含业务实现；SSE 适配器 `SseExecutionStreamSink` 只在此层出现。
 
 更完整的模块依赖与边界说明见 [docs/design/design-overview.md](docs/design/design-overview.md) 与 [docs/design/design-detailed.md](docs/design/design-detailed.md)。
 
@@ -204,6 +221,8 @@ wgh-rag-system/
 - **单库承载业务与向量**：PostgreSQL + pgvector 省去独立向量数据库；pgvector 不可用时不阻断应用启动，但向量检索相关能力不可用。
 - **Redis 可选**：限流、分享密码锁定、嵌入授权可集中到 Redis；不可用时自动降级为单机内存，不阻断启动。
 - **SSE 统一协议**：聊天、Agent、工作流、多 Agent 共用事件风格；`content` 事件使用 JSON 包装文本，避免换行丢失，前端状态复位以事件驱动。
+- **传输无关事件出口**：执行域只依赖 `ExecutionStreamSink`；SSE 适配器 `SseExecutionStreamSink` 留在 `rag-controller`，聊天侧用 `ChatEventPublisher` / `ChatStreamHandle` 管理事件与取消，后台作业与交互式链路可复用同一套事件契约。
+- **统一调度中心**：`rag-scheduler` 提供三车道、`wgh_execution_job` 作业表、租约与 Redis 单飞；后台型作业走 `JobHandler`，周期型作业实现 `RecurringJob` 按时间桶提交；`wgh.scheduler.enabled=false` 可整体关闭，交互式聊天不受影响。
 - **先落库后推送**：Agent / 工作流执行结果先持久化再发送 SSE，刷新页面后仍可恢复。
 - **多环境配置**：dev / test / prod 分离；生产敏感配置通过环境变量注入。
 - **逻辑删除**：所有删除走 `deleted` 字段，便于审计与恢复。
@@ -218,7 +237,8 @@ wgh-rag-system/
 | LLM | LangChain4j · OpenAI / DASHSCOPE / DeepSeek / 自建 OpenAI 兼容端点 |
 | 工具 | LangChain4j Tool Calling · MCP（stdio / Streamable HTTP）· HTTP · 本地反射 · Skill |
 | Agent | Planner / StepExecutor / Reflection / HITL；多 Agent 含 Crew / Graph / GroupChat |
-| 工作流 | 自研 DAG 引擎：11 类节点、并行 fan-out/fan-in、版本快照、CRON / Webhook |
+| 工作流 | 自研 DAG 引擎：12 类节点、并行 fan-out/fan-in、版本快照、CRON / Webhook |
+| 调度 | 自研 `rag-scheduler`：交互式 / 后台 / 维护三车道，`wgh_execution_job` 作业表 + 租约，Redis 单飞，周期作业按时间桶提交 |
 | 鉴权 | 外部 OIDC token（JWKS 非对称公钥验签）+ 本地会话凭证 + RBAC + API Key（SHA-256） |
 | 评估 | 检索侧 Recall@K / Precision@K / MRR / NDCG；生成侧 LLM-as-Judge |
 | 测试 | JUnit 5 + Mockito；shell e2e / 冒烟 / 压测；离线召回率评测脚本 |
@@ -252,19 +272,26 @@ docker run -d --name postgres-with-vector \
   -v "$(pwd)/rag-backend/sql:/sql:ro" \
   pgvector/pgvector:pg15
 
-# 37 张表 + 索引 + 种子数据：按顺序用 -f 执行（结构脚本幂等，种子含示例数据，不建议对存量库重跑）
+# 46 张表 + 索引 + 种子数据：按顺序用 -f 执行（结构脚本幂等，种子含示例数据，不建议对存量库重跑）
 docker exec -i postgres-with-vector psql -U postgres -d wgh_rag \
   -f /sql/schema/01-schema.sql -f /sql/seed/02-data.sql
 ```
 
-> **已有库升级**：不要重跑 schema / seed。按版本顺序执行 `sql/migrations/` 下的增量脚本，例如资源可见性：
+> **已有库升级**：不要重跑 schema / seed。按版本顺序执行 `sql/migrations/` 下的增量脚本，例如资源可见性与 2026-11-20 新增的调度 / 配额流水：
 >
 > ```bash
 > docker exec -i postgres-with-vector psql -U postgres -d wgh_rag \
 >   -f /sql/migrations/20261113/01_resource_visibility.sql
+>
+> docker exec -i postgres-with-vector psql -U postgres -d wgh_rag \
+>   -f /sql/migrations/20261120/01_execution_job.sql
+>
+> # wgh_quota_charge 位于聊天主链路：部署含扣费流水的版本前必须先执行
+> docker exec -i postgres-with-vector psql -U postgres -d wgh_rag \
+>   -f /sql/migrations/20261120/02_quota_charge.sql
 > ```
 >
-> 迁移脚本均为幂等（`IF NOT EXISTS`），只补列 / 索引与必要回填，不重建表。
+> 迁移脚本均为幂等（`IF NOT EXISTS`），只补列 / 索引与必要回填，不重建表。`wgh_execution_job` 与 `wgh_quota_charge` 已登记到 `sql/schema/01-schema.sql`，新库无需重复执行增量脚本。
 
 2）启动后端：
 
@@ -330,6 +357,8 @@ docker compose ps
 ## 6. 配置说明
 
 功能开关与运行参数集中在 `application-features.yml`，由 `application.yml` 以 `optional:classpath` 引入；文件内所有值等于代码默认值，缺失不影响启动，敏感项仍由环境变量注入。
+
+`config/migrations/` 存放按日期分目录的**增量配置片段**（如 `20261120/01_async-executor.yml`、`02_scheduler.yml`、`03_quota-refund.yml`），不参与自动加载；合并方式与各片段键位见 [config/migrations/README.md](rag-backend/config/migrations/README.md)。
 
 ### 6.1 认证与初始化管理员
 
@@ -442,6 +471,22 @@ OSS 配置不完整时不阻断启动，仅在真正调用存储操作时返回�
 | `WGH_UPLOAD_CLEANUP_STALE_HOURS` | 24 | 只清理超过该时长未更新的 `UPLOADING` 会话 |
 | `WGH_UPLOAD_CLEANUP_INTERVAL_MINUTES` / `BATCH_SIZE` | 60 / 200 | 清理轮询间隔（最小 5 分钟）与单轮上限 |
 
+### 6.8 调度中心与配额退款补偿
+
+| 配置 | 默认 | 说明 |
+|------|------|------|
+| `wgh.scheduler.enabled` | `true` | 调度中心总开关；关闭后不创建车道线程池与作业循环，后台作业与补偿作业不再运行 |
+| `wgh.scheduler.lease-ttl` | 60s | 作业租约 TTL；持有者需在到期前续租，否则可被其它实例回收 |
+| `wgh.scheduler.single-flight.lock-ttl` | 120s | 维护车道单飞锁 TTL；Redis 只做锁，不存待退款数据 |
+| `wgh.rag.quota.charge.refund-enabled` | `true` | 是否启用退款补偿作业 |
+| `wgh.rag.quota.charge.refund-protection` | 5m | 已扣未决保护期，超过后才补偿 |
+| `wgh.rag.quota.charge.refund-scan-interval` | 60s | 补偿作业提交间隔（维护车道） |
+| `wgh.rag.quota.charge.refund-max-attempts` | 5 | 单条流水最大退款尝试次数（含首次），耗尽后置 `DEAD` |
+| `wgh.rag.quota.charge.refund-backoff` / `refund-backoff-max` | 60s / 30m | 指数退避基数与上限 |
+| `wgh.rag.quota.charge.refund-batch-size` | 200 | 单次扫描最多处理的流水条数 |
+
+> 调度中心启用前需先执行 `sql/migrations/20261120/01_execution_job.sql`；配额扣费流水位于聊天主链路，部署对应版本前必须先执行 `sql/migrations/20261120/02_quota_charge.sql`。增量配置片段见 `config/migrations/20261120/02_scheduler.yml` 与 `03_quota-refund.yml`。
+
 ---
 
 ## 7. 接口概览
@@ -477,6 +522,8 @@ OSS 配置不完整时不阻断启动，仅在真正调用存储操作时返回�
 | 权限体系 | 已提供角色 / 权限管理页面与接口；五类核心资源（知识库 / 聊天窗口 / 工作流 / Prompt 模板 / 工具）已支持 owner + 可见性；无租户隔离，文档级权限仍不在范围内 | 多团队共用与真正的团队边界需后续引入租户 / 成员模型；规划见 [多租户隔离落地规划](docs/design/features/platform/design-multi-tenancy-isolation-roadmap.md) |
 | 可观测性 | 已提供 Prometheus 指标与管理端口（9090）、`X-Request-Id` 日志关联；未接入分布式链路追踪 | 跨服务调用链仍需日志 / 审计辅助 |
 | 部署编排 | 已提供前后端 Dockerfile 与全栈 docker-compose；无 Kubernetes 级编排 | 大规模水平扩展需自行补编排；规划见 [Kubernetes 级编排规划](docs/design/features/platform/design-kubernetes-orchestration.md) |
+| 调度中心（2026-11-20） | `wgh_execution_job`、三车道、租约、Redis 单飞与 `RecurringJob` 已落地；`WORKFLOW_RUN`、`QUOTA_REFUND` 已作业化。H2 单测覆盖不到 `FOR UPDATE SKIP LOCKED`、租约过期回收与跨副本单飞；双副本并发未压测；`CHAT` 仍走统一异步执行器，未作业化；评测、存储迁移类 handler 尚未接入调度 | 生产启用前需在真实 PostgreSQL + 双副本环境验证领取 / 回收 / 单飞；未接入的链路继续沿用原有执行方式 |
+| 配额退款流水（2026-11-20） | `wgh_quota_charge` 已登记基线；存量库需执行 `sql/migrations/20261120/02_quota_charge.sql`，且必须先迁移再部署。补偿作业依赖 `wgh.scheduler.enabled=true`；`REFUND_FAILED` / `DEAD` 目前靠日志与 SQL 人工处理，无管理端页面 | 上线前准备回滚与人工对账 SQL；补偿关闭期间退款失败会停留在流水状态，需人工介入 |
 | 限流 | Redis Lua 分布式滑动窗口，故障时降级单机内存 | Redis 故障期间多实例计数不共享、重启清零；建议 Redis 高可用 |
 | Widget | 仅 iframe 注入，无 `postMessage` 双向通信；`frame-ancestors` 需网关 / 静态服务配置 | 宿主页无法读取对话事件；手工 iframe 仍可能绕过 `widget.js`，需 CSP 兜底 |
 | 分享密码 | 失败 5 次锁定 15 分钟（可配置），无验证码 | 换 IP 可继续尝试；强防护可叠加网关限流 / 验证码 |
@@ -589,11 +636,11 @@ OSS 配置不完整时不阻断启动，仅在真正调用存储操作时返回�
 
 ### 9.4 平台演进四块规划（2026-11-19）
 
-以下四块已完成规划文档，**尚未开始实施**，阶段编号与验收以各自文档为准。此前「暂不规划」的表述已废止。
+以下四块已完成规划文档；**任务调度中心已进入实施（S1 后台作业化落地），其余三块尚未开始**。阶段编号与验收以各自文档为准。此前「暂不规划」的表述已废止。
 
 | 块 | 规划文档 | 阶段 | 前置关系 |
 |----|----------|------|----------|
-| 任务调度中心 | [design-execution-scheduler-center.md](docs/design/features/platform/design-execution-scheduler-center.md) | S0 → S1 → S2 → S3 | 与多租户阶段 0/1 同批；S0 是 K8s 多副本前置 |
+| 任务调度中心 | [design-execution-scheduler-center.md](docs/design/features/platform/design-execution-scheduler-center.md) | S0 → S1（已落地）→ S2 → S3（未开始） | 与多租户阶段 0/1 同批；S0 是 K8s 多副本前置 |
 | 多租户隔离 | [design-multi-tenancy-isolation-roadmap.md](docs/design/features/platform/design-multi-tenancy-isolation-roadmap.md) | 阶段 0 → 1 → 2 → 3（阶段 4 按需） | 阶段 0 必须先于任何多副本扩容 |
 | 独立向量数据库 / 搜索引擎 | [design-vector-store-and-search-engine.md](docs/design/features/platform/design-vector-store-and-search-engine.md) | V0 → V1 → V2（按阈值）→ V3 | V0 的事实层（chunk 原文独立化）是替换前置 |
 | Kubernetes 级编排 | [design-kubernetes-orchestration.md](docs/design/features/platform/design-kubernetes-orchestration.md) | K0 → K1 → K2 → K3 | K2 依赖 S0/A 阶段完成 |

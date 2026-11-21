@@ -2,7 +2,7 @@
 
 > **版本**：v1.3
 > **日期**：2026-11-20
-> **修订**：v1.3 记录 P1 依赖净化落地（声明漂移清理、`SsrfGuard` 下沉、Enforcer 规则）并复核两项待办；v1.2 新增 §4.8（P0 `rag-execution` 契约模块落地与命名取舍）；v1.1 新增 §4.7（`rag-controller` 按业务域分包）；v1.0 初稿。
+> **修订**：v1.4 记录 `rag-quota` 为退款补偿作业新增对 `rag-execution` 纯契约的依赖；v1.3 记录 P1 依赖净化落地（声明漂移清理、`SsrfGuard` 下沉、Enforcer 规则）并复核两项待办；v1.2 新增 §4.8（P0 `rag-execution` 契约模块落地与命名取舍）；v1.1 新增 §4.7（`rag-controller` 按业务域分包）；v1.0 初稿。
 > **性质**：分析与方案文档。不修改业务代码、不移动包、不改配置、不执行 DDL、不做 git 操作。
 > **范围**：`rag-backend` 下 19 个 Maven 模块的职责、依赖方向、职责重叠，以及为「统一调度中心」切入所需的目标划分与搬迁路径。
 > **复用来源（结论以此为准，本文不重新论证）**：
@@ -109,11 +109,13 @@
 | `rag-agent` | D/U | D/U | D/U | D/U | | | | | D/U | D/U | D/U | | — | | | | | |
 | `rag-workflow` | D/U | D/U | D/U | | | | | | D/U | D/U | D/U | | D/U | — | | | | |
 | `rag-agent-multi` | D/U | D/U | D/U | D/U | | | | | D/U | D/U | D/U | | D/U | D/U | — | | | |
-| `rag-public-access` | D/U | D/U | D/U | | | | D/U | | | | D/U | D/U | | | | — | | |
+| `rag-public-access` | D/U | D/U | D/U | | | | D/U | | | | | | | | | — | | |
 | `rag-controller` | D/U | D/U | D/U | | | D/U | D/U | D/U | D/U | D/U | D/U | D/U | D/U | D/U | D/U | D/U | — | |
 | `rag-app` | | D | | | | D | D | | | | | | | | | | D | — |
 
 > P1 落地后（2026-11-20）上表已按实际 import 扫描校正：`rag-tool→rag-context`、`rag-chat→rag-context`、`rag-workflow→rag-context`、`rag-agent-multi→rag-chat` 与 `rag-kb→rag-tool` 均已不再声明，见 §5 P1 落地结果。
+>
+> P4 端口中立化后（2026-11-20）`rag-public-access` 对 `rag-chat` / `rag-kb` 的两列已清空：分享目标端口迁至 `rag-common` 的 `com.wgh.rag.common.share`，两域只提供实现。新增的 `rag-document` / `rag-eval` 不在本表列头内，实际依赖见 §4.9。
 
 ### 2.3 依赖问题清单
 
@@ -125,8 +127,9 @@
 rag-chat        → rag-workflow, rag-agent
 rag-workflow    → rag-agent
 rag-agent-multi → rag-workflow, rag-agent（对 chat 的未使用声明已于 P1 删除）
-rag-public-access → rag-chat, rag-kb
 ```
+
+> `rag-public-access → rag-chat / rag-kb` 两条边已于 P4（2026-11-20）由「端口中立化」移除，改为二者共同依赖 `rag-common.share` 的端口接口。
 
 后果：任何人给 `rag-agent` 增加对 `rag-workflow` 的调用（例如 Agent 要用工作流节点），Maven 立刻成环；而且「谁是顶层执行体」无法判断，调度中心无法确定「统一入口该放在哪一层」。
 
@@ -135,9 +138,9 @@ rag-public-access → rag-chat, rag-kb
 | 位置 | 现象 | 为什么是倒置 |
 |---|---|---|
 | `rag-controller/.../service/TaskRecoveryService.java` | 接入层持有 `AgentOrchestrator`、`WorkflowEngine`、`MultiAgentRuntime`、`RagChatService`，并自带 2 线程执行器、Redis 锁、按类型 switch 续跑 | 运行编排与恢复属于执行域，不属于 HTTP 接入层；同时它直连 5 个 Mapper，违反 [design-overview.md](../../design-overview.md) §3.4「接入层禁止直接访问 Mapper」 |
-| `rag-public-access` → `rag-chat` / `rag-kb` | 分享/API Key 域直接依赖 `ChatSessionMapper`、`ChatWindowService`、`KnowledgeBaseMapper`（`ShareLinkService`） | 适配型模块硬绑业务实现，业务改签名即连带改分享域 |
+| `rag-public-access` → `rag-chat` / `rag-kb` | 分享/API Key 域直接依赖 `ChatSessionMapper`、`ChatWindowService`、`KnowledgeBaseMapper`（`ShareLinkService`） | 适配型模块硬绑业务实现，业务改签名即连带改分享域。**P2 反向端口化、P4 端口中立化后已消除**：端口接口在 `com.wgh.rag.common.share`，chat/kb 只提供 `@Component` 实现 |
 | `rag-kb` → `rag-tool` | 仅为 `SsrfBlockedException` / `SsrfGuard` 两个类 | 两个领域层的横向耦合；安全工具应有独立落点。**P1 已消除**：两个类下沉到 `rag-common.net`，`rag-kb` 不再依赖 `rag-tool` |
-| `rag-public-access` → `rag-chat` / `rag-kb` | 分享/API Key 域直接依赖 `ChatSessionMapper`、`ChatWindowService`、`KnowledgeBaseMapper`（`ShareLinkService`），pom 中显式声明两者 | 适配型模块硬绑业务实现，业务改签名即连带改分享域。**复核结论（2026-11-20）**：仍然存在，按 §5 P1 的界定留到 P2 合流门之后处理 |
+| `rag-public-access` → `rag-chat` / `rag-kb` | 分享/API Key 域直接依赖 `ChatSessionMapper`、`ChatWindowService`、`KnowledgeBaseMapper`（`ShareLinkService`），pom 中显式声明两者 | 适配型模块硬绑业务实现，业务改签名即连带改分享域。**复核结论（2026-11-20，P4 后）**：两处 pom 声明与 import 均已移除，chat/kb 的 `enforce-public-access-not-consumed` skip 同步取消，Enforcer 校验通过 |
 | `rag-chat` service 返回 `SseEmitter` | `RagChatService#streamChat`、`ChatWorkflowService` 的签名里直接出现 web 类型 | 执行域反向依赖 web 层，导致「无 HTTP 连接就不能运行」。**复核结论（2026-11-20）**：仍然存在（`RagChatService#streamChat`/`streamShareChat`、`ChatWorkflowService#hitlConfirm` 签名未变），留到 P2 合流后处理 |
 
 **（3）职责重叠**
@@ -284,8 +287,8 @@ rag-public-access → rag-chat, rag-kb
 |---|---|---|
 | **新增** | `rag-execution` | 作业抽象与执行契约。纯库，零依赖（仅 JDK 21，刻意不依赖 `rag-common` 以隔离 web 传递依赖）。见 §4.4、§4.8 |
 | **新增** | `rag-scheduler` | 调度实现：三 lane、准入、`wgh_execution_job` 持久化与租约、策略缓存、公平队列、运行时快照、触发器归属。只依赖 `rag-execution` + `rag-data` + `rag-config` |
-| **新增（拆分）** | `rag-document` | 从 `rag-kb` 拆出 `parser/*` 与 `splitter/*`（Tika/PDF/Excel 解析、OCR、切分策略、规范化）。**只依赖 `rag-common`**，不依赖 `rag-kb`/`rag-storage`/`rag-llm`，避免成环。文件处理流水线（`KnowledgeFileService`）、分片上传与 `INGEST_FILE` handler 仍留在 `rag-kb`，由 `rag-kb` 调用本模块 |
-| **新增（拆分）** | `rag-eval` | 从 `rag-kb` 拆出：`EvalDataset*`、`RetrievalEvaluationService`、评测结果归档。依赖 `rag-kb`（检索）+ `rag-llm`。rag-chat 重构合流后并入 `LlmJudgeService` 等 |
+| **新增（拆分）** | `rag-document` | 从 `rag-kb` 拆出 `parser/*` 与 `splitter/*`（PDF/Office/HTML/EML 解析、OCR、规范化、切分策略）。实际依赖 `rag-common`、`rag-config`（`RagProperties`）、`rag-llm`（语义切分的 `ModelCacheManager`），不依赖 `rag-kb`/`rag-storage`，避免成环。文件处理流水线（`KnowledgeFileService`）、分片上传与 `INGEST_FILE` handler 仍留在 `rag-kb`，由 `rag-kb` 调用本模块。**已落地（2026-11-20）**，见 §4.9 |
+| **新增（拆分）** | `rag-eval` | 从 `rag-kb` 拆出：`EvalDataset*`、`RetrievalEvaluationService`、评测结果归档。实际依赖 `rag-kb`（检索）+ `rag-data` + `rag-config`。rag-chat 重构合流后并入 `LlmJudgeService` 等。**已落地（2026-11-20）**，见 §4.9 |
 | **拆分** | `rag-controller` | 只保留 HTTP/SSE 适配。`TaskRecoveryService` 拆为「通用 `RunCoordinator`（放 `rag-scheduler`，只依赖 `RunRegistry` 接口）+ 各域 `RunAdapter`（放对应执行域模块）」；删除 Mapper 直连 |
 | **纯库化** | `rag-kb` | 去掉 `MultipartFile`：上传边界改为 Controller 接收后传 `InputStream` + 元数据；去掉对 `rag-tool` 的依赖（`SsrfGuard` 下沉到 `rag-common` 的 `net` 包）；触发器（连接器 / 上传清理 / 记忆清理 / 孤儿清理 / 语义缓存清理）改由 `rag-scheduler` 提交，模块内只保留 `JobHandler` |
 | **纯库化** | `rag-public-access` | `ApiKeyAuthenticationFilter`、`PublicAccessSecurityConfig`、`PublicAccessExceptionHandler` 与 `HttpServletRequest` 解析上移到 `rag-controller`；模块只保留分享 / Key / 限流 / 存储域能力 |
@@ -307,17 +310,18 @@ rag-public-access → rag-chat, rag-kb
 | `rag-config` | `rag-common` | 业务模块 | — |
 | `rag-context` | 无 | 任何模块 | 纯算法；不得引入 Spring 注解 |
 | `rag-storage` | `rag-common` | `rag-kb`（迁移任务目前在 kb，迁移后不得反向） | 存储抽象不得感知 KB |
-| `rag-log` / `rag-auth` / `rag-quota` | `rag-common`、`rag-data`（auth 另含 log） | 执行域 / 调度层 | — |
+| `rag-log` / `rag-auth` | `rag-common`、`rag-data`（auth 另含 log） | 执行域 / 调度层 | — |
+| `rag-quota` | `rag-common`、`rag-data`、`rag-execution`（仅 `JobHandler` / `RecurringJob` 纯契约） | 调度层 / 执行域实现 | P3 退款补偿作业接入维护车道；只依赖契约，不依赖 `rag-scheduler` |
 | `rag-llm` | `rag-data`、`rag-config` | 执行域 / 调度层 | — |
 | `rag-tool` | `rag-common`、`rag-data`、`rag-config` | `rag-llm`（沿用 SPI 反转）、`rag-kb`、执行域、web starter | P1 已移除 web starter 与未使用的 `rag-context` 声明 |
-| `rag-document` | `rag-common`（仅工具类） | `rag-kb`、`rag-storage`、`rag-llm`、执行域、web 类型 | 纯解析/切分算法库；不得回写业务表 |
-| `rag-kb` | `rag-data`、`rag-storage`、`rag-config`、`rag-llm`、`rag-document` | `rag-tool`（P1 起，SSRF 工具已下沉）、`rag-chat`、`rag-agent`、`rag-workflow`、`rag-scheduler`、web 类型 | 不得出现 `SseEmitter` / `MultipartFile` / `jakarta.servlet` |
-| `rag-eval` | `rag-kb`、`rag-llm`、`rag-execution` | `rag-chat`（迁入前置除外）、web 类型 | 只暴露 `EvalPort` 与 `EVAL_RUN` handler |
+| `rag-document` | `rag-common`、`rag-config`（配置属性）、`rag-llm`（语义切分的 embedding） | `rag-kb`、`rag-eval`、`rag-storage`、执行域、调度层、`rag-public-access`、接入层、web 类型 | 纯解析/切分算法库；不得回写业务表。P4 已按实际依赖校正：语义切分无法在不依赖 `rag-llm` 的前提下保留 |
+| `rag-kb` | `rag-data`、`rag-storage`、`rag-config`、`rag-llm`、`rag-document` | `rag-tool`（P1 起，SSRF 工具已下沉）、`rag-eval`、`rag-chat`、`rag-agent`、`rag-workflow`、`rag-scheduler`、web 类型 | 不得出现 `SseEmitter` / `MultipartFile` / `jakarta.servlet` |
+| `rag-eval` | `rag-common`、`rag-data`、`rag-config`、`rag-kb` | `rag-document`、`rag-chat`（迁入前置除外）、执行域、调度层、`rag-public-access`、接入层、web 类型 | 只暴露评测服务与 `EVAL_RUN` handler；不得反向依赖文档处理 |
 | `rag-agent` | `rag-kb`、`rag-tool`、`rag-llm`、`rag-context`、`rag-execution` | `rag-workflow`、`rag-chat`、`rag-agent-multi`、`rag-scheduler`、web 类型 | 执行域最底层；HITL 状态机自持 |
 | `rag-workflow` | `rag-agent`、`rag-kb`、`rag-tool`、`rag-llm`、`rag-execution` | `rag-chat`、`rag-agent-multi`、`rag-scheduler`、web 类型 | 引擎不得创建 `SseEmitter`，只接受 `ExecutionEventSink` |
 | `rag-chat` | `rag-agent`、`rag-workflow`、`rag-kb`、`rag-tool`、`rag-quota`、`rag-execution` | `rag-agent-multi`、`rag-scheduler`、web 类型（service 层） | **冻结区**：改动需与重构线合流 |
 | `rag-agent-multi` | `rag-agent`、`rag-workflow`、`rag-tool`、`rag-execution` | `rag-chat`（删除未使用声明）、`rag-scheduler`、web 类型 | 与 `rag-chat` 并列，互不依赖 |
-| `rag-public-access` | `rag-common`、`rag-data`、`rag-auth`、`rag-config`、`rag-chat`、`rag-kb` | `rag-controller`、`rag-scheduler`、servlet/security web 类型 | 纯领域库 |
+| `rag-public-access` | `rag-common`（含 `common.share` 端口 SPI）、`rag-data`、`rag-auth`、`rag-config` | `rag-controller`、`rag-scheduler`、`rag-chat`、`rag-kb`、servlet/security web 类型（终态上移） | 分享目标端口在中立模块；P4 后不再依赖 chat/kb |
 | `rag-execution` | 无（仅 JDK 21） | 所有业务模块、`rag-common`、`rag-data`、`rag-controller`、`org.springframework.web`、`jakarta.servlet` | 契约层，不含实现；零依赖是为了让调度层与执行域都能单向依赖它而不引入 web |
 | `rag-scheduler` | `rag-execution`、`rag-data`、`rag-config`、`rag-log` | `rag-chat`、`rag-agent`、`rag-workflow`、`rag-agent-multi`、`rag-kb`、`rag-document`、`rag-eval`、`rag-controller` | 只认 `JobHandler` / `RunAdapter` 接口与 `job_type` 字符串；`RunCoordinator`（统一查询/续跑/取消）在此实现，不感知具体引擎 |
 | `rag-controller` | 全部业务模块 + `rag-scheduler`（管理端只读） | `rag-app` | 唯一组合根；不得直连 Mapper（存量迁移后） |
@@ -359,7 +363,7 @@ rag-agent  <  rag-workflow  <  rag-chat
 
 | 约束 | 手段 | 说明 |
 |---|---|---|
-| 模块级禁止依赖 | Maven Enforcer `bannedDependencies`（沿用现有 `enforce-public-access-not-consumed` 写法） | P1 已落地 6 条：`rag-tool` / `rag-kb` / `rag-agent` / `rag-workflow` / `rag-chat` / `rag-agent-multi`。`rag-execution` / `rag-scheduler` / `rag-document` / `rag-eval` 待对应模块拆分（P3/P4）后补 |
+| 模块级禁止依赖 | Maven Enforcer `bannedDependencies`（沿用现有 `enforce-public-access-not-consumed` 写法） | P1 落地 6 条：`rag-tool` / `rag-kb` / `rag-agent` / `rag-workflow` / `rag-chat` / `rag-agent-multi`。P4 新增 `rag-document` / `rag-eval` 各 1 条，并给 `rag-kb` 补禁 `rag-eval`；`rag-scheduler` 已在 P3 补 `enforce-scheduler-no-execution-domain` |
 | 包级禁止 import | ArchUnit 测试（新增测试依赖，只在 P0 加规则，不写业务测试） | 规则：执行域不得 import `org.springframework.web..`、`jakarta.servlet..`；`rag-scheduler` 不得 import 执行域包 |
 | 执行域偏序 | Enforcer + 依赖图断言 | `rag-agent` 的 pom 出现 workflow/chat/multi 即失败（P1 已生效） |
 | 显式组合根 | `rag-app` 的 pom 显式列出被装配模块 | 避免「加了模块但没生效」（P1 未执行，见 §9.7） |
@@ -480,6 +484,65 @@ com.wgh.rag.execution
 
 ---
 
+### 4.9 P4 落地：模块拆分与收敛
+
+> 状态：**已落地（2026-11-20）**。`rag-document` / `rag-eval` 已注册进根 POM；端口 SPI 已中立化；受影响模块的编译、test-compile、Enforcer 与目标单测均通过。
+
+**拆分边界**
+
+| 模块 | 迁入内容 | 依赖 | 保留在原模块 |
+|---|---|---|---|
+| `rag-document`（新，包根 `com.wgh.rag.document`） | `parser/*`（29 个类，含 `layout` / `normalize` / `ocr` / `table` 子包）、`splitter/*`（12 个类） | `rag-common`、`rag-config`（`RagProperties`）、`rag-llm`（语义切分的 `ModelCacheManager`）；第三方 pdfbox、poi/poi-ooxml/poi-scratchpad、jsoup、jakarta.mail | `rag-kb` 保留 connector（`UrlConnector` 仍用 jsoup 抓取 HTML）、service 入库编排、storage、entity/mapper/port/share、知识库聚合与检索 |
+| `rag-eval`（新，包根 `com.wgh.rag.eval`） | `EvalDatasetService`、`RetrievalEvaluationService`、`EvalCase`/`EvalDataset`/`EvalResult`/`KbGroundTruth` 实体、4 个 Mapper | `rag-common`、`rag-data`、`rag-config`（`RagEvaluationProperties`）、`rag-kb`（`RagRetrieveService`/`RetrievalOptions`/`RetrieveResult`/`RetrievalQuality`/`KnowledgeBaseMapper`）、mybatis-plus | `RetrievalOptions` / `RetrieveResult` / `RetrievalQuality` 留在 `rag-kb`，属于检索域语义；`rag-chat.evaluation` 未迁（冻结区） |
+
+**迁移映射**
+
+| 原位置 | 新位置 | 文件数 |
+|---|---|---|
+| `rag-kb/.../kb/parser/**` | `rag-document/.../document/parser/**` | 主代码 29 + 测试 8 |
+| `rag-kb/.../kb/splitter/**` | `rag-document/.../document/splitter/**` | 主代码 12 + 测试 5 |
+| `rag-kb/.../kb/service/EvalDatasetService.java`、`RetrievalEvaluationService.java` | `rag-eval/.../eval/service/` | 2 + 测试 2 |
+| `rag-kb/.../kb/entity/EvalCase`、`EvalDataset`、`EvalResult`、`KbGroundTruth` | `rag-eval/.../eval/entity/` | 4 |
+| `rag-kb/.../kb/mapper/EvalCaseMapper`、`EvalDatasetMapper`、`EvalResultMapper`、`KbGroundTruthMapper` | `rag-eval/.../eval/mapper/` | 4 |
+| `rag-public-access/.../publicaccess/port/ChatShareTargetPort`、`KnowledgeBaseShareTargetPort` | `rag-common/.../common/share/` | 2 |
+
+同步改动的调用点：`KnowledgeFileService`、`rag-kb` 4 个 service 测试、`rag-app` 的 `TextSplitterTest`、`rag-controller` 的 2 个评测 Controller、`ShareLinkService`、chat/kb 的分享端口 Adapter、`rag-app` 的 2 个 publicaccess 测试。
+
+**端口中立化结果**
+
+- `rag-chat` / `rag-kb` 的 pom 删除 `rag-public-access` 依赖，并取消对根规则 `enforce-public-access-not-consumed` 的 `skip`；`mvn validate` 两模块均 `BannedDependencies passed`。
+- 终态方向：`rag-public-access → rag-common ← rag-chat / rag-kb`，两个业务域与适配层之间不再有直接依赖。
+- 与 §7 矩阵的差异：原矩阵写 `public-access → chat/kb`。本轮按任务要求采用「SPI 中立」而非「适配层直连业务」，矩阵已同步改为无直接依赖。
+
+**Enforcer 新增规则**
+
+| 模块 | 规则 | 覆盖 |
+|---|---|---|
+| `rag-document` | `enforce-document-leaf-boundary` | 禁 `rag-kb`/`rag-eval`/`rag-tool`/执行域/`rag-scheduler`/`rag-public-access`/`rag-controller`/`rag-app` |
+| `rag-eval` | `enforce-eval-domain-boundary` | 禁 `rag-document`/`rag-tool`/执行域/`rag-scheduler`/`rag-public-access`/`rag-controller`/`rag-app` |
+| `rag-kb` | 追加到 `enforce-domain-layer-boundary` | 增禁 `rag-eval` |
+
+**验证结果（2026-11-20）**
+
+| 项 | 命令/范围 | 结果 |
+|---|---|---|
+| 全仓编译 | `mvn -o -DskipTests compile` | 24 个模块全部 SUCCESS（`rag-scheduler` 已由 P3 线修复并纳入 reactor） |
+| 测试编译 | `mvn -o -DskipTests test-compile` | 24 个模块全部 SUCCESS |
+| Enforcer | `mvn -o validate -pl rag-document,rag-eval,rag-kb,rag-chat,rag-public-access,rag-controller` | 全部 `BannedDependencies passed` |
+| `rag-document` 单测 | 13 个测试类 | 67 个用例，0 失败 0 错误 |
+| `rag-eval` 单测 | 2 个测试类 | 18 个用例，0 失败 0 错误 |
+| `rag-kb` 受影响单测 | 4 个 `KnowledgeFile*` 测试类 | 13 个用例，0 失败 0 错误 |
+| `rag-app` 受影响单测 | `TextSplitterTest`、2 个 publicaccess 测试 | 41 个用例，0 失败 0 错误 |
+
+**本轮未纳入**
+
+1. 删除 `TaskRecoveryService` 需 `rag-scheduler` 的 `RunCoordinator`；调度模块由并行线在研，按约束本轮不碰。
+2. 执行域四模块（`rag-chat`/`rag-agent`/`rag-workflow`/`rag-agent-multi`）的 service 传输类型清理会改 `rag-chat` 业务逻辑，且 `rag-agent-multi`/`rag-workflow` 正被 P2 线修改（`CrewCoordinator`、`WorkflowEngine` 已在工作区变更），按并行约束顺延。
+3. `rag-kb` 的 `MultipartFile` 上传边界上移（P4 第 5 项）未做，避免与上传链路并行冲突。
+4. `rag-public-access` 的 servlet/security 纯库化未做；本轮只做端口 SPI 中立化。
+
+---
+
 ## 5. 分阶段搬迁步骤
 
 > 每个阶段标注：**动作** / **可编译性** / **回滚方式** / **验收** / **冲突面**。
@@ -489,7 +552,7 @@ com.wgh.rag.execution
 
 | 项 | 内容 |
 |---|---|
-| 动作 | 1) 新增 `rag-execution` 模块，只放 §4.4 的接口、值对象、错误码、指标名；2) 在根 POM 注册模块但不被任何模块引用；3) 增加 Enforcer 白名单规则（新模块不得被业务模块依赖，仅 scheduler/执行域可依赖）；4) 记录「`SseEmitter` / `MultipartFile` / `jakarta.servlet` 使用清单」作为冻结基线 |
+| 动作 | 1) 新增 `rag-execution` 模块，只放 §4.4 的接口、值对象、错误码、指标名；2) 在根 POM 注册模块但不被任何模块引用；3) 增加 Enforcer 白名单规则（P0 阶段仅 scheduler/执行域可依赖，后续按 §2.2 放行执行域模块与 `rag-quota` 契约依赖）；4) 记录「`SseEmitter` / `MultipartFile` / `jakarta.servlet` 使用清单」作为冻结基线 |
 | 可编译 | 是（零引用） |
 | 回滚 | 删除模块 + 删 POM 条目 |
 | 验收 | 构建通过；新增模块不含任何实现类；依赖图与 §2.2 完全一致 |
@@ -544,6 +607,7 @@ com.wgh.rag.execution
 | 回滚 | 配置开关 `wgh.scheduler.background.enabled`；作业表只新增不删；旧调度器保留一版 |
 | 验收 | 评测不占请求线程；kill -9 后 ≤90s 离开 RUNNING；两副本同一 CRON/连接器只执行一次；计划任务有执行记录 |
 | 冲突面 | 中：`rag-kb` 的 `AgentMemoryService` 在 rag-chat 链路被调用，但只改「谁触发清理」，不改方法签名 |
+| 状态 | **部分落地（2026-11-20）**：`rag-scheduler` 模块、`wgh_execution_job`（已在 `wgh_rag` / `wgh_rag_fresh` 执行并登记 `01-schema.sql`）、三车道准入、租约/回收/重试/死信、Redis 单飞、`WF_RUN` 作业化、`rag-app` 装配已完成；`PolicyCache` / `wgh_tenant_schedule_policy`、其余 9 类 handler（含 `EVAL_RUN`、`INGEST_FILE`、连接器与清理类）、评测接口 `202 + jobId`、管理端只读接口顺延，见 1.3.0 文档 §3.9.7 |
 
 ### P4 模块拆分与收敛
 
@@ -554,6 +618,7 @@ com.wgh.rag.execution
 | 回滚 | 每次只拆一个子包；`rag-kb` 保留 `@Deprecated` 转发类一版；POM 依赖可回退 |
 | 验收 | 依赖图满足 §4.3 全部「禁止」列；无模块 import `SseEmitter` / `MultipartFile`（`rag-controller` 除外）；`rag-scheduler` 依赖列表里没有任何执行域模块 |
 | 冲突面 | 中：`rag-chat` 的评测类迁移需与重构线约定先后 |
+| 状态 | **部分落地（2026-11-20）**：`rag-document` / `rag-eval` 拆分、端口 SPI 中立化、Enforcer 补规则已完成并验证；`TaskRecoveryService` 删除、执行域传输类型清理、`rag-kb` 上传边界上移、`rag-public-access` 纯库化顺延，见 §4.9「本轮未纳入」 |
 
 ### 5.1 搬迁顺序的依赖关系
 
@@ -604,6 +669,34 @@ P0 ──► P1 ──► P2 ──► P3 ──► P4
 
 **合流检查单**：rag-chat 重构合并后，先对齐三件事再落 P2——(a) `streamChat` 的线程创建位置是否变化；(b) 是否已内建取消/断开语义；(c) `ChatWorkflowService` 是否已抽象事件出口。三项对齐后，P2 的 chat 改动是 1–3 行的替换。
 
+**P2 落地记录（2026-11-20）**
+
+检查单三项均已闭环，但实现方式与本节早期设想有两处差异：
+
+| 项 | 计划 | 实际落地 | 说明 |
+|---|---|---|---|
+| 线程创建 | `executionFacade.submitInteractive(...)` | `AsyncTaskExecutor#execute`（统一 `ragAsyncExecutor`） | P3 调度中心尚未实现；先以 `AsyncTaskExecutor` 作为可替换注入点，P3 替换 Bean 即可 |
+| 事件出口 | `ExecutionEventSink` 的 SSE 实现 | 新增传输无关的 `ExecutionStreamSink`（`emit/complete/fail`） | 聊天 `sources` 载荷是数组，且需要完成/失败终态；`ExecutionEventSink` 保留给带 `seq` 的作业事件 |
+| SSE 写出位置 | `ChatSsePublisher` 内实现 sink | 控制器侧 `SseExecutionStreamSink` | 执行域不再出现 `SseEmitter`；`ChatSsePublisher` 已删除，由 `ChatEventPublisher` 取代 |
+| 取消语义 | 内建取消/断开 | `ChatStreamHandle` + 控制器绑定 `onTimeout/onError/onCompletion` | 日志与取消动作与原实现一致 |
+
+**P2 端口化**：`rag-public-access` 不再依赖 `rag-chat` / `rag-kb`，改为定义 `ChatShareTargetPort` 与 `KnowledgeBaseShareTargetPort`，由 `rag-chat` / `rag-kb` 提供 `@Component` 适配器，`rag-app` 通过组件扫描装配。分享可见性、有效期、密码、吊销、次数与越权拒绝语义不变。**P4 更新（2026-11-20）**：两个端口已从 `com.wgh.rag.publicaccess.port` 迁到中立模块 `com.wgh.rag.common.share`，chat/kb 的 pom 删除 `rag-public-access` 并取消 Enforcer skip，反向依赖彻底消除。
+
+**P2 装配审计（rag-app）**
+
+- `rag-app` 仍只有 `RagApplication`（`@SpringBootApplication(scanBasePackages = "com.wgh.rag")` + `@MapperScan` + `@EnableAsync`），**没有显式 `@Configuration` / `@Bean`**；现有 Bean 全部靠扫描隐式生效。
+- 本轮新增的 `ragAsyncExecutor`（`rag-common`）、`ChatShareTargetAdapter`（`rag-chat`）、`KnowledgeBaseShareTargetAdapter`（`rag-kb`）均走扫描；`SseExecutionStreamSink` 是控制器内按请求创建的对象，不是 Bean。
+- 统一执行器与 Boot 自动配置的 `applicationTaskExecutor` 同为 `AsyncTaskExecutor`，用 `@Primary` 消歧；当前没有 `@ConditionalOn*` / profile 条件装配。
+- 隐患：`rag-app` 未显式列出被装配模块，缺 Bean 只在启动期暴露；同一能力存在两个 `AsyncTaskExecutor`，靠 `@Primary` 隐式选择；端口实现靠类型唯一性注入。建议 P4 在 `rag-app` 增加显式装配清单。
+
+**P2 已知未闭环项**：
+
+1. 配额退款已闭环（2026-11-20）：`checkAndIncrementChat` 返回 `QuotaCharge`（含扣费周期键），`refundChat` 以 `chat_count > 0` 条件原子减一，并用 chargeId 做实例内幂等；统一池拒绝分支调用退款并打点 `wgh.quota.refund{result=...}`。注意 `streamChat` 仍是 `@Transactional`，拒绝异常上抛会回滚本次扣费，退款是防御性补偿；任务提交成功后执行失败不退款（按次计费语义不变）。
+2. ~~`rag-public-access` 仍携带 servlet/security 类型，执行域反向依赖它属于过渡态；终态应把端口 SPI 抽到中立模块（P4）。~~ **已闭环（P4，2026-11-20）**：端口 SPI 迁到 `rag-common.share`，执行域不再依赖 `rag-public-access`；servlet/security 纯库化仍未做。
+3. 现存独立线程池（查询改写、文件解析、评审、压缩、存储迁移、任务恢复、定时调度）未合并到统一执行器，保留其并发与生命周期语义。
+
+> 依赖矩阵的过渡说明：P2 期间 `rag-chat` / `rag-kb` 曾增加对 `rag-public-access` 的依赖（端口 SPI 所在模块），与终态矩阵方向相反；**P4 端口中立化后该过渡依赖已删除**，端口接口落在 `rag-common.share`，§7 矩阵的 `rag-public-access` 行已同步去掉 chat/kb。
+
 ---
 
 ## 7. 目标依赖矩阵（终态）
@@ -612,14 +705,14 @@ P0 ──► P1 ──► P2 ──► P3 ──► P4
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | `rag-execution` | ✔ | | | | | | | | | | | | | | — | | | |
 | `rag-scheduler` | ✔ | ✔ | ✔ | | | | | | | | | | | | ✔ | — | | |
-| `rag-document` | ✔ | | | | | | | | — | | | | | | | | | |
+| `rag-document` | ✔ | | ✔ | | | ✔ | | | — | | | | | | | | | |
 | `rag-kb` | ✔ | ✔ | ✔ | | ✔ | ✔ | | — | ✔ | | | | | | | | | |
-| `rag-eval` | ✔ | ✔ | ✔ | | | ✔ | | ✔ | | — | | | | | ✔ | | | |
+| `rag-eval` | ✔ | ✔ | ✔ | | | | | ✔ | | — | | | | | | | | | |
 | `rag-agent` | ✔ | ✔ | ✔ | ✔ | | ✔ | ✔ | ✔ | | | — | | | | ✔ | | | |
 | `rag-workflow` | ✔ | ✔ | ✔ | | | ✔ | ✔ | ✔ | | | ✔ | — | | | ✔ | | | |
 | `rag-chat` | ✔ | ✔ | ✔ | | | ✔ | ✔ | ✔ | | ✔（评测迁移后） | ✔ | ✔ | — | | ✔ | | | |
 | `rag-agent-multi` | ✔ | ✔ | ✔ | ✔ | | ✔ | ✔ | ✔ | | | ✔ | ✔ | | — | ✔ | | | |
-| `rag-public-access` | ✔ | ✔ | ✔ | | | | | ✔ | | | | | ✔ | | | | — | |
+| `rag-public-access` | ✔ | ✔ | ✔ | | | | | | | | | | | | | | — | |
 | `rag-controller` | ✔ | ✔ | ✔ | | | ✔ | ✔ | ✔ | | ✔ | ✔ | ✔ | ✔ | ✔ | | ✔（只读） | ✔ | — |
 | `rag-app` | ✔ | ✔ | ✔ | | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ |
 
@@ -629,7 +722,8 @@ P0 ──► P1 ──► P2 ──► P3 ──► P4
 2. 不存在执行域 → `rag-controller` / `rag-app` 的依赖。
 3. 执行域与 `rag-kb`/`rag-document`/`rag-eval` 中不出现 `org.springframework.web`、`jakarta.servlet`、`MultipartFile`。
 4. `rag-agent` 只依赖 `agent` 以下的模块；`chat` 与 `multi` 互不依赖。
-5. `rag-public-access` 不依赖 `rag-controller`。
+5. `rag-public-access` 不依赖 `rag-controller`，也不依赖 `rag-chat` / `rag-kb`（分享目标端口在 `rag-common.share`，由两域实现）。
+6. `rag-kb` 不依赖 `rag-eval`；`rag-document` 只依赖 `rag-common` / `rag-config` / `rag-llm`（语义切分）。
 
 ---
 
@@ -661,7 +755,7 @@ P0 ──► P1 ──► P2 ──► P3 ──► P4
 1. **未做运行压测**：线程放大倍数、排队时长、连接池耗尽均为静态推断，未实测。
 2. **未验证多副本行为**：仓库只有单副本 compose，所有多实例结论来自代码路径。
 3. **`rag-chat` 重构的最终形态未知**：工作区已可见 9 个新协作类与 `RagChatService` 的大幅瘦身，但重构尚未提交、也未合流；`streamChat` 的线程创建点、配额顺序、`ChatSsePublisher` 是否会被替换为端口，都可能继续变化。P2 的合流点需在该线合并后复核。
-4. **`rag-kb` 拆分粒度待确认**：`rag-document` 是否只含 `parser`/`splitter`（本文按此划分，文件处理流水线与分片上传留在 `rag-kb`）、`rag-eval` 是否包含 judge，需要在 P4 启动前与负责人确认。
+4. **`rag-kb` 拆分粒度**：**已定（P4）**——`rag-document` 只含 `parser`/`splitter`（文件处理流水线与分片上传留在 `rag-kb`）；`rag-eval` 含评测数据集与检索评测，不含 judge（`rag-chat.evaluation` 待重构合流后迁入）。由于语义切分依赖 `ModelCacheManager`，`rag-document` 实际依赖 `rag-common`/`rag-config`/`rag-llm`，原「只依赖 common」的设想已校正。
 5. **`SsrfGuard` 归属**：**已定（P1）**——下沉到 `rag-common` 的 `com.wgh.rag.common.net`，未新建独立 `rag-net` 模块；当前调用方为 `rag-tool.HttpToolExecutor` 与 `rag-kb` 的 URL 连接器。
 6. **`rag-tool` 的 web starter 是否真无用**：**已移除（P1）**。静态扫描 0 处 `org.springframework.web` / `jakarta.servlet` / `MultipartFile`，全仓 `-DskipTests compile` 通过；但因 `rag-common` 仍传递携带 web starter，运行时依赖面未变，完整启动验证仍建议在 P2 前后补一次。
 7. **`rag-app` 显式装配的收益**：**仍未执行（P1 本轮未纳入）**。会让 `rag-app` 的 POM 变长，但能防止「模块加了却没生效」；是否采用需团队确认。
@@ -673,6 +767,7 @@ P0 ──► P1 ──► P2 ──► P3 ──► P4
 
 | 日期 | 版本 | 修订内容 |
 |---|---|---|
+| 2026-11-20 | v1.4 | **P4 模块拆分与收敛（部分落地）**：新增 `rag-document`（parser 29 + splitter 12）与 `rag-eval`（2 个 service + 4 实体 + 4 Mapper）；分享目标端口从 `rag-public-access.port` 迁到 `rag-common.share`，chat/kb 删除 `rag-public-access` 依赖并取消 Enforcer skip；新增 `rag-document`/`rag-eval` Enforcer 规则、`rag-kb` 增禁 `rag-eval`。全仓编译（除并行线 `rag-scheduler`）与 test-compile 通过，目标单测 139 个用例全绿。同步校正 §2.2/§2.3/§4.1/§4.3/§4.5/§6.3/§7/§9.4 的口径。未纳入：`TaskRecoveryService` 删除、执行域传输类型清理、`rag-kb` 上传边界上移、`rag-public-access` 纯库化。 |
 | 2026-11-20 | v1.3 | **P1 依赖净化落地**：删除 5 处未使用声明（新增确认 `rag-tool→rag-context`）；`SsrfGuard`/`SsrfBlockedException` 下沉到 `rag-common.net` 并切断 `rag-kb→rag-tool`；在 6 个模块 `pom.xml` 增加 Enforcer 依赖方向约束（未改根 POM）；全仓 `-DskipTests compile` 通过。同步校正 §2.1/§2.2/§2.3 的矩阵与漂移清单，补齐 §4.3/§4.5 落地状态，更新 §9.5–§9.7。**复核未改动**：`rag-public-access→rag-chat/rag-kb` 硬绑、`rag-chat` service 签名暴露 `SseEmitter` 两项结论仍然成立，按计划留到 P2 合流门之后。`rag-app` 显式装配与 `TaskRecoveryService→RunAdapter` 形状本轮未执行。 |
 | 2026-11-20 | v1.2 | 新增 §4.8（P0 `rag-execution` 契约模块落地与命名取舍）。 |
 | 2026-11-20 | v1.1 | 新增 §4.7（`rag-controller` 按业务域分包的结构与分组依据）。 |
