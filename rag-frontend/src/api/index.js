@@ -626,6 +626,14 @@ export const modelPriceCreate = (data) => request.post('/admin/model-prices', da
 export const modelPriceUpdate = (data) => request.put('/admin/model-prices', data)
 export const modelPriceDelete = (id) => request.delete(`/admin/model-prices/${id}`)
 
+// ===== 管理端：调度中心（作业列表/详情/取消 + 概览） =====
+export const schedulerOverview = () => request.get('/admin/scheduler/overview')
+export const schedulerJobs = (params) => request.get('/admin/scheduler/jobs', { params })
+export const schedulerJobDetail = (executionId) =>
+  request.get(`/admin/scheduler/jobs/${encodeURIComponent(executionId)}`)
+export const schedulerCancelJob = (executionId, reason) =>
+  request.post(`/admin/scheduler/jobs/${encodeURIComponent(executionId)}/cancel`, { reason })
+
 // ===== 管理端：体验账号（用户管理） =====
 export const adminUsersPage = (params) => request.get('/admin/users', { params })
 export const adminUserCreate = (data) => request.post('/admin/users', data)

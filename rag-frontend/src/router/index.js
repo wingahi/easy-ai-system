@@ -38,6 +38,7 @@ const routes = [
       { path: 'multi-agent/playground', name: 'MultiAgentPlayground', component: () => import('../views/multi-agent/MultiAgentPlayground.vue'), meta: { title: '多 Agent 运行调试' } },
       { path: 'admin/stats', name: 'AdminStats', component: () => import('../views/admin/AdminStats.vue'), meta: { title: '审计与统计' } },
       { path: 'admin/tasks', name: 'RunningTasks', component: () => import('../views/admin/RunningTasks.vue'), meta: { title: '运行中任务', requiresAdmin: true } },
+      { path: 'admin/scheduler', name: 'SchedulerCenter', component: () => import('../views/admin/SchedulerCenter.vue'), meta: { title: '调度中心', requiresAdmin: true } },
       { path: 'open-access', name: 'OpenAccess', component: () => import('../views/open/PublicAccess.vue'), meta: { title: '开放平台' } },
       { path: 'admin/quota', name: 'QuotaManagement', component: () => import('../views/admin/QuotaManagement.vue'), meta: { title: '用户配额管理', requiresAdmin: true } },
       { path: 'admin/users', name: 'UserManagement', component: () => import('../views/admin/UserManagement.vue'), meta: { title: '用户管理', requiresAdmin: true } },

@@ -252,4 +252,55 @@ public interface ExecutionJobMapper extends BaseMapper<ExecutionJob> {
               AND status IN ('LEASED', 'RUNNING') AND deleted = 0
             """)
     long countTenantActive(@Param("tenantId") String tenantId, @Param("lane") String lane);
+
+    // ===== 管理端只读聚合（数据来源统一为作业表） =====
+
+    /** 按状态分组计数。 */
+    @Select("""
+            SELECT status, COUNT(*) AS cnt FROM wgh_execution_job
+            WHERE deleted = 0
+            GROUP BY status
+            """)
+    java.util.List<java.util.Map<String, Object>> countGroupByStatus();
+
+    /** 按车道分组计数。 */
+    @Select("""
+            SELECT lane, COUNT(*) AS cnt FROM wgh_execution_job
+            WHERE deleted = 0
+            GROUP BY lane
+            """)
+    java.util.List<java.util.Map<String, Object>> countGroupByLane();
+
+    /** 作业总数。 */
+    @Select("SELECT COUNT(*) FROM wgh_execution_job WHERE deleted = 0")
+    long countAll();
+
+    /** 待执行数（仅 PENDING，已领取但未开始计入在途）。 */
+    @Select("SELECT COUNT(*) FROM wgh_execution_job WHERE status = 'PENDING' AND deleted = 0")
+    long countPendingAll();
+
+    /** 在途数（LEASED + RUNNING）。 */
+    @Select("""
+            SELECT COUNT(*) FROM wgh_execution_job
+            WHERE status IN ('LEASED', 'RUNNING') AND deleted = 0
+            """)
+    long countInFlight();
+
+    /** 失败数（可重试的 FAILED）。 */
+    @Select("SELECT COUNT(*) FROM wgh_execution_job WHERE status = 'FAILED' AND deleted = 0")
+    long countFailedAll();
+
+    /** 死信数。 */
+    @Select("SELECT COUNT(*) FROM wgh_execution_job WHERE status = 'DEAD' AND deleted = 0")
+    long countDeadAll();
+
+    /** 超时或租约过期数：租约已过期未回收，或已落超时/租约丢失错误码。 */
+    @Select("""
+            SELECT COUNT(*) FROM wgh_execution_job
+            WHERE deleted = 0 AND (
+                (status IN ('LEASED', 'RUNNING') AND lease_expire_time IS NOT NULL AND lease_expire_time < now())
+                OR error_code IN ('LEASE_LOST', 'JOB_QUEUE_TIMEOUT', 'EXECUTION_TIMEOUT')
+            )
+            """)
+    long countTimeoutOrLeaseExpired();
 }
