@@ -63,6 +63,7 @@
 | [browser-test-report-2026-11-04.md](testing/reports/browser-test-report-2026-11-04.md) | 2026-11-04 浏览器全量回归与重启后复验报告 | 2026-11-04 |
 | [browser-e2e-report-2026-11-06.md](testing/reports/browser-e2e-report-2026-11-06.md) | 2026-11-06 页面端到端测试报告：用例分布、缺陷修复复验与 BLOCKED 解除记录 | 2026-11-06 |
 | [browser-e2e-report-2026-11-18.md](testing/reports/browser-e2e-report-2026-11-18.md) | 2026-11-18 全量浏览器回归报告：批次 3 迁移与重启、页面 84 条 PASS 84、接口 8 条 PASS 8（补跑被叫停，3 条未完成不计 PASS）、基线 93 条对照与缺陷清单 | 2026-11-18 |
+| [browser-e2e-report-2026-11-21.md](testing/reports/browser-e2e-report-2026-11-21.md) | 2026-11-21 全量浏览器自动化回归：29 页 / 202 项全部通过，调度中心 44 项细测（筛选分页、详情抽屉、取消二次确认、轮询开关）与 3 类非阻断控制台缺陷 | 2026-11-21 |
 
 证据截图不入库：`testing/evidence/` 目录仅保留在本地工作区，文件名与报告引用保持一致（截图未纳入 Git 跟踪）。
 
