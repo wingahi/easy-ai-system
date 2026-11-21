@@ -131,6 +131,7 @@ import {
   adminPermissionsList,
   adminRolePermissionsUpdate
 } from '../../api'
+import { validateForm } from '../../utils/form'
 
 const roles = ref([])
 const permissionGroups = ref([])
@@ -194,7 +195,7 @@ const openCreate = () => {
 }
 
 const submitCreate = async () => {
-  await createFormRef.value.validate()
+  if (!(await validateForm(createFormRef))) return
   saving.value = true
   try {
     await adminRoleCreate({
@@ -218,7 +219,7 @@ const openEdit = (row) => {
 }
 
 const submitEdit = async () => {
-  await editFormRef.value.validate()
+  if (!(await validateForm(editFormRef))) return
   saving.value = true
   try {
     await adminRoleUpdate(editForm.roleCode, {

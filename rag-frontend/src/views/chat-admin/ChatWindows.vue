@@ -291,6 +291,7 @@ import {
 } from '../../api'
 import VisibilityControl from '../../components/VisibilityControl.vue'
 import { VISIBILITY_OPTIONS, canWriteResource } from '../../utils/visibility'
+import { validateForm } from '../../utils/form'
 import { useUserStore } from '../../stores/user'
 
 const router = useRouter()
@@ -423,7 +424,7 @@ const openDialog = (row) => {
 }
 
 const submit = async () => {
-  await formRef.value.validate()
+  if (!(await validateForm(formRef))) return
   if (execMode.value === 'WORKFLOW' && !selectedWorkflowId.value) {
     ElMessage.warning('请选择要绑定的工作流')
     return

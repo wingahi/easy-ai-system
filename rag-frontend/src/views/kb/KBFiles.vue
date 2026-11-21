@@ -311,7 +311,16 @@ const del = async (row) => {
 }
 
 const preview = async (row) => {
-  const res = await kbPreviewSplit(row.id)
+  let res
+  try {
+    // silent：由本方法按文件上下文给出具体失败提示，避免拦截器弹出重复的通用提示
+    res = await kbPreviewSplit(row.id, { silent: true })
+  } catch (e) {
+    // 优先透出后端的具体原因（如「存储对象不存在」），避免只提示「请求失败」
+    const reason = e?.response?.data?.message || e?.message || '服务端异常，请稍后重试'
+    ElMessage.error(`文件「${row.fileName}」预览失败：${reason}`)
+    return
+  }
   previewData.value = res.data
   previewVisible.value = true
 }

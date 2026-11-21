@@ -177,9 +177,14 @@ async function save() {
     warnings.push(`Token 上限 ${formatNum(form.tokenLimit)} 不高于当期已用量 ${formatNum(editingRow.tokenUsed)}`)
   }
   if (warnings.length) {
-    await ElMessageBox.confirm(
-      `${warnings.join('；')}。保存后该用户当期将立即被限流，是否继续？`,
-      '上限低于已用量', { type: 'warning', confirmButtonText: '仍要保存', cancelButtonText: '再想想' })
+    try {
+      await ElMessageBox.confirm(
+        `${warnings.join('；')}。保存后该用户当期将立即被限流，是否继续？`,
+        '上限低于已用量', { type: 'warning', confirmButtonText: '仍要保存', cancelButtonText: '再想想' })
+    } catch {
+      // 用户取消确认：保持弹窗打开，不保存
+      return
+    }
   }
 
   saving.value = true
@@ -200,15 +205,25 @@ async function save() {
 }
 
 async function resetUsage(row) {
-  await ElMessageBox.confirm(`确认清零用户「${row.username}」当期用量？`, '重置用量', { type: 'warning' })
+  try {
+    await ElMessageBox.confirm(`确认清零用户「${row.username}」当期用量？`, '重置用量', { type: 'warning' })
+  } catch {
+    // 用户取消确认：不执行重置
+    return
+  }
   await quotaAdminResetUsage(row.username)
   ElMessage.success('当期用量已清零')
   await load(page.value)
 }
 
 async function restoreDefault(row) {
-  await ElMessageBox.confirm(
-    `确认将用户「${row.username}」恢复为全局默认配额？`, '恢复默认', { type: 'warning' })
+  try {
+    await ElMessageBox.confirm(
+      `确认将用户「${row.username}」恢复为全局默认配额？`, '恢复默认', { type: 'warning' })
+  } catch {
+    // 用户取消确认：不执行恢复
+    return
+  }
   await quotaAdminRestoreDefault(row.username)
   ElMessage.success('已恢复全局默认')
   await load(page.value)

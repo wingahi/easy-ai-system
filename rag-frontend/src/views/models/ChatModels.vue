@@ -115,6 +115,7 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import { chatModelPage, chatModelCreate, chatModelUpdate, chatModelDelete, CHAT_MODEL_PROVIDERS } from '../../api'
+import { validateForm } from '../../utils/form'
 
 const chatProviders = CHAT_MODEL_PROVIDERS
 const providerLabel = (value) => {
@@ -177,7 +178,7 @@ const openDialog = (row) => {
 }
 
 const submit = async () => {
-  await formRef.value.validate()
+  if (!(await validateForm(formRef))) return
   submitting.value = true
   try {
     if (editing.value) {

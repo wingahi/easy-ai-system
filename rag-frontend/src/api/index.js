@@ -45,7 +45,7 @@ export const kbResplitFile = (fileId, splitStrategy, splitConfig) => {
   if (splitConfig) params.append('splitConfig', splitConfig)
   return request.post(`/kb/files/${fileId}/resplit?${params.toString()}`)
 }
-export const kbPreviewSplit = (fileId) => request.get(`/kb/files/${fileId}/preview`)
+export const kbPreviewSplit = (fileId, config = {}) => request.get(`/kb/files/${fileId}/preview`, config)
 export const kbSearch = (kbId, query, rerankModelId, hybrid, queryTransformMode, rewriteModelId) => request.get(`/kb/${kbId}/search`, { params: { query, rerankModelId: rerankModelId || undefined, hybrid: hybrid || undefined, queryTransformMode: queryTransformMode && queryTransformMode !== 'NONE' ? queryTransformMode : undefined, rewriteModelId: rewriteModelId || undefined } })
 
 // URL / HTTP 数据源连接器（单页抓取 + 增量同步，内容未变不重复入库）

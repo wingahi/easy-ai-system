@@ -367,6 +367,7 @@ import {
 } from '../../api'
 import VisibilityControl from '../../components/VisibilityControl.vue'
 import { VISIBILITY_OPTIONS, canWriteResource } from '../../utils/visibility'
+import { validateForm } from '../../utils/form'
 import { useUserStore } from '../../stores/user'
 
 const userStore = useUserStore()
@@ -418,7 +419,7 @@ const openDialog = (row) => {
 }
 
 const submit = async () => {
-  await formRef.value.validate()
+  if (!(await validateForm(formRef))) return
   submitting.value = true
   try {
     if (editing.value) { form.id = editing.value.id; await toolUpdate(form) }
@@ -701,7 +702,7 @@ const openCreateSkillDialog = () => {
 }
 
 const submitCreateSkill = async () => {
-  await newSkillFormRef.value.validate()
+  if (!(await validateForm(newSkillFormRef))) return
   creatingSkill.value = true
   try {
     await skillCreateDir(newSkillForm)

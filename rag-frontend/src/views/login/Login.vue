@@ -45,6 +45,7 @@ import { ref, reactive } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { login, getMe } from '../../api'
+import { validateForm } from '../../utils/form'
 import { useUserStore } from '../../stores/user'
 
 const router = useRouter()
@@ -68,7 +69,7 @@ const redirectTarget = () => {
 
 // 管理员 / 体验账号：账号密码登录，换取内部会话凭证
 const doAccountLogin = async () => {
-  await formRef.value.validate()
+  if (!(await validateForm(formRef))) return
   loading.value = true
   try {
     const res = await login({ username: form.username.trim(), password: form.password })

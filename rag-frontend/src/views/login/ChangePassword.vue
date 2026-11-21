@@ -32,6 +32,7 @@ import { reactive, ref, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { changePassword } from '../../api'
+import { validateForm } from '../../utils/form'
 import { useUserStore } from '../../stores/user'
 
 const router = useRouter()
@@ -70,7 +71,7 @@ const rules = {
 }
 
 const submit = async () => {
-  await formRef.value.validate()
+  if (!(await validateForm(formRef))) return
   loading.value = true
   try {
     await changePassword({ oldPassword: form.oldPassword, newPassword: form.newPassword })

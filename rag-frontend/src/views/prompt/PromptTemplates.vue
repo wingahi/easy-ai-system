@@ -139,6 +139,7 @@ import { promptTemplatePage, promptTemplateCreate, promptTemplateUpdate, promptT
 import { loadPromptTriggerConfig, savePromptTriggerConfig } from '../../utils/promptTrigger'
 import VisibilityControl from '../../components/VisibilityControl.vue'
 import { VISIBILITY_OPTIONS, canWriteResource } from '../../utils/visibility'
+import { validateForm } from '../../utils/form'
 import { useUserStore } from '../../stores/user'
 
 const userStore = useUserStore()
@@ -251,7 +252,7 @@ const doPreview = async () => {
 }
 
 const submit = async () => {
-  await formRef.value.validate()
+  if (!(await validateForm(formRef))) return
   submitting.value = true
   try {
     if (editing.value) {

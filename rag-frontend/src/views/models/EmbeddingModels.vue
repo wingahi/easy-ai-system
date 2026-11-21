@@ -78,6 +78,7 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import { embeddingModelPage, embeddingModelCreate, embeddingModelUpdate, embeddingModelDelete, EMBEDDING_MODEL_PROVIDERS } from '../../api'
+import { validateForm } from '../../utils/form'
 
 const embeddingProviders = EMBEDDING_MODEL_PROVIDERS
 const providerLabel = (value) => {
@@ -130,7 +131,7 @@ const openDialog = (row) => {
 }
 
 const submit = async () => {
-  await formRef.value.validate()
+  if (!(await validateForm(formRef))) return
   submitting.value = true
   try {
     if (editing.value) { form.id = editing.value.id; await embeddingModelUpdate(form) }

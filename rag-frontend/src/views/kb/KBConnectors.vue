@@ -151,6 +151,7 @@ import {
   kbGet, kbConnectorList, kbConnectorCreate, kbConnectorUpdate, kbConnectorDelete,
   kbConnectorSync, kbConnectorRuns
 } from '../../api'
+import { validateForm } from '../../utils/form'
 
 const route = useRoute()
 const kbId = route.params.id
@@ -226,7 +227,7 @@ const openDialog = (row) => {
 }
 
 const submit = async () => {
-  await formRef.value.validate()
+  if (!(await validateForm(formRef))) return
   submitting.value = true
   try {
     const payload = { ...form.value }

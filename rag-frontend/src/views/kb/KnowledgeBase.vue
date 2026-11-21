@@ -145,6 +145,7 @@ import { kbPage, kbCreate, kbUpdate, kbDelete, embeddingModelList,
          tagList, kbTags, kbSetTags, kbUpdateVisibility } from '../../api'
 import VisibilityControl from '../../components/VisibilityControl.vue'
 import { VISIBILITY_OPTIONS, canWriteResource } from '../../utils/visibility'
+import { validateForm } from '../../utils/form'
 import { useUserStore } from '../../stores/user'
 
 const router = useRouter()
@@ -234,7 +235,7 @@ const changeVisibility = async (row, visibility) => {
 }
 
 const submit = async () => {
-  await formRef.value.validate()
+  if (!(await validateForm(formRef))) return
   submitting.value = true
   try {
     if (editing.value) {
