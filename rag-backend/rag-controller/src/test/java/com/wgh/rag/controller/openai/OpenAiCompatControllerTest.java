@@ -8,6 +8,7 @@ import com.wgh.rag.chat.service.RagChatService;
 import com.wgh.rag.common.exception.BusinessException;
 import com.wgh.rag.common.result.PageResult;
 import com.wgh.rag.common.result.ResultCode;
+import com.wgh.rag.execution.event.ExecutionStreamSink;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -18,7 +19,6 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
-import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
@@ -69,8 +69,8 @@ class OpenAiCompatControllerTest {
     void shouldReturnOpenAiCompletionForNonStreamingRequest() throws Exception {
         when(windowService.findById(1L)).thenReturn(window());
         when(windowService.createSession(eq(1L), anyString())).thenReturn(session(99L));
-        when(ragChatService.streamChat(eq(1L), eq(99L), eq("你好"), eq(true), any()))
-                .thenReturn(emitterProducing("你", "好"));
+        when(ragChatService.streamChat(eq(1L), eq(99L), eq("你好"), eq(true), any(), any()))
+                .thenAnswer(emitterProducing("你", "好"));
 
         MvcResult result = mockMvc.perform(post("/v1/chat/completions")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -98,8 +98,8 @@ class OpenAiCompatControllerTest {
     void shouldStreamOpenAiChunksIncrementally() throws Exception {
         when(windowService.findById(1L)).thenReturn(window());
         when(windowService.createSession(eq(1L), anyString())).thenReturn(session(99L));
-        when(ragChatService.streamChat(eq(1L), eq(99L), eq("你好"), eq(true), any()))
-                .thenReturn(emitterProducing("你", "好"));
+        when(ragChatService.streamChat(eq(1L), eq(99L), eq("你好"), eq(true), any(), any()))
+                .thenAnswer(emitterProducing("你", "好"));
 
         MvcResult result = mockMvc.perform(post("/v1/chat/completions")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -158,7 +158,7 @@ class OpenAiCompatControllerTest {
     void shouldMapQuotaExceededToRateLimitError() throws Exception {
         when(windowService.findById(1L)).thenReturn(window());
         when(windowService.createSession(eq(1L), anyString())).thenReturn(session(99L));
-        when(ragChatService.streamChat(eq(1L), eq(99L), eq("hi"), eq(true), any()))
+        when(ragChatService.streamChat(eq(1L), eq(99L), eq("hi"), eq(true), any(), any()))
                 .thenThrow(new BusinessException(ResultCode.QUOTA_EXCEEDED, "配额已用尽"));
 
         mockMvc.perform(post("/v1/chat/completions")
@@ -207,23 +207,24 @@ class OpenAiCompatControllerTest {
         return session;
     }
 
-    private SseEmitter emitterProducing(String... chunks) {
-        SseEmitter emitter = new SseEmitter(30_000L);
-        Thread thread = new Thread(() -> {
-            try {
-                Thread.sleep(10);
-                for (String chunk : chunks) {
-                    emitter.send(SseEmitter.event().name("content").data(Map.of("text", chunk)));
+    private org.mockito.stubbing.Answer<Object> emitterProducing(String... chunks) {
+        return invocation -> {
+            ExecutionStreamSink sink = invocation.getArgument(5);
+            Thread thread = new Thread(() -> {
+                try {
+                    Thread.sleep(10);
+                    for (String chunk : chunks) {
+                        sink.emit("content", Map.of("text", chunk));
+                    }
+                    sink.emit("done", Map.of("fullResponse", String.join("", chunks)));
+                    sink.complete();
+                } catch (Exception ignored) {
+                    // 测试线程结束
                 }
-                emitter.send(SseEmitter.event().name("done")
-                        .data(Map.of("fullResponse", String.join("", chunks))));
-                emitter.complete();
-            } catch (Exception ignored) {
-                // 测试线程结束
-            }
-        });
-        thread.setDaemon(true);
-        thread.start();
-        return emitter;
+            });
+            thread.setDaemon(true);
+            thread.start();
+            return null;
+        };
     }
 }

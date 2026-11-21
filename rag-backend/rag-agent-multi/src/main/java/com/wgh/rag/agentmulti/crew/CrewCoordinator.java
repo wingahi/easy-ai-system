@@ -336,10 +336,16 @@ public class CrewCoordinator {
                 r -> new Thread(r, "crew-parallel-" + r.hashCode()),
                 new ThreadPoolExecutor.AbortPolicy());
 
-        // 简单串行调度线程 —— 从 frontier 拿节点入线程池
-        Thread dispatcher = new Thread(() -> {
+        // 调度循环：原实现起线程后立即 join，线程无并行价值；改为内联执行并保留 10 分钟截止，
+        // 避免嵌套提交到统一线程池造成池饥饿
+        long deadlineNanos = System.nanoTime() + TimeUnit.MINUTES.toNanos(10);
+        Runnable dispatcher = () -> {
             try {
                 while (true) {
+                    if (System.nanoTime() > deadlineNanos) {
+                        log.warn("Crew Parallel dispatcher 超时 runId={}", run.getRunId());
+                        return;
+                    }
                     String nodeId;
                     synchronized (frontier) {
                         while (frontier.isEmpty() && submitted.isEmpty()) return;
@@ -362,12 +368,9 @@ public class CrewCoordinator {
             } catch (Throwable t) {
                 log.error("Crew Parallel dispatcher 异常", t);
             }
-        }, "crew-dispatcher-" + run.getRunId());
-        dispatcher.start();
+        };
         try {
-            dispatcher.join(10 * 60 * 1000L);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
+            dispatcher.run();
         } finally {
             executor.shutdownNow();
         }

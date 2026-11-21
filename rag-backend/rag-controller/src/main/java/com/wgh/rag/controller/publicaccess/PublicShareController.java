@@ -1,14 +1,17 @@
 package com.wgh.rag.controller.publicaccess;
 
+import com.wgh.rag.chat.constant.ChatConstants;
 import com.wgh.rag.chat.entity.ChatSession;
 import com.wgh.rag.chat.entity.ChatWindow;
 import com.wgh.rag.chat.mapper.ChatSessionMapper;
 import com.wgh.rag.chat.service.ChatWindowService;
 import com.wgh.rag.chat.service.RagChatService;
+import com.wgh.rag.chat.service.stream.ChatStreamHandle;
 import com.wgh.rag.common.exception.BusinessException;
 import com.wgh.rag.common.result.PageResult;
 import com.wgh.rag.common.result.Result;
 import com.wgh.rag.common.result.ResultCode;
+import com.wgh.rag.controller.support.SseExecutionStreamSink;
 import com.wgh.rag.kb.entity.KnowledgeBase;
 import com.wgh.rag.kb.mapper.KnowledgeBaseMapper;
 import com.wgh.rag.kb.service.RagRetrieveService;
@@ -240,8 +243,14 @@ public class PublicShareController {
 
         // 匿名身份注入：让既有 RagChatService 复用配额（按访客统计），不改动其内部实现
         final Long chatSessionId = sessionId;
-        return asVisitor(identifier, () ->
-                ragChatService.streamChat(window.getId(), chatSessionId, message, true, images));
+        SseEmitter emitter = new SseEmitter(ChatConstants.SSE_TIMEOUT_MS);
+        ChatStreamHandle handle = asVisitor(identifier, () ->
+                ragChatService.streamChat(window.getId(), chatSessionId, message, true, images,
+                        new SseExecutionStreamSink(emitter)));
+        emitter.onTimeout(handle::onTimeout);
+        emitter.onError(handle::onError);
+        emitter.onCompletion(handle::onCompletion);
+        return emitter;
     }
 
     @Operation(summary = "分享链接：知识库只读检索（KB 范围）")

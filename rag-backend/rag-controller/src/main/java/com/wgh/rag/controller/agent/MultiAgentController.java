@@ -18,6 +18,7 @@ import com.wgh.rag.common.security.RequiresPermission;
 import com.wgh.rag.log.annotation.Audit;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.task.AsyncTaskExecutor;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -37,6 +38,8 @@ public class MultiAgentController {
     private final MultiAgentStepMapper stepMapper;
     private final MultiAgentCrewMapper crewMapper;
     private final ObjectMapper objectMapper;
+    /** 统一受管执行器（MDC/异常/有界队列由 Bean 统一处理） */
+    private final AsyncTaskExecutor ragAsyncExecutor;
 
     // ==================== Run API ====================
 
@@ -88,7 +91,7 @@ public class MultiAgentController {
         emitter.onTimeout(() -> log.warn("SSE runId={} timeout", runId));
         emitter.onError(e -> log.warn("SSE runId={} error: {}", runId, e.getMessage()));
 
-        new Thread(com.wgh.rag.common.log.MdcContext.wrap(() -> {
+        ragAsyncExecutor.execute(() -> {
             try {
                 runtime.execute(runId, emitter);
                 emitter.complete();
@@ -96,7 +99,7 @@ public class MultiAgentController {
                 log.error("runId={} 执行异常", runId, e);
                 emitter.completeWithError(e);
             }
-        }), "multi-agent-run-" + runId).start();
+        });
 
         return emitter;
     }
@@ -120,7 +123,7 @@ public class MultiAgentController {
         SseEmitter emitter = new SseEmitter(10 * 60 * 1000L);
         emitter.onCompletion(() -> log.info("SSE resume runId={} completed", runId));
 
-        new Thread(com.wgh.rag.common.log.MdcContext.wrap(() -> {
+        ragAsyncExecutor.execute(() -> {
             try {
                 runtime.resumeFromHitl(runId, userInput, emitter);
                 emitter.complete();
@@ -128,7 +131,7 @@ public class MultiAgentController {
                 log.error("runId={} resume 异常", runId, e);
                 emitter.completeWithError(e);
             }
-        }), "multi-agent-resume-" + runId).start();
+        });
 
         return emitter;
     }

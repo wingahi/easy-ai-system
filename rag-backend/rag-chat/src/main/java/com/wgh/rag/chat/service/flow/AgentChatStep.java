@@ -4,7 +4,6 @@ import com.wgh.rag.agent.dto.AgentStepResult.RagSourceRecord;
 import com.wgh.rag.agent.service.AgentOrchestrator;
 import com.wgh.rag.chat.service.prompt.ChatCitationAssembler;
 import com.wgh.rag.chat.service.session.ChatMessageStore;
-import com.wgh.rag.chat.service.stream.ChatSsePublisher;
 import com.wgh.rag.common.metrics.RagMetrics;
 import com.wgh.rag.llm.entity.LlmModel;
 import com.wgh.rag.llm.service.ModelRouter;
@@ -50,8 +49,7 @@ final class AgentChatStep implements ChatTurnStep {
             // SSE 事件回调：AgentOrchestrator.emit(eventName, data) → 拆成独立 SSE 事件名
             java.util.function.BiConsumer<String, Map<String, Object>> sseEventSink = (eventName, data) -> {
                 try {
-                    ctx.emitter.send(org.springframework.web.servlet.mvc.method.annotation.SseEmitter
-                            .event().name(eventName).data(data));
+                    ctx.events.send(eventName, data);
                 } catch (Exception se) {
                     // 客户端刷新/断开时 send 会抛 IOException 或 IllegalStateException，
                     // 此时 Agent 仍应继续执行，最终结果会落库
@@ -115,16 +113,16 @@ final class AgentChatStep implements ChatTurnStep {
                         ctx.session.getId());
             }
 
-            ChatSsePublisher.sendQuietly(ctx.emitter, "sources", sourceList);
+            ctx.events.sendQuietly("sources", sourceList);
             if (agentAccuracy != null) {
-                ChatSsePublisher.sendQuietly(ctx.emitter, "accuracy", Map.of("accuracyRate", agentAccuracy));
+                ctx.events.sendQuietly("accuracy", Map.of("accuracyRate", agentAccuracy));
             }
 
             Map<String, Object> doneData = new HashMap<>();
             doneData.put("fullResponse", agentFinalText);
             if (agentAccuracy != null) doneData.put("accuracyRate", agentAccuracy);
-            ChatSsePublisher.sendQuietly(ctx.emitter, "done", doneData);
-            ChatSsePublisher.completeQuietly(ctx.emitter);
+            ctx.events.sendQuietly("done", doneData);
+            ctx.events.completeQuietly();
             ctx.metricCtx.route().set("agent");
             return true;
         } catch (Exception ex) {

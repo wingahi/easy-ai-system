@@ -24,7 +24,7 @@ final class WorkflowChatStep implements ChatTurnStep {
             return false;
         }
         ctx.metricCtx.route().set("workflow");
-        chatWorkflowService.stream(ctx.window, ctx.session, ctx.userMessage, ctx.emitter, ctx.shareMode);
+        chatWorkflowService.stream(ctx.window, ctx.session, ctx.userMessage, ctx.events, ctx.shareMode);
         return true;
     }
 }

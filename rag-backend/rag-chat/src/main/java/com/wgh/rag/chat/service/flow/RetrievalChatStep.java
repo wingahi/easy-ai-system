@@ -4,7 +4,6 @@ import com.wgh.rag.chat.constant.ChatEvents;
 import com.wgh.rag.chat.service.prompt.ChatContextBudgetService;
 import com.wgh.rag.chat.service.prompt.ChatPromptAssembler;
 import com.wgh.rag.chat.service.session.ChatMessageStore;
-import com.wgh.rag.chat.service.stream.ChatSsePublisher;
 import com.wgh.rag.chat.service.window.ChatToolLoader;
 import com.wgh.rag.common.metrics.RagMetrics;
 import com.wgh.rag.config.property.RagProperties;
@@ -138,7 +137,7 @@ final class RetrievalChatStep implements ChatTurnStep {
                 ctx.contextBudget != null ? ctx.contextBudget.budgetTokens() : null);
         retrieveInfo.put("contextTrimmed", ctx.contextBudget != null
                 && (!ctx.contextBudget.dropped().isEmpty() || ctx.contextBudget.truncated()));
-        ChatSsePublisher.send(ctx.emitter, ChatEvents.RETRIEVE, retrieveInfo);
+        ctx.events.send(ChatEvents.RETRIEVE, retrieveInfo);
 
         messageStore.updateRetrievalMetrics(ctx.userMsg, coverageRate, hitRate);
     }

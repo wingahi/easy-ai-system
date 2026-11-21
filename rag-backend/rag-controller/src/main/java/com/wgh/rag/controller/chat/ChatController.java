@@ -3,12 +3,15 @@ package com.wgh.rag.controller.chat;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wgh.rag.auth.constant.AuthConstants;
 import com.wgh.rag.controller.support.RunAccessGuard;
+import com.wgh.rag.controller.support.SseExecutionStreamSink;
+import com.wgh.rag.chat.constant.ChatConstants;
 import com.wgh.rag.chat.service.ChatImageService;
 import com.wgh.rag.chat.service.ChatCancellationStore;
 import com.wgh.rag.chat.service.ChatWindowService;
 import com.wgh.rag.chat.service.ChatWorkflowService;
 import com.wgh.rag.chat.service.FeedbackService;
 import com.wgh.rag.chat.service.RagChatService;
+import com.wgh.rag.chat.service.stream.ChatStreamHandle;
 import com.wgh.rag.chat.entity.ChatMessage;
 import com.wgh.rag.chat.entity.ChatSession;
 import com.wgh.rag.chat.entity.ChatWindow;
@@ -218,7 +221,11 @@ public class ChatController {
                 Long.parseLong(params.get("sessionId").toString()) : null;
         String message = (String) params.get("message");
         List<String> imageUrls = parseImageUrls(params.get("imageUrls"));
-        return ragChatService.streamChat(windowId, sessionId, message, false, imageUrls);
+        SseEmitter emitter = newEmitter();
+        ChatStreamHandle handle = ragChatService.streamChat(windowId, sessionId, message, false, imageUrls,
+                new SseExecutionStreamSink(emitter));
+        wireLifecycle(emitter, handle);
+        return emitter;
     }
 
     @SuppressWarnings("unchecked")
@@ -273,7 +280,11 @@ public class ChatController {
         Long sessionId = params.get("sessionId") != null
                 ? Long.parseLong(params.get("sessionId").toString()) : null;
         List<String> imageUrls = parseImageUrls(params.get("imageUrls"));
-        return ragChatService.streamShareChat(shareToken, message, currentUsername(), sessionId, imageUrls);
+        SseEmitter emitter = newEmitter();
+        ChatStreamHandle handle = ragChatService.streamShareChat(shareToken, message, currentUsername(),
+                sessionId, imageUrls, new SseExecutionStreamSink(emitter));
+        wireLifecycle(emitter, handle);
+        return emitter;
     }
 
     @Operation(summary = "分享页面：列出当前登录用户的历史会话")
@@ -335,7 +346,10 @@ public class ChatController {
         if (sessionId != null) {
             windowService.getOwnedSession(windowId, sessionId, currentUsername());
         }
-        return chatWorkflowService.hitlConfirm(runId, sessionId, extractUserInput(params), false);
+        SseEmitter emitter = newEmitter();
+        chatWorkflowService.hitlConfirm(runId, sessionId, extractUserInput(params), false,
+                new SseExecutionStreamSink(emitter));
+        return emitter;
     }
 
     @Operation(summary = "取消工作流运行（调试页）")
@@ -368,7 +382,10 @@ public class ChatController {
         if (sessionId != null) {
             windowService.getOwnedSession(window.getId(), sessionId, currentUsername());
         }
-        return chatWorkflowService.hitlConfirm(runId, sessionId, extractUserInput(params), true);
+        SseEmitter emitter = newEmitter();
+        chatWorkflowService.hitlConfirm(runId, sessionId, extractUserInput(params), true,
+                new SseExecutionStreamSink(emitter));
+        return emitter;
     }
 
     @Operation(summary = "分享页面：取消工作流运行")
@@ -390,6 +407,18 @@ public class ChatController {
         String raw = String.valueOf(params.get("sessionId"));
         if (raw.isBlank() || "null".equals(raw)) return null;
         return Long.parseLong(raw);
+    }
+
+    /** 传输层构造 SSE 通道；执行域只接收 sink，不感知 SseEmitter。 */
+    private static SseEmitter newEmitter() {
+        return new SseEmitter(ChatConstants.SSE_TIMEOUT_MS);
+    }
+
+    /** 断连/超时/完成时取消生成，语义与重构前在服务内注册的回调一致。 */
+    private static void wireLifecycle(SseEmitter emitter, ChatStreamHandle handle) {
+        emitter.onTimeout(handle::onTimeout);
+        emitter.onError(handle::onError);
+        emitter.onCompletion(handle::onCompletion);
     }
 
     private String extractUserInput(Map<String, Object> params) {

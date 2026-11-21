@@ -38,11 +38,17 @@
             <groupId>com.wgh</groupId>
             <artifactId>rag-quota</artifactId>
         </dependency>
+        <!-- 执行事件出口契约（传输无关 sink），SSE 写出由接入层适配 -->
+        <dependency>
+            <groupId>com.wgh</groupId>
+            <artifactId>rag-execution</artifactId>
+        </dependency>
         <!-- RedisCommandPort：跨实例取消标记复用公开访问的 Redis 封装 -->
         <dependency>
             <groupId>com.wgh</groupId>
             <artifactId>rag-config</artifactId>
         </dependency>
+        <!-- 分享链接端口定义在中立模块 rag-common.share，rag-chat 只提供实现，不依赖 rag-public-access -->
         <dependency>
             <groupId>dev.langchain4j</groupId>
             <artifactId>langchain4j-reactor</artifactId>

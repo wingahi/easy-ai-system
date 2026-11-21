@@ -1,13 +1,16 @@
 package com.wgh.rag.controller.publicaccess;
 
+import com.wgh.rag.chat.constant.ChatConstants;
 import com.wgh.rag.chat.entity.ChatSession;
 import com.wgh.rag.chat.entity.ChatWindow;
 import com.wgh.rag.chat.mapper.ChatSessionMapper;
 import com.wgh.rag.chat.service.ChatWindowService;
 import com.wgh.rag.chat.service.RagChatService;
+import com.wgh.rag.chat.service.stream.ChatStreamHandle;
 import com.wgh.rag.common.exception.BusinessException;
 import com.wgh.rag.common.result.Result;
 import com.wgh.rag.common.result.ResultCode;
+import com.wgh.rag.controller.support.SseExecutionStreamSink;
 import com.wgh.rag.kb.service.RagRetrieveService;
 import com.wgh.rag.kb.service.RetrievalOptions;
 import com.wgh.rag.publicaccess.config.PublicAccessProperties;
@@ -104,8 +107,14 @@ public class OpenApiController {
         }
         List<String> images = parseImages(body.get("imageUrls"));
         Long finalSessionId = sessionId;
-        return withApiIdentity(identifier, () ->
-                ragChatService.streamChat(windowId, finalSessionId, message, true, images));
+        SseEmitter emitter = new SseEmitter(ChatConstants.SSE_TIMEOUT_MS);
+        ChatStreamHandle handle = withApiIdentity(identifier, () ->
+                ragChatService.streamChat(windowId, finalSessionId, message, true, images,
+                        new SseExecutionStreamSink(emitter)));
+        emitter.onTimeout(handle::onTimeout);
+        emitter.onError(handle::onError);
+        emitter.onCompletion(handle::onCompletion);
+        return emitter;
     }
 
     @Operation(summary = "开放 API：知识库检索（scope=kb:read）")

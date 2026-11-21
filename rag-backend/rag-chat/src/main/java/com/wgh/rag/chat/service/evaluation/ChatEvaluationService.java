@@ -7,14 +7,13 @@ import com.wgh.rag.chat.entity.ChatWindow;
 import com.wgh.rag.chat.evaluation.JudgeModelSelector;
 import com.wgh.rag.chat.evaluation.LlmJudgeService;
 import com.wgh.rag.chat.mapper.ChatMessageMapper;
-import com.wgh.rag.chat.service.stream.ChatSsePublisher;
+import com.wgh.rag.chat.service.stream.ChatEventPublisher;
 import com.wgh.rag.llm.entity.LlmModel;
 import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.store.embedding.EmbeddingMatch;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.HashMap;
 import java.util.List;
@@ -35,7 +34,7 @@ public class ChatEvaluationService {
 
     public void runLlmJudgeAsync(ChatWindow window, String query,
                           List<EmbeddingMatch<TextSegment>> retrievedMatches,
-                          String answer, SseEmitter emitter, ChatMessage assistantMsg) {
+                          String answer, ChatEventPublisher events, ChatMessage assistantMsg) {
         String context = retrievedMatches.stream()
                 .map(m -> m.embedded() != null ? m.embedded().text() : "")
                 .filter(s -> !s.isBlank())
@@ -48,7 +47,7 @@ public class ChatEvaluationService {
         if (judges.isEmpty()) {
             log.warn("窗口 {} 无可用 judge 模型，跳过 LLM-as-Judge", window.getId());
             try {
-                emitter.complete();
+                events.complete();
             } catch (Exception ignore) {
             }
             return;
@@ -66,7 +65,7 @@ public class ChatEvaluationService {
                             payload.put("answerRelevancy", result.answerRelevancy());
                             payload.put("judgeAgreement", result.judgeAgreement());
                             payload.put("judgeCount", result.details().size());
-                            ChatSsePublisher.send(emitter, ChatEvents.JUDGE, payload);
+                            events.send(ChatEvents.JUDGE, payload);
 
                             if (assistantMsg != null && assistantMsg.getId() != null) {
                                 ChatMessage update = new ChatMessage();
@@ -87,7 +86,7 @@ public class ChatEvaluationService {
                     } catch (Exception e) {
                         log.error("处理 judge 结果失败", e);
                     } finally {
-                        ChatSsePublisher.completeQuietly(emitter);
+                        events.completeQuietly();
                     }
                 });
     }

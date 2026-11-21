@@ -3,6 +3,7 @@ package com.wgh.rag.chat.service.flow;
 import com.wgh.rag.chat.entity.ChatSession;
 import com.wgh.rag.chat.entity.ChatWindow;
 import com.wgh.rag.chat.evaluation.EvaluationScheme;
+import com.wgh.rag.chat.service.stream.ChatEventPublisher;
 import com.wgh.rag.chat.service.stream.ChatStreamCancellation;
 import com.wgh.rag.llm.entity.LlmModel;
 import com.wgh.rag.llm.failover.StreamingModelFailover;
@@ -14,7 +15,6 @@ import dev.langchain4j.data.message.ChatMessage;
 import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.store.embedding.EmbeddingMatch;
-import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -34,7 +34,7 @@ public final class ChatTurnContext {
     final ChatWindow window;
     final ChatSession session;
     final String userMessage;
-    final SseEmitter emitter;
+    final ChatEventPublisher events;
     final com.wgh.rag.chat.entity.ChatMessage userMsg;
     final boolean shareMode;
     final String quotaUsername;
@@ -69,7 +69,7 @@ public final class ChatTurnContext {
         this.window = builder.window;
         this.session = builder.session;
         this.userMessage = builder.userMessage;
-        this.emitter = builder.emitter;
+        this.events = builder.events;
         this.userMsg = builder.userMsg;
         this.shareMode = builder.shareMode;
         this.quotaUsername = builder.quotaUsername;
@@ -86,7 +86,7 @@ public final class ChatTurnContext {
         private ChatWindow window;
         private ChatSession session;
         private String userMessage;
-        private SseEmitter emitter;
+        private ChatEventPublisher events;
         private com.wgh.rag.chat.entity.ChatMessage userMsg;
         private boolean shareMode;
         private String quotaUsername;
@@ -109,8 +109,8 @@ public final class ChatTurnContext {
             return this;
         }
 
-        public Builder emitter(SseEmitter emitter) {
-            this.emitter = emitter;
+        public Builder events(ChatEventPublisher events) {
+            this.events = events;
             return this;
         }
 

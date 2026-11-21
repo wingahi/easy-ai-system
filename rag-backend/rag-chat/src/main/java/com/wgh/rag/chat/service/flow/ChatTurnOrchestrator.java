@@ -1,7 +1,6 @@
 package com.wgh.rag.chat.service.flow;
 
 import com.wgh.rag.chat.constant.ChatEvents;
-import com.wgh.rag.chat.service.stream.ChatSsePublisher;
 import org.springframework.stereotype.Service;
 
 import java.util.Comparator;
@@ -26,8 +25,7 @@ public final class ChatTurnOrchestrator {
     }
 
     public void execute(ChatTurnContext ctx) throws Exception {
-        ChatSsePublisher.send(ctx.emitter, ChatEvents.START,
-                Map.of("sessionId", ctx.session.getId()));
+        ctx.events.send(ChatEvents.START, Map.of("sessionId", ctx.session.getId()));
         for (ChatTurnStep step : steps) {
             if (step.execute(ctx)) {
                 return;

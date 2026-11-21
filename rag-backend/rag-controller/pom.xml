@@ -39,6 +39,15 @@
             <groupId>com.wgh</groupId>
             <artifactId>rag-chat</artifactId>
         </dependency>
+        <!-- 知识库检索与评测：控制器直接编排检索参数，显式声明避免依赖传递 -->
+        <dependency>
+            <groupId>com.wgh</groupId>
+            <artifactId>rag-kb</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.wgh</groupId>
+            <artifactId>rag-eval</artifactId>
+        </dependency>
         <dependency>
             <groupId>com.wgh</groupId>
             <artifactId>rag-agent</artifactId>
@@ -58,6 +67,11 @@
         <dependency>
             <groupId>com.wgh</groupId>
             <artifactId>rag-quota</artifactId>
+        </dependency>
+        <!-- 执行事件出口契约：接入层实现 SSE 适配器 -->
+        <dependency>
+            <groupId>com.wgh</groupId>
+            <artifactId>rag-execution</artifactId>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>

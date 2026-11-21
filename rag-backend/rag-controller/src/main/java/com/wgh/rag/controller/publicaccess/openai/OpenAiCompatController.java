@@ -1,6 +1,7 @@
 package com.wgh.rag.controller.publicaccess.openai;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.wgh.rag.chat.constant.ChatConstants;
 import com.wgh.rag.chat.entity.ChatSession;
 import com.wgh.rag.chat.entity.ChatWindow;
 import com.wgh.rag.chat.service.ChatWindowService;
@@ -9,6 +10,7 @@ import com.wgh.rag.common.exception.BusinessException;
 import com.wgh.rag.common.result.PageResult;
 import com.wgh.rag.common.result.ResultCode;
 import com.wgh.rag.common.security.SecurityUtils;
+import com.wgh.rag.controller.support.SseExecutionStreamSink;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
@@ -117,8 +119,9 @@ public class OpenAiCompatController {
         Long sessionId = resolveSession(window, body, identifier);
 
         // 在请求线程内调用，配额/窗口校验等同步异常可返回正确的 HTTP 状态码
-        SseEmitter upstream = withApiIdentity(identifier,
-                () -> ragChatService.streamChat(window.getId(), sessionId, prompt.text(), true, prompt.images()));
+        SseEmitter upstream = new SseEmitter(ChatConstants.SSE_TIMEOUT_MS);
+        withApiIdentity(identifier, () -> ragChatService.streamChat(window.getId(), sessionId,
+                prompt.text(), true, prompt.images(), new SseExecutionStreamSink(upstream)));
 
         String completionId = "chatcmpl-" + UUID.randomUUID().toString().replace("-", "");
         long created = Instant.now().getEpochSecond();

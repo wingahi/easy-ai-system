@@ -3,7 +3,6 @@ package com.wgh.rag.chat.service.flow;
 import com.wgh.rag.chat.constant.ChatEvents;
 import com.wgh.rag.chat.service.prompt.ChatPromptAssembler;
 import com.wgh.rag.chat.service.session.ChatMessageStore;
-import com.wgh.rag.chat.service.stream.ChatSsePublisher;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -32,19 +31,19 @@ final class NoResultChatStep implements ChatTurnStep {
         }
 
         String noResultMsg = promptAssembler.noResultMessage(ctx.hasKb);
-        ChatSsePublisher.send(ctx.emitter, ChatEvents.CONTENT, Map.of("text", noResultMsg));
-        ChatSsePublisher.send(ctx.emitter, ChatEvents.SOURCES, List.of());
+        ctx.events.send(ChatEvents.CONTENT, Map.of("text", noResultMsg));
+        ctx.events.send(ChatEvents.SOURCES, List.of());
 
         messageStore.saveAssistantMessage(ctx.session, noResultMsg, List.of(),
                 ctx.hitRate, null, null, null);
 
         // 未配置知识库时不下发 accuracyRate 字段，前端按 null 不展示
         if (ctx.hasKb) {
-            ChatSsePublisher.send(ctx.emitter, ChatEvents.DONE, Map.of("accuracyRate", 0.0));
+            ctx.events.send(ChatEvents.DONE, Map.of("accuracyRate", 0.0));
         } else {
-            ChatSsePublisher.send(ctx.emitter, ChatEvents.DONE, Map.of());
+            ctx.events.send(ChatEvents.DONE, Map.of());
         }
-        ctx.emitter.complete();
+        ctx.events.complete();
         return true;
     }
 }

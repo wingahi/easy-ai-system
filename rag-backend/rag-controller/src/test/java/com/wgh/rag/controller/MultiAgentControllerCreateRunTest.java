@@ -44,7 +44,8 @@ class MultiAgentControllerCreateRunTest {
 
     @BeforeEach
     void setUp() {
-        controller = new MultiAgentController(runtime, service, stepMapper, crewMapper, new ObjectMapper());
+        controller = new MultiAgentController(runtime, service, stepMapper, crewMapper, new ObjectMapper(),
+                org.mockito.Mockito.mock(org.springframework.core.task.AsyncTaskExecutor.class));
         when(runtime.newRunId()).thenReturn("mag-test-0001");
     }
 

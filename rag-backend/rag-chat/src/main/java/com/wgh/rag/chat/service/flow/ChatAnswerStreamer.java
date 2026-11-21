@@ -9,7 +9,6 @@ import com.wgh.rag.chat.service.evaluation.ChatEvaluationService;
 import com.wgh.rag.chat.service.prompt.ChatCitationAssembler;
 import com.wgh.rag.chat.service.prompt.ChatContextBudgetService;
 import com.wgh.rag.chat.service.session.ChatMessageStore;
-import com.wgh.rag.chat.service.stream.ChatSsePublisher;
 import com.wgh.rag.common.metrics.RagMetrics;
 import com.wgh.rag.kb.service.SemanticCacheService;
 import com.wgh.rag.llm.entity.LlmModel;
@@ -33,7 +32,6 @@ import dev.langchain4j.store.embedding.EmbeddingMatch;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -101,8 +99,7 @@ final class ChatAnswerStreamer {
                 }
                 attempt.appendPartial(partialResponse);
                 try {
-                    ctx.emitter.send(SseEmitter.event().name(ChatEvents.CONTENT)
-                            .data(Map.of("text", partialResponse)));
+                    ctx.events.send(ChatEvents.CONTENT, Map.of("text", partialResponse));
                 } catch (IOException e) {
                     // 客户端断开：停止后续 token 消费，并把已生成内容落库为 STOPPED
                     log.warn("发送SSE数据失败，取消生成: {}", e.getMessage());
@@ -147,10 +144,10 @@ final class ChatAnswerStreamer {
 
                     for (ToolExecutionRequest req : toolCalls) {
                         try {
-                            ctx.emitter.send(SseEmitter.event().name(ChatEvents.TOOL_CALL_START).data(Map.of(
+                            ctx.events.send(ChatEvents.TOOL_CALL_START, Map.of(
                                     "tool", req.name(),
                                     "args", req.arguments()
-                            )));
+                            ));
                         } catch (IOException e) {
                             log.warn("发送 tool_call_start 失败，取消生成", e);
                             ctx.cancellation.cancel();
@@ -173,12 +170,12 @@ final class ChatAnswerStreamer {
                         toolResults.add(result);
 
                         try {
-                            ctx.emitter.send(SseEmitter.event().name(ChatEvents.TOOL_CALL_RESULT).data(Map.of(
+                            ctx.events.send(ChatEvents.TOOL_CALL_RESULT, Map.of(
                                     "tool", req.name(),
                                     "success", outcome.success(),
                                     "result", result.text(),
                                     "latencyMs", outcome.latencyMs()
-                            )));
+                            ));
                         } catch (IOException e) {
                             log.warn("发送 tool_call_result 失败，取消生成", e);
                             ctx.cancellation.cancel();
@@ -236,20 +233,20 @@ final class ChatAnswerStreamer {
         }
 
         List<Map<String, Object>> sourceList = ChatCitationAssembler.buildSourcesList(ctx.retrievedMatches);
-        ChatSsePublisher.send(ctx.emitter, ChatEvents.SOURCES, sourceList);
+        ctx.events.send(ChatEvents.SOURCES, sourceList);
 
         // 正确率同样依赖知识库 —— 未关联知识库时不下发/不持久化
         boolean hasKb = !ctx.kbIds.isEmpty();
         Double accuracyRate = hasKb
                 ? ChatCitationAssembler.calculateAccuracyRate(fullAnswer, ctx.retrievedMatches) : null;
         if (accuracyRate != null) {
-            ChatSsePublisher.send(ctx.emitter, ChatEvents.ACCURACY, Map.of("accuracyRate", accuracyRate));
+            ctx.events.send(ChatEvents.ACCURACY, Map.of("accuracyRate", accuracyRate));
         }
 
         RetrievalMetricsCalculator.RetrievalMetrics retrievalMetrics = null;
         if (ctx.evaluationScheme.hasMetrics() && hasKb) {
             retrievalMetrics = RetrievalMetricsCalculator.compute(fullAnswer, ctx.retrievedMatches);
-            ChatSsePublisher.send(ctx.emitter, ChatEvents.METRICS, Map.of(
+            ctx.events.send(ChatEvents.METRICS, Map.of(
                     "mrr", retrievalMetrics.mrr(),
                     "ndcg", retrievalMetrics.ndcg(),
                     "citedCount", retrievalMetrics.citedCount(),
@@ -275,13 +272,13 @@ final class ChatAnswerStreamer {
         doneData.put("fullResponse", fullAnswer);
         if (accuracyRate != null) doneData.put("accuracyRate", accuracyRate);
         if (saved != null && saved.getId() != null) doneData.put("assistantMessageId", saved.getId());
-        ChatSsePublisher.send(ctx.emitter, ChatEvents.DONE, doneData);
+        ctx.events.send(ChatEvents.DONE, doneData);
 
         if (ctx.evaluationScheme.hasLlmJudge()) {
             evaluationService.runLlmJudgeAsync(ctx.window, ctx.userMessage, ctx.retrievedMatches,
-                    fullAnswer, ctx.emitter, saved);
+                    fullAnswer, ctx.events, saved);
         } else {
-            ChatSsePublisher.completeQuietly(ctx.emitter);
+            ctx.events.completeQuietly();
         }
     }
 
@@ -367,10 +364,10 @@ final class ChatAnswerStreamer {
                     attempt.model().getModelName(), attempt.model().getId(),
                     attempt.index() + 1, attempt.total(), FailoverErrors.describe(error));
             persistFailed(ctx, attempt);
-            ChatSsePublisher.sendQuietly(ctx.emitter, ChatEvents.ERROR,
+            ctx.events.sendQuietly(ChatEvents.ERROR,
                     Map.of("text", FailoverErrors.userFacing(error)));
             try {
-                ctx.emitter.completeWithError(error);
+                ctx.events.completeWithError(error);
             } catch (Exception e) {
                 log.warn("SSE 关闭失败: {}", e.getMessage());
             }
@@ -381,8 +378,8 @@ final class ChatAnswerStreamer {
             String message = FailoverErrors.allModelsFailed(chain.size(), lastError);
             log.error("[Failover] {}", message);
             ctx.cancellation.markFinalized();
-            ChatSsePublisher.sendQuietly(ctx.emitter, ChatEvents.ERROR, Map.of("text", message));
-            ChatSsePublisher.completeQuietly(ctx.emitter);
+            ctx.events.sendQuietly(ChatEvents.ERROR, Map.of("text", message));
+            ctx.events.completeQuietly();
         }
 
         @Override

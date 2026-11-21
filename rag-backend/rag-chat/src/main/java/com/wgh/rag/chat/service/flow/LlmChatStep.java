@@ -13,7 +13,6 @@ import dev.langchain4j.model.chat.request.ChatRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
-import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -56,8 +55,8 @@ final class LlmChatStep implements ChatTurnStep {
             log.info("[Failover] 使用模型 {} (id={})，原因: {}", m.getModelName(), m.getId(), reason);
             actualModel.set(m);
             try {
-                ctx.emitter.send(SseEmitter.event().name(ChatEvents.MODEL_SWITCH)
-                        .data(Map.of("modelName", m.getModelName(), "modelId", m.getId(), "reason", reason)));
+                ctx.events.send(ChatEvents.MODEL_SWITCH,
+                        Map.of("modelName", m.getModelName(), "modelId", m.getId(), "reason", reason));
             } catch (IOException ignored) {
             }
         };
@@ -100,9 +99,9 @@ final class LlmChatStep implements ChatTurnStep {
             metrics.recordChatError("llm");
             log.error("LLM调用异常", e);
             try {
-                ctx.emitter.send(SseEmitter.event().name(ChatEvents.CONTENT)
-                        .data(Map.of("text", "抱歉，大模型调用出现异常: " + e.getMessage())));
-                ctx.emitter.completeWithError(e);
+                ctx.events.send(ChatEvents.CONTENT,
+                        Map.of("text", "抱歉，大模型调用出现异常: " + e.getMessage()));
+                ctx.events.completeWithError(e);
             } catch (IOException ex) {
                 log.error("发送错误失败", ex);
             }

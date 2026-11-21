@@ -21,8 +21,10 @@ import com.wgh.rag.chat.service.evaluation.ChatEvaluationService;
 import com.wgh.rag.chat.service.prompt.ChatContextBudgetService;
 import com.wgh.rag.chat.service.prompt.ContextCompressionService;
 import com.wgh.rag.chat.service.session.ChatMessageStore;
+import com.wgh.rag.chat.service.stream.ChatEventPublisher;
 import com.wgh.rag.chat.service.stream.ChatStreamCancellation;
 import com.wgh.rag.config.property.RagProperties;
+import com.wgh.rag.execution.event.ExecutionStreamSink;
 import com.wgh.rag.kb.mapper.KnowledgeBaseMapper;
 import com.wgh.rag.kb.service.RagRetrieveService;
 import com.wgh.rag.kb.service.SemanticCacheService;
@@ -46,8 +48,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.web.servlet.mvc.method.annotation.ResponseBodyEmitter;
-import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -325,13 +325,13 @@ class ModelFailoverStreamTest {
 
     // ==================== 辅助方法 ====================
 
-    private ChatTurnContext context(List<LlmModel> chain, SseEmitter emitter,
+    private ChatTurnContext context(List<LlmModel> chain, CapturingEmitter emitter,
                                     AtomicReference<LlmModel> actualModel,
                                     List<LlmModel> switched) {
         return context(chain, emitter, actualModel, switched, new ChatStreamCancellation());
     }
 
-    private ChatTurnContext context(List<LlmModel> chain, SseEmitter emitter,
+    private ChatTurnContext context(List<LlmModel> chain, CapturingEmitter emitter,
                                     AtomicReference<LlmModel> actualModel,
                                     List<LlmModel> switched,
                                     ChatStreamCancellation cancellation) {
@@ -339,7 +339,7 @@ class ModelFailoverStreamTest {
                 .window(window)
                 .session(session)
                 .userMessage("hi")
-                .emitter(emitter)
+                .events(new ChatEventPublisher(emitter))
                 .shareMode(false)
                 .quotaUsername("tester")
                 .imageUrls(List.of())
@@ -398,8 +398,8 @@ class ModelFailoverStreamTest {
         return model;
     }
 
-    /** 记录 SSE 事件名与 payload 的 SseEmitter，用于断言事件序列 */
-    private static class CapturingEmitter extends SseEmitter {
+    /** 记录聊天事件名与 payload 的事件出口，用于断言事件序列 */
+    private static class CapturingEmitter implements ExecutionStreamSink {
         record Event(String name, Object data) {
         }
 
@@ -408,30 +408,12 @@ class ModelFailoverStreamTest {
         private volatile Throwable completedWithError;
 
         @Override
-        public void send(SseEventBuilder builder) throws IOException {
-            record(toEvent(builder));
+        public void emit(String type, Object payload) throws IOException {
+            record(new Event(type, payload));
         }
 
         void record(Event event) {
             events.add(event);
-        }
-
-        static Event toEvent(SseEventBuilder builder) {
-            String name = "message";
-            Object data = null;
-            for (ResponseBodyEmitter.DataWithMediaType item : builder.build()) {
-                Object value = item.getData();
-                if (value instanceof CharSequence text) {
-                    for (String line : text.toString().split("\n")) {
-                        if (line.startsWith("event:")) {
-                            name = line.substring(6).trim();
-                        }
-                    }
-                } else if (value != null) {
-                    data = value;
-                }
-            }
-            return new Event(name, data);
         }
 
         @Override
@@ -440,7 +422,7 @@ class ModelFailoverStreamTest {
         }
 
         @Override
-        public void completeWithError(Throwable ex) {
+        public void fail(Throwable ex) {
             completed = true;
             completedWithError = ex;
         }
@@ -460,16 +442,15 @@ class ModelFailoverStreamTest {
 
     /** 第二个 content 事件写失败，模拟客户端在流式过程中断开 */
     private static final class FailAfterFirstContentEmitter extends CapturingEmitter {
-        private final java.util.concurrent.atomic.AtomicInteger contentSendCount =
+        private final java.util.concurrent.atomic.AtomicInteger contentEmitCount =
                 new java.util.concurrent.atomic.AtomicInteger();
 
         @Override
-        public void send(SseEventBuilder builder) throws IOException {
-            Event event = toEvent(builder);
-            if ("content".equals(event.name()) && contentSendCount.incrementAndGet() > 1) {
+        public void emit(String type, Object payload) throws IOException {
+            if ("content".equals(type) && contentEmitCount.incrementAndGet() > 1) {
                 throw new IOException("client disconnected");
             }
-            record(event);
+            record(new Event(type, payload));
         }
     }
 }
