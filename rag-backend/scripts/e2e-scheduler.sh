@@ -36,6 +36,7 @@ SRV=${SRV:-http://localhost:8080}
 MGMT_SRV=${MGMT_SRV:-http://localhost:9090}
 HEALTH_URL=${HEALTH_URL:-$MGMT_SRV/actuator/health}
 DB=${DB:-wgh_rag}
+DB_TIMEZONE=${DB_TIMEZONE:-Asia/Shanghai}
 DB_USER=${DB_USER:-postgres}
 DB_HOST=${DB_HOST:-127.0.0.1}
 DB_PORT=${DB_PORT:-5432}
@@ -63,9 +64,9 @@ else
 fi
 psqlq() {
   if [ "$PSQL_MODE" = container ]; then
-    docker exec -i "$PG_CONTAINER" psql -U "$DB_USER" -d "$DB" -t -A -v ON_ERROR_STOP=1 -c "$1"
+    docker exec -e PGTZ="$DB_TIMEZONE" -i "$PG_CONTAINER" psql -U "$DB_USER" -d "$DB" -t -A -v ON_ERROR_STOP=1 -c "$1"
   else
-    PGPASSWORD="$PGPASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB" \
+    PGTZ="$DB_TIMEZONE" PGPASSWORD="$PGPASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB" \
       -t -A -v ON_ERROR_STOP=1 -c "$1"
   fi
 }
@@ -140,10 +141,10 @@ fi
 ok "后端健康检查 UP"
 
 if ! psqlq "SELECT 1" >/dev/null 2>&1; then
-  ng "数据库不可用（mode=$PSQL_MODE db=$DB）：请设置 DB_HOST/DB_PORT/DB_USER/PGPASSWORD 或 PG_CONTAINER"
+  ng "数据库不可用（mode=$PSQL_MODE db=${DB}）：请设置 DB_HOST/DB_PORT/DB_USER/PGPASSWORD 或 PG_CONTAINER"
   exit 1
 fi
-ok "数据库可用（$PSQL_MODE）"
+ok "数据库可用（${PSQL_MODE}）"
 
 if ! psqlq "SELECT to_regclass('public.wgh_execution_job') IS NOT NULL" | grep -q t; then
   ng "缺少 wgh_execution_job 表：请先执行 sql/schema/01-schema.sql 或 sql/migrations/20261120/01_execution_job.sql"
@@ -154,9 +155,9 @@ ok "作业表存在"
 REDIS_OK=0
 if [ "$REDIS_MODE" != none ] && [ "$(redisq ping 2>/dev/null | tr -d '\r')" = "PONG" ]; then
   REDIS_OK=1
-  ok "Redis 可用（$REDIS_MODE）"
+  ok "Redis 可用（${REDIS_MODE}）"
 else
-  ng "Redis 不可用（mode=$REDIS_MODE）：维护车道单飞按失败关闭设计不会执行作业；请设置 REDIS_* 或 REDIS_CONTAINER"
+  ng "Redis 不可用（mode=${REDIS_MODE}）：维护车道单飞按失败关闭设计不会执行作业；请设置 REDIS_* 或 REDIS_CONTAINER"
 fi
 
 TOKEN=$(curl -s -X POST "$SRV/api/auth/login" -H "Content-Type: application/json" \
@@ -170,7 +171,7 @@ AUTH="Authorization: Bearer $TOKEN"
 ok "登录成功"
 
 RUN=$(date +%s)-$RANDOM
-echo "  runId=$RUN（用于隔离本次测试数据）"
+echo "  runId=${RUN}（用于隔离本次测试数据）"
 
 # 预置一个最小工作流，供 WF_RUN 真实执行
 cat > /tmp/e2e_sched_wf.json <<'JSON'
@@ -199,8 +200,8 @@ ok "预置工作流 id=$WF"
 echo ""
 echo "[S1] 后台作业全链路：PENDING → LEASED → RUNNING → SUCCEEDED"
 EX1="e2e-sched-$RUN-wf"
-ID1=$(insert_job "$EX1" "WF_RUN" "BACKGROUND" "{\"workflowId\":$WF,\"input\":\"sched-$RUN\"}")
-[ -n "$ID1" ] && ok "作业已提交（id=$ID1）" || { ng "作业提交失败"; exit 1; }
+ID1=$(insert_job "$EX1" "WF_RUN" "BACKGROUND" "{\"workflowId\":\"$WF\",\"input\":\"sched-$RUN\"}")
+[ -n "$ID1" ] && ok "作业已提交（id=${ID1}）" || { ng "作业提交失败"; exit 1; }
 ST1=$(wait_job_status "$EX1" "SUCCEEDED DEAD FAILED CANCELLED" 90)
 [ "$ST1" = "SUCCEEDED" ] && ok "作业进入 SUCCEEDED" || ng "作业终态=${ST1} error=$(job_field "$EX1" error_message)"
 [ "$(job_field "$EX1" attempt)" = "1" ] && ok "attempt=1（领取时 +1）" || ng "attempt=$(job_field "$EX1" attempt)"
@@ -235,7 +236,7 @@ psqlq "INSERT INTO wgh_execution_job
           status, scheduled_at, max_attempts, attempt, lease_owner, start_time,
           lease_expire_time, heartbeat_time)
        VALUES
-         ('$EX3','WF_RUN','BACKGROUND','default','{\"workflowId\":$WF,\"input\":\"lease-$RUN\"}'::jsonb,1,
+         ('$EX3','WF_RUN','BACKGROUND','default','{\"workflowId\":\"$WF\",\"input\":\"lease-$RUN\"}'::jsonb,1,
           'RUNNING', now(), 3, 1, 'e2e-dead-instance', now() - interval '2 minutes',
           now() - interval '1 minute', now() - interval '2 minutes')" >/dev/null
 ST3=$(wait_job_status "$EX3" "SUCCEEDED DEAD FAILED CANCELLED" 120)
@@ -251,7 +252,7 @@ psqlq "INSERT INTO wgh_execution_job
           status, scheduled_at, max_attempts, attempt, lease_owner, start_time,
           lease_expire_time, heartbeat_time)
        VALUES
-         ('$EX3B','WF_RUN','BACKGROUND','default','{\"workflowId\":$WF,\"input\":\"lease-dead-$RUN\"}'::jsonb,1,
+         ('$EX3B','WF_RUN','BACKGROUND','default','{\"workflowId\":\"$WF\",\"input\":\"lease-dead-$RUN\"}'::jsonb,1,
           'RUNNING', now(), 3, 3, 'e2e-dead-instance', now() - interval '3 minutes',
           now() - interval '1 minute', now() - interval '3 minutes')" >/dev/null
 ST3B=$(wait_job_status "$EX3B" "DEAD" 90)
@@ -270,7 +271,7 @@ psqlq "INSERT INTO wgh_execution_job
          (execution_id, job_type, lane, tenant_id, payload_json, payload_schema_version,
           status, scheduled_at, max_attempts)
        VALUES
-         ('$EX4','WF_RUN','BACKGROUND','default','{\"workflowId\":999999999,\"input\":\"retry-$RUN\"}'::jsonb,1,
+         ('$EX4','WF_RUN','BACKGROUND','default','{\"workflowId\":\"999999999\",\"input\":\"retry-$RUN\"}'::jsonb,1,
           'PENDING', now(), 2)" >/dev/null
 ST4A=$(wait_job_status "$EX4" "FAILED DEAD" 60)
 [ "$ST4A" = "FAILED" ] && ok "首次失败落 FAILED（可重试）" || ng "首次失败终态=${ST4A}"
@@ -304,7 +305,7 @@ psqlq "INSERT INTO wgh_execution_job
          (execution_id, job_type, lane, tenant_id, payload_json, payload_schema_version,
           status, scheduled_at, max_attempts, cancel_requested, cancel_reason)
        VALUES
-         ('$EX5','WF_RUN','BACKGROUND','default','{\"workflowId\":$WF,\"input\":\"cancel-$RUN\"}'::jsonb,1,
+         ('$EX5','WF_RUN','BACKGROUND','default','{\"workflowId\":\"$WF\",\"input\":\"cancel-$RUN\"}'::jsonb,1,
           'PENDING', now(), 3, 1, 'e2e cancel')" >/dev/null
 ST5=$(wait_job_status "$EX5" "CANCELLED DEAD FAILED SUCCEEDED" 60)
 [ "$ST5" = "CANCELLED" ] && ok "作业取消成功" || ng "终态=${ST5}"
@@ -318,7 +319,7 @@ echo ""
 echo "[S6] (job_type, biz_key) 幂等去重"
 BIZ="e2e-sched-$RUN-biz"
 EX6="e2e-sched-$RUN-idem"
-insert_job "$EX6" "WF_RUN" "BACKGROUND" "{\"workflowId\":$WF,\"input\":\"idem-$RUN\"}" ",biz_key" "'$BIZ'" >/dev/null
+insert_job "$EX6" "WF_RUN" "BACKGROUND" "{\"workflowId\":\"$WF\",\"input\":\"idem-$RUN\"}" ",biz_key" "'$BIZ'" >/dev/null
 DUP_ID=$(psqlq "INSERT INTO wgh_execution_job
                   (execution_id, job_type, lane, tenant_id, payload_json, payload_schema_version,
                    status, scheduled_at, max_attempts, biz_key)
@@ -340,7 +341,7 @@ if [ "$REDIS_OK" = 1 ]; then
   LOCK_KEY="$REDIS_KEY_PREFIX:lock:scheduler-singleflight:job:QUOTA_REFUND"
   redisq SET "$LOCK_KEY" "e2e-holder" NX PX 60000 >/dev/null
   HELD=$(redisq EXISTS "$LOCK_KEY" | tr -d '\r')
-  [ "$HELD" = "1" ] && ok "已模拟其它实例持有单飞锁（$LOCK_KEY）" || ng "模拟持锁失败"
+  [ "$HELD" = "1" ] && ok "已模拟其它实例持有单飞锁（${LOCK_KEY}）" || ng "模拟持锁失败"
 
   EX7="e2e-sched-$RUN-sf"
   insert_job "$EX7" "QUOTA_REFUND" "MAINTENANCE" '{}' >/dev/null

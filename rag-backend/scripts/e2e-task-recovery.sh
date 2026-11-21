@@ -29,6 +29,7 @@ SRV=${SRV:-http://localhost:8080}
 MGMT_SRV=${MGMT_SRV:-http://localhost:9090}
 HEALTH_URL=${HEALTH_URL:-$MGMT_SRV/actuator/health}
 DB=${DB:-wgh_rag}
+DB_TIMEZONE=${DB_TIMEZONE:-Asia/Shanghai}
 DB_USER=${DB_USER:-postgres}
 DB_HOST=${DB_HOST:-127.0.0.1}
 DB_PORT=${DB_PORT:-5432}
@@ -55,9 +56,9 @@ else
 fi
 psqlq() {
   if [ "$PSQL_MODE" = container ]; then
-    docker exec -i "$PG_CONTAINER" psql -U "$DB_USER" -d "$DB" -t -A -v ON_ERROR_STOP=1 -c "$1"
+    docker exec -e PGTZ="$DB_TIMEZONE" -i "$PG_CONTAINER" psql -U "$DB_USER" -d "$DB" -t -A -v ON_ERROR_STOP=1 -c "$1"
   else
-    PGPASSWORD="$PGPASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB" \
+    PGTZ="$DB_TIMEZONE" PGPASSWORD="$PGPASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB" \
       -t -A -v ON_ERROR_STOP=1 -c "$1"
   fi
 }
@@ -116,7 +117,7 @@ if ! curl -sf "$HEALTH_URL" | grep -q '"status":"UP"'; then
 fi
 ok "后端健康检查 UP"
 if ! psqlq "SELECT 1" >/dev/null 2>&1; then
-  ng "数据库不可用（mode=$PSQL_MODE db=$DB）"
+  ng "数据库不可用（mode=$PSQL_MODE db=${DB}）"
   exit 1
 fi
 ok "数据库可用"
@@ -181,7 +182,7 @@ curl -s -N -X POST "$SRV/api/workflows/$WF/run" -H "$AUTH" -H 'Content-Type: app
   --max-time 60 > /tmp/e2e_recovery_baseline.sse 2>&1
 R1=$(psqlq "SELECT max(id) FROM wgh_workflow_run WHERE workflow_id=$WF")
 ST_BASE=$(psqlq "SELECT status FROM wgh_workflow_run WHERE id=$R1")
-[ "$ST_BASE" = "COMPLETED" ] && ok "基线运行 COMPLETED（id=$R1）" || { ng "基线运行状态=${ST_BASE}"; exit 1; }
+[ "$ST_BASE" = "COMPLETED" ] && ok "基线运行 COMPLETED（id=${R1}）" || { ng "基线运行状态=${ST_BASE}"; exit 1; }
 
 # 构造中断现场：RUNNING + START 成功 + v1 处于 RUNNING（模拟进程中断）
 new_interrupted_run() { # input -> runId
@@ -201,7 +202,7 @@ echo ""
 echo "[R1] 工作流中断后继续执行"
 INPUT1="resume-$RUN"
 RID=$(new_interrupted_run "$INPUT1")
-[ -n "$RID" ] && ok "构造中断运行 id=$RID（status=RUNNING，v1 中断）" || { ng "构造中断运行失败"; exit 1; }
+[ -n "$RID" ] && ok "构造中断运行 id=${RID}（status=RUNNING，v1 中断）" || { ng "构造中断运行失败"; exit 1; }
 psqlq "INSERT INTO wgh_workflow_node_run (run_id, node_id, node_type, node_name, status, start_time)
        VALUES ($RID,'start','START','开始','SUCCESS', now() - interval '2 minutes')" >/dev/null
 psqlq "INSERT INTO wgh_workflow_node_run (run_id, node_id, node_type, node_name, status, start_time)
@@ -211,7 +212,7 @@ RESP1=$(resume_api "WORKFLOW" "$RID")
 SUCCESS1=$(json_field "$RESP1" success)
 MSG1=$(json_field "$RESP1" message)
 FROM1=$(json_field "$RESP1" resumedFrom)
-[ "$SUCCESS1" = "True" ] && ok "恢复接口接受：$MSG1（resumedFrom=$FROM1）" || ng "恢复接口拒绝：$RESP1（message=$MSG1）"
+[ "$SUCCESS1" = "True" ] && ok "恢复接口接受：${MSG1}（resumedFrom=${FROM1}）" || ng "恢复接口拒绝：${RESP1}（message=${MSG1}）"
 
 if wait_value "SELECT status FROM wgh_workflow_run WHERE id=$RID" "COMPLETED" 90; then
   ok "续跑后运行 COMPLETED"
@@ -307,7 +308,7 @@ else
     -H "Content-Type: application/json" -d '{}' \
     | python3 -c "import sys,json;print((json.load(sys.stdin).get('data') or {}).get('id',''))" 2>/dev/null)
   if [ -z "${SID:-}" ]; then
-    ng "创建会话失败（window=$WIN）"
+    ng "创建会话失败（window=${WIN}）"
   else
     PEND=$(curl -s "$SRV/api/chat/sessions/$SID/pending-task" -H "$AUTH")
     HP=$(json_field "$PEND" hasPending)

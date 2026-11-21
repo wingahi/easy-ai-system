@@ -33,6 +33,7 @@ SRV=${SRV:-http://localhost:8080}
 MGMT_SRV=${MGMT_SRV:-http://localhost:9090}
 HEALTH_URL=${HEALTH_URL:-$MGMT_SRV/actuator/health}
 DB=${DB:-wgh_rag}
+DB_TIMEZONE=${DB_TIMEZONE:-Asia/Shanghai}
 DB_USER=${DB_USER:-postgres}
 DB_HOST=${DB_HOST:-127.0.0.1}
 DB_PORT=${DB_PORT:-5432}
@@ -58,9 +59,9 @@ else
 fi
 psqlq() {
   if [ "$PSQL_MODE" = container ]; then
-    docker exec -i "$PG_CONTAINER" psql -U "$DB_USER" -d "$DB" -t -A -v ON_ERROR_STOP=1 -c "$1"
+    docker exec -e PGTZ="$DB_TIMEZONE" -i "$PG_CONTAINER" psql -U "$DB_USER" -d "$DB" -t -A -v ON_ERROR_STOP=1 -c "$1"
   else
-    PGPASSWORD="$PGPASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB" \
+    PGTZ="$DB_TIMEZONE" PGPASSWORD="$PGPASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB" \
       -t -A -v ON_ERROR_STOP=1 -c "$1"
   fi
 }
@@ -106,12 +107,12 @@ fi
 ok "后端健康检查 UP"
 
 if ! psqlq "SELECT 1" >/dev/null 2>&1; then
-  ng "数据库不可用（mode=$PSQL_MODE db=$DB）"
+  ng "数据库不可用（mode=$PSQL_MODE db=${DB}）"
   exit 1
 fi
 for t in wgh_quota_charge wgh_quota_usage wgh_execution_job; do
   if ! psqlq "SELECT to_regclass('public.$t') IS NOT NULL" | grep -q t; then
-    ng "缺少表 $t：请先执行 sql/schema/01-schema.sql 或 sql/migrations/20261120/02_quota_charge.sql"
+    ng "缺少表 ${t}：请先执行 sql/schema/01-schema.sql 或 sql/migrations/20261120/02_quota_charge.sql"
     exit 1
   fi
 done
@@ -120,7 +121,7 @@ ok "配额流水 / 用量 / 作业表存在"
 REDIS_OK=0
 if [ "$REDIS_MODE" != none ] && [ "$(redisq ping 2>/dev/null | tr -d '\r')" = "PONG" ]; then
   REDIS_OK=1
-  ok "Redis 可用（$REDIS_MODE）"
+  ok "Redis 可用（${REDIS_MODE}）"
 else
   ng "Redis 不可用：QUOTA_REFUND 在维护车道且单飞失败关闭，补偿用例无法执行"
   exit 1
@@ -162,7 +163,7 @@ else
     -H "Content-Type: application/json" -d '{}' \
     | python3 -c "import sys,json;print((json.load(sys.stdin).get('data') or {}).get('id',''))" 2>/dev/null)
   if [ -z "${SID:-}" ]; then
-    ng "创建会话失败（window=$WIN）"
+    ng "创建会话失败（window=${WIN}）"
   else
     BEFORE_MAX=$(psqlq "SELECT coalesce(max(id),0) FROM wgh_quota_charge")
     BEFORE_COUNT=$(psqlq "SELECT coalesce(chat_count,0) FROM wgh_quota_usage WHERE username='$ADMIN_USER' AND date_key='$PERIOD'")
@@ -178,10 +179,10 @@ else
       ST=$(psqlq "SELECT status FROM wgh_quota_charge WHERE charge_id='$CHARGE_ID'")
       [ "$ST" = "SETTLED" ] && ok "流水置 SETTLED（执行已开始）" || ng "流水状态=${ST}（期望 SETTLED；若为 REFUNDED 说明执行器拒绝了任务）"
       SID_DB=$(psqlq "SELECT coalesce(session_id::text,'') FROM wgh_quota_charge WHERE charge_id='$CHARGE_ID'")
-      [ "$SID_DB" = "$SID" ] && ok "流水已回填 session_id" || ng "流水 session_id=${SID_DB}（期望 $SID）"
+      [ "$SID_DB" = "$SID" ] && ok "流水已回填 session_id" || ng "流水 session_id=${SID_DB}（期望 ${SID}）"
       AFTER_COUNT=$(psqlq "SELECT coalesce(chat_count,0) FROM wgh_quota_usage WHERE username='$ADMIN_USER' AND date_key='$PERIOD'")
-      [ "$AFTER_COUNT" -gt "$BEFORE_COUNT" ] && ok "对话计数增加（$BEFORE_COUNT → $AFTER_COUNT）" \
-        || ng "对话计数未增加（$BEFORE_COUNT → $AFTER_COUNT）"
+      [ "$AFTER_COUNT" -gt "$BEFORE_COUNT" ] && ok "对话计数增加（$BEFORE_COUNT → ${AFTER_COUNT}）" \
+        || ng "对话计数未增加（$BEFORE_COUNT → ${AFTER_COUNT}）"
     fi
   fi
 fi
@@ -289,8 +290,8 @@ if [ "${E2E_TASK_REJECT:-0}" = "1" ]; then
     for p in "${pids[@]}"; do wait "$p" 2>/dev/null; done
     AFTER_REFUND=$(psqlq "SELECT count(*) FROM wgh_quota_charge WHERE username='$ADMIN_USER' AND status='REFUNDED'")
     [ "$AFTER_REFUND" -gt "$BEFORE_REFUND" ] \
-      && ok "拒绝后新增退款流水（$BEFORE_REFUND → $AFTER_REFUND）" \
-      || ng "未观察到拒绝退款（$BEFORE_REFUND → $AFTER_REFUND）；确认已按文档缩小执行器队列并重启"
+      && ok "拒绝后新增退款流水（$BEFORE_REFUND → ${AFTER_REFUND}）" \
+      || ng "未观察到拒绝退款（$BEFORE_REFUND → ${AFTER_REFUND}）；确认已按文档缩小执行器队列并重启"
   fi
 else
   ng "拒绝分支退款未执行：需先把聊天异步执行器队列压到 1 并重启后端，再以 E2E_TASK_REJECT=1 重跑。"

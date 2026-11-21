@@ -29,6 +29,7 @@ SRV=${SRV:-http://localhost:8080}
 MGMT_SRV=${MGMT_SRV:-http://localhost:9090}
 HEALTH_URL=${HEALTH_URL:-$MGMT_SRV/actuator/health}
 DB=${DB:-wgh_rag}
+DB_TIMEZONE=${DB_TIMEZONE:-Asia/Shanghai}
 DB_USER=${DB_USER:-postgres}
 DB_HOST=${DB_HOST:-127.0.0.1}
 DB_PORT=${DB_PORT:-5432}
@@ -50,9 +51,9 @@ else
 fi
 psqlq() {
   if [ "$PSQL_MODE" = container ]; then
-    docker exec -i "$PG_CONTAINER" psql -U "$DB_USER" -d "$DB" -t -A -v ON_ERROR_STOP=1 -c "$1"
+    docker exec -e PGTZ="$DB_TIMEZONE" -i "$PG_CONTAINER" psql -U "$DB_USER" -d "$DB" -t -A -v ON_ERROR_STOP=1 -c "$1"
   else
-    PGPASSWORD="$PGPASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB" \
+    PGTZ="$DB_TIMEZONE" PGPASSWORD="$PGPASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB" \
       -t -A -v ON_ERROR_STOP=1 -c "$1"
   fi
 }
@@ -71,12 +72,12 @@ if ! curl -sf "$HEALTH_URL" | grep -q '"status":"UP"'; then
 fi
 ok "后端健康检查 UP"
 if ! psqlq "SELECT 1" >/dev/null 2>&1; then
-  ng "数据库不可用（mode=$PSQL_MODE db=$DB）"
+  ng "数据库不可用（mode=$PSQL_MODE db=${DB}）"
   exit 1
 fi
 for t in wgh_tool wgh_workflow wgh_workflow_node_run; do
   if ! psqlq "SELECT to_regclass('public.$t') IS NOT NULL" | grep -q t; then
-    ng "缺少表 $t：请先初始化 schema"
+    ng "缺少表 ${t}：请先初始化 schema"
     exit 1
   fi
 done

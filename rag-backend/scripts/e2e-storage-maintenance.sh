@@ -31,6 +31,7 @@ SRV=${SRV:-http://localhost:8080}
 MGMT_SRV=${MGMT_SRV:-http://localhost:9090}
 HEALTH_URL=${HEALTH_URL:-$MGMT_SRV/actuator/health}
 DB=${DB:-wgh_rag}
+DB_TIMEZONE=${DB_TIMEZONE:-Asia/Shanghai}
 DB_USER=${DB_USER:-postgres}
 DB_HOST=${DB_HOST:-127.0.0.1}
 DB_PORT=${DB_PORT:-5432}
@@ -64,9 +65,9 @@ else
 fi
 psqlq() {
   if [ "$PSQL_MODE" = container ]; then
-    docker exec -i "$PG_CONTAINER" psql -U "$DB_USER" -d "$DB" -t -A -v ON_ERROR_STOP=1 -c "$1"
+    docker exec -e PGTZ="$DB_TIMEZONE" -i "$PG_CONTAINER" psql -U "$DB_USER" -d "$DB" -t -A -v ON_ERROR_STOP=1 -c "$1"
   else
-    PGPASSWORD="$PGPASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB" \
+    PGTZ="$DB_TIMEZONE" PGPASSWORD="$PGPASSWORD" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB" \
       -t -A -v ON_ERROR_STOP=1 -c "$1"
   fi
 }
@@ -105,7 +106,7 @@ echo "=============================================="
 echo " 存储迁移与孤儿清理端到端测试"
 echo "=============================================="
 echo "  DB: $PSQL_MODE / $DB     Redis: $REDIS_MODE     SRV: $SRV"
-echo "  本地存储目录：$UPLOAD_DIR_LABEL（相对 rag-backend）"
+echo "  本地存储目录：${UPLOAD_DIR_LABEL}（相对 rag-backend）"
 
 # ---------- 0. 前置 ----------
 echo ""
@@ -116,7 +117,7 @@ if ! curl -sf "$HEALTH_URL" | grep -q '"status":"UP"'; then
 fi
 ok "后端健康检查 UP"
 if ! psqlq "SELECT 1" >/dev/null 2>&1; then
-  ng "数据库不可用（mode=$PSQL_MODE db=$DB）"
+  ng "数据库不可用（mode=$PSQL_MODE db=${DB}）"
   exit 1
 fi
 ok "数据库可用"
@@ -126,7 +127,7 @@ if [ "$REDIS_MODE" = none ] || [ "$(redisq ping 2>/dev/null | tr -d '\r')" != "P
 fi
 ok "Redis 可用"
 if [ ! -d "$UPLOAD_DIR" ]; then
-  ng "本地存储目录不存在：$UPLOAD_DIR（请设置 UPLOAD_DIR；若后端以容器运行，需指向容器内实际可写目录）"
+  ng "本地存储目录不存在：${UPLOAD_DIR}（请设置 UPLOAD_DIR；若后端以容器运行，需指向容器内实际可写目录）"
   exit 1
 fi
 ok "本地存储目录存在"
@@ -154,7 +155,7 @@ if [ -z "${TASK_ID:-}" ]; then
 else
   ok "接口立即返回 taskId=$TASK_ID"
   ST0=$(json_field "$SUBMIT" "data.status")
-  [ "$ST0" = "RUNNING" ] && ok "初始状态 RUNNING" || echo "  ℹ 初始状态=$ST0（可能已快速进入终态）"
+  [ "$ST0" = "RUNNING" ] && ok "初始状态 RUNNING" || echo "  ℹ 初始状态=${ST0}（可能已快速进入终态）"
 
   echo ""
   echo "[M2] 轮询进度直至终态"
@@ -213,7 +214,7 @@ if [ "${E2E_MIGRATION_RUNNING:-0}" = "1" ]; then
   else
     ST2=$(json_field "$SUBMIT2" "data.status")
     if [ "$ST2" != "RUNNING" ]; then
-      ng "任务未处于 RUNNING（status=$ST2），无法验证运行中取消"
+      ng "任务未处于 RUNNING（status=${ST2}），无法验证运行中取消"
     else
       CAN2=$(curl -s -X POST "$SRV/api/admin/storage/migrate/$TASK2/cancel" -H "$AUTH")
       [ "$(json_field "$CAN2" "data")" = "True" ] && ok "运行中取消请求被接受" || ng "运行中取消失败：$CAN2"
