@@ -59,6 +59,20 @@ public interface QuotaUsageMapper extends BaseMapper<QuotaUsage> {
     int countExisting(@Param("username") String username, @Param("dateKey") String dateKey);
 
     /**
+     * 原子退回一次对话计数：仅当 chat_count &gt; 0 时减一，避免退款把计数减成负数。
+     * <p>返回 0 表示当期行不存在或计数已为 0（无实际退款）。</p>
+     */
+    @Update("""
+            UPDATE wgh_quota_usage
+               SET chat_count = chat_count - 1,
+                   update_time = CURRENT_TIMESTAMP
+             WHERE username = #{username}
+               AND date_key = #{dateKey}
+               AND chat_count > 0
+            """)
+    int decrementChatAtomically(@Param("username") String username, @Param("dateKey") String dateKey);
+
+    /**
      * 原子「检查配额并计数」。
      *
      * <p>UPDATE 先行：行存在时由带 limit 条件的 UPDATE 原子判定；

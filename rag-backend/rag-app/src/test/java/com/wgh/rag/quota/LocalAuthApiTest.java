@@ -98,6 +98,7 @@ class LocalAuthApiTest {
             GlobalExceptionHandler.class,
             RagMetrics.class,
             QuotaService.class,
+            com.wgh.rag.quota.service.QuotaChargeLedger.class,
             DefaultQuotaUserResolver.class,
             QuotaAdminGuard.class,
             PermissionAspect.class,

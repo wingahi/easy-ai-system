@@ -35,8 +35,11 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -51,6 +54,9 @@ class QuotaServiceTest {
 
     @Mock
     private UserQuotaConfigMapper userQuotaConfigMapper;
+
+    @Mock
+    private QuotaChargeLedger chargeLedger;
 
     @Spy
     private QuotaProperties quotaProperties = new QuotaProperties();
@@ -386,5 +392,71 @@ class QuotaServiceTest {
         assertThat(body.getCode()).isEqualTo(429);
         assertThat(body.getMessage()).contains("对话次数已达上限");
         verify(quotaUsageMapper, never()).upsertIncrement(anyString(), anyString(), anyInt(), anyLong());
+    }
+
+    @Test
+    @DisplayName("退款：委托持久化流水，按 chargeId 幂等")
+    void refundChat_delegatesToDurableLedger() {
+        QuotaService.QuotaCharge charge = new QuotaService.QuotaCharge("alice", "2026-11-20", "charge-1");
+        when(chargeLedger.refund(charge)).thenReturn(QuotaService.RefundResult.REFUNDED)
+                .thenReturn(QuotaService.RefundResult.DUPLICATE);
+
+        assertThat(quotaService.refundChat(charge)).isEqualTo(QuotaService.RefundResult.REFUNDED);
+        assertThat(quotaService.refundChat(charge)).isEqualTo(QuotaService.RefundResult.DUPLICATE);
+        verify(chargeLedger, times(2)).refund(charge);
+    }
+
+    @Test
+    @DisplayName("退款：无可退计数时返回 NOTHING_TO_REFUND 且允许重试")
+    void refundChat_nothingToRefund() {
+        QuotaService.QuotaCharge charge = new QuotaService.QuotaCharge("alice", "2026-11-20", "charge-2");
+        when(chargeLedger.refund(charge)).thenReturn(QuotaService.RefundResult.NOTHING_TO_REFUND)
+                .thenReturn(QuotaService.RefundResult.REFUNDED);
+
+        assertThat(quotaService.refundChat(charge)).isEqualTo(QuotaService.RefundResult.NOTHING_TO_REFUND);
+        assertThat(quotaService.refundChat(charge)).isEqualTo(QuotaService.RefundResult.REFUNDED);
+        verify(chargeLedger, times(2)).refund(charge);
+    }
+
+    @Test
+    @DisplayName("退款：数据库异常返回 FAILED，并登记待补偿状态且允许重试")
+    void refundChat_failureMarksRetryAndAllowsRetry() {
+        QuotaService.QuotaCharge charge = new QuotaService.QuotaCharge("alice", "2026-11-20", "charge-3");
+        when(chargeLedger.refund(charge)).thenThrow(new RuntimeException("db down"))
+                .thenReturn(QuotaService.RefundResult.REFUNDED);
+
+        assertThat(quotaService.refundChat(charge)).isEqualTo(QuotaService.RefundResult.FAILED);
+        verify(chargeLedger).markRefundFailed(eq("charge-3"), any(), contains("db down"));
+        assertThat(quotaService.refundChat(charge)).isEqualTo(QuotaService.RefundResult.REFUNDED);
+    }
+
+    @Test
+    @DisplayName("扣费凭据：成功计数返回带持久化标识与周期键的 charge")
+    void checkAndIncrementChat_returnsCharge() {
+        when(quotaUsageMapper.incrementChatAtomically(eq("alice"), anyString(), anyInt())).thenReturn(1);
+        QuotaService.QuotaCharge expected = new QuotaService.QuotaCharge("alice", "2026-11-20", "charge-x");
+        when(chargeLedger.create(eq("alice"), anyString(), isNull())).thenReturn(expected);
+
+        QuotaService.QuotaCharge charge = quotaService.checkAndIncrementChat("alice");
+
+        assertThat(charge).isNotNull();
+        assertThat(charge.username()).isEqualTo("alice");
+        assertThat(charge.periodKey()).isNotBlank();
+        assertThat(charge.chargeId()).isEqualTo("charge-x");
+        verify(chargeLedger).create(eq("alice"), anyString(), isNull());
+    }
+
+    @Test
+    @DisplayName("流水落库失败：无事务时补偿减一，不阻断聊天")
+    void checkAndIncrementChat_ledgerFailureCompensatesWithoutTransaction() {
+        when(quotaUsageMapper.incrementChatAtomically(eq("alice"), anyString(), anyInt())).thenReturn(1);
+        when(chargeLedger.create(eq("alice"), anyString(), any()))
+                .thenThrow(new RuntimeException("ledger down"));
+
+        // 单测没有真实事务上下文，按「无事务」分支补偿减一
+        QuotaService.QuotaCharge charge = quotaService.checkAndIncrementChat("alice");
+
+        assertThat(charge).isNull();
+        verify(quotaUsageMapper).decrementChatAtomically(eq("alice"), anyString());
     }
 }

@@ -335,6 +335,28 @@ CREATE TABLE IF NOT EXISTS wgh_user_quota_config (
     CONSTRAINT uk_user_quota_username UNIQUE (username)
 );
 
+CREATE TABLE IF NOT EXISTS wgh_quota_charge (
+    id SERIAL PRIMARY KEY,
+    charge_id VARCHAR(64) NOT NULL,
+    username VARCHAR(50) NOT NULL,
+    period_key VARCHAR(10) NOT NULL,
+    amount INT NOT NULL DEFAULT 1,
+    status VARCHAR(16) NOT NULL DEFAULT 'CHARGED',
+    window_id BIGINT,
+    session_id BIGINT,
+    task_id VARCHAR(64),
+    retry_count INT NOT NULL DEFAULT 0,
+    next_retry_at TIMESTAMP,
+    last_error VARCHAR(500),
+    finish_time TIMESTAMP,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    create_by VARCHAR(100),
+    update_by VARCHAR(100),
+    deleted INT DEFAULT 0,
+    CONSTRAINT uk_quota_charge_id UNIQUE (charge_id)
+);
+
 -- ===== 生产基线同步：标签 / 版本 / 缓存 =====
 
 CREATE TABLE IF NOT EXISTS wgh_tag (

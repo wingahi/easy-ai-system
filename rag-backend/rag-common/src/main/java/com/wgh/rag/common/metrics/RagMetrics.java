@@ -46,6 +46,8 @@ public class RagMetrics {
 
     /** 配额超限次数（type: chat/token） */
     public static final String QUOTA_EXCEEDED = "wgh.quota.exceeded";
+    /** 统一执行器拒绝后的配额退款结果（result=refunded/duplicate/nothing_to_refund/failed） */
+    public static final String QUOTA_REFUND = "wgh.quota.refund";
 
     /** 公开访问请求量（dimension: share-token/share-ip/share-chat/api-key/api-ip 等） */
     public static final String PUBLIC_ACCESS_REQUESTS = "wgh.public.access.requests";
@@ -185,6 +187,10 @@ public class RagMetrics {
 
     public void recordQuotaExceeded(String type) {
         counter(QUOTA_EXCEEDED, "type", type).increment();
+    }
+
+    public void recordQuotaRefund(String result) {
+        counter(QUOTA_REFUND, "result", result == null ? "unknown" : result).increment();
     }
 
     public void recordPublicAccess(String dimension) {

@@ -8,6 +8,7 @@ import com.wgh.rag.quota.mapper.QuotaUsageMapper;
 import com.wgh.rag.quota.properties.QuotaProperties;
 import com.wgh.rag.quota.service.DefaultQuotaUserResolver;
 import com.wgh.rag.quota.service.QuotaAdminGuard;
+import com.wgh.rag.quota.service.QuotaChargeLedger;
 import com.wgh.rag.quota.service.QuotaService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
@@ -50,6 +51,7 @@ class QuotaConcurrencyTest {
             MetaObjectHandlerImpl.class,
             com.wgh.rag.common.metrics.RagMetrics.class,
             QuotaService.class,
+            QuotaChargeLedger.class,
             DefaultQuotaUserResolver.class,
             QuotaAdminGuard.class
     })

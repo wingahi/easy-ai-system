@@ -16,6 +16,7 @@ import com.wgh.rag.controller.quota.QuotaUserController;
 import com.wgh.rag.quota.properties.QuotaProperties;
 import com.wgh.rag.quota.service.DefaultQuotaUserResolver;
 import com.wgh.rag.quota.service.QuotaAdminGuard;
+import com.wgh.rag.quota.service.QuotaChargeLedger;
 import com.wgh.rag.quota.service.QuotaService;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
@@ -78,6 +79,7 @@ class QuotaApiTest {
             GlobalExceptionHandler.class,
             RagMetrics.class,
             QuotaService.class,
+            QuotaChargeLedger.class,
             DefaultQuotaUserResolver.class,
             QuotaAdminGuard.class,
             QuotaAdminController.class,
