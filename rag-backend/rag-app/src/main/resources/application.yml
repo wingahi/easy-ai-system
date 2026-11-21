@@ -68,6 +68,17 @@ mybatis-plus:
 
 # ===== WGH RAG 自定义配置 =====
 wgh:
+  # ===== 统一异步执行器（替代裸 new Thread；有界队列 + 显式拒绝） =====
+  async:
+    executor:
+      core-size: ${WGH_ASYNC_CORE:8}
+      max-size: ${WGH_ASYNC_MAX:32}
+      queue-capacity: ${WGH_ASYNC_QUEUE:200}
+      keep-alive-seconds: 60
+      thread-name-prefix: rag-async-
+      await-termination-seconds: 30
+      caller-runs: false   # true=饱和回退提交线程（可能阻塞请求线程），默认显式拒绝
+
   # ===== 数据库方言（仅影响 MyBatis-Plus 分页语法，默认 PostgreSQL） =====
   db:
     dialect: ${WGH_DB_DIALECT:postgresql}

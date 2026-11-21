@@ -1,0 +1,25 @@
+# =====================================================================
+# 增量配置：统一异步执行器（2026-11-20）
+# ---------------------------------------------------------------------
+# 目标文件：rag-backend/rag-app/src/main/resources/application.yml
+# 分区：统一异步执行器（今日新增 7 个键）
+# 说明：增量覆盖片段，不参与自动加载；合并方式见 config/migrations/README.md
+# 绑定类：com.wgh.rag.common.config.RagAsyncExecutorProperties
+# =====================================================================
+wgh:
+  async:
+    executor:
+      # 核心线程数
+      core-size: ${WGH_ASYNC_CORE:8}
+      # 最大线程数
+      max-size: ${WGH_ASYNC_MAX:32}
+      # 有界队列容量（必须有界，避免任务无限积压）
+      queue-capacity: ${WGH_ASYNC_QUEUE:200}
+      # 空闲线程存活秒数
+      keep-alive-seconds: 60
+      # 线程名前缀，便于日志与线程转储辨识
+      thread-name-prefix: rag-async-
+      # 关闭时等待在途任务完成的秒数
+      await-termination-seconds: 30
+      # false=AbortPolicy（显式拒绝，不静默丢弃）；true=CallerRunsPolicy（回退提交线程，可能阻塞请求线程）
+      caller-runs: false

@@ -71,3 +71,17 @@ spring:
 合计：今日新增/修改 42 个键 + 收敛既有键 8 个。任务恢复（`TaskRecoveryService`）无可配置项，故不设片段；`wgh.sandbox.work-root`、`wgh.rag.memory.summary-model-id` 两个空值默认项保留在代码中。
 
 变更对应的业务背景与逐项说明见 [1.2.0-change-summary-2026-11-19.md](../../../docs/version/1.2.0-change-summary-2026-11-19.md)。
+
+## 2026-11-20 片段清单
+
+| 文件 | 分区 | 键数 | 目标文件 |
+| --- | --- | --- | --- |
+| `01_async-executor.yml` | 统一异步执行器 | 7（新增） | `application.yml` |
+| `02_scheduler.yml` | 统一调度中心 | 27（新增） | `application-features.yml` |
+| `03_quota-refund.yml` | 配额退款补偿 | 7（新增） | `application-features.yml` |
+
+说明：统一异步执行器替代 `new Thread(...).start()`，键前缀为 `wgh.async.executor`，绑定类为 `com.wgh.rag.common.config.RagAsyncExecutorProperties`。业务背景见 [1.3.0-change-summary-2026-11-20.md](../../../docs/version/1.3.0-change-summary-2026-11-20.md) 第 3.8 节。
+
+统一调度中心键前缀为 `wgh.scheduler`，绑定类为 `com.wgh.rag.scheduler.config.SchedulerProperties`；启用前必须先执行 `sql/migrations/20261120/01_execution_job.sql`。业务背景见同一文档第 3.9 节。
+
+配额退款补偿键前缀为 `wgh.rag.quota.charge`，绑定类为 `com.wgh.rag.quota.properties.QuotaProperties.Charge`；扣费流水位于聊天主链路，**部署本代码前**必须先执行 `sql/migrations/20261120/02_quota_charge.sql`（本轮只创建脚本，执行需我方批准）。业务背景见同一文档第 3.11 节。

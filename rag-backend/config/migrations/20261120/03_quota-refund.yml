@@ -1,0 +1,27 @@
+# =====================================================================
+# 增量配置：配额退款补偿（2026-11-20）
+# ---------------------------------------------------------------------
+# 目标文件：rag-backend/rag-app/src/main/resources/application-features.yml
+# 分区：quota（今日新增 7 个键）
+# 绑定类：com.wgh.rag.quota.properties.QuotaProperties.Charge
+# 说明：增量覆盖片段，不参与自动加载；合并方式见 config/migrations/README.md
+# 注意：扣费流水位于聊天主链路，部署本代码前必须先执行 sql/migrations/20261120/02_quota_charge.sql
+# =====================================================================
+wgh:
+  rag:
+    quota:
+      charge:
+        # 是否启用退款补偿作业（关闭后不扫描流水，已产生的流水保持原状）
+        refund-enabled: true
+        # 已扣未决保护期：扣费后超过该时长仍未确认执行才开始补偿
+        refund-protection: 5m
+        # 补偿作业提交间隔（维护车道；由调度中心按时间分桶提交）
+        refund-scan-interval: 60s
+        # 单条流水最大退款尝试次数（含首次），耗尽后置 DEAD 等人工处理
+        refund-max-attempts: 5
+        # 退款重试退避基数（按尝试次数指数递增）
+        refund-backoff: 60s
+        # 退款重试退避上限
+        refund-backoff-max: 30m
+        # 单次扫描最多处理的流水条数
+        refund-batch-size: 200

@@ -1,0 +1,66 @@
+# =====================================================================
+# 增量配置：统一调度中心（2026-11-20）
+# ---------------------------------------------------------------------
+# 目标文件：rag-backend/rag-app/src/main/resources/application-features.yml
+# 分区：scheduler（今日新增 27 个键）
+# 绑定类：com.wgh.rag.scheduler.config.SchedulerProperties
+# 说明：增量覆盖片段，不参与自动加载；合并方式见 config/migrations/README.md
+# 注意：启用前必须先执行 sql/migrations/20261120/01_execution_job.sql
+# =====================================================================
+wgh:
+  scheduler:
+    # 总开关；关闭后不创建车道线程池与调度循环
+    enabled: ${WGH_SCHEDULER_ENABLED:true}
+    # 实例标识；留空时取 HOSTNAME-pid，用于租约归属
+    instance-id: ${WGH_INSTANCE_ID:}
+
+    # 作业租约 TTL（秒）；持有者需在到期前续租
+    lease-ttl: 60s
+    # 续约与取消轮询间隔；必须显著小于 lease-ttl
+    heartbeat-interval: 10s
+    # 后台车道领取轮询间隔
+    claim-interval: 2s
+    # 租约过期回收扫描间隔
+    reclaim-interval: 30s
+    # 排队超时扫描间隔
+    queue-sweep-interval: 15s
+
+    # 单次执行默认超时（请求未指定 timeout 时）
+    default-timeout: 30m
+    # 后台作业排队超时；超时落 FAILED(JOB_QUEUE_TIMEOUT) 且不重试
+    queue-timeout: 5m
+    # 失败重试退避基数（按尝试次数线性递增）
+    retry-backoff: 30s
+    # 默认最大尝试次数（含首次）
+    max-attempts: 3
+    # 终态事件保留时长（供本实例 attach 重放）
+    event-retention: 5m
+    # 单租户后台并发上限（S1 为进程内口径）
+    tenant-max-concurrent: 2
+
+    # 交互式：进程内执行，不落作业表
+    interactive:
+      core-size: 4
+      max-size: 16
+      # 线程池有界队列容量
+      queue-capacity: 100
+      thread-name-prefix: sched-interactive-
+    # 后台：落作业表，租约保证一作业一执行者
+    background:
+      core-size: 2
+      max-size: 8
+      # 作业表 PENDING 上限（准入拒绝阈值）
+      queue-capacity: 500
+      thread-name-prefix: sched-background-
+    # 维护：Redis 单飞，跨实例同类作业只跑一份
+    maintenance:
+      core-size: 1
+      max-size: 2
+      queue-capacity: 50
+      thread-name-prefix: sched-maintenance-
+
+    single-flight:
+      # 单飞锁 TTL（执行期间按心跳续约）
+      lock-ttl: 120s
+      # 未抢到锁或 Redis 不可用时，作业回到 PENDING 的延迟
+      retry-delay: 10s

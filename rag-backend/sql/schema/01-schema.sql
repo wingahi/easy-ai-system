@@ -1005,6 +1005,53 @@ COMMENT ON COLUMN wgh_user_quota_config.enabled IS '是否启用（0/1；禁用�
 COMMENT ON COLUMN wgh_user_quota_config.remark IS '备注';
 -- date_key 为月周期键（yyyy-MM，7 字符）
 
+-- 配额扣费流水（退款幂等与补偿的唯一事实源；一次对话扣费一行）
+CREATE TABLE IF NOT EXISTS wgh_quota_charge (
+  id BIGSERIAL PRIMARY KEY,
+  charge_id VARCHAR(64) NOT NULL,
+  username VARCHAR(50) NOT NULL,
+  period_key VARCHAR(10) NOT NULL,
+  amount INT NOT NULL DEFAULT 1,
+  status VARCHAR(16) NOT NULL DEFAULT 'CHARGED',
+  window_id BIGINT,
+  session_id BIGINT,
+  task_id VARCHAR(64),
+  retry_count INT NOT NULL DEFAULT 0,
+  next_retry_at TIMESTAMP,
+  last_error VARCHAR(500),
+  finish_time TIMESTAMP,
+  create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  create_by VARCHAR(50) DEFAULT 'system',
+  update_by VARCHAR(50) DEFAULT 'system',
+  deleted SMALLINT DEFAULT 0
+);
+COMMENT ON TABLE wgh_quota_charge IS '配额扣费流水（退款幂等与补偿的唯一事实源）';
+COMMENT ON COLUMN wgh_quota_charge.charge_id IS '扣费标识（UUID）；退款幂等键，全局唯一';
+COMMENT ON COLUMN wgh_quota_charge.username IS '用户名';
+COMMENT ON COLUMN wgh_quota_charge.period_key IS '扣费时的周期键（日=yyyy-MM-dd，月=yyyy-MM）；退款按此键回退';
+COMMENT ON COLUMN wgh_quota_charge.amount IS '本次扣减的对话条数（当前固定为 1）';
+COMMENT ON COLUMN wgh_quota_charge.status IS '状态：CHARGED/SETTLED/REFUNDED/REFUND_FAILED/DEAD';
+COMMENT ON COLUMN wgh_quota_charge.window_id IS '关联聊天窗口';
+COMMENT ON COLUMN wgh_quota_charge.session_id IS '关联会话（会话创建后回填）';
+COMMENT ON COLUMN wgh_quota_charge.task_id IS '关联任务标识（预留：后台作业/异步任务接入时使用）';
+COMMENT ON COLUMN wgh_quota_charge.retry_count IS '退款补偿已重试次数';
+COMMENT ON COLUMN wgh_quota_charge.next_retry_at IS '下次可补偿时间（退避）';
+COMMENT ON COLUMN wgh_quota_charge.last_error IS '最近一次退款失败原因（截断）';
+COMMENT ON COLUMN wgh_quota_charge.finish_time IS '终态时间（REFUNDED / DEAD）';
+COMMENT ON COLUMN wgh_quota_charge.deleted IS '逻辑删除（0 未删除 / 1 已删除）';
+CREATE UNIQUE INDEX IF NOT EXISTS uk_quota_charge_id
+  ON wgh_quota_charge(charge_id);
+CREATE INDEX IF NOT EXISTS idx_quota_charge_scan
+  ON wgh_quota_charge(status, create_time)
+  WHERE deleted = 0;
+CREATE INDEX IF NOT EXISTS idx_quota_charge_retry
+  ON wgh_quota_charge(status, next_retry_at)
+  WHERE deleted = 0;
+CREATE INDEX IF NOT EXISTS idx_quota_charge_user
+  ON wgh_quota_charge(username, period_key)
+  WHERE deleted = 0;
+
 -- 聊天消息成本列（回复完成后按模型价格表回填，无价格配置时为 NULL）
 COMMENT ON COLUMN wgh_chat_message.cost IS '本条消息估算成本（元，按模型价格表回填；无价格配置为 NULL）';
 COMMENT ON COLUMN wgh_chat_message.model_name IS '生成本条消息的模型名（厂商侧 modelName，用于成本按模型聚合）';
@@ -1486,4 +1533,87 @@ CREATE INDEX IF NOT EXISTS idx_agent_memory_scope_time
   WHERE deleted = 0;
 CREATE INDEX IF NOT EXISTS idx_agent_memory_agent
   ON wgh_agent_memory (agent_id, create_time DESC)
+  WHERE deleted = 0;
+
+-- ==================== 调度：后台作业 ====================
+CREATE TABLE IF NOT EXISTS wgh_execution_job (
+  id BIGSERIAL PRIMARY KEY,
+  execution_id VARCHAR(64) NOT NULL,
+  job_type VARCHAR(64) NOT NULL,
+  lane VARCHAR(16) NOT NULL DEFAULT 'BACKGROUND',
+  tenant_id VARCHAR(64) NOT NULL DEFAULT 'default',
+  owner_user_id VARCHAR(64),
+  biz_key VARCHAR(200),
+  payload_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  payload_schema_version INT NOT NULL DEFAULT 1,
+  priority INT NOT NULL DEFAULT 0,
+  status VARCHAR(16) NOT NULL DEFAULT 'PENDING',
+  scheduled_at TIMESTAMP NOT NULL DEFAULT now(),
+  not_before TIMESTAMP,
+  lease_owner VARCHAR(64),
+  start_time TIMESTAMP,
+  lease_expire_time TIMESTAMP,
+  heartbeat_time TIMESTAMP,
+  attempt INT NOT NULL DEFAULT 0,
+  max_attempts INT NOT NULL DEFAULT 3,
+  timeout_seconds INT,
+  cancel_requested SMALLINT NOT NULL DEFAULT 0,
+  cancel_reason VARCHAR(200),
+  error_code VARCHAR(64),
+  error_message TEXT,
+  result_json JSONB,
+  finish_time TIMESTAMP,
+  version INT NOT NULL DEFAULT 0,
+  create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  create_by VARCHAR(50) DEFAULT 'system',
+  update_by VARCHAR(50) DEFAULT 'system',
+  deleted SMALLINT DEFAULT 0
+);
+COMMENT ON TABLE wgh_execution_job IS '后台作业（持久化 + 租约；核对与重试的唯一事实源）';
+COMMENT ON COLUMN wgh_execution_job.id IS '主键';
+COMMENT ON COLUMN wgh_execution_job.execution_id IS '对外执行标识（UUID），门面查询/取消/订阅使用';
+COMMENT ON COLUMN wgh_execution_job.job_type IS '作业类型，对应 JobHandler#jobType()';
+COMMENT ON COLUMN wgh_execution_job.lane IS '执行车道：BACKGROUND 后台 / MAINTENANCE 维护';
+COMMENT ON COLUMN wgh_execution_job.tenant_id IS '租户标识（单租户为 default）';
+COMMENT ON COLUMN wgh_execution_job.owner_user_id IS '发起人用户标识（系统任务为空）';
+COMMENT ON COLUMN wgh_execution_job.biz_key IS '业务幂等键；同 job_type + biz_key 只保留一条';
+COMMENT ON COLUMN wgh_execution_job.payload_json IS '作业负载 JSON';
+COMMENT ON COLUMN wgh_execution_job.payload_schema_version IS '负载结构版本；不兼容置 DEAD(INCOMPATIBLE_PAYLOAD)';
+COMMENT ON COLUMN wgh_execution_job.priority IS '优先级，数值越大越优先';
+COMMENT ON COLUMN wgh_execution_job.status IS '状态：PENDING/LEASED/RUNNING/SUCCEEDED/FAILED/DEAD/CANCELLED';
+COMMENT ON COLUMN wgh_execution_job.scheduled_at IS '期望开始时间';
+COMMENT ON COLUMN wgh_execution_job.not_before IS '最早可领取时间（重试退避 / 单飞锁等待）';
+COMMENT ON COLUMN wgh_execution_job.lease_owner IS '租约持有者实例标识';
+COMMENT ON COLUMN wgh_execution_job.start_time IS '首次进入 RUNNING 的时间';
+COMMENT ON COLUMN wgh_execution_job.lease_expire_time IS '租约过期时间；过期后可被其它实例回收';
+COMMENT ON COLUMN wgh_execution_job.heartbeat_time IS '最近一次续租时间';
+COMMENT ON COLUMN wgh_execution_job.attempt IS '已尝试次数（领取时 +1）';
+COMMENT ON COLUMN wgh_execution_job.max_attempts IS '最大尝试次数（含首次）';
+COMMENT ON COLUMN wgh_execution_job.timeout_seconds IS '单次执行超时秒数（空=车道默认值）';
+COMMENT ON COLUMN wgh_execution_job.cancel_requested IS '是否已请求取消（0 否 / 1 是）';
+COMMENT ON COLUMN wgh_execution_job.cancel_reason IS '取消原因';
+COMMENT ON COLUMN wgh_execution_job.error_code IS '失败错误码（ExecutionErrorCodes）';
+COMMENT ON COLUMN wgh_execution_job.error_message IS '失败原因';
+COMMENT ON COLUMN wgh_execution_job.result_json IS '执行结果 JSON（如工作流 runId）';
+COMMENT ON COLUMN wgh_execution_job.finish_time IS '终态时间';
+COMMENT ON COLUMN wgh_execution_job.version IS '状态迁移版本号，每次迁移 +1';
+COMMENT ON COLUMN wgh_execution_job.create_time IS '创建时间';
+COMMENT ON COLUMN wgh_execution_job.update_time IS '更新时间';
+COMMENT ON COLUMN wgh_execution_job.create_by IS '创建人';
+COMMENT ON COLUMN wgh_execution_job.update_by IS '更新人';
+COMMENT ON COLUMN wgh_execution_job.deleted IS '逻辑删除（0 未删除 / 1 已删除）';
+CREATE UNIQUE INDEX IF NOT EXISTS uk_exec_job_execution_id
+  ON wgh_execution_job(execution_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uk_exec_job_biz
+  ON wgh_execution_job(job_type, biz_key)
+  WHERE biz_key IS NOT NULL AND deleted = 0;
+CREATE INDEX IF NOT EXISTS idx_exec_job_claim
+  ON wgh_execution_job(lane, status, scheduled_at)
+  WHERE deleted = 0;
+CREATE INDEX IF NOT EXISTS idx_exec_job_tenant
+  ON wgh_execution_job(tenant_id, status)
+  WHERE deleted = 0;
+CREATE INDEX IF NOT EXISTS idx_exec_job_lease
+  ON wgh_execution_job(status, lease_expire_time)
   WHERE deleted = 0;
