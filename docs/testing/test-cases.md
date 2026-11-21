@@ -1,9 +1,9 @@
 # WGH RAG System 全面测试用例
 
-> 版本：v1.2　｜　日期：2026-11-18（增补批次 3：窗口检索参数 / 评测数据集版本化 / CI 检索门禁 / 表达式节点 / 单步调试 / URL 连接器 / 迁移脚本）　｜　历史：v1.1，2026-11-12（批次 2：引用溯源 / 资源可见性 / OpenAI 兼容入口）；v1.0，2026-10-28
+> 版本：v1.3　｜　日期：2026-11-21（增补批次 4：调度中心 / 配额扣费与退款补偿 / 任务恢复 / 存储迁移与孤儿清理 / 代码沙箱）　｜　历史：v1.2，2026-11-18（批次 3：窗口检索参数 / 评测数据集版本化 / CI 检索门禁 / 表达式节点 / 单步调试 / URL 连接器 / 迁移脚本）；v1.1，2026-11-12（批次 2：引用溯源 / 资源可见性 / OpenAI 兼容入口）；v1.0，2026-10-28
 > 测试方法：黑盒 + 灰盒（已知 API 面）
 > 分类：正常功能 / 边界条件 / 异常场景
-> 覆盖模块：鉴权 · 知识库 · 模型 · 聊天 · Agent · 工作流 · 工具 · 上下文压缩 · 评估 · 分享 · 触发器 · 多 Agent 协作 · 引用溯源 · 资源可见性 · OpenAI 兼容 API · 窗口检索参数 · 评测数据集版本化 · CI 检索门禁 · 工作流表达式 · 单步调试 · URL 连接器 · 存量库迁移
+> 覆盖模块：鉴权 · 知识库 · 模型 · 聊天 · Agent · 工作流 · 工具 · 上下文压缩 · 评估 · 分享 · 触发器 · 多 Agent 协作 · 引用溯源 · 资源可见性 · OpenAI 兼容 API · 窗口检索参数 · 评测数据集版本化 · CI 检索门禁 · 工作流表达式 · 单步调试 · URL 连接器 · 存量库迁移 · 调度中心 · 配额扣费与退款补偿 · 任务恢复 · 存储迁移与孤儿清理 · 代码沙箱
 
 ---
 
@@ -50,6 +50,11 @@
 39. [工作流单步调试（批次 3）](#39-工作流单步调试批次-3-2026-11-18)
 40. [URL 数据源连接器（批次 3）](#40-url-数据源连接器批次-3-2026-11-18)
 41. [批次 3 存量库迁移脚本](#41-批次-3-存量库迁移脚本2026-11-18)
+42. [调度中心（批次 4）](#42-调度中心批次-42026-11-21)
+43. [配额扣费与退款补偿（批次 4）](#43-配额扣费与退款补偿批次-42026-11-21)
+44. [任务恢复（批次 4）](#44-任务恢复批次-42026-11-21)
+45. [存储迁移与孤儿清理（批次 4）](#45-存储迁移与孤儿清理批次-42026-11-21)
+46. [代码沙箱（批次 4）](#46-代码沙箱批次-42026-11-21)
 
 - [附录 A：测试环境速查](#附录-a测试环境速查)
 - [附录 B：测试代码规范与自动化门禁](#附录-b测试代码规范与自动化门禁)
@@ -515,6 +520,11 @@
 | test-agent-hitl-e2e.sh | stream + hitl-confirm + state | 16 | HITL 暂停续跑、窗口开关对照、取消、消息落库 | 暂停中取消、step_hitl_pending 无 id 补建 |
 | test-workflow-e2e.sh | 25 个 API（CRUD/validate/run/state/hitl/version/trigger/template） | 67 | 9 类节点/fan-out fan-in/子流程/版本回滚/CRON&Webhook/HITL/模板实例化 | 节点失败 onError 两种策略、变量引用数组下标、嵌套超限 4 层、fan-in 一个分支 FAILED 场景 |
 | test-multi-agent-smoke.sh | /api/agent-multi（run + state） | 12 | SSE 事件序列 / 终态 COMPLETED / 步骤持久化 / state 接口 | Crew 三种模式细节、GroupChat 路由、HITL 中断 |
+| e2e-scheduler.sh | `wgh_execution_job` + 调度循环（后台/维护车道） | 24 | 状态机、租约回收、重试/死信、取消、幂等去重、Redis 单飞 | 排队超时（≥5min）、执行超时、双实例并发 |
+| e2e-quota-refund.sh | 扣费流水 + QUOTA_REFUND 补偿作业 | 16 | 扣费结算、悬挂退款、幂等、退避、拒绝分支（人工前置） | 故障注入下的 DEAD（人工前置）、真实执行器拒绝（人工前置） |
+| e2e-task-recovery.sh | /api/admin/tasks/resume + 会话待办 | 21 | 工作流检查点续跑、恢复锁、终态拒绝、会话级查询 | 多 Agent 续跑（需真实中断运行 + 模型）、双实例并发 |
+| e2e-storage-maintenance.sh | /api/admin/storage/* | 17 | 异步提交、进度/终态、历史、取消契约、孤儿只报告 | 运行中取消（需 OSS + 大量对象）、删除模式 |
+| e2e-sandbox.sh | 工作流 TOOL 节点 → SANDBOX | 15 | 默认关闭、超时、输出截断、语言白名单 | 并发/频率/网络隔离（需压测与手工验证） |
 
 ### 黑盒测试方法映射
 
@@ -1768,3 +1778,279 @@
 | MIG3-05 | 边界 | 连接器迁移幂等与影响面 | 已执行过 02 脚本 | 再次执行并比对 | 无错误；表/索引不重复；不改既有表；不写业务数据；连接器默认 `enabled=0`、`sync_interval_minutes=60`、`split_strategy='PARAGRAPH'` | 手工 | `CREATE TABLE/INDEX IF NOT EXISTS` |
 | MIG3-06 | 异常 | 未迁移时接口报错 | 存量库未执行 01/02 | 调用 `/api/kb/{kbId}/eval-datasets` 或 `/api/kb/{kbId}/connectors` | 因表不存在返回服务端错误（非 200）；执行对应脚本后相同请求恢复 HTTP 200 / code 200 | 接口（需运行环境验证） | 两组 Controller / Service |
 | MIG3-07 | 正常 | 迁移结果校验查询 | 已执行两个脚本 | `SELECT table_name FROM information_schema.tables WHERE table_name IN (...)`；查询 `pg_indexes` | 5 张表全部存在；6 个索引全部存在；无重复索引；`COMMENT ON COLUMN` 可读 | 手工 | `information_schema` / `pg_indexes` |
+
+---
+
+## 42. 调度中心（批次 4，2026-11-21）
+
+> 代码：`rag-execution`（执行契约）· `rag-scheduler`（作业表 / 调度循环 / 执行器 / 单飞）｜表：`wgh_execution_job`｜脚本：`rag-backend/scripts/e2e-scheduler.sh`
+> 环境要求：**backend 运行中 + 真实 PostgreSQL + Redis**。H2 不支持 `FOR UPDATE SKIP LOCKED`、`JSONB`、`make_interval`、部分唯一索引，以下用例全部无法在 H2 上执行。
+> 代码默认值（可由 `wgh.scheduler.*` 覆盖）：领取间隔 2s、租约回收 30s、重试入队 2s、排队超时扫描 15s、租约 TTL 60s、失败退避 30s（线性）、maxAttempts 3；车道在途上限 后台 8 / 维护 2；单飞锁 TTL 120s、拿不到锁的回队延迟 10s；排队超时 5min。
+
+### 42.1 状态机与车道
+
+| 编号 | 分类 | 名称 | 前置条件 | 数据准备 | 操作步骤 | 预期结果 | 判定方式 | 自动化落点 |
+|------|------|------|---------|---------|---------|---------|---------|-----------|
+| SCHED-01 | 正常 | 后台作业全链路 | backend + PG + Redis；存在可运行工作流 | 插入 `WF_RUN` 作业：`status=PENDING`、`lane=BACKGROUND`、`payload_json={"workflowId":<id>,"input":"..."}` | 等待调度循环领取执行 | 作业最终 `SUCCEEDED`；`attempt=1`；`start_time`/`finish_time` 非空；终态后 `lease_owner`、`lease_expire_time` 为 NULL；`wgh_workflow_run` 新增 1 条 | 轮询作业表状态；逐列断言 | `e2e-scheduler.sh` S1 |
+| SCHED-02 | 正常 | 领取即占租约 | 同上 | 同上 | 观察执行前后字段 | 领取后 `attempt+1` 且写入 `lease_owner`（LEASED 为瞬态，需结合日志/字段判定） | `attempt` 与租约字段 | `e2e-scheduler.sh` S1；`JobStoreTest` |
+| SCHED-03 | 正常 | 后台车道执行 | 同上 | `lane=BACKGROUND` | 提交并等待 | 作业由后台车道执行完成 | `lane` 字段 + 终态 | `e2e-scheduler.sh` S1 |
+| SCHED-04 | 正常 | 维护车道执行 | 同上；`QUOTA_REFUND` 已注册 | 插入 `QUOTA_REFUND` 作业：`lane=MAINTENANCE` | 等待执行 | `lane=MAINTENANCE` 且 `SUCCEEDED`（日志出现「配额退款补偿完成」） | 作业表 `lane`/`status` | `e2e-scheduler.sh` S2 |
+| SCHED-05 | 边界 | 维护车道在途上限 | 车道 `maxSize=2` | 并发提交多条维护作业 | 观察并发度 | 同时 RUNNING 的维护作业不超过 2（其余保持 PENDING） | 定时采样 `count(status='RUNNING' AND lane='MAINTENANCE')` | 手工（需压测数据）；`JobDispatcher` |
+| SCHED-06 | 边界 | 后台车道在途上限 | 车道 `maxSize=8` | 并发提交多条后台作业 | 观察并发度 | 同时 RUNNING 的后台作业不超过 8 | 定时采样计数 | 手工（需压测数据） |
+| SCHED-07 | 边界 | 未到期作业不被领取 | 作业 `scheduled_at=now()+10min` | 插入 PENDING 作业 | 等待 10s | 状态保持 PENDING，`attempt=0` | 作业表状态 | 手工（脚本内可加，默认不跑） |
+| SCHED-08 | 异常 | 调度关闭时不创建车道 | 设置 `wgh.scheduler.enabled=false` 启动 | — | 启动应用 | 不创建车道线程池/调度循环；提交的作业保持 PENDING；日志无「调度中心已启动」 | 启动日志 + 作业表 | 手工（需重启） |
+
+### 42.2 租约回收 / 重试 / 死信 / 取消
+
+| 编号 | 分类 | 名称 | 前置条件 | 数据准备 | 操作步骤 | 预期结果 | 判定方式 | 自动化落点 |
+|------|------|------|---------|---------|---------|---------|---------|-----------|
+| SCHED-09 | 正常 | 租约过期回收（未超上限） | backend + PG + Redis | 插入 `status=RUNNING`、`lease_owner=e2e-dead-instance`、`lease_expire_time=now()-1min`、`attempt=1`、`max_attempts=3`、合法 `WF_RUN` 负载 | 等待回收（≤30s）与重新领取 | 先回 `PENDING` 且 `error_code=LEASE_LOST`，随后被本实例重新领取并 `SUCCEEDED`；`attempt=2` | 轮询终态 + `attempt` + 回收标记 | `e2e-scheduler.sh` S3-a |
+| SCHED-10 | 异常 | 租约过期回收（超上限） | 同上 | 同上但 `attempt=3`、`max_attempts=3` | 等待回收 | 直接 `DEAD`，`error_code=LEASE_LOST`、`finish_time` 非空、租约清空；不产生业务运行记录 | 作业表字段 + 业务表计数 | `e2e-scheduler.sh` S3-b |
+| SCHED-11 | 异常 | 租约被接管后旧持有者不写终态 | 同上 | 作业 `lease_owner` 被改为其它实例 | 旧持有者尝试 complete/fail | 条件 UPDATE 影响行数为 0，结果被丢弃；作业表保持接管者状态 | `JobStore` 返回值 + 表状态 | 单元（`JobStoreTest`）；H2 可覆盖 |
+| SCHED-12 | 正常 | 可重试失败 → 退避 → 重新入队 | 同上 | 插入 `WF_RUN` 指向不存在的工作流 999999999，`max_attempts=2` | 等待首次失败与退避 | 首次 `FAILED`，`not_before≈now+30s`；退避到期回 PENDING 并再次领取 | 状态 + `not_before` 时间 | `e2e-scheduler.sh` S4 |
+| SCHED-13 | 异常 | 超上限进死信 | 同上 | 同 SCHED-12 | 继续等待 | 第二次失败后 `DEAD`，`attempt=2`，不再重试 | 终态 + attempt | `e2e-scheduler.sh` S4 |
+| SCHED-14 | 异常 | 未注册作业类型直接死信 | 同上 | 插入 `job_type=E2E_NO_SUCH_JOB` | 等待执行 | `DEAD`，`error_code=JOB_TYPE_UNKNOWN` | 错误码 | `e2e-scheduler.sh` S4-b |
+| SCHED-15 | 异常 | 负载不兼容直接死信 | 同上 | 插入 `WF_RUN` + `payload_json={}` | 等待执行 | `DEAD`，`error_code=INCOMPATIBLE_PAYLOAD` | 错误码 | `e2e-scheduler.sh` S4-c |
+| SCHED-16 | 正常 | 取消（执行前到） | 同上 | 插入 PENDING 作业并预置 `cancel_requested=1`、`cancel_reason` | 等待领取 | `CANCELLED`、`error_code=CANCELLED`、保留 `cancel_reason`；不产生工作流运行记录 | 终态 + 业务表计数 | `e2e-scheduler.sh` S5 |
+| SCHED-17 | 正常 | 取消（排队中） | 同上 | 通过门面 `cancel(executionId)` | 调用取消后查询 | PENDING → CANCELLED（`cancelPending` 分支） | 状态迁移 | 单元（`JobStoreTest`）；对外暂无 HTTP 取消接口 |
+| SCHED-18 | 边界 | 执行超时置 DEAD | 同上；`timeout_seconds=1` | 插入耗时作业（如 LLM/工具节点） | 触发执行 | 看门狗取消后落 `DEAD(EXECUTION_TIMEOUT)` | 错误码 + `finish_time` | 手工（需慢作业） |
+| SCHED-19 | 边界 | 排队超时落 FAILED 不重试 | 队列被占满或调度暂停 | 插入 PENDING 作业并等待超过 5min | 观察 | `FAILED(JOB_QUEUE_TIMEOUT)`，之后不会被 `requeueFailed` 重新入队 | 状态 + 错误码 | 手工（≥5min 或覆盖 `queue-timeout`） |
+
+### 42.3 幂等与单飞
+
+| 编号 | 分类 | 名称 | 前置条件 | 数据准备 | 操作步骤 | 预期结果 | 判定方式 | 自动化落点 |
+|------|------|------|---------|---------|---------|---------|---------|-----------|
+| SCHED-20 | 正常 | `(job_type,biz_key)` 唯一 | 同上；存在 `uk_exec_job_biz` | 首次插入带 `biz_key` 的作业 | 再次插入同 `(job_type,biz_key)` | 第二次插入被部分唯一索引拒绝（`ON CONFLICT DO NOTHING` 返回 0 行）；表中同键仅 1 条 | SQL 返回行数 + 计数 | `e2e-scheduler.sh` S6 |
+| SCHED-21 | 正常 | 应用层幂等复用 | 同上 | 同 `biz_key` 连续两次 `JobStore.submit` | 比较 `executionId` | 第二次返回既有作业，不新增行；并发插入冲突时按 `DuplicateKeyException` 回查复用 | `executionId` 相等 + 行数 | 单元（`JobStoreTest`）；H2 无法验证部分唯一索引 |
+| SCHED-22 | 正常 | 维护车道 Redis 单飞互斥 | 同上；Redis 可用 | 手工占用锁 `wgh:lock:scheduler-singleflight:job:QUOTA_REFUND`（TTL 60s） | 插入维护作业并等待 | 作业不执行：回 `PENDING`、`attempt` 回滚为 0、写入 `not_before≈now+10s`；日志「同类维护作业已在其它实例执行」 | 作业表字段 + Redis key | `e2e-scheduler.sh` S7 |
+| SCHED-23 | 正常 | 释放锁后恢复执行 | 同上 | 删除上述锁 | 继续等待 | 作业被重新领取并 `SUCCEEDED` | 终态 | `e2e-scheduler.sh` S7 |
+| SCHED-24 | 异常 | Redis 不可用时维护作业失败关闭 | Redis 停止/未启用 | 提交维护作业 | 观察 | 不降级为进程内锁：作业反复回 PENDING（不执行），日志「单飞锁不可用，作业回退排队」 | 状态不前进 + 日志 | 手工（需停 Redis，脚本会显式报错） |
+
+### 42.4 执行环境与判定说明
+
+| 项目 | 说明 |
+|------|------|
+| 必须真实 PostgreSQL | 领取语句使用 `FOR UPDATE SKIP LOCKED`；`payload_json`/`result_json` 为 JSONB；回收使用 `make_interval`；幂等依赖部分唯一索引。H2 下这些用例不可执行。 |
+| 必须 Redis | 维护车道单飞为严格失败关闭；Redis 未启用时维护作业不会执行。 |
+| 必须 backend | 领取/执行/回收/重试/单飞都在调度循环内完成，纯 SQL 无法模拟。 |
+| 脚本 | `bash rag-backend/scripts/e2e-scheduler.sh`；连接信息全部走环境变量；缺 PG/Redis/backend 时直接报错退出，不静默跳过。 |
+| 判定 | 以 `wgh_execution_job` 的状态、`attempt`、租约字段、`error_code`、`not_before`、`finish_time` 为准，并结合 `wgh_workflow_run` 计数确认无业务副作用。 |
+
+---
+
+## 43. 配额扣费与退款补偿（批次 4，2026-11-21）
+
+> 代码：`rag-quota`（`QuotaService` / `QuotaChargeLedger` / `QuotaRefundJobHandler`）· `rag-chat`（扣费与退款调用点）｜表：`wgh_quota_charge`、`wgh_quota_usage`、`wgh_execution_job`｜脚本：`rag-backend/scripts/e2e-quota-refund.sh`
+> 环境要求：**backend 运行中 + 真实 PostgreSQL + Redis**（补偿作业走维护车道，单飞失败关闭）。
+> 代码默认值：退款保护期 5min、扫描间隔 60s、最大尝试 5 次、退避基数 60s（指数、封顶 30min）、单批 200 条。
+
+### 43.1 正常扣费与结算
+
+| 编号 | 分类 | 名称 | 前置条件 | 数据准备 | 操作步骤 | 预期结果 | 判定方式 | 自动化落点 |
+|------|------|------|---------|---------|---------|---------|---------|-----------|
+| QCHG-01 | 正常 | 扣费流水创建 | 可用窗口（`status=1` 且有 `llm_model_id`） | 记录 `max(id)` 与当期 `chat_count` | `POST /api/chat/windows/{id}/stream` 发送一条消息 | 新增 `wgh_quota_charge` 行，`status` 由 CHARGED 迁移；`session_id` 回填；`chat_count+1` | 新增流水 + 用量对比 | `e2e-quota-refund.sh` Q1 |
+| QCHG-02 | 正常 | 执行开始置 SETTLED | 同上 | 同上 | 请求返回后查询流水 | 流水 `SETTLED`（异步执行体启动后置位） | `status` 字段 | `e2e-quota-refund.sh` Q1 |
+| QCHG-03 | 边界 | 超限拒绝不产生流水 | 用户当期 `chat_limit=1` 已用尽 | 预置用量 | 再次请求 | HTTP 业务码为配额超限；不新增 CHARGED 流水；计数不变 | 业务码 + 流水行数 | 单元（`QuotaServiceTest`）/接口 |
+| QCHG-04 | 边界 | 计数失败放行且无退款凭据 | 模拟计数异常 | — | 请求 | 不阻断聊天；不产生可退款凭据（`QuotaCharge=null`） | 日志 + 流水行数 | 单元 |
+
+### 43.2 补偿扫描与幂等
+
+| 编号 | 分类 | 名称 | 前置条件 | 数据准备 | 操作步骤 | 预期结果 | 判定方式 | 自动化落点 |
+|------|------|------|---------|---------|---------|---------|---------|-----------|
+| QCHG-05 | 正常 | CHARGED 悬挂被补偿退款 | 补偿作业在跑；`wgh_quota_usage.chat_count=5` | 插入 CHARGED 流水，`create_time=now()-10min`（超过 5min 保护期） | 等待最多 150s | 流水 `REFUNDED`、`finish_time` 非空；`chat_count=4` | 流水状态 + 用量 | `e2e-quota-refund.sh` Q2 |
+| QCHG-06 | 边界 | 保护期内不误退 | 同上 | 插入 CHARGED 流水 `create_time=now()` | 等一轮扫描 | 仍为 CHARGED（保护期 5min 内不扫） | 状态不变 | 单元（`QuotaChargeMapper` SQL） |
+| QCHG-07 | 正常 | 重复退款幂等 | 已完成 QCHG-05 | — | 再等一轮扫描 | 流水保持 REFUNDED，`chat_count` 不再次减；`charge_id` 仍唯一 1 条 | 用量 + 行数 | `e2e-quota-refund.sh` Q3 |
+| QCHG-08 | 异常 | 计数已为 0 时退款仍落终态 | 用量被管理端重置为 0 | CHARGED 悬挂流水 | 触发补偿 | 流水 `REFUNDED`，计数保持 0；日志「计数无可减」 | 状态 + 计数 | 单元 |
+| QCHG-09 | 正常 | 已 SETTLED 的流水不退 | 流水 SETTLED | — | 触发补偿 | 不被扫描，保持 SETTLED | 状态 | 单元 |
+| QCHG-10 | 异常 | 退款失败退避未到期不扫 | REFUND_FAILED 行 | `retry_count=1`、`next_retry_at=now()+3min`、`create_time=now()-10min` | 等 20s | 保持 REFUND_FAILED，`retry_count` 不变 | 状态 + 重试次数 | `e2e-quota-refund.sh` Q4-a |
+| QCHG-11 | 正常 | 退避到期后重试成功 | 同上 | `next_retry_at=now()-1min` | 等待最多 150s | `REFUNDED`，计数再减一 | 状态 + 用量 | `e2e-quota-refund.sh` Q4-b |
+| QCHG-12 | 异常 | 超次数置 DEAD | 需故障注入（见 43.4） | 构造连续退款失败，`retry_count` 达 4 | 触发补偿 | `DEAD`，`retry_count≥5`，`finish_time` 非空，不再扫描 | 状态 + 计数 | 单元（`QuotaRefundJobHandlerTest`）+ 手工故障注入 |
+| QCHG-13 | 异常 | 补偿中取消 | 批量流水较多 | 取消当前 `QUOTA_REFUND` 作业 | 观察批处理 | 每 20 条检查取消标记，取消后提前结束 | 作业终态 | 单元 |
+
+### 43.3 拒绝分支退款
+
+| 编号 | 分类 | 名称 | 前置条件 | 数据准备 | 操作步骤 | 预期结果 | 判定方式 | 自动化落点 |
+|------|------|------|---------|---------|---------|---------|---------|-----------|
+| QCHG-14 | 异常 | 执行器拒绝后退款 | 聊天异步执行器队列被压到 1（见 43.5） | 前置已扣费 | 并发 8 次流式请求触发 `TaskRejectedException` | 被拒请求对应流水 `REFUNDED`，计数退回；日志区分 REFUNDED/DUPLICATE/NOTHING_TO_REFUND/FAILED | 新增 REFUNDED 流水数 + 用量 | `e2e-quota-refund.sh` Q6（需 `E2E_TASK_REJECT=1`） |
+| QCHG-15 | 异常 | 退款失败不阻断主流程 | 模拟退款 DB 异常 | — | 请求被拒绝且退款失败 | 原异常仍上抛；日志记录退款失败；流水保持 CHARGED 由补偿作业兜底 | 异常语义 + 流水 | 单元 |
+| QCHG-16 | 正常 | 退款结果分类 | — | — | 分别对 CHARGED / REFUNDED / SETTLED / 不存在 chargeId 调用退款 | 依次返回 REFUNDED / DUPLICATE / NOTHING_TO_REFUND / NOTHING_TO_REFUND | 枚举值 | 单元（`QuotaChargeLedgerTest`） |
+
+### 43.4 故障注入：超次数进 DEAD（人工前置）
+
+脚本不会自动执行破坏性操作。需要验证 QCHG-12 时，按以下步骤人工准备，否则脚本显式报错并要求重跑：
+
+1. 准备一条“退款必然失败”的流水：把应用数据库账号对 `wgh_quota_usage` 的 `UPDATE` 权限临时收回（`REVOKE UPDATE ON wgh_quota_usage FROM <app_user>;`），或临时断开 `wgh_quota_usage` 所在库的写连接。
+2. 插入 `REFUND_FAILED` 流水（`retry_count=4`、`next_retry_at=now()-1s`、`create_time=now()-10min`），记下 `charge_id`。
+3. 等补偿作业跑 1～2 轮，流水应置 `DEAD`。
+4. 恢复权限（`GRANT UPDATE ...`）。
+5. 以 `E2E_QUOTA_FAULT_INJECTION=1 E2E_QUOTA_DEAD_CHARGE_ID=<chargeId> bash scripts/e2e-quota-refund.sh` 重跑，由脚本完成断言。
+
+> 约束：不在脚本中自动执行 `REVOKE/GRANT`，避免影响其它会话；恢复权限属于人工必做步骤。
+
+### 43.5 拒绝分支人工前置
+
+1. 临时把聊天异步执行器队列容量压到 1（对应 `wgh.rag.chat.executor.*`，以实际配置键为准），重启后端。
+2. 确认后端可用窗口与模型正常。
+3. 以 `E2E_TASK_REJECT=1 bash scripts/e2e-quota-refund.sh` 运行；脚本并发 8 次流式请求，统计新增 REFUNDED 流水。
+4. 测试结束恢复原队列配置并重启。
+
+---
+
+## 44. 任务恢复（批次 4，2026-11-21）
+
+> 代码：`rag-controller` 的 `TaskRecoveryService` / `TaskRecoveryController`·`rag-agent` / `rag-agent-multi` / `rag-workflow`｜表：`wgh_workflow_run`、`wgh_workflow_node_run`、`wgh_multi_agent_run`、`wgh_agent_plan`、`wgh_audit_log`｜脚本：`rag-backend/scripts/e2e-task-recovery.sh`
+> 环境要求：**backend 运行中 + 真实 PostgreSQL + Redis**（恢复锁失败关闭：Redis 未启用时直接拒绝恢复，不退回进程内锁）。
+
+### 44.1 工作流中断后继续执行
+
+| 编号 | 分类 | 名称 | 前置条件 | 数据准备 | 操作步骤 | 预期结果 | 判定方式 | 自动化落点 |
+|------|------|------|---------|---------|---------|---------|---------|-----------|
+| RECV-01 | 正常 | 中断运行继续执行 | 后端 + PG + Redis；存在 START→VARIABLE→END 工作流并完成过一次基线运行 | 插入 `wgh_workflow_run(status=RUNNING, graph_snapshot=<基线快照>, context_json={"vars":{"input":...}})`；插入节点轨迹：START `SUCCESS`、v1 `RUNNING` | `POST /api/admin/tasks/resume {"taskType":"WORKFLOW","taskId":"<runId>"}` | 返回 `success=true`、`resumedFrom` 为首个就绪节点；运行最终 `COMPLETED`；输出符合 END 配置 | 响应 + 运行状态 + 输出 | `e2e-task-recovery.sh` R1 |
+| RECV-02 | 正常 | 中断节点被重跑 | 同上 | 同上 | 查询节点运行记录 | 原 `RUNNING` 轨迹被标记 `FAILED`（`error_message='interrupted by restart'`），并新增一条 `SUCCESS` 轨迹 | 节点表状态 + 条数 | `e2e-task-recovery.sh` R1 |
+| RECV-03 | 正常 | 恢复审计 | 同上 | 同上 | 查询审计表 | 新增 `action=TASK_RESUME`、`resource_type=WORKFLOW`、`resource_id=<runId>` | 审计行数 | `e2e-task-recovery.sh` R1 |
+| RECV-04 | 正常 | 仅沿实际选中分支恢复 | 含 CONDITION/LOOP 的图 | 只插入实际执行过的节点轨迹 | 恢复 | 未走到的分支永不进入 ready；LOOP 轮次按 `output_json.iteration` 回填 | 节点执行集合 | 单元（检查点重建） |
+| RECV-05 | 边界 | HITL 暂停不走恢复入口 | 运行 `PAUSED` | — | 调用 resume | 拒绝并提示「工作流处于 HITL 暂停，请使用人工确认入口」 | 响应 message | 接口 |
+| RECV-06 | 边界 | 终态不可恢复 | 运行 `COMPLETED` | — | 调用 resume | `success=false`，提示「任务已结束（COMPLETED），无需继续执行」 | 响应 message | `e2e-task-recovery.sh` R3 |
+| RECV-07 | 异常 | 图快照损坏 | 运行 RUNNING | `graph_snapshot` 写非法 JSON | 调用 resume | 拒绝并提示「工作流图快照解析失败」；运行状态不变 | 响应 + 状态 | 接口 |
+| RECV-08 | 异常 | 无可就绪节点 | 运行 RUNNING 且所有节点已完成但状态未收尾 | — | 调用 resume | `readyNodes` 为空且 allCompleted 时标记 COMPLETED 并返回成功 | 状态 | 单元 |
+
+### 44.2 多 Agent 从检查点续跑
+
+| 编号 | 分类 | 名称 | 前置条件 | 数据准备 | 操作步骤 | 预期结果 | 判定方式 | 自动化落点 |
+|------|------|------|---------|---------|---------|---------|---------|-----------|
+| RECV-09 | 正常 | 多 Agent 续跑 | 一条真实中断的 `RUNNING`/`PLANNING` 多 Agent 运行；可用模型 | 准备 `runId`（`E2E_MULTI_AGENT_RUN_ID`） | `POST /api/admin/tasks/resume {"taskType":"MULTI_AGENT","taskId":"<runId>"}` | 返回 `success=true`，`resumedFrom` 为「运行入口（尚未启动）」或「第 N 轮」；运行离开 RUNNING/PLANNING | 响应 + 运行状态 | `e2e-task-recovery.sh` R4（需真实中断运行） |
+| RECV-10 | 正常 | 续跑审计 | 同上 | 同上 | 查询审计表 | 新增 `TASK_RESUME(MULTI_AGENT)` | 审计行数 | `e2e-task-recovery.sh` R4 |
+| RECV-11 | 边界 | HITL 暂停拒绝 | 运行 `PAUSED` | — | 调用 resume | 拒绝并提示使用人工确认入口 | 响应 message | 接口 |
+| RECV-12 | 边界 | 终态拒绝 | 运行 COMPLETED/FAILED | — | 调用 resume | `success=false`，提示任务已结束 | 响应 message | 接口 |
+
+### 44.3 跨实例恢复锁
+
+| 编号 | 分类 | 名称 | 前置条件 | 数据准备 | 操作步骤 | 预期结果 | 判定方式 | 自动化落点 |
+|------|------|------|---------|---------|---------|---------|---------|-----------|
+| RECV-13 | 正常 | 锁被其它实例持有 → 拒绝 | Redis 可用 | `SET wgh:lock:task-resume:WORKFLOW:<runId> <owner> NX PX 30000` 模拟其它实例 | 调用 resume | `success=false`，message 含「已在其他实例恢复中」；运行保持 RUNNING | Redis key + 响应 + 状态 | `e2e-task-recovery.sh` R2 |
+| RECV-14 | 正常 | 释放锁后可恢复 | 同上 | `DEL` 上述 key | 再次 resume | `success=true`，运行推进至 COMPLETED | 响应 + 状态 | `e2e-task-recovery.sh` R2 |
+| RECV-15 | 异常 | Redis 不可用 → 失败关闭 | Redis 停止/未启用 | — | 调用 resume | 拒绝，message「分布式锁不可用，已拒绝恢复」；不执行恢复 | 响应 message | 手工（需停 Redis） |
+| RECV-16 | 边界 | 同实例重复点击 | 恢复执行器 2 线程 | 连续两次 resume | 调用 | 第二次返回「任务正在恢复或执行中，请勿重复操作」 | 响应 message | 接口（时序不稳定，脚本用锁模拟） |
+| RECV-17 | 边界 | 恢复执行器繁忙 | 已占满 2 个恢复线程 | 并发多个 resume | 调用 | 返回「恢复执行器繁忙，请稍后重试」，锁被释放 | 响应 + 后续可重试 | 手工（需并发压测） |
+
+### 44.4 会话级待办查询
+
+| 编号 | 分类 | 名称 | 前置条件 | 数据准备 | 操作步骤 | 预期结果 | 判定方式 | 自动化落点 |
+|------|------|------|---------|---------|---------|---------|---------|-----------|
+| RECV-18 | 正常 | 无待办返回 hasPending=false | 自己新建的空会话 | — | `GET /api/chat/sessions/{id}/pending-task` | `hasPending=false`，taskType/taskId/status 为空 | 响应字段 | `e2e-task-recovery.sh` R5 |
+| RECV-19 | 正常 | 空会话恢复提示 | 同上 | — | `POST /api/chat/sessions/{id}/resume-task` | `success=false`，提示「当前会话没有可继续执行的任务」 | 响应 message | `e2e-task-recovery.sh` R5 |
+| RECV-20 | 安全 | 非本人会话拒绝 | 使用不存在的 sessionId | — | 调用 pending-task | 业务码非 200（权限拒绝） | 业务码 | `e2e-task-recovery.sh` R5 |
+| RECV-21 | 正常 | 有活跃任务时返回 | 会话关联一条 RUNNING 的 WORKFLOW/MULTI_AGENT/AGENT | — | 调用 pending-task | `hasPending=true`，返回 taskType/taskId/status/startTime/stayMinutes | 响应字段 | 接口（依赖真实活跃任务） |
+
+### 44.5 执行环境与判定说明
+
+| 项目 | 说明 |
+|------|------|
+| 真实 PostgreSQL | `graph_snapshot`/`context_json` 为 JSONB，检查点重建依赖节点轨迹表；H2 不可用。 |
+| Redis | 恢复锁为失败关闭；Redis 不可用一律拒绝恢复。 |
+| 多 Agent | 需要真实中断的运行与可用模型；脚本要求 `E2E_MULTI_AGENT_RUN_ID`，未提供时显式报错。 |
+| 跨实例 | 脚本用「手工持锁」走与另一实例持锁完全相同的代码路径；真正的双实例并发属于手工验证。 |
+| 脚本 | `bash rag-backend/scripts/e2e-task-recovery.sh`；不在脚本中重启服务、不修改业务代码。 |
+
+---
+
+## 45. 存储迁移与孤儿清理（批次 4，2026-11-21）
+
+> 代码：`rag-kb` 的 `StorageMaintenanceController` / `StorageMigrationJobService` / `StorageOrphanCleanupService`·`rag-storage` 迁移引擎｜脚本：`rag-backend/scripts/e2e-storage-maintenance.sh`
+> 环境要求：**backend 运行中 + 真实 PostgreSQL + Redis**（迁移单飞锁失败关闭：Redis 不可用时提交被拒）。本地存储目录需可写。
+
+### 45.1 迁移任务提交 / 进度 / 终态
+
+| 编号 | 分类 | 名称 | 前置条件 | 数据准备 | 操作步骤 | 预期结果 | 判定方式 | 自动化落点 |
+|------|------|------|---------|---------|---------|---------|---------|-----------|
+| SMIG-01 | 正常 | 异步提交立即返回 | 管理员登录；Redis 可用；`local` 目录存在 | — | `POST /api/admin/storage/migrate?source=local&target=oss&dryRun=true` | HTTP 200/code 200；`data.taskId` 非空；`dryRun=true`；请求不被搬运阻塞 | 响应字段 | `e2e-storage-maintenance.sh` M1 |
+| SMIG-02 | 正常 | 进度查询 | 已提交任务 | — | `GET /api/admin/storage/migrate/{taskId}` | 返回 `status/total/totalKnown/processed/copied/skipped/planned/failed/copiedBytes`，数值单调不减 | 字段 + 轮询 | `e2e-storage-maintenance.sh` M2 |
+| SMIG-03 | 正常 | 成功终态 | OSS 已配置且对象可写 | 待迁移对象 | 轮询至结束 | `COMPLETED`，`report` 非空，`totalKnown=true` | 状态 + report | `e2e-storage-maintenance.sh` M2（需 OSS） |
+| SMIG-04 | 异常 | 失败终态 | 未配置 OSS（默认环境） | — | 轮询至结束 | `FAILED`，`errorMessage` 非空；`finishedAt` 非空 | 状态 + 错误信息 | `e2e-storage-maintenance.sh` M2 |
+| SMIG-05 | 正常 | 历史列表 | 已提交过任务 | — | `GET /api/admin/storage/migrate/history?limit=20` | 按提交时间倒序，包含本次 taskId | 列表包含 taskId | `e2e-storage-maintenance.sh` M3 |
+| SMIG-06 | 边界 | 任务不存在 | — | 随机 taskId | `GET /api/admin/storage/migrate/{taskId}` | 业务异常「迁移任务不存在或已过期」，不返回 200 | 业务码 | 接口 |
+| SMIG-07 | 异常 | 源与目标相同 | — | — | `source=local&target=local` | 拒绝「源与目标存储类型不能相同」 | 业务码 | 接口 |
+| SMIG-08 | 异常 | Redis 不可用时拒绝启动 | Redis 停止 | — | 提交迁移 | 拒绝「分布式锁不可用，已拒绝启动迁移」；不退回进程内锁 | 业务码 + 日志 | 手工（需停 Redis） |
+| SMIG-09 | 异常 | 已有迁移在执行 | 已有 RUNNING 任务 | — | 再次提交 | 拒绝「已有迁移任务在执行」 | 业务码 | 手工（需长任务） |
+
+### 45.2 取消
+
+| 编号 | 分类 | 名称 | 前置条件 | 数据准备 | 操作步骤 | 预期结果 | 判定方式 | 自动化落点 |
+|------|------|------|---------|---------|---------|---------|---------|-----------|
+| SMIG-10 | 边界 | 终态任务取消 | 任务已 COMPLETED/FAILED | — | `POST .../migrate/{taskId}/cancel` | 返回 `false`；状态不变 | 响应 data | `e2e-storage-maintenance.sh` M4 |
+| SMIG-11 | 正常 | 运行中协作式取消 | 已配置 OSS 且对象较多 | 提交非 dryRun 任务 | 立即 cancel | 返回 `true`；处理完当前对象后停止派发，终态 `CANCELLED` | 响应 + 终态 | `e2e-storage-maintenance.sh` M4-b（需 `E2E_MIGRATION_RUNNING=1`） |
+| SMIG-12 | 边界 | 取消不存在的任务 | — | 随机 taskId | cancel | 业务异常「迁移任务不存在或已过期」 | 业务码 | 接口 |
+| SMIG-13 | 边界 | 跨实例取消 | 两个实例共享 Redis | A 实例执行，B 实例 cancel | 调用 | B 写取消标记；A 在 `cancel-check-interval` 内感知并停止 | 状态 + 日志 | 手工（需双实例，未配置双实例时显式说明） |
+
+### 45.3 运行中取消的人工前置
+
+1. 配置 OSS（`WGH_OSS_ENDPOINT` / `WGH_OSS_BUCKET` / `WGH_OSS_ACCESS_KEY_ID` / `WGH_OSS_ACCESS_KEY_SECRET`）并重启后端。
+2. 在本地存储目录准备足量对象（建议 ≥200 个），使迁移持续数秒以上。
+3. 以 `E2E_MIGRATION_RUNNING=1 bash scripts/e2e-storage-maintenance.sh` 运行。
+4. 未配置 OSS 时脚本对运行中取消显式报错，不会静默跳过。
+
+### 45.4 孤儿扫描（只报告）
+
+| 编号 | 分类 | 名称 | 前置条件 | 数据准备 | 操作步骤 | 预期结果 | 判定方式 | 自动化落点 |
+|------|------|------|---------|---------|---------|---------|---------|-----------|
+| SMIG-14 | 正常 | 默认只扫描不删除 | 本地存储目录可写 | 放置一个未被 DB 引用的文件 `e2e-orphan-<run>.txt` | `POST /api/admin/storage/orphans/scan?delete=false` | `storageType` 正确；`scanned≥1`；`orphans≥1`；`deleted=0`；`sampleOrphans` 含测试文件；文件仍存在 | 报告字段 + 文件存在性 | `e2e-storage-maintenance.sh` M5 |
+| SMIG-15 | 正常 | 引用计数与缺失引用 | 存在知识库文件 | — | 扫描 | `referenced` 覆盖已入库文件与未完成上传分片；`missingReferences` 统计 DB 引用但存储缺失的 key | 报告字段 | 接口 |
+| SMIG-16 | 边界 | 保护期内跳过删除 | `delete=true` 且对象 mtime 在保护期内 | 新建对象 | 扫描 | `skippedYoung` 增加，`deleted` 不含该对象 | 报告字段 | 手工（`delete=true` 有删除副作用，不在自动脚本中执行） |
+| SMIG-17 | 正常 | 定时扫描默认开启 | 未设置 `WGH_STORAGE_ORPHAN_CLEANUP_ENABLED` | — | 启动后等待一个间隔 | 默认 `enabled=true`、`delete=false`；首次执行在一个间隔之后 | 启动日志 | 手工 |
+
+### 45.5 执行环境说明
+
+| 项目 | 说明 |
+|------|------|
+| 存储目录 | 相对路径以 rag-backend 为基准（默认 `uploads`），脚本用 `UPLOAD_DIR` 覆盖；后端容器化时需指向容器内实际目录。 |
+| Redis | 迁移提交必须拿 Redis 单飞锁，失败关闭。 |
+| OSS | 未配置时迁移以 `FAILED` 结束，这是合法终态；`COMPLETED`/运行中取消需要 OSS。 |
+| 删除模式 | `delete=true` 会真实删除对象，本文档与脚本只验证 `delete=false`。 |
+
+---
+
+## 46. 代码沙箱（批次 4，2026-11-21）
+
+> 代码：`rag-sandbox`（`CodeSandboxService` / 隔离策略 / `SandboxToolExecutor`）｜入口：工作流 `TOOL` 节点（`toolId` → `SANDBOX` 工具），不经 LLM 决策｜脚本：`rag-backend/scripts/e2e-sandbox.sh`
+> 环境要求：**backend 运行中 + 真实 PostgreSQL**（写工具配置与工作流节点记录）。`enabled` 默认 false；`isolation=AUTO` 时优先 `sandbox-exec`（macOS）或 `bwrap`（Linux），都不可用时默认拒绝执行（fail-closed）。
+> 代码默认值：默认超时 5s、最大超时 30s、输出上限 64KiB、代码上限 64KiB、允许语言 PYTHON/JAVASCRIPT、并发 2、每用户每分钟 10 次。
+
+### 46.1 默认关闭
+
+| 编号 | 分类 | 名称 | 前置条件 | 数据准备 | 操作步骤 | 预期结果 | 判定方式 | 自动化落点 |
+|------|------|------|---------|---------|---------|---------|---------|-----------|
+| SBOX-01 | 正常 | 默认关闭拒绝执行 | 后端未设置 `WGH_SANDBOX_ENABLED`（默认 false） | 注册 `SANDBOX` 工具；建 START→TOOL→END 工作流 | 运行工作流 | 工具返回 `Error: SandboxDisabledException - 代码沙箱未启用`；节点输出含「代码沙箱未启用」；代码未执行 | 节点 `output_json.text` | `e2e-sandbox.sh` SB1 |
+| SBOX-02 | 正常 | 默认不暴露给模型 | 未在 `wgh_tool` 建 SANDBOX 记录 | — | 查看窗口工具列表 | 模型看不到沙箱工具（本脚本会临时注册 PRIVATE 工具，测试后可删除） | 工具列表 | 接口/手工 |
+| SBOX-03 | 正常 | 审计记录 | `audit-to-database=true` | — | 触发一次拒绝 | `wgh_audit_log` 记录沙箱拒绝原因（不记录源码正文） | 审计行 | 接口（可选） |
+
+### 46.2 开启后超时与截断
+
+| 编号 | 分类 | 名称 | 前置条件 | 数据准备 | 操作步骤 | 预期结果 | 判定方式 | 自动化落点 |
+|------|------|------|---------|---------|---------|---------|---------|-----------|
+| SBOX-04 | 正常 | 正常执行 | `WGH_SANDBOX_ENABLED=true`；隔离可用；`python3` 可用 | 工具参数 `code=print('ok')` | 运行工作流 | 返回 `exitCode=0`、`timedOut=false`、`truncated=false`，stdout 含 `ok` | 节点输出文本 | `SANDBOX_EXPECT_ENABLED=true e2e-sandbox.sh` SB1 |
+| SBOX-05 | 边界 | 超时强杀 | 同上 | `code=import time; time.sleep(10)`，`timeoutMs=1000` | 运行 | 返回 `timedOut=true`；耗时接近 1s 而非 10s；进程被强杀 | 输出中的 `timedOut` + duration | `e2e-sandbox.sh` SB2 |
+| SBOX-06 | 边界 | 输出截断 | 同上 | `code=print('x'*200000)` | 运行 | 返回 `truncated=true`；返回体显著小于 200000 字符（上限 65536 字节） | `truncated` + 长度 | `e2e-sandbox.sh` SB3 |
+| SBOX-07 | 边界 | 超时上限裁剪 | 同上 | `timeoutMs=999999` | 运行 | 实际超时被裁剪为 `max-timeout-ms`（默认 30000） | 日志/结果耗时 | 手工 |
+| SBOX-08 | 异常 | 隔离不可用拒绝执行 | `enabled=true` 但无 sandbox-exec/bwrap，且未允许降级 | — | 运行 | 拒绝并提示「隔离机制不可用…已拒绝」，不执行代码 | 节点输出 | 手工（取决于平台） |
+
+### 46.3 参数与配额
+
+| 编号 | 分类 | 名称 | 前置条件 | 数据准备 | 操作步骤 | 预期结果 | 判定方式 | 自动化落点 |
+|------|------|------|---------|---------|---------|---------|---------|-----------|
+| SBOX-09 | 边界 | 语言白名单 | 开启沙箱 | `language=RUST` | 运行 | 拒绝并提示「不支持的语言（仅允许: [PYTHON, JAVASCRIPT]）」 | 节点输出 | `e2e-sandbox.sh` SB4 |
+| SBOX-10 | 边界 | 空代码 | 开启沙箱 | `code=""` | 运行 | 拒绝「代码不能为空」 | 节点输出 | 单元 |
+| SBOX-11 | 边界 | 代码超上限 | 开启沙箱 | `code` 超过 64KiB | 运行 | 拒绝「代码超过大小上限」 | 节点输出 | 单元 |
+| SBOX-12 | 边界 | 频率限制 | 开启沙箱 | 1 分钟内同一用户第 11 次调用 | 连续调用 | 返回「调用频率超过上限，请稍后再试」 | 节点输出 | 手工（内存配额，不持久化） |
+| SBOX-13 | 边界 | 并发上限 | 开启沙箱 | 并发 3 次执行 | 并发调用 | 最多 2 个执行，其余返回「并发执行数已达上限」 | 节点输出 | 手工（需压测） |
+| SBOX-14 | 安全 | 网络默认拒绝 | 开启沙箱，`allow-network=false` | `code` 尝试访问外网 | 运行 | 网络访问失败；不影响宿主 | stdout/stderr | 手工 |
+| SBOX-15 | 安全 | 工作目录隔离 | 开启沙箱 | `code` 写临时文件并打印路径 | 运行 | 写入独立子目录，执行后递归删除；不污染宿主目录 | 结果 + 目录检查 | 单元（`CodeSandboxServiceTest`） |
+
+### 46.4 执行环境与判定说明
+
+| 项目 | 说明 |
+|------|------|
+| 默认关闭验证 | 直接运行 `bash rag-backend/scripts/e2e-sandbox.sh`；脚本会注册临时 PRIVATE 的 SANDBOX 工具并建工作流，经 TOOL 节点拿到确定结果。 |
+| 开启验证 | 以 `WGH_SANDBOX_ENABLED=true` 重启后端后，`SANDBOX_EXPECT_ENABLED=true bash scripts/e2e-sandbox.sh`；否则脚本对超时/截断显式报错。 |
+| 平台依赖 | `sandbox-exec`（macOS）/`bwrap`（Linux）任一可用；`PYTHON` 需 `python3`，`JAVASCRIPT` 需 `node`。 |
+| H2 说明 | 沙箱执行本身不依赖数据库特性，但本文档的端到端入口经工作流与工具配置落库，需真实 PostgreSQL。 |
+| 判定 | 以工具节点 `output_json.text` 中的 `exitCode/timedOut/truncated/isolation` 字段为准；拒绝场景以错误文本中的原因判定。 |
