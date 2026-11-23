@@ -47,6 +47,10 @@
             <groupId>com.wgh</groupId>
             <artifactId>rag-common</artifactId>
         </dependency>
+        <dependency>
+            <groupId>com.wgh</groupId>
+            <artifactId>rag-execution</artifactId>
+        </dependency>
 
         <dependency>
             <groupId>com.baomidou</groupId>

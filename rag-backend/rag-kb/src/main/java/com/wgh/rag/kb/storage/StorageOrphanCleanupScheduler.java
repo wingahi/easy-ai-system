@@ -4,6 +4,7 @@ import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 import org.springframework.stereotype.Component;
 
@@ -27,12 +28,20 @@ public class StorageOrphanCleanupScheduler {
     private final StorageOrphanCleanupProperties properties;
     private final StorageMaintenanceLock maintenanceLock;
 
+    /** 调度中心开启时由 {@code KB_ORPHAN_CLEANUP} 周期作业接管，本地定时器不启动。 */
+    @Value("${wgh.scheduler.enabled:true}")
+    private boolean schedulerEnabled = true;
+
     private ThreadPoolTaskScheduler scheduler;
 
     @PostConstruct
     void start() {
         if (!properties.isEnabled()) {
             log.info("孤儿对象定期扫描未启用（wgh.rag.storage.orphan-cleanup.enabled=false）");
+            return;
+        }
+        if (schedulerEnabled) {
+            log.info("孤儿对象定期扫描已交由调度中心（KB_ORPHAN_CLEANUP），本地定时器不启动");
             return;
         }
         scheduler = new ThreadPoolTaskScheduler();
@@ -54,7 +63,8 @@ public class StorageOrphanCleanupScheduler {
         }
     }
 
-    void runOnce() {
+    /** 执行一轮扫描；调度中心周期作业与本地定时器共用同一入口。 */
+    public void runOnce() {
         try (StorageMaintenanceLock.Handle handle = maintenanceLock.tryAcquire(LOCK_NAME)) {
             if (handle == null) {
                 log.info("孤儿对象扫描跳过：其他实例正在执行");

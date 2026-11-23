@@ -219,6 +219,17 @@ public class QuotaService {
      * <p>普通聊天入口中流水与扣费在同一个外层事务里，异步线程可能先于提交运行；
      * 这里做有界重试，等待外层事务提交后流水可见。</p>
      */
+    /** 管理端：分页查询退款异常流水（REFUND_FAILED / DEAD）。 */
+    public List<com.wgh.rag.quota.entity.QuotaChargeEntity> listRefundIssues(String status, String username,
+                                                                             int offset, int limit) {
+        return chargeLedger.findRefundIssues(status, username, offset, limit);
+    }
+
+    /** 管理端：退款异常流水总数。 */
+    public long countRefundIssues(String status, String username) {
+        return chargeLedger.countRefundIssues(status, username);
+    }
+
     public void markChargeSettled(QuotaCharge charge) {
         if (charge == null || charge.chargeId() == null) {
             return;

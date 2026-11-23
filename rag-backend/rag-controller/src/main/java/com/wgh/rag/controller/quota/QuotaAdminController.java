@@ -1,8 +1,11 @@
 package com.wgh.rag.controller.quota;
 
+import com.wgh.rag.common.exception.BusinessException;
 import com.wgh.rag.common.result.PageResult;
 import com.wgh.rag.common.result.Result;
+import com.wgh.rag.common.result.ResultCode;
 import com.wgh.rag.log.annotation.Audit;
+import com.wgh.rag.quota.entity.QuotaChargeEntity;
 import com.wgh.rag.quota.entity.QuotaUsage;
 import com.wgh.rag.quota.entity.UserQuotaConfig;
 import com.wgh.rag.quota.service.EffectiveQuota;
@@ -26,6 +29,7 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
@@ -40,6 +44,37 @@ public class QuotaAdminController {
 
     private final QuotaService quotaService;
     private final QuotaAdminGuard quotaAdminGuard;
+
+    /**
+     * 退款异常流水：只读展示 REFUND_FAILED / DEAD，便于管理员定位需人工处理的扣费。
+     * <p>查询不触发退款，人工处置仍走既有配额流水运维流程。</p>
+     */
+    @Operation(summary = "分页查询退款异常流水（REFUND_FAILED / DEAD）")
+    @GetMapping("/refunds")
+    public Result<PageResult<Map<String, Object>>> listRefundIssues(
+            @RequestParam(defaultValue = "1") long page,
+            @RequestParam(defaultValue = "20") long size,
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) String username) {
+        quotaAdminGuard.requireAdmin();
+
+        String normalized = status == null ? null : status.trim().toUpperCase(Locale.ROOT);
+        if (normalized != null && !normalized.isEmpty()
+                && !Set.of("REFUND_FAILED", "DEAD").contains(normalized)) {
+            throw new BusinessException(ResultCode.PARAM_ERROR, "退款状态仅支持 REFUND_FAILED / DEAD");
+        }
+        String hint = username == null || username.isBlank() ? null : username.trim();
+        long current = Math.max(1L, page);
+        long pageSize = Math.max(1L, Math.min(200L, size));
+        long total = quotaService.countRefundIssues(normalized, hint);
+        int offset = (int) Math.min(Integer.MAX_VALUE, (current - 1) * pageSize);
+        List<Map<String, Object>> rows = quotaService
+                .listRefundIssues(normalized, hint, offset, (int) pageSize)
+                .stream()
+                .map(this::toRefundRow)
+                .toList();
+        return Result.success(new PageResult<>(total, current, pageSize, rows));
+    }
 
     @Operation(summary = "分页列出用户配额（自定义配置 ∪ 有用量记录的用户）")
     @GetMapping("/users")
@@ -113,6 +148,24 @@ public class QuotaAdminController {
         Map<String, Object> row = buildRow(username, null);
         row.put("restoredDefault", removed);
         return Result.success(row);
+    }
+
+    private Map<String, Object> toRefundRow(QuotaChargeEntity row) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("chargeId", row.getChargeId());
+        data.put("username", row.getUsername());
+        data.put("periodKey", row.getPeriodKey());
+        data.put("amount", row.getAmount());
+        data.put("status", row.getStatus());
+        data.put("windowId", row.getWindowId());
+        data.put("sessionId", row.getSessionId());
+        data.put("retryCount", row.getRetryCount());
+        data.put("nextRetryAt", row.getNextRetryAt());
+        data.put("lastError", row.getLastError());
+        data.put("createTime", row.getCreateTime());
+        data.put("updateTime", row.getUpdateTime());
+        data.put("finishTime", row.getFinishTime());
+        return data;
     }
 
     /**

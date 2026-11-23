@@ -5,6 +5,13 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wgh.rag.common.exception.BusinessException;
 import com.wgh.rag.common.result.PageResult;
 import com.wgh.rag.common.result.ResultCode;
+import com.wgh.rag.execution.api.ExecutionFacade;
+import com.wgh.rag.execution.error.ExecutionCancelledException;
+import com.wgh.rag.execution.error.LeaseLostException;
+import com.wgh.rag.execution.model.ExecutionHandle;
+import com.wgh.rag.execution.model.ExecutionLane;
+import com.wgh.rag.execution.model.ExecutionRequest;
+import com.wgh.rag.kb.job.KbJobTypes;
 import com.wgh.rag.storage.service.FileStorageService;
 import com.wgh.rag.storage.service.StorageKeys;
 import com.wgh.rag.storage.service.StoredObject;
@@ -23,8 +30,13 @@ import dev.langchain4j.data.document.Metadata;
 import dev.langchain4j.data.segment.TextSegment;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.ByteArrayInputStream;
@@ -58,7 +70,19 @@ public class KnowledgeFileService {
     private final FileStorageService fileStorageService;
 
     /**
-     * 文件处理线程池：core=4, max=8, queue=50，避免裸 new Thread() 导致并发失控
+     * 调度中心门面；关闭调度或尚未装配时为空。
+     * <p>使用字段注入避免改变既有构造器签名（单测直接 new 时不注入，按本地线程池运行）。</p>
+     */
+    @Autowired(required = false)
+    private ObjectProvider<ExecutionFacade> executionFacadeProvider;
+
+    /** 调度中心开关：开启时入库/重建走后台作业，关闭时保留原有本地线程池。 */
+    @Value("${wgh.scheduler.enabled:true}")
+    private boolean schedulerEnabled = true;
+
+    /**
+     * 文件处理线程池（仅作为调度中心关闭或提交失败时的本地兜底）：
+     * core=4, max=8, queue=50，避免裸 new Thread() 导致并发失控
      */
     private static final java.util.concurrent.ExecutorService FILE_PROCESSOR =
             new java.util.concurrent.ThreadPoolExecutor(
@@ -353,7 +377,65 @@ public class KnowledgeFileService {
      */
     public void rebuildAll(Long kbId) {
         KnowledgeBaseService.RebuildPlan plan = kbService.claimRebuild(kbId);
+        submitRebuild(plan);
+    }
+
+    /**
+     * 全量重建提交：调度中心开启时落后台作业（可跨实例领取、续租与重试），
+     * 关闭或提交失败时回退原有本地线程池，保证功能不失效。
+     */
+    private void submitRebuild(KnowledgeBaseService.RebuildPlan plan) {
+        Long kbId = plan.kb().getId();
+        ExecutionFacade facade = executionFacade();
+        if (facade != null) {
+            try {
+                ExecutionHandle handle = facade.submit(ExecutionRequest.builder(KbJobTypes.REBUILD, ExecutionLane.BACKGROUND)
+                        .bizKey("kb-rebuild:" + kbId + ":" + plan.targetCollection())
+                        .payload(rebuildPayload(plan))
+                        .build());
+                log.info("知识库重建已提交后台作业 kbId={} executionId={}", kbId, handle.executionId());
+                return;
+            } catch (RuntimeException e) {
+                log.warn("知识库重建提交调度中心失败，回退本地线程池 kbId={} error={}", kbId, e.getMessage());
+            }
+        }
         FILE_PROCESSOR.submit(() -> runRebuild(plan));
+    }
+
+    /** 调度中心门面；关闭调度或未装配时返回 {@code null}，由调用方回退本地线程池。 */
+    private ExecutionFacade executionFacade() {
+        if (!schedulerEnabled || executionFacadeProvider == null) {
+            return null;
+        }
+        return executionFacadeProvider.getIfAvailable();
+    }
+
+    private Map<String, Object> rebuildPayload(KnowledgeBaseService.RebuildPlan plan) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put(KbJobTypes.PAYLOAD_KB_ID, String.valueOf(plan.kb().getId()));
+        payload.put(KbJobTypes.PAYLOAD_TARGET_COLLECTION, plan.targetCollection());
+        if (plan.targetModelId() != null) {
+            payload.put(KbJobTypes.PAYLOAD_TARGET_MODEL_ID, String.valueOf(plan.targetModelId()));
+        }
+        if (plan.targetDimension() != null) {
+            payload.put(KbJobTypes.PAYLOAD_TARGET_DIMENSION, String.valueOf(plan.targetDimension()));
+        }
+        return payload;
+    }
+
+    /**
+     * 后台作业入口：按 kbId 重新读取知识库后执行重建。
+     * <p>知识库已被删除时直接跳过，视为幂等完成。</p>
+     */
+    public void runRebuildJob(Long kbId, String targetCollection, Long targetModelId, Integer targetDimension,
+                              Runnable heartbeat, Runnable cancellationCheck) {
+        KnowledgeBase kb = kbService.getById(kbId);
+        if (kb == null) {
+            log.warn("知识库已不存在，跳过重建 kbId={}", kbId);
+            return;
+        }
+        runRebuild(new KnowledgeBaseService.RebuildPlan(kb, targetCollection, targetModelId, targetDimension),
+                heartbeat, cancellationCheck);
     }
 
     /**
@@ -361,6 +443,15 @@ public class KnowledgeFileService {
      * 目标表被清理、collection/模型指针不切换，检索继续使用旧向量。
      */
     void runRebuild(KnowledgeBaseService.RebuildPlan plan) {
+        runRebuild(plan, () -> {
+        }, () -> {
+        });
+    }
+
+    /**
+     * 带执行生命周期回调的重建：按文件粒度续租与检查取消，供后台作业使用。
+     */
+    void runRebuild(KnowledgeBaseService.RebuildPlan plan, Runnable heartbeat, Runnable cancellationCheck) {
         KnowledgeBase kb = plan.kb();
         int total = plan.kb().getRebuildTotal() == null ? 0 : plan.kb().getRebuildTotal();
         int processed = 0;
@@ -369,11 +460,22 @@ public class KnowledgeFileService {
             List<KnowledgeFile> files = fileMapper.selectList(new LambdaQueryWrapper<KnowledgeFile>()
                     .eq(KnowledgeFile::getKnowledgeBaseId, kb.getId()));
             for (KnowledgeFile file : files) {
+                cancellationCheck.run();
+                heartbeat.run();
                 processFile(file, kb, plan.targetCollection(), plan.targetModelId(), plan.targetDimension());
                 processed++;
                 kbService.updateRebuildProgress(kb.getId(), processed, total);
                 log.info("知识库 {} 重建进度 {}/{}", kb.getId(), processed, total);
             }
+        } catch (ExecutionCancelledException e) {
+            // 取消是终态：把重建标记为失败供前端停止轮询，再交由调度层落 CANCELLED
+            log.warn("知识库 {} 重建已取消（已完成 {}/{}）", kb.getId(), processed, total);
+            kbService.finishRebuild(plan, processed, false);
+            throw e;
+        } catch (LeaseLostException e) {
+            // 租约已丢失：另一实例可能已接管，停止写入，避免双写
+            log.warn("知识库 {} 重建租约已丢失（已完成 {}/{}），停止写入", kb.getId(), processed, total);
+            throw e;
         } catch (Exception e) {
             success = false;
             log.error("知识库 {} 重建失败（已完成 {}/{}），旧数据继续可用", kb.getId(), processed, total, e);
@@ -441,16 +543,74 @@ public class KnowledgeFileService {
         return dotIdx > 0 ? filename.substring(dotIdx + 1).toLowerCase() : "";
     }
 
+    /**
+     * 异步处理文件：调度中心开启时提交后台作业，关闭或提交失败时回退本地线程池。
+     * <p>提交动作放在事务提交之后，避免后台作业先于文件记录提交而读不到数据。</p>
+     */
     private void processFileAsync(KnowledgeFile file, KnowledgeBase kb) {
-        // 使用线程池异步处理（避免裸 new Thread 导致并发失控）
+        Long fileId = file.getId();
+        Long kbId = kb.getId();
+        int version = file.getVersion() == null ? 1 : file.getVersion();
+        Runnable submit = () -> submitFileProcess(fileId, kbId, version);
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    submit.run();
+                }
+            });
+        } else {
+            submit.run();
+        }
+    }
+
+    private void submitFileProcess(Long fileId, Long kbId, int version) {
+        ExecutionFacade facade = executionFacade();
+        if (facade != null) {
+            try {
+                ExecutionHandle handle = facade.submit(ExecutionRequest.builder(
+                                KbJobTypes.FILE_PROCESS, ExecutionLane.BACKGROUND)
+                        .bizKey("kb-file:" + fileId + ":" + version)
+                        .payload(Map.of(KbJobTypes.PAYLOAD_FILE_ID, String.valueOf(fileId),
+                                KbJobTypes.PAYLOAD_KB_ID, String.valueOf(kbId)))
+                        .build());
+                log.info("文件处理已提交后台作业 fileId={} executionId={}", fileId, handle.executionId());
+                return;
+            } catch (RuntimeException e) {
+                log.warn("文件处理提交调度中心失败，回退本地线程池 fileId={} error={}", fileId, e.getMessage());
+            }
+        }
         FILE_PROCESSOR.submit(() -> {
             try {
-                processFile(file, kb, kb.getCollectionName(),
-                        kb.getEmbeddingModelId(), kb.getDimension());
+                KnowledgeFile latest = fileMapper.selectById(fileId);
+                KnowledgeBase kb = latest == null ? null : kbService.getById(kbId);
+                if (latest == null || kb == null) {
+                    log.warn("文件或知识库已不存在，跳过后台处理 fileId={} kbId={}", fileId, kbId);
+                    return;
+                }
+                processFile(latest, kb, kb.getCollectionName(), kb.getEmbeddingModelId(), kb.getDimension());
             } catch (Exception e) {
-                log.error("文件处理失败: {}", file.getFileName(), e);
+                log.error("文件处理失败 fileId={}", fileId, e);
             }
         });
+    }
+
+    /**
+     * 后台作业入口：按 fileId 重新读取文件后执行解析/切分/向量化。
+     * <p>文件已被删除时直接跳过，视为幂等完成。</p>
+     */
+    public void processFileJob(Long fileId, Long kbId) throws Exception {
+        KnowledgeFile file = fileMapper.selectById(fileId);
+        if (file == null) {
+            log.warn("文件已不存在，跳过处理 fileId={}", fileId);
+            return;
+        }
+        KnowledgeBase kb = kbService.getById(kbId);
+        if (kb == null) {
+            log.warn("知识库已不存在，跳过文件处理 fileId={} kbId={}", fileId, kbId);
+            return;
+        }
+        processFile(file, kb, kb.getCollectionName(), kb.getEmbeddingModelId(), kb.getDimension());
     }
 
     /**

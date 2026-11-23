@@ -16,6 +16,7 @@ import com.wgh.rag.agentmulti.entity.MultiAgentStep;
 import com.wgh.rag.agentmulti.runtime.MultiAgentRuntime;
 import com.wgh.rag.agentmulti.service.AgentStepCheckpointService;
 import com.wgh.rag.agentmulti.service.AgentStepCheckpointService.CheckpointSession;
+import com.wgh.rag.execution.run.RunLifecycle;
 import com.wgh.rag.agentmulti.service.AgentStepCheckpointService.StepDecision;
 import com.wgh.rag.agentmulti.service.MultiAgentService;
 import com.wgh.rag.agentmulti.support.AgentInstanceExecutor;
@@ -59,6 +60,14 @@ public class GraphCoordinator {
     public void execute(MultiAgentRun run, List<AgentInstance> agents,
                         DAGGraph graph, MultiAgentContext ctx, SseEmitter emitter,
                         CheckpointSession session) {
+        execute(run, agents, graph, ctx, emitter, session, RunLifecycle.NOOP);
+    }
+
+    public void execute(MultiAgentRun run, List<AgentInstance> agents,
+                        DAGGraph graph, MultiAgentContext ctx, SseEmitter emitter,
+                        CheckpointSession session, RunLifecycle lifecycle) {
+        lifecycle.throwIfCancelled();
+        lifecycle.heartbeat();
         if (graph == null || graph.getNodes() == null || graph.getNodes().isEmpty()) {
             sse.send(emitter, MultiAgentEvents.MULTI_AGENT_ERROR, Map.of("runId", run.getRunId(), "error", "Graph 为空"));
             return;
@@ -221,6 +230,8 @@ public class GraphCoordinator {
                     } else {
                         output = ctx.render(outTemplate);
                     }
+                    lifecycle.throwIfCancelled();
+                    lifecycle.heartbeat();
                     run.setOutputText(output);
                     run.setStatus(MultiAgentConstants.STATUS_COMPLETED);
                     service.finishRun(run, MultiAgentConstants.STATUS_COMPLETED, null);
@@ -282,12 +293,15 @@ public class GraphCoordinator {
         // 构造简化的 DAGGraph（从 allTargets 开始的连通子图）
         // 简单做法：把 allTargets 加进 startNodes 集合
         List<String> frontier = new ArrayList<>(allTargets);
-        executeFromFrontier(run, agents, graph, ctx, emitter, frontier);
+        executeFromFrontier(run, agents, graph, ctx, emitter, frontier, RunLifecycle.NOOP);
     }
 
     private void executeFromFrontier(MultiAgentRun run, List<AgentInstance> agents,
                                       DAGGraph graph, MultiAgentContext ctx,
-                                      SseEmitter emitter, List<String> initialFrontier) {
+                                      SseEmitter emitter, List<String> initialFrontier,
+                                      RunLifecycle lifecycle) {
+        lifecycle.throwIfCancelled();
+        lifecycle.heartbeat();
         if (graph == null || graph.getNodes() == null || graph.getNodes().isEmpty()) return;
 
         Map<String, AgentInstance> agentMap = indexAgents(agents);
@@ -375,6 +389,8 @@ public class GraphCoordinator {
                     String output = outTemplate.isBlank()
                             ? ctx.stringify(ctx.resolvePath("last"))
                             : ctx.render(outTemplate);
+                    lifecycle.throwIfCancelled();
+                    lifecycle.heartbeat();
                     run.setOutputText(output);
                     run.setStatus(MultiAgentConstants.STATUS_COMPLETED);
                     service.finishRun(run, MultiAgentConstants.STATUS_COMPLETED, null);

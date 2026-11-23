@@ -5,6 +5,11 @@ import com.wgh.rag.execution.job.ExecutionCancellationToken;
 import com.wgh.rag.execution.job.JobContext;
 import com.wgh.rag.execution.model.ExecutionRequest;
 
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
+
 /**
  * 调度层注入给 {@code JobHandler} 的运行上下文。
  *
@@ -24,16 +29,32 @@ public class JobContextImpl implements JobContext {
 
     private final Runnable heartbeatAction;
 
+    private final AtomicReference<Map<String, Object>> savedResult;
+
+    private final Consumer<Map<String, Object>> saveAction;
+
     public JobContextImpl(String executionId,
                           ExecutionRequest request,
                           ExecutionEventSink events,
                           ExecutionCancellationToken cancellation,
                           Runnable heartbeatAction) {
+        this(executionId, request, events, cancellation, heartbeatAction, Map.of(), null);
+    }
+
+    public JobContextImpl(String executionId,
+                          ExecutionRequest request,
+                          ExecutionEventSink events,
+                          ExecutionCancellationToken cancellation,
+                          Runnable heartbeatAction,
+                          Map<String, Object> initialResult,
+                          Consumer<Map<String, Object>> saveAction) {
         this.executionId = executionId;
         this.request = request;
         this.events = events;
         this.cancellation = cancellation;
         this.heartbeatAction = heartbeatAction;
+        this.savedResult = new AtomicReference<>(initialResult == null ? Map.of() : Map.copyOf(initialResult));
+        this.saveAction = saveAction;
     }
 
     @Override
@@ -61,5 +82,19 @@ public class JobContextImpl implements JobContext {
         if (heartbeatAction != null) {
             heartbeatAction.run();
         }
+    }
+
+    @Override
+    public Map<String, Object> savedResult() {
+        return savedResult.get();
+    }
+
+    @Override
+    public void saveResult(Map<String, Object> result) {
+        Map<String, Object> snapshot = result == null ? Map.of() : new LinkedHashMap<>(result);
+        if (saveAction != null) {
+            saveAction.accept(snapshot);
+        }
+        savedResult.set(Map.copyOf(snapshot));
     }
 }

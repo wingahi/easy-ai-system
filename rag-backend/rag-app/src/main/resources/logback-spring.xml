@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <configuration>
-    <!-- requestId 由 RequestIdFilter 写入 MDC，缺失时输出 "-"，便于按请求串联日志 -->
-    <property name="LOG_PATTERN" value="%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] [rid=%X{requestId:--}] %-5level %logger{36} - %msg%n"/>
+    <!-- requestId 由 RequestIdFilter 写入 MDC，traceId 由 Micrometer Tracing 写入；
+         缺失时输出 "- -"，便于按请求 / 链路串联日志 -->
+    <property name="LOG_PATTERN" value="%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] [rid=%X{requestId:--}] [trace=%X{traceId:--}] %-5level %logger{36} - %msg%n"/>
     
     <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
         <encoder>

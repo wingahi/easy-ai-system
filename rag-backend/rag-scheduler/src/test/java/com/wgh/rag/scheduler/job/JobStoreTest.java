@@ -1,5 +1,6 @@
 package com.wgh.rag.scheduler.job;
 
+import com.wgh.rag.common.log.MdcContext;
 import com.wgh.rag.execution.model.ExecutionLane;
 import com.wgh.rag.execution.model.ExecutionRequest;
 import com.wgh.rag.execution.model.ExecutionSnapshot;
@@ -11,6 +12,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.slf4j.MDC;
 import org.springframework.dao.DuplicateKeyException;
 
 import java.time.Duration;
@@ -51,6 +53,26 @@ class JobStoreTest {
         assertThat(job.getTimeoutSeconds()).isEqualTo(60);
         assertThat(job.getPayloadJson()).contains("workflowId");
         verify(mapper).insert(job);
+    }
+
+    @Test
+    void shouldCaptureTraceIdFromMdcWhenSubmitting() {
+        MDC.put(MdcContext.TRACE_ID_KEY, "trace-123");
+        try {
+            ExecutionJob job = store.submit(request("k-trace"), 3, null);
+            assertThat(job.getTraceId()).isEqualTo("trace-123");
+        } finally {
+            MDC.remove(MdcContext.TRACE_ID_KEY);
+        }
+    }
+
+    @Test
+    void shouldLeaveTraceIdEmptyOutsideTrace() {
+        MDC.remove(MdcContext.TRACE_ID_KEY);
+
+        ExecutionJob job = store.submit(request("k-no-trace"), 3, null);
+
+        assertThat(job.getTraceId()).isNull();
     }
 
     @Test

@@ -45,4 +45,15 @@ public class RunContext {
 
     /** 调试会话累计已执行节点数（用于总执行次数上限保护） */
     private Integer debugExecutedCount = 0;
+
+    // ===== 中断续跑游标（普通运行持久化；HITL 恢复仍只读 pendingNodeIds） =====
+
+    /** 中断时尚未完成的节点队列 */
+    private List<String> resumeFrontier;
+
+    /** 中断时各节点剩余入边数 */
+    private Map<String, Integer> resumePendingIn;
+
+    /** 中断时已提交到执行队列但尚未完成的节点 */
+    private List<String> resumeSubmitted;
 }

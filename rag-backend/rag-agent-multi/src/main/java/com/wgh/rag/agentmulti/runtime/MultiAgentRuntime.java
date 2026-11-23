@@ -15,6 +15,9 @@ import com.wgh.rag.agentmulti.mapper.MultiAgentStepMapper;
 import com.wgh.rag.agentmulti.service.AgentStepCheckpointService;
 import com.wgh.rag.agentmulti.service.AgentStepCheckpointService.CheckpointSession;
 import com.wgh.rag.agentmulti.service.MultiAgentService;
+import com.wgh.rag.execution.error.ExecutionCancelledException;
+import com.wgh.rag.execution.error.LeaseLostException;
+import com.wgh.rag.execution.run.RunLifecycle;
 import com.wgh.rag.agentmulti.support.SseEventSender;
 import com.wgh.rag.agentmulti.crew.CrewCoordinator;
 import com.wgh.rag.agentmulti.graph.GraphCoordinator;
@@ -65,13 +68,20 @@ public class MultiAgentRuntime {
             sse.send(emitter, MultiAgentEvents.MULTI_AGENT_ERROR, Map.of("runId", runId, "error", "Run 不存在"));
             return runId;
         }
-        return runInternal(run, emitter, checkpointService.open(runId), false);
+        return runInternal(run, emitter, checkpointService.open(runId), false, RunLifecycle.NOOP);
     }
 
     /**
      * 崩溃恢复：从 (runId, stepKey) 检查点继续。已完成步骤只回填上下文，不重新执行、不重发卡片。
      */
     public String resumeFromCheckpoint(String runId, SseEmitter emitter) {
+        return resumeFromCheckpoint(runId, emitter, RunLifecycle.NOOP);
+    }
+
+    /**
+     * 后台作业续跑：事件出口可为 {@code null}（静默），并在步骤边界续租/响应取消。
+     */
+    public String resumeFromCheckpoint(String runId, SseEmitter emitter, RunLifecycle lifecycle) {
         MultiAgentRun run = loadRun(runId);
         if (run == null) {
             sse.send(emitter, MultiAgentEvents.MULTI_AGENT_ERROR, Map.of("runId", runId, "error", "Run 不存在"));
@@ -83,11 +93,13 @@ public class MultiAgentRuntime {
                     Map.of("runId", runId, "error", "Run 非可恢复状态: " + run.getStatus()));
             return runId;
         }
-        return runInternal(run, emitter, checkpointService.open(runId), true);
+        return runInternal(run, emitter, checkpointService.open(runId), true,
+                lifecycle == null ? RunLifecycle.NOOP : lifecycle);
     }
 
     private String runInternal(MultiAgentRun run, SseEmitter emitter,
-                               CheckpointSession session, boolean resume) {
+                               CheckpointSession session, boolean resume, RunLifecycle lifecycle) {
+        lifecycle.throwIfCancelled();
         String runId = run.getRunId();
         List<AgentInstance> agents = parseAgents(run.getAgentsJson());
 
@@ -115,19 +127,21 @@ public class MultiAgentRuntime {
         try {
             switch (run.getExecutionMode() == null ? "" : run.getExecutionMode()) {
                 case "CREW_SEQUENTIAL", "CREW_HIERARCHICAL", "CREW_PARALLEL" -> {
-                    crewCoordinator.execute(run, agents, ctx, emitter, session);
+                    crewCoordinator.execute(run, agents, ctx, emitter, session, lifecycle);
                 }
                 case "GRAPH_ROUTED" -> {
                     DAGGraph graph = parseGraphFromCrewConfig(run);
-                    graphCoordinator.execute(run, agents, graph, ctx, emitter, session);
+                    graphCoordinator.execute(run, agents, graph, ctx, emitter, session, lifecycle);
                 }
                 case "GROUP_CHAT_ROUND_ROBIN", "GROUP_CHAT_DYNAMIC_ROUTER" -> {
-                    groupChatCoordinator.execute(run, agents, ctx, emitter, session);
+                    groupChatCoordinator.execute(run, agents, ctx, emitter, session, lifecycle);
                 }
                 default -> throw new IllegalStateException("未知 executionMode: " + run.getExecutionMode());
             }
 
-            // 兜底：如果 Coordinator 没设置终态
+            // 兜底：如果 Coordinator 没设置终态；写终态前再确认租约
+            lifecycle.throwIfCancelled();
+            lifecycle.heartbeat();
             MultiAgentRun latest = runMapper.selectById(run.getId());
             if (latest != null && MultiAgentConstants.STATUS_RUNNING.equals(latest.getStatus())) {
                 finishRun(latest, MultiAgentConstants.STATUS_COMPLETED, null);
@@ -135,6 +149,9 @@ public class MultiAgentRuntime {
         } catch (PauseSignal pause) {
             // HITL —— run.status 已由 coordinator 置为 PAUSED
             log.info("run {} 进入 HITL 暂停: {}", run.getRunId(), pause.getMessage());
+        } catch (LeaseLostException | ExecutionCancelledException stop) {
+            // 租约丢失/作业取消：不写业务终态，交给调度层重试或人工观测
+            throw stop;
         } catch (Exception e) {
             log.error("run {} 执行异常", run.getRunId(), e);
             MultiAgentRun latest = runMapper.selectById(run.getId());

@@ -40,6 +40,11 @@
             <groupId>com.wgh</groupId>
             <artifactId>rag-document</artifactId>
         </dependency>
+        <!-- 执行层契约（纯库）：入库/重建作业只依赖 JobHandler/ExecutionFacade，不依赖 rag-scheduler -->
+        <dependency>
+            <groupId>com.wgh</groupId>
+            <artifactId>rag-execution</artifactId>
+        </dependency>
         <!-- 分享链接端口定义在中立模块 rag-common.share，rag-kb 只提供实现，不依赖 rag-public-access -->
         <!-- URL 数据源抓取的 SSRF 校验走 rag-common.net.SsrfGuard，不再依赖 rag-tool -->
         <dependency>

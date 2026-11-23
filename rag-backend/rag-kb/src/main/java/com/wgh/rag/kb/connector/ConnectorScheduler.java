@@ -7,6 +7,7 @@ import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 import org.springframework.stereotype.Component;
 
@@ -29,12 +30,20 @@ public class ConnectorScheduler {
     private final ConnectorService connectorService;
     private final ConnectorProperties properties;
 
+    /** 调度中心开启时由 {@code KB_CONNECTOR_SYNC} 周期作业接管，本地定时器不启动。 */
+    @Value("${wgh.scheduler.enabled:true}")
+    private boolean schedulerEnabled = true;
+
     private ThreadPoolTaskScheduler scheduler;
 
     @PostConstruct
     void start() {
         if (!properties.isSchedulerEnabled()) {
             log.info("URL 连接器定时同步未启用（wgh.connector.scheduler.enabled=false），仅支持手动同步");
+            return;
+        }
+        if (schedulerEnabled) {
+            log.info("URL 连接器定时同步已交由调度中心（KB_CONNECTOR_SYNC），本地定时器不启动");
             return;
         }
         scheduler = new ThreadPoolTaskScheduler();
@@ -56,7 +65,7 @@ public class ConnectorScheduler {
     }
 
     /** 单轮轮询：只挑到期的启用连接器，单个失败不影响本轮其他连接器。 */
-    void tick() {
+    public void tick() {
         try {
             LocalDateTime now = LocalDateTime.now();
             int batchSize = Math.max(1, properties.getBatchSize());

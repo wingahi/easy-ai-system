@@ -522,7 +522,6 @@
 | test-multi-agent-smoke.sh | /api/agent-multi（run + state） | 12 | SSE 事件序列 / 终态 COMPLETED / 步骤持久化 / state 接口 | Crew 三种模式细节、GroupChat 路由、HITL 中断 |
 | e2e-scheduler.sh | `wgh_execution_job` + 调度循环（后台/维护车道） | 24 | 状态机、租约回收、重试/死信、取消、幂等去重、Redis 单飞 | 排队超时（≥5min）、执行超时、双实例并发 |
 | e2e-quota-refund.sh | 扣费流水 + QUOTA_REFUND 补偿作业 | 16 | 扣费结算、悬挂退款、幂等、退避、拒绝分支（人工前置） | 故障注入下的 DEAD（人工前置）、真实执行器拒绝（人工前置） |
-| e2e-task-recovery.sh | /api/admin/tasks/resume + 会话待办 | 21 | 工作流检查点续跑、恢复锁、终态拒绝、会话级查询 | 多 Agent 续跑（需真实中断运行 + 模型）、双实例并发 |
 | e2e-storage-maintenance.sh | /api/admin/storage/* | 17 | 异步提交、进度/终态、历史、取消契约、孤儿只报告 | 运行中取消（需 OSS + 大量对象）、删除模式 |
 | e2e-sandbox.sh | 工作流 TOOL 节点 → SANDBOX | 15 | 默认关闭、超时、输出截断、语言白名单 | 并发/频率/网络隔离（需压测与手工验证） |
 
@@ -1896,12 +1895,13 @@
 
 ---
 
-## 44. 任务恢复（批次 4，2026-11-21）
+## 44. 任务恢复（已移除，2026-11-22）
 
-> 代码：`rag-controller` 的 `TaskRecoveryService` / `TaskRecoveryController`·`rag-agent` / `rag-agent-multi` / `rag-workflow`｜表：`wgh_workflow_run`、`wgh_workflow_node_run`、`wgh_multi_agent_run`、`wgh_agent_plan`、`wgh_audit_log`｜脚本：`rag-backend/scripts/e2e-task-recovery.sh`
-> 环境要求：**backend 运行中 + 真实 PostgreSQL + Redis**（恢复锁失败关闭：Redis 未启用时直接拒绝恢复，不退回进程内锁）。
+> **状态：功能已下线，以下用例作废，不再执行。** 用户触发的【继续执行】入口与接口（`/api/chat/sessions/{id}/pending-task`、`/api/chat/sessions/{id}/resume-task`、`/api/admin/tasks/resume`）已删除，脚本 `rag-backend/scripts/e2e-task-recovery.sh` 已同步删除；停在 RUNNING/PENDING 的任务改由调度中心按异步执行点处置。保留此节仅作历史记录，其中 RECV-01～RECV-21 均不再适用。
+>
+> 原始信息：`rag-controller` 的 `TaskRecoveryService` / `TaskRecoveryController`·`rag-agent` / `rag-agent-multi` / `rag-workflow`｜表：`wgh_workflow_run`、`wgh_workflow_node_run`、`wgh_multi_agent_run`、`wgh_agent_plan`、`wgh_audit_log`
 
-### 44.1 工作流中断后继续执行
+### 44.1 工作流中断后继续执行（已作废）
 
 | 编号 | 分类 | 名称 | 前置条件 | 数据准备 | 操作步骤 | 预期结果 | 判定方式 | 自动化落点 |
 |------|------|------|---------|---------|---------|---------|---------|-----------|

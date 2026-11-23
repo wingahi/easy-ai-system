@@ -1,5 +1,6 @@
 package com.wgh.rag.scheduler.job;
 
+import com.wgh.rag.common.log.MdcContext;
 import com.wgh.rag.execution.error.ExecutionCancelledException;
 import com.wgh.rag.execution.error.ExecutionErrorCodes;
 import com.wgh.rag.execution.error.ExecutionException;
@@ -140,22 +141,30 @@ public class JobRunner {
 
             ExecutionRequest request = toRequest(job, payload);
             JobContext context = new JobContextImpl(executionId, request, sequencedSink(bus), cancellation,
-                    () -> renewOrFail(job, owner, singleFlightRef.get(), leaseLost, cancellation));
+                    () -> renewOrFail(job, owner, singleFlightRef.get(), leaseLost, cancellation),
+                    jobStore.resultOf(job),
+                    result -> {
+                        if (!jobStore.saveResult(job.getId(), owner, result)) {
+                            leaseLost.set(true);
+                            throw new LeaseLostException("持久化执行进度时租约已丢失", job.getExecutionId());
+                        }
+                    });
             bus.publish(ExecutionEventTypes.STARTED, eventPayload("STARTED", null));
 
             long heartbeatMillis = Math.max(500L, properties.getHeartbeatInterval().toMillis());
-            watchdog.scheduleWithFixedDelay(
+            // 看门狗线程继承作业的 MDC（requestId / traceId），续约与取消日志仍可关联链路
+            watchdog.scheduleWithFixedDelay(MdcContext.wrap(
                     () -> watch(job, owner, singleFlightRef.get(), context, handler, cancellation,
-                            leaseLost, cancelHookInvoked),
+                            leaseLost, cancelHookInvoked)),
                     heartbeatMillis, heartbeatMillis, TimeUnit.MILLISECONDS);
             Duration timeout = request.timeout() == null ? properties.getDefaultTimeout() : request.timeout();
             if (timeout != null && !timeout.isZero() && !timeout.isNegative()) {
-                watchdog.schedule(() -> {
+                watchdog.schedule(MdcContext.wrap(() -> {
                     if (!cancellation.isCancelled()) {
                         timedOut.set(true);
                         cancellation.cancel("执行超时（" + timeout.toSeconds() + "s）");
                     }
-                }, timeout.toMillis(), TimeUnit.MILLISECONDS);
+                }), timeout.toMillis(), TimeUnit.MILLISECONDS);
             }
 
             handler.execute(context);
@@ -163,7 +172,7 @@ public class JobRunner {
             if (cancellation.isCancelled()) {
                 finishCancelled(job, owner, bus, cancellation, timedOut, leaseLost);
             } else {
-                boolean written = jobStore.complete(job.getId(), owner, Map.of());
+                boolean written = jobStore.complete(job.getId(), owner, context.savedResult());
                 if (!written) {
                     log.warn("作业完成但租约已丢失，结果丢弃 executionId={} owner={}", executionId, owner);
                 }

@@ -605,16 +605,10 @@ export function streamMultiAgentHitl(runId, userInput, onEvent, onDone, onError)
 }
 
 
-// ===== 任务恢复：会话继续 / 管理端运行中任务 =====
+// ===== 运行中任务：管理端只读查询 =====
 // 契约接口可能尚未在后端就绪，调用方统一按 silent 处理，失败时降级（不弹全局错误）
-export const chatPendingTask = (sessionId) =>
-  request.get(`/chat/sessions/${sessionId}/pending-task`, { silent: true })
-export const chatResumeTask = (sessionId) =>
-  request.post(`/chat/sessions/${sessionId}/resume-task`, null, { silent: true })
 export const adminRunningTasks = (params) =>
   request.get('/admin/tasks/running', { params, silent: true })
-export const adminResumeTask = (data) =>
-  request.post('/admin/tasks/resume', data, { silent: true })
 
 // ===== 管理端：审计 / 配额 / 成本 =====
 export const adminAuditLogs = (params) => request.get('/admin/audit-logs', { params })
@@ -651,6 +645,7 @@ export const adminRolePermissionsUpdate = (roleCode, permCodes) =>
 
 // ===== 配额管理（管理端 + 用户自查） =====
 export const quotaAdminPage = (params) => request.get('/admin/quota/users', { params })
+export const quotaRefundIssues = (params) => request.get('/admin/quota/refunds', { params })
 export const quotaAdminGet = (username) => request.get(`/admin/quota/users/${encodeURIComponent(username)}`)
 export const quotaAdminSave = (username, data) => request.put(`/admin/quota/users/${encodeURIComponent(username)}`, data)
 export const quotaAdminResetUsage = (username) => request.post(`/admin/quota/users/${encodeURIComponent(username)}/reset-usage`)

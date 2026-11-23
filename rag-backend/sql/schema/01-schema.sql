@@ -1539,6 +1539,7 @@ CREATE INDEX IF NOT EXISTS idx_agent_memory_agent
 CREATE TABLE IF NOT EXISTS wgh_execution_job (
   id BIGSERIAL PRIMARY KEY,
   execution_id VARCHAR(64) NOT NULL,
+  trace_id VARCHAR(64),
   job_type VARCHAR(64) NOT NULL,
   lane VARCHAR(16) NOT NULL DEFAULT 'BACKGROUND',
   tenant_id VARCHAR(64) NOT NULL DEFAULT 'default',
@@ -1573,6 +1574,7 @@ CREATE TABLE IF NOT EXISTS wgh_execution_job (
 COMMENT ON TABLE wgh_execution_job IS '后台作业（持久化 + 租约；核对与重试的唯一事实源）';
 COMMENT ON COLUMN wgh_execution_job.id IS '主键';
 COMMENT ON COLUMN wgh_execution_job.execution_id IS '对外执行标识（UUID），门面查询/取消/订阅使用';
+COMMENT ON COLUMN wgh_execution_job.trace_id IS '提交时链路 traceId，用于跨实例按 traceId 关联提交与执行日志';
 COMMENT ON COLUMN wgh_execution_job.job_type IS '作业类型，对应 JobHandler#jobType()';
 COMMENT ON COLUMN wgh_execution_job.lane IS '执行车道：BACKGROUND 后台 / MAINTENANCE 维护';
 COMMENT ON COLUMN wgh_execution_job.tenant_id IS '租户标识（单租户为 default）';

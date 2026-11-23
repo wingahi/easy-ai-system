@@ -1,6 +1,7 @@
 package com.wgh.rag.kb.storage;
 
 import com.wgh.rag.common.metrics.RagMetrics;
+import com.wgh.rag.kb.entity.KnowledgeFile;
 import com.wgh.rag.kb.entity.UploadSession;
 import com.wgh.rag.kb.mapper.KnowledgeFileMapper;
 import com.wgh.rag.kb.mapper.UploadSessionMapper;
@@ -58,7 +59,7 @@ class StorageOrphanCleanupServiceTest {
                 new StorageObjectInfo("kb/1/u2/orphan.txt", 20, old),
                 new StorageObjectInfo("kb/1/s1/parts/0.part", 5, old),
                 new StorageObjectInfo("kb/1/s1/parts/1.part", 5, old)));
-        when(fileMapper.selectObjs(any())).thenReturn(List.<Object>of("kb/1/u1/keep.txt"));
+        when(fileMapper.selectList(any())).thenReturn(List.of(file(1L, "keep.txt", "kb/1/u1/keep.txt")));
         when(sessionMapper.selectList(any())).thenReturn(List.of(uploadingSession()));
 
         StorageOrphanReport report = service.scan(false);
@@ -79,7 +80,7 @@ class StorageOrphanCleanupServiceTest {
         when(inventory.listAll()).thenReturn(List.of(
                 new StorageObjectInfo("kb/1/orphan-old.txt", 10, aged),
                 new StorageObjectInfo("kb/1/orphan-young.txt", 10, fresh)));
-        when(fileMapper.selectObjs(any())).thenReturn(List.of());
+        when(fileMapper.selectList(any())).thenReturn(List.of());
         when(sessionMapper.selectList(any())).thenReturn(List.of());
 
         StorageOrphanReport report = service.scan(true);
@@ -90,6 +91,33 @@ class StorageOrphanCleanupServiceTest {
         assertThat(report.deleteFailed()).isZero();
         verify(storage).delete("kb/1/orphan-old.txt");
         verify(storage, never()).delete("kb/1/orphan-young.txt");
+    }
+
+    @Test
+    @DisplayName("知识文件记录存在但存储对象缺失：计数并给出可定位明细")
+    void reportsMissingKnowledgeFileObjects() {
+        when(inventory.listAll()).thenReturn(List.of());
+        when(fileMapper.selectList(any()))
+                .thenReturn(List.of(file(9L, "lost.txt", "kb/1/lost.txt")));
+        when(sessionMapper.selectList(any())).thenReturn(List.of());
+
+        StorageOrphanReport report = service.scan(false);
+
+        assertThat(report.missingReferences()).isEqualTo(1);
+        assertThat(report.sampleMissingReferences()).hasSize(1);
+        StorageOrphanReport.MissingReference detail = report.sampleMissingReferences().get(0);
+        assertThat(detail.fileId()).isEqualTo(9L);
+        assertThat(detail.fileName()).isEqualTo("lost.txt");
+        assertThat(detail.storageKey()).isEqualTo("kb/1/lost.txt");
+        verify(metrics).recordStorageOrphans("missing", 1);
+    }
+
+    private KnowledgeFile file(Long id, String name, String path) {
+        KnowledgeFile file = new KnowledgeFile();
+        file.setId(id);
+        file.setFileName(name);
+        file.setFilePath(path);
+        return file;
     }
 
     private UploadSession uploadingSession() {

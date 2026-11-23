@@ -15,6 +15,7 @@ import com.wgh.rag.agent.planner.Planner;
 import com.wgh.rag.agent.reflection.ReflectionEngine;
 import com.wgh.rag.agent.support.AgentStateBlockBuilder;
 import com.wgh.rag.agent.support.AgentTaskMemory;
+import com.wgh.rag.execution.run.RunLifecycle;
 import com.wgh.rag.llm.entity.LlmModel;
 import com.wgh.rag.tool.entity.ToolConfig;
 import dev.langchain4j.agent.tool.ToolSpecification;
@@ -204,6 +205,16 @@ public class AgentOrchestrator {
                                                    double reflectionThreshold, int reflectionMaxRetries,
                                                    BiConsumer<String, Map<String, Object>> sse,
                                                    List<LlmModel> executorChain, List<LlmModel> plannerChain) {
+        return resumeAfterInterruption(planId, reflectionThreshold, reflectionMaxRetries, sse,
+                executorChain, plannerChain, RunLifecycle.NOOP);
+    }
+
+    /** 带作业生命周期钩子的中断续跑：节点边界续租、响应取消/租约丢失。 */
+    public AgentStepResult resumeAfterInterruption(Long planId,
+                                                   double reflectionThreshold, int reflectionMaxRetries,
+                                                   BiConsumer<String, Map<String, Object>> sse,
+                                                   List<LlmModel> executorChain, List<LlmModel> plannerChain,
+                                                   RunLifecycle lifecycle) {
         AgentPlan plan = planLifecycleService.findPlan(planId);
         if (plan == null) throw new AgentException("Plan 不存在: " + planId);
         if (!AgentConstants.STATUS_RUNNING.equals(plan.getStatus())) {
@@ -254,7 +265,8 @@ public class AgentOrchestrator {
 
         return executeSteps(plan, remainingStepDTOs, plan.getLlmModelId(),
                 List.of(), Map.of(), false, List.of(), plan.getUserGoal(),
-                reflectionThreshold, reflectionMaxRetries, true, sse, stateEntries, executorChain, plannerChain);
+                reflectionThreshold, reflectionMaxRetries, true, sse, stateEntries, executorChain, plannerChain,
+                lifecycle);
     }
 
     // ==================== 执行控制 API ====================
@@ -338,7 +350,7 @@ public class AgentOrchestrator {
                                           BiConsumer<String, Map<String, Object>> sse) {
         return executeSteps(plan, stepDTOs, executorModelId, toolSpecs, toolRegistry,
                 hasKb, kbIds, userGoal, reflectionThreshold, reflectionMaxRetries, hitlEnabled, sse,
-                new ArrayList<>(), null, null);
+                new ArrayList<>(), null, null, RunLifecycle.NOOP);
     }
 
     private AgentStepResult executeSteps(AgentPlan plan, List<StepDTO> stepDTOs,
@@ -351,12 +363,30 @@ public class AgentOrchestrator {
                                           List<AgentStateBlockBuilder.Entry> stateEntries,
                                           List<LlmModel> executorChain,
                                           List<LlmModel> plannerChain) {
+        return executeSteps(plan, stepDTOs, executorModelId, toolSpecs, toolRegistry, hasKb, kbIds, userGoal,
+                reflectionThreshold, reflectionMaxRetries, hitlEnabled, sse, stateEntries, executorChain,
+                plannerChain, RunLifecycle.NOOP);
+    }
+
+    private AgentStepResult executeSteps(AgentPlan plan, List<StepDTO> stepDTOs,
+                                          Long executorModelId,
+                                          List<ToolSpecification> toolSpecs, Map<String, ToolConfig> toolRegistry,
+                                          boolean hasKb, List<Long> kbIds, String userGoal,
+                                          double reflectionThreshold, int reflectionMaxRetries,
+                                          boolean hitlEnabled,
+                                          BiConsumer<String, Map<String, Object>> sse,
+                                          List<AgentStateBlockBuilder.Entry> stateEntries,
+                                          List<LlmModel> executorChain,
+                                          List<LlmModel> plannerChain,
+                                          RunLifecycle lifecycle) {
         AgentStepResult lastResult = null;
         // 跨步骤（含 Reflection 重试 / re-plan / HITL resume）累积真正进入模型上下文的检索来源，
         // 供聊天侧生成与模型上下文同源的引用卡片
         List<AgentStepResult.RagSourceRecord> aggregatedSources = new ArrayList<>();
 
         for (StepDTO stepDTO : stepDTOs) {
+            lifecycle.throwIfCancelled();
+            lifecycle.heartbeat();
             if (AgentConstants.STATUS_CANCELLED.equals(plan.getStatus())) {
                 log.info("Plan 已取消，停止后续步骤");
                 break;
@@ -418,6 +448,9 @@ public class AgentOrchestrator {
                                 stepDTO.getDescription() != null ? stepDTO.getDescription() : userGoal,
                                 kbIds);
                 stepLatencyMs = System.currentTimeMillis() - stepStartMs;
+                // 模型返回后、落步骤结果前确认租约：丢失时保持 RUNNING，交给下次续跑复位重放
+                lifecycle.throwIfCancelled();
+                lifecycle.heartbeat();
                 emitModelSwitches(result, sse);
 
                 // Reflection 评估（仅对 SUCCESS 状态的结果做质量检查）
@@ -544,6 +577,8 @@ public class AgentOrchestrator {
         }
 
         // 6. Plan 完成（任务级记忆：目标 + 最终结论，任务结束后仍可被同任务/同会话召回）
+        lifecycle.throwIfCancelled();
+        lifecycle.heartbeat();
         if (AgentConstants.STATUS_RUNNING.equals(plan.getStatus())) {
             planLifecycleService.markPlanCompleteTx(plan, AgentConstants.STATUS_COMPLETED);
             eventPublisher.emit(sse, AgentEvents.PLAN_COMPLETE, Map.of(

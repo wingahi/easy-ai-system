@@ -12,6 +12,7 @@ import com.wgh.rag.agentmulti.entity.MultiAgentStep;
 import com.wgh.rag.agentmulti.runtime.MultiAgentRuntime;
 import com.wgh.rag.agentmulti.service.AgentStepCheckpointService;
 import com.wgh.rag.agentmulti.service.AgentStepCheckpointService.CheckpointSession;
+import com.wgh.rag.execution.run.RunLifecycle;
 import com.wgh.rag.agentmulti.service.AgentStepCheckpointService.StepDecision;
 import com.wgh.rag.agentmulti.service.MultiAgentService;
 import com.wgh.rag.agentmulti.support.AgentInstanceExecutor;
@@ -49,6 +50,14 @@ public class GroupChatCoordinator {
 
     public void execute(MultiAgentRun run, List<AgentInstance> agents,
                         MultiAgentContext ctx, SseEmitter emitter, CheckpointSession session) {
+        execute(run, agents, ctx, emitter, session, RunLifecycle.NOOP);
+    }
+
+    public void execute(MultiAgentRun run, List<AgentInstance> agents,
+                        MultiAgentContext ctx, SseEmitter emitter, CheckpointSession session,
+                        RunLifecycle lifecycle) {
+        lifecycle.throwIfCancelled();
+        lifecycle.heartbeat();
         MessageBus bus = new MessageBus(agents, emitter);
 
         // userProxy 先广播用户 Goal
@@ -190,6 +199,8 @@ public class GroupChatCoordinator {
             finalAnswer = extractLastAgentMessage(bus.getAllHistory());
         }
 
+        lifecycle.throwIfCancelled();
+        lifecycle.heartbeat();
         run.setOutputText(finalAnswer);
         service.finishRun(run, MultiAgentConstants.STATUS_COMPLETED, null);
         sse.send(emitter, MultiAgentEvents.MULTI_AGENT_COMPLETE,

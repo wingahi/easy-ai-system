@@ -89,6 +89,28 @@ public interface ExecutionJobMapper extends BaseMapper<ExecutionJob> {
                  @Param("owner") String owner,
                  @Param("resultJson") String resultJson);
 
+    /** 是否存在已持久化指定 runId 且仍活跃的作业（用于中断扫描排除正常执行中的 run）。 */
+    @Select("""
+            SELECT COUNT(*) FROM wgh_execution_job
+            WHERE deleted = 0
+              AND job_type = #{jobType}
+              AND status IN ('PENDING', 'LEASED', 'RUNNING')
+              AND result_json ->> 'runId' = #{runId}
+            """)
+    long countActiveByResultRunId(@Param("jobType") String jobType, @Param("runId") String runId);
+
+    /** 执行中持久化进度（如 runId）；返回 0 表示租约已丢失。 */
+    @Update("""
+            UPDATE wgh_execution_job
+            SET result_json = CAST(#{resultJson,jdbcType=VARCHAR} AS jsonb),
+                update_time = now()
+            WHERE id = #{id} AND lease_owner = #{owner}
+              AND status IN ('LEASED', 'RUNNING') AND deleted = 0
+            """)
+    int updateResult(@Param("id") Long id,
+                     @Param("owner") String owner,
+                     @Param("resultJson") String resultJson);
+
     /** 失败/死信；返回 0 表示租约已丢失。 */
     @Update("""
             UPDATE wgh_execution_job

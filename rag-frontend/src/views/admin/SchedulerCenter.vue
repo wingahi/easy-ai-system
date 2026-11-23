@@ -22,11 +22,11 @@
         <div class="label">运行中（含已领取）</div>
         <div class="value primary">{{ overview.runningCount }}</div>
       </div>
-      <div class="stat-card">
+      <div class="stat-card clickable" title="点击查看失败作业" @click="filterStatus('FAILED')">
         <div class="label">失败</div>
         <div class="value danger">{{ overview.failedCount }}</div>
       </div>
-      <div class="stat-card">
+      <div class="stat-card clickable" title="点击查看死信作业" @click="filterStatus('DEAD')">
         <div class="label">死信</div>
         <div class="value danger">{{ overview.deadCount }}</div>
       </div>
@@ -317,6 +317,12 @@ const statusTag = (status) => ({
 const laneTag = (lane) => ({ BACKGROUND: 'primary', MAINTENANCE: 'success', INTERACTIVE: 'info' }[lane] || 'info')
 
 const cancellable = (row) => CANCELLABLE_STATUS.includes(row?.status)
+
+/** 概览卡片下钻：按状态过滤并回到第一页。 */
+const filterStatus = (status) => {
+  query.status = status
+  load(1)
+}
 const shortId = (id) => (id && id.length > 14 ? `${id.slice(0, 8)}…${id.slice(-4)}` : id || '—')
 
 const formatTime = (value) => {
@@ -478,6 +484,9 @@ onBeforeUnmount(stopTimer)
   display: flex;
   gap: 10px;
   align-items: center;
+}
+.stat-card.clickable {
+  cursor: pointer;
 }
 .distribution-card {
   margin-bottom: 20px;

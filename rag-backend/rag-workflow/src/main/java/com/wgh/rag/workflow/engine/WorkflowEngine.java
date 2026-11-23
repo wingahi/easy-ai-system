@@ -1,9 +1,13 @@
 package com.wgh.rag.workflow.engine;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wgh.rag.common.log.MdcContext;
 import com.wgh.rag.common.metrics.RagMetrics;
+import com.wgh.rag.execution.error.ExecutionCancelledException;
+import com.wgh.rag.execution.error.LeaseLostException;
+import com.wgh.rag.execution.run.RunLifecycle;
 import com.wgh.rag.workflow.constant.WorkflowConstants;
 import com.wgh.rag.workflow.constant.WorkflowEvents;
 import com.wgh.rag.workflow.config.WorkflowContextProperties;
@@ -25,6 +29,7 @@ import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiConsumer;
 import java.util.stream.Collectors;
 
@@ -94,6 +99,58 @@ public class WorkflowEngine {
             return;
         }
         executeLoop(run, graph, validation, ctx, new ArrayList<>(ctx.getPendingNodeIds()), sink, 1);
+    }
+
+    /**
+     * 从实例中断点恢复（非 HITL）。
+     *
+     * <p>读取持久化在 {@code context_json} 中的 frontier/pendingIn/submitted 游标，
+     * 重放中断时尚未完成的节点；已完成节点不重复执行。中断时仍为 RUNNING 的
+     * node_run 标记为 FAILED（实例中断），保留可定位的失败记录。
+     */
+    public void resumeInterrupted(WorkflowRun run, WorkflowGraph graph,
+                                  GraphValidator.GraphValidationResult validation,
+                                  RunContext ctx,
+                                  BiConsumer<String, Map<String, Object>> sink,
+                                  RunLifecycle lifecycle) {
+        List<String> initial = new ArrayList<>();
+        if (ctx.getResumeFrontier() != null) {
+            initial.addAll(ctx.getResumeFrontier());
+        }
+        if (ctx.getResumeSubmitted() != null) {
+            for (String nodeId : ctx.getResumeSubmitted()) {
+                if (!initial.contains(nodeId)) {
+                    initial.add(nodeId);
+                }
+            }
+        }
+        if (initial.isEmpty()) {
+            finishRun(run, WorkflowConstants.STATUS_FAILED, "续跑失败：没有可恢复的执行游标", sink);
+            sink.accept(WorkflowEvents.WORKFLOW_FAILED, Map.of(
+                    "runId", run.getId(), "error", "续跑失败：没有可恢复的执行游标"));
+            return;
+        }
+
+        List<WorkflowNodeRun> runningNodes = nodeRunMapper.selectList(new LambdaQueryWrapper<WorkflowNodeRun>()
+                .eq(WorkflowNodeRun::getRunId, run.getId())
+                .eq(WorkflowNodeRun::getStatus, WorkflowConstants.STATUS_RUNNING));
+        for (WorkflowNodeRun nodeRun : runningNodes) {
+            nodeRun.setStatus(WorkflowConstants.STATUS_FAILED);
+            nodeRun.setEndTime(LocalDateTime.now());
+            nodeRun.setErrorMessage("实例中断，续跑时重放该节点");
+            nodeRunMapper.updateById(nodeRun);
+        }
+
+        run.setStatus(WorkflowConstants.STATUS_RUNNING);
+        run.setErrorMessage(null);
+        run.setFinishTime(null);
+        run.setUpdateTime(LocalDateTime.now());
+        runMapper.updateById(run);
+
+        Map<String, Integer> pendingIn = ctx.getResumePendingIn() == null
+                ? null : new HashMap<>(ctx.getResumePendingIn());
+        executeLoop(run, graph, validation, ctx, initial, sink, 1, pendingIn,
+                lifecycle == null ? RunLifecycle.NOOP : lifecycle);
     }
 
     // ==================== 单步调试 ====================
@@ -443,6 +500,15 @@ public class WorkflowEngine {
                              GraphValidator.GraphValidationResult validation,
                              RunContext ctx, List<String> initialFrontier,
                              BiConsumer<String, Map<String, Object>> sink, int nestingDepth) {
+        executeLoop(run, graph, validation, ctx, initialFrontier, sink, nestingDepth,
+                null, RunLifecycle.NOOP);
+    }
+
+    private void executeLoop(WorkflowRun run, WorkflowGraph graph,
+                             GraphValidator.GraphValidationResult validation,
+                             RunContext ctx, List<String> initialFrontier,
+                             BiConsumer<String, Map<String, Object>> sink, int nestingDepth,
+                             Map<String, Integer> resumePendingIn, RunLifecycle lifecycle) {
         Map<String, GraphNode> nodeMap = graph.getNodes().stream()
                 .collect(Collectors.toMap(GraphNode::getId, n -> n, (a, b) -> a));
         Map<String, List<GraphEdge>> outEdges = new HashMap<>();
@@ -450,8 +516,10 @@ public class WorkflowEngine {
             outEdges.computeIfAbsent(edge.getSource(), k -> new ArrayList<>()).add(edge);
         }
 
-        // 初始化入边等待计数器（使用 GraphValidator 产出的 parallelInDegree）
-        Map<String, Integer> pendingIn = new ConcurrentHashMap<>(validation.parallelInDegree);
+        // 初始化入边等待计数器：中断续跑优先使用持久化游标，HITL/首次执行使用图校验结果
+        Map<String, Integer> pendingIn = new ConcurrentHashMap<>(
+                resumePendingIn == null || resumePendingIn.isEmpty()
+                        ? validation.parallelInDegree : resumePendingIn);
         // resume 时 pendingNodeIds 可能有多个，强制这些节点 pendingIn=0 让它们入队
         for (String id : initialFrontier) {
             pendingIn.put(id, 0);
@@ -460,10 +528,18 @@ public class WorkflowEngine {
         // 共享状态
         Deque<String> frontier = new ArrayDeque<>(initialFrontier);
         AtomicInteger guard = new AtomicInteger(0);
-        AtomicInteger executed = new AtomicInteger(0);
+        // 续跑/HITL 恢复时沿用已执行节点数，避免执行次数上限被重置
+        AtomicInteger executed = new AtomicInteger(
+                ctx.getNodeOutputs() == null ? 0 : ctx.getNodeOutputs().size());
         CountDownLatch latch = new CountDownLatch(1);
         // 已提交到执行队列的节点（防重复提交）
         Set<String> submitted = ConcurrentHashMap.newKeySet();
+        // 租约丢失/取消等致命信号：由 worker 记录，调度循环停止并最终上抛，不落业务终态
+        AtomicReference<RuntimeException> fatal = new AtomicReference<>();
+
+        // 先落一次游标：实例在第一个节点完成前崩溃也能从 START/当前 frontier 续跑
+        snapshotCursor(ctx, frontier, pendingIn, submitted);
+        persistContext(run, ctx, WorkflowConstants.STATUS_RUNNING);
 
         ThreadPoolExecutor executor = new ThreadPoolExecutor(
                 WORKER_COUNT, WORKER_COUNT, 60L, TimeUnit.SECONDS,
@@ -478,6 +554,9 @@ public class WorkflowEngine {
             Runnable dispatcher = () -> {
                 try {
                     while (true) {
+                        if (fatal.get() != null) {
+                            return;
+                        }
                         if (System.nanoTime() > deadlineNanos) {
                             log.warn("工作流调度超时 runId={}", run.getId());
                             return;
@@ -489,18 +568,22 @@ public class WorkflowEngine {
                                 return;
                             }
                             nodeId = frontier.pollFirst();
+                            if (nodeId != null) {
+                                int remain = pendingIn.getOrDefault(nodeId, 0);
+                                if (remain > 0) {
+                                    // 还有入边未就绪，放回队列尾部等待（另一个线程可能已在处理入边）
+                                    frontier.offerLast(nodeId);
+                                    nodeId = null;
+                                } else {
+                                    // 与 frontier 快照保持原子：节点要么在 frontier，要么在 submitted
+                                    submitted.add(nodeId);
+                                }
+                            }
                         }
                         if (nodeId == null) {
                             Thread.sleep(20);
                             continue;
                         }
-                        int remain = pendingIn.getOrDefault(nodeId, 0);
-                        if (remain > 0) {
-                            // 还有入边未就绪，放回队列尾部等待（另一个线程可能已在处理入边）
-                            synchronized (frontier) { frontier.offerLast(nodeId); }
-                            continue;
-                        }
-                        if (!submitted.add(nodeId)) continue; // 已提交过
 
                         if (guard.incrementAndGet() > MAX_TOTAL_NODE_EXECUTIONS) {
                             finishRun(run, WorkflowConstants.STATUS_FAILED, "超过最大节点执行次数 " + MAX_TOTAL_NODE_EXECUTIONS, sink);
@@ -510,9 +593,10 @@ public class WorkflowEngine {
                         }
 
                         // worker 执行节点
-                        executor.submit(MdcContext.wrap(() -> executeOneNode(run, graph, nodeMap, outEdges, nodeId,
+                        final String dispatchNodeId = nodeId;
+                        executor.submit(MdcContext.wrap(() -> executeOneNode(run, graph, nodeMap, outEdges, dispatchNodeId,
                                 ctx, sink, pendingIn, frontier, submitted, guard, executed,
-                                latch, nestingDepth, validation)));
+                                latch, nestingDepth, validation, lifecycle, fatal)));
                     }
                 } catch (Throwable t) {
                     log.error("工作流调度线程异常", t);
@@ -523,6 +607,10 @@ public class WorkflowEngine {
             executor.shutdownNow();
             latch.countDown();
         }
+        RuntimeException stop = fatal.get();
+        if (stop != null) {
+            throw stop;
+        }
     }
 
     private void executeOneNode(WorkflowRun run, WorkflowGraph graph,
@@ -532,8 +620,12 @@ public class WorkflowEngine {
                                 Map<String, Integer> pendingIn, Deque<String> frontier,
                                 Set<String> submitted, AtomicInteger guard, AtomicInteger executed,
                                 CountDownLatch latch, int nestingDepth,
-                                GraphValidator.GraphValidationResult validation) {
+                                GraphValidator.GraphValidationResult validation,
+                                RunLifecycle lifecycle, AtomicReference<RuntimeException> fatal) {
         try {
+            // 作业续跑：节点边界续租并响应取消；租约丢失时直接退出，不写业务终态
+            lifecycle.throwIfCancelled();
+            lifecycle.heartbeat();
             // 周期检查取消状态
             WorkflowRun latest = runMapper.selectById(run.getId());
             if (latest == null || WorkflowConstants.STATUS_CANCELLED.equals(latest.getStatus())) {
@@ -565,12 +657,14 @@ public class WorkflowEngine {
                 ctx.getNodeOutputs().put(nodeId, output);
 
                 appendNodeRun(run, node, iteration, output, 0L, "SUCCESS", null);
-                persistContext(run, ctx, WorkflowConstants.STATUS_RUNNING);
                 executed.incrementAndGet();
                 sink.accept(WorkflowEvents.NODE_OUTPUT, event(run, node, output, 0L, iteration));
 
                 activateSuccessors(node, outEdges, shouldBreak ? "done" : "loop",
                         pendingIn, frontier, submitted);
+                submitted.remove(nodeId);
+                snapshotCursor(ctx, frontier, pendingIn, submitted);
+                persistContext(run, ctx, WorkflowConstants.STATUS_RUNNING);
                 return;
             }
 
@@ -617,8 +711,10 @@ public class WorkflowEngine {
                     Map<String, Object> failed = new LinkedHashMap<>();
                     failed.put("error", e.getMessage());
                     ctx.getNodeOutputs().put(node.getId(), failed);
-                    persistContext(run, ctx, WorkflowConstants.STATUS_RUNNING);
                     activateAllSuccessors(node, outEdges, pendingIn, frontier, submitted);
+                    submitted.remove(nodeId);
+                    snapshotCursor(ctx, frontier, pendingIn, submitted);
+                    persistContext(run, ctx, WorkflowConstants.STATUS_RUNNING);
                     return;
                 }
                 failRun(run, node.getId(), "节点「" + nameOf(node) + "」执行失败：" + e.getMessage(), sink);
@@ -626,6 +722,9 @@ public class WorkflowEngine {
             }
 
             long duration = System.currentTimeMillis() - t0;
+            // 节点体已返回：写入 SUCCESS 前再确认租约与取消，避免接管实例的双写
+            lifecycle.throwIfCancelled();
+            lifecycle.heartbeat();
             // LOOP 首次进入：记录 handle/shouldBreak，供崩溃恢复时判定实际走向
             if (WorkflowConstants.NODE_LOOP.equals(node.getType())) {
                 boolean breakNow = NodeConfigSupport.intConfig(node, "maxIterations", 3) <= 0;
@@ -641,7 +740,6 @@ public class WorkflowEngine {
             nr.setEndTime(LocalDateTime.now());
             nr.setDurationMs(duration);
             nodeRunMapper.updateById(nr);
-            persistContext(run, ctx, "RUNNING");
             executed.incrementAndGet();
             run.setExecutedNodes(executed.get());
 
@@ -669,6 +767,11 @@ public class WorkflowEngine {
             } else {
                 activateAllSuccessors(node, outEdges, pendingIn, frontier, submitted);
             }
+            submitted.remove(nodeId);
+            snapshotCursor(ctx, frontier, pendingIn, submitted);
+            persistContext(run, ctx, WorkflowConstants.STATUS_RUNNING);
+        } catch (LeaseLostException | ExecutionCancelledException stop) {
+            fatal.compareAndSet(null, stop);
         } catch (PauseSignal pause) {
             // HITL：向上抛出给 dispatcher，外层 catch 后完成 emitter
             throw pause;
@@ -804,6 +907,16 @@ public class WorkflowEngine {
         nr.setEndTime(LocalDateTime.now());
         nr.setDurationMs(duration);
         nodeRunMapper.insert(nr);
+    }
+
+    /** 快照当前调度游标，供实例中断后从最后一个完成节点继续。 */
+    private void snapshotCursor(RunContext ctx, Deque<String> frontier,
+                                Map<String, Integer> pendingIn, Set<String> submitted) {
+        synchronized (frontier) {
+            ctx.setResumeFrontier(new ArrayList<>(frontier));
+        }
+        ctx.setResumePendingIn(new HashMap<>(pendingIn));
+        ctx.setResumeSubmitted(new ArrayList<>(submitted));
     }
 
     private void persistContext(WorkflowRun run, RunContext ctx, String status) {

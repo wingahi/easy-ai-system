@@ -68,13 +68,6 @@
             <span v-else class="hint">—</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="120" fixed="right">
-          <template #default="{ row }">
-            <el-button link type="warning" :loading="resumingKey === rowKey(row)"
-                       :disabled="!!resumingKey && resumingKey !== rowKey(row)"
-                       @click="resume(row)">继续执行</el-button>
-          </template>
-        </el-table-column>
 
         <template #empty>
           <el-empty :description="loadError ? '任务接口暂不可用' : '暂无运行中任务'" :image-size="80" />
@@ -91,9 +84,8 @@
 
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
-import { adminRunningTasks, adminResumeTask } from '../../api'
+import { adminRunningTasks } from '../../api'
 
 const STALE_MINUTES = 60
 
@@ -132,7 +124,6 @@ const size = ref(20)
 const loading = ref(false)
 const loadError = ref('')
 const lastRefreshAt = ref(null)
-const resumingKey = ref('')
 
 const query = reactive({ type: '', status: '' })
 
@@ -159,7 +150,6 @@ const statusTag = (status) => ({
 
 const isStale = (row) => Number(row.stayMinutes) >= STALE_MINUTES
 const rowClassName = ({ row }) => (isStale(row) ? 'row-stale' : '')
-const rowKey = (row) => `${row.taskType}:${row.taskId}`
 
 const formatTime = (value) => {
   if (!value) return '—'
@@ -201,39 +191,6 @@ const load = async (p = page.value) => {
   } finally {
     loading.value = false
     lastRefreshAt.value = new Date()
-  }
-}
-
-const resume = async (row) => {
-  if (resumingKey.value) return
-  const from = row.currentNode
-    ? `「${row.currentNode}」`
-    : (row.lastStepStatus ? `最近步骤（${row.lastStepStatus}）` : '最近已完成位置')
-  try {
-    await ElMessageBox.confirm(
-      `将从 ${from} 继续执行任务「${row.title || row.taskId}」，确认继续？`,
-      '继续执行确认',
-      { type: 'warning', confirmButtonText: '继续执行', cancelButtonText: '取消' }
-    )
-  } catch {
-    return // 用户取消
-  }
-
-  const key = rowKey(row)
-  resumingKey.value = key
-  try {
-    const res = await adminResumeTask({ taskType: row.taskType, taskId: row.taskId })
-    const data = res?.data || {}
-    if (data.success === false) {
-      ElMessage.error(data.message || '继续执行失败')
-      return
-    }
-    ElMessage.success(data.message || '已触发继续执行')
-    await load(page.value)
-  } catch (e) {
-    ElMessage.error(e?.response?.data?.message || e?.message || '继续执行失败')
-  } finally {
-    resumingKey.value = ''
   }
 }
 

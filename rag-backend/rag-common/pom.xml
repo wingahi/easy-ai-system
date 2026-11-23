@@ -31,6 +31,11 @@
             <groupId>io.micrometer</groupId>
             <artifactId>micrometer-core</artifactId>
         </dependency>
+        <!-- 上下文传播（ContextPropagatingTaskDecorator 依赖；未启用 tracing 时为轻量 no-op） -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>context-propagation</artifactId>
+        </dependency>
         <!-- Spring Security (JWT 鉴权) -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

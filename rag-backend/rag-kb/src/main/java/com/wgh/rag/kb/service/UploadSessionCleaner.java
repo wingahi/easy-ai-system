@@ -9,6 +9,7 @@ import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 import org.springframework.stereotype.Component;
 
@@ -35,12 +36,20 @@ public class UploadSessionCleaner {
     private final FileStorageService fileStorageService;
     private final UploadCleanupProperties properties;
 
+    /** 调度中心开启时由 {@code KB_UPLOAD_CLEANUP} 周期作业接管，本地定时器不启动。 */
+    @Value("${wgh.scheduler.enabled:true}")
+    private boolean schedulerEnabled = true;
+
     private ThreadPoolTaskScheduler scheduler;
 
     @PostConstruct
     void start() {
         if (!properties.isEnabled()) {
             log.info("分片上传会话清理未启用（wgh.upload.cleanup.enabled=false）");
+            return;
+        }
+        if (schedulerEnabled) {
+            log.info("分片上传会话清理已交由调度中心（KB_UPLOAD_CLEANUP），本地定时器不启动");
             return;
         }
         scheduler = new ThreadPoolTaskScheduler();

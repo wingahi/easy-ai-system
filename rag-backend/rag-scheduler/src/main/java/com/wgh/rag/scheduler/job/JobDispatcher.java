@@ -1,5 +1,6 @@
 package com.wgh.rag.scheduler.job;
 
+import com.wgh.rag.common.log.MdcContext;
 import com.wgh.rag.execution.job.RecurringJob;
 import com.wgh.rag.execution.model.ExecutionLane;
 import com.wgh.rag.execution.model.ExecutionRequest;
@@ -181,7 +182,13 @@ public class JobDispatcher {
             try {
                 laneExecutors.executor(lane).execute(() -> {
                     try {
-                        jobRunner.run(job);
+                        // 恢复提交时的 traceId，执行日志可与提交请求按 trace 关联（跨实例同样有效）
+                        String previousTraceId = MdcContext.putTraceId(job.getTraceId());
+                        try {
+                            jobRunner.run(job);
+                        } finally {
+                            MdcContext.restoreTraceId(previousTraceId);
+                        }
                     } finally {
                         laneExecutors.release(lane);
                     }

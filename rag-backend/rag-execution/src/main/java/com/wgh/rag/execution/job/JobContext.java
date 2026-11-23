@@ -4,6 +4,8 @@ import com.wgh.rag.execution.event.ExecutionEventSink;
 import com.wgh.rag.execution.model.ExecutionRequest;
 import com.wgh.rag.execution.model.JobPayload;
 
+import java.util.Map;
+
 /**
  * 单次执行的运行上下文。
  *
@@ -57,4 +59,28 @@ public interface JobContext {
      * 交互式执行不持有租约，调用应为无操作。
      */
     void heartbeat();
+
+    /**
+     * 已持久化的执行进度（来自 {@code wgh_execution_job.result_json}）。
+     *
+     * <p>用于中断重试时定位原业务 run，例如 {@code WF_RUN} 在首次执行后写入
+     * {@code runId}，租约回收后的重试据此续跑而不是新建 run。
+     *
+     * @return 进度快照，未写入时为空 Map
+     */
+    default Map<String, Object> savedResult() {
+        return Map.of();
+    }
+
+    /**
+     * 持久化执行进度。
+     *
+     * <p>只在当前实例仍持有租约时写入；写入失败（租约丢失）抛出
+     * {@link com.wgh.rag.execution.error.LeaseLostException}。
+     *
+     * @param result 进度，需可 JSON 序列化
+     */
+    default void saveResult(Map<String, Object> result) {
+        // 兼容仅实现 execute 的测试/轻量 handler
+    }
 }

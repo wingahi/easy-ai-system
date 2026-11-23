@@ -94,6 +94,26 @@ public class StorageOrphanCleanupService {
             int deleteFailed = 0;
             int skippedYoung = 0;
             int logLimit = Math.max(0, properties.getMaxReportEntries());
+
+            // 「记录存在但存储对象缺失」：按知识文件逐条给出可定位的明细（受报告上限约束）
+            List<StorageOrphanReport.MissingReference> missingDetails = new ArrayList<>();
+            Set<String> seenMissingKeys = new HashSet<>();
+            for (ReferenceCandidate candidate : references.fileCandidates()) {
+                if (!listed.contains(candidate.storageKey()) && seenMissingKeys.add(candidate.storageKey())) {
+                    missingDetails.add(new StorageOrphanReport.MissingReference(
+                            candidate.fileId(), candidate.fileName(), candidate.storageKey()));
+                }
+            }
+            int missingLogLimit = Math.max(1, logLimit);
+            for (int i = 0; i < missingDetails.size() && i < missingLogLimit; i++) {
+                StorageOrphanReport.MissingReference detail = missingDetails.get(i);
+                log.warn("知识文件记录存在但存储对象缺失: fileId={}, fileName={}, key={}",
+                        detail.fileId(), detail.fileName(), detail.storageKey());
+            }
+            if (missingDetails.size() > missingLogLimit) {
+                log.warn("另有 {} 个知识文件缺失存储对象未逐条打印，详见指标 wgh.storage.orphans(missing)",
+                        missingDetails.size() - missingLogLimit);
+            }
             if (delete) {
                 long now = System.currentTimeMillis();
                 long minAgeMillis = Math.max(0, properties.getMinAgeMinutes()) * 60_000L;
@@ -132,6 +152,7 @@ public class StorageOrphanCleanupService {
                     .toList();
 
             metrics.recordStorageOrphans("detected", orphans.size());
+            metrics.recordStorageOrphans("missing", missing);
             if (delete) {
                 metrics.recordStorageOrphans("deleted", deleted);
                 metrics.recordStorageOrphans("delete_failed", deleteFailed);
@@ -144,7 +165,8 @@ public class StorageOrphanCleanupService {
                     orphanBytes, deleted, deleteFailed, skippedYoung, missing, delete, duration);
 
             return new StorageOrphanReport(storageProperties.getType(), objects.size(), references.all().size(),
-                    orphans.size(), orphanBytes, deleted, deleteFailed, skippedYoung, missing, duration, sample);
+                    orphans.size(), orphanBytes, deleted, deleteFailed, skippedYoung, missing, duration, sample,
+                    missingDetails.stream().limit(missingLogLimit).toList());
         } finally {
             running.set(false);
         }
@@ -168,12 +190,13 @@ public class StorageOrphanCleanupService {
     private ReferenceKeys collectReferencedKeys() {
         Set<String> all = new HashSet<>();
         Set<String> canonical = new HashSet<>();
+        List<ReferenceCandidate> fileCandidates = new ArrayList<>();
 
-        List<Object> paths = fileMapper.selectObjs(new QueryWrapper<KnowledgeFile>()
-                .select("file_path")
+        List<KnowledgeFile> files = fileMapper.selectList(new QueryWrapper<KnowledgeFile>()
+                .select("id", "file_name", "file_path")
                 .isNotNull("file_path"));
-        for (Object raw : paths) {
-            String path = raw == null ? null : String.valueOf(raw);
+        for (KnowledgeFile file : files) {
+            String path = file == null ? null : file.getFilePath();
             if (path == null || path.isBlank()) {
                 continue;
             }
@@ -182,6 +205,7 @@ public class StorageOrphanCleanupService {
             if (key != null && !key.isBlank()) {
                 all.add(key);
                 canonical.add(key);
+                fileCandidates.add(new ReferenceCandidate(file.getId(), file.getFileName(), key));
             }
         }
 
@@ -197,9 +221,14 @@ public class StorageOrphanCleanupService {
                 canonical.add(key);
             }
         }
-        return new ReferenceKeys(all, canonical);
+        return new ReferenceKeys(all, canonical, fileCandidates);
     }
 
-    private record ReferenceKeys(Set<String> all, Set<String> canonical) {
+    private record ReferenceKeys(Set<String> all, Set<String> canonical,
+                                 List<ReferenceCandidate> fileCandidates) {
+    }
+
+    /** 知识文件引用，用于在扫描结果中定位“记录存在但存储对象缺失”。 */
+    private record ReferenceCandidate(Long fileId, String fileName, String storageKey) {
     }
 }

@@ -11,6 +11,7 @@ import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -55,6 +56,11 @@ public class AgentMemoryCleaner {
 
     private final AtomicBoolean running = new AtomicBoolean(false);
     private volatile boolean advisoryLockSupported = true;
+
+    /** 调度中心开启时由 {@code KB_AGENT_MEMORY_CLEANUP} 周期作业接管，本地定时器不启动。 */
+    @Value("${wgh.scheduler.enabled:true}")
+    private boolean schedulerEnabled = true;
+
     private ThreadPoolTaskScheduler scheduler;
 
     @PostConstruct
@@ -62,6 +68,10 @@ public class AgentMemoryCleaner {
         RagProperties.Memory cfg = memoryConfig();
         if (!Boolean.TRUE.equals(cfg.getCleanupEnabled())) {
             log.info("长期记忆清理未启用（wgh.rag.memory.cleanup-enabled=false）");
+            return;
+        }
+        if (schedulerEnabled) {
+            log.info("长期记忆清理已交由调度中心（KB_AGENT_MEMORY_CLEANUP），本地定时器不启动");
             return;
         }
         int interval = Math.max(5, cfg.getCleanupIntervalMinutes() != null

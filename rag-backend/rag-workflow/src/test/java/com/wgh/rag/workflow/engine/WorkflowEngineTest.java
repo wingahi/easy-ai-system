@@ -441,6 +441,41 @@ class WorkflowEngineTest {
         assertThat(last.getErrorMessage()).contains("客户端断开");
     }
 
+    /** 中断续跑：只重放游标中的未完成节点，并把中断时 RUNNING 的节点标记为失败 */
+    @Test
+    void resumeInterrupted_replaysCursorAndMarksRunningNodeFailed() {
+        GraphNode var = node("v", "VARIABLE", Map.of("assignments",
+                List.of(Map.of("name", "x", "value", "{{input}}-续跑"))));
+        GraphNode end = node("e", "END", Map.of("output", "结果：{{vars.x}}"));
+        WorkflowGraph graph = graph(
+                List.of(node("s", "START"), var, end),
+                List.of(edge("s", "v"), edge("v", "e")));
+
+        WorkflowRun run = newRun();
+        RunContext ctx = new RunContext();
+        ctx.getVars().put("input", "你好");
+        ctx.getNodeOutputs().put("s", Map.of("output", "你好"));
+        ctx.setResumeFrontier(List.of("v"));
+        ctx.setResumePendingIn(Map.of("v", 0, "e", 1));
+        ctx.setResumeSubmitted(List.of());
+
+        WorkflowNodeRun interrupted = new WorkflowNodeRun();
+        interrupted.setId(7L);
+        interrupted.setRunId(run.getId());
+        interrupted.setNodeId("v");
+        interrupted.setStatus("RUNNING");
+        when(nodeRunMapper.selectList(any())).thenReturn(List.of(interrupted));
+
+        engine.resumeInterrupted(run, graph, validate(graph), ctx, this::sink,
+                com.wgh.rag.execution.run.RunLifecycle.NOOP);
+
+        assertThat(nodeStartIds()).doesNotContain("s");
+        assertThat(nodeStartIds()).contains("v", "e");
+        assertThat(lastPayload("workflow_complete").get("output")).isEqualTo("结果：你好-续跑");
+        assertThat(interrupted.getStatus()).isEqualTo("FAILED");
+        assertThat(interrupted.getErrorMessage()).contains("实例中断");
+    }
+
     // ==================== 测试基建 ====================
 
     private void sink(String event, Map<String, Object> payload) {

@@ -18,6 +18,7 @@ import com.wgh.rag.agentmulti.entity.MultiAgentRun;
 import com.wgh.rag.agentmulti.entity.MultiAgentStep;
 import com.wgh.rag.agentmulti.service.AgentStepCheckpointService;
 import com.wgh.rag.agentmulti.service.AgentStepCheckpointService.CheckpointSession;
+import com.wgh.rag.execution.run.RunLifecycle;
 import com.wgh.rag.agentmulti.service.AgentStepCheckpointService.StepDecision;
 import com.wgh.rag.agentmulti.service.MultiAgentService;
 import com.wgh.rag.agentmulti.support.AgentInstanceExecutor;
@@ -68,6 +69,14 @@ public class CrewCoordinator {
 
     public void execute(MultiAgentRun run, List<AgentInstance> agents,
                         MultiAgentContext ctx, SseEmitter emitter, CheckpointSession session) {
+        execute(run, agents, ctx, emitter, session, RunLifecycle.NOOP);
+    }
+
+    public void execute(MultiAgentRun run, List<AgentInstance> agents,
+                        MultiAgentContext ctx, SseEmitter emitter, CheckpointSession session,
+                        RunLifecycle lifecycle) {
+        lifecycle.throwIfCancelled();
+        lifecycle.heartbeat();
         String mode = run.getExecutionMode();
         CrewConfig crewCfg = parseCrewConfig(run.getCrewConfigJson());
         DAGGraph graph = crewCfg.graph;
@@ -85,7 +94,9 @@ public class CrewCoordinator {
             default -> throw new IllegalStateException("未知 crew mode: " + mode);
         }
 
-        // Collector / 汇总 —— 最后一个节点
+        // Collector / 汇总 —— 最后一个节点；写终态前再确认租约
+        lifecycle.throwIfCancelled();
+        lifecycle.heartbeat();
         collectAndFinish(run, graph, ctx, emitter);
     }
 

@@ -58,4 +58,29 @@ class MdcContextTest {
         assertTrue(MdcContext.copy().containsKey("requestId"));
         MDC.clear();
     }
+
+    @Test
+    @DisplayName("MDC-05 临时 traceId 可读取并在还原后不残留")
+    void traceIdCanBeSetAndRestored() {
+        MDC.clear();
+
+        String previous = MdcContext.putTraceId("trace-01");
+        assertEquals("trace-01", MdcContext.currentTraceId());
+
+        MdcContext.restoreTraceId(previous);
+        assertNull(MdcContext.currentTraceId());
+    }
+
+    @Test
+    @DisplayName("MDC-06 空 traceId 会移除已有值，还原后恢复原值")
+    void blankTraceIdRemovesValue() {
+        MDC.put(MdcContext.TRACE_ID_KEY, "trace-parent");
+
+        String previous = MdcContext.putTraceId(null);
+        assertNull(MdcContext.currentTraceId());
+
+        MdcContext.restoreTraceId(previous);
+        assertEquals("trace-parent", MdcContext.currentTraceId());
+        MDC.clear();
+    }
 }

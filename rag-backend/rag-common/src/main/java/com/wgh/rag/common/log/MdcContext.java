@@ -15,7 +15,40 @@ import java.util.concurrent.Executor;
  */
 public final class MdcContext {
 
+    /** 链路追踪标识在 MDC 中的键（Micrometer Tracing / Brave 使用同名键）。 */
+    public static final String TRACE_ID_KEY = "traceId";
+
     private MdcContext() {
+    }
+
+    /** 当前线程的 traceId；未处于链路中时返回 {@code null}。 */
+    public static String currentTraceId() {
+        return MDC.get(TRACE_ID_KEY);
+    }
+
+    /**
+     * 临时设置 traceId。
+     *
+     * @param traceId 目标 traceId；为空时移除
+     * @return 设置前的 traceId，供调用方在 {@code finally} 中还原
+     */
+    public static String putTraceId(String traceId) {
+        String previous = MDC.get(TRACE_ID_KEY);
+        if (traceId == null || traceId.isBlank()) {
+            MDC.remove(TRACE_ID_KEY);
+        } else {
+            MDC.put(TRACE_ID_KEY, traceId);
+        }
+        return previous;
+    }
+
+    /** 还原 {@link #putTraceId(String)} 之前的 traceId。 */
+    public static void restoreTraceId(String previous) {
+        if (previous == null) {
+            MDC.remove(TRACE_ID_KEY);
+        } else {
+            MDC.put(TRACE_ID_KEY, previous);
+        }
     }
 
     /** 拷贝当前线程的 MDC 快照，供子线程恢复。 */

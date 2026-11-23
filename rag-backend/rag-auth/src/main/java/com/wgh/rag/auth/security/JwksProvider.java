@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
@@ -33,9 +34,12 @@ import java.util.Map;
  * 只使用非对称公钥验签（RSA / EC），不含任何本地密钥或对称密钥。
  * 缓存策略：
  * <ul>
- *   <li>本地缓存 JWKS（默认 TTL 300s）；</li>
- *   <li>未知 kid 触发一次刷新，刷新有最小间隔限制（默认 30s），避免被伪造 kid 打爆；</li>
- *   <li>网络失败时沿用旧缓存；启动阶段不拉取，IdP 不可达不会阻断应用启动。</li>
+ *   <li>本地缓存 JWKS（默认 TTL 300s），作为第一层；</li>
+ *   <li>多实例共享缓存（默认启用，复用 {@code wgh.rag.redis}）：本地未命中/过期时先读共享缓存，
+ *       避免每个实例重复回源 IdP；回源成功后把原始 JWKS 写回共享缓存；</li>
+ *   <li>未知 kid 触发刷新，刷新有最小间隔限制（默认 30s），避免被伪造 kid 打爆；
+ *       刷新前先重读共享缓存，其它实例完成轮换后可直接复用；</li>
+ *   <li>网络或共享缓存失败时沿用旧缓存；启动阶段不拉取，IdP 不可达不会阻断应用启动。</li>
  * </ul>
  */
 @Slf4j
@@ -52,11 +56,22 @@ public class JwksProvider {
 
     private final Object refreshLock = new Object();
 
+    /** 跨实例共享缓存；未注入时为空实现，行为退化为纯本地缓存。 */
+    private JwksSharedCache sharedCache = JwksSharedCache.NOOP;
+
     /** kid → 公钥（原子替换，读路径无锁） */
     private volatile Map<String, PublicKey> keyCache = Map.of();
     private volatile long lastSuccessNanos = Long.MIN_VALUE;
     private volatile long lastAttemptNanos = 0L;
     private volatile String resolvedJwksUri;
+    /** 当前 keyCache 对应的原始 JWKS 文档，用于判断共享缓存是否已变化。 */
+    private volatile String loadedBody;
+
+    /** 由 Spring 在容器内注入；单元测试直接构造时使用 {@link JwksSharedCache#NOOP}。 */
+    @Autowired(required = false)
+    public void setSharedCache(JwksSharedCache sharedCache) {
+        this.sharedCache = sharedCache == null ? JwksSharedCache.NOOP : sharedCache;
+    }
 
     /**
      * 按 kid / 算法获取验签公钥。
@@ -66,7 +81,10 @@ public class JwksProvider {
     public PublicKey getVerificationKey(String kid, String alg) {
         long now = System.nanoTime();
         if (keyCache.isEmpty() || isTtlExpired(now)) {
-            refresh(now);
+            // 先看其它实例是否已把最新 JWKS 写入共享缓存，避免每个实例各自回源
+            if (!loadFromSharedCache()) {
+                refresh(now);
+            }
         }
 
         PublicKey key = findByKidOrAlgorithm(kid, alg);
@@ -74,7 +92,13 @@ public class JwksProvider {
             return key;
         }
         if (StringUtils.hasText(kid)) {
-            // 未知 kid：限频刷新一次后重试
+            // 未知 kid：先重读共享缓存（可能刚完成轮换），再限频回源后重试
+            if (loadFromSharedCache()) {
+                key = findByKidOrAlgorithm(kid, alg);
+                if (key != null) {
+                    return key;
+                }
+            }
             refresh(now);
             return findByKidOrAlgorithm(kid, alg);
         }
@@ -97,10 +121,12 @@ public class JwksProvider {
             }
             lastAttemptNanos = now;
             try {
-                Map<String, PublicKey> fetched = fetchJwks();
-                if (!fetched.isEmpty()) {
-                    keyCache = fetched;
+                JwksDocument document = fetchJwks();
+                if (!document.keys().isEmpty()) {
+                    keyCache = document.keys();
+                    loadedBody = document.body();
                     lastSuccessNanos = now;
+                    writeSharedCache(document);
                 } else {
                     log.warn("JWKS 未包含可用的非对称验签公钥，沿用旧缓存");
                 }
@@ -108,6 +134,71 @@ public class JwksProvider {
                 // IdP 不可达 / 响应异常：不抛到请求线程，沿用旧缓存；无旧缓存时调用方按 401 处理
                 log.warn("JWKS 刷新失败，沿用旧缓存：{}", e.getMessage());
             }
+        }
+    }
+
+    /**
+     * 从共享缓存加载 JWKS。
+     *
+     * @return {@code true} 表示加载了与本地不同的有效 JWKS，调用方无需回源
+     */
+    private boolean loadFromSharedCache() {
+        if (!sharedCache.enabled()) {
+            return false;
+        }
+        String jwksUri = resolveJwksUriQuietly();
+        if (!StringUtils.hasText(jwksUri)) {
+            return false;
+        }
+        String body;
+        try {
+            body = sharedCache.get(jwksUri);
+        } catch (RuntimeException e) {
+            // 共享缓存故障不能影响认证，直接回退回源
+            log.debug("读取共享 JWKS 缓存失败，回退回源：{}", e.getMessage());
+            return false;
+        }
+        if (!StringUtils.hasText(body) || body.equals(loadedBody)) {
+            return false;
+        }
+        try {
+            Map<String, PublicKey> parsed = parseJwks(body);
+            if (parsed.isEmpty()) {
+                return false;
+            }
+            keyCache = parsed;
+            loadedBody = body;
+            lastSuccessNanos = System.nanoTime();
+            log.debug("已从共享缓存加载 JWKS，跳过回源");
+            return true;
+        } catch (Exception e) {
+            log.debug("共享缓存 JWKS 解析失败，忽略：{}", e.getMessage());
+            return false;
+        }
+    }
+
+    private void writeSharedCache(JwksDocument document) {
+        long ttlSeconds = properties.getJwksCacheTtlSeconds();
+        if (ttlSeconds <= 0) {
+            return;
+        }
+        String jwksUri = StringUtils.hasText(resolvedJwksUri) ? resolvedJwksUri : properties.getJwksUri();
+        if (!StringUtils.hasText(jwksUri)) {
+            return;
+        }
+        try {
+            sharedCache.put(jwksUri, document.body(), Duration.ofSeconds(ttlSeconds));
+        } catch (RuntimeException e) {
+            log.debug("写入共享 JWKS 缓存失败，忽略：{}", e.getMessage());
+        }
+    }
+
+    private String resolveJwksUriQuietly() {
+        try {
+            return resolveJwksUri();
+        } catch (Exception e) {
+            log.debug("解析 JWKS 地址失败，跳过共享缓存：{}", e.getMessage());
+            return null;
         }
     }
 
@@ -122,7 +213,7 @@ public class JwksProvider {
                 .orElse(null);
     }
 
-    private Map<String, PublicKey> fetchJwks() throws Exception {
+    private JwksDocument fetchJwks() throws Exception {
         String jwksUri = resolveJwksUri();
         if (!StringUtils.hasText(jwksUri)) {
             throw new IllegalStateException("未配置 wgh.auth.oidc.jwks-uri，且 issuer 为空");
@@ -132,8 +223,11 @@ public class JwksProvider {
         if (response.statusCode() != 200) {
             throw new IllegalStateException("JWKS 端点返回 HTTP " + response.statusCode());
         }
+        return new JwksDocument(response.body(), parseJwks(response.body()));
+    }
 
-        JsonNode root = objectMapper.readTree(response.body());
+    private Map<String, PublicKey> parseJwks(String body) throws Exception {
+        JsonNode root = objectMapper.readTree(body);
         Map<String, PublicKey> result = new LinkedHashMap<>();
         int index = 0;
         for (JsonNode keyNode : root.path("keys")) {
@@ -242,5 +336,9 @@ public class JwksProvider {
             return key instanceof ECPublicKey;
         }
         return false;
+    }
+
+    /** 一次回源得到的原始 JWKS 文档与解析后的公钥。 */
+    private record JwksDocument(String body, Map<String, PublicKey> keys) {
     }
 }

@@ -13,6 +13,10 @@ import com.wgh.rag.common.security.SecurityUtils;
 import com.wgh.rag.data.scope.DataScopeContext;
 import com.wgh.rag.data.scope.DataScopeGuard;
 import com.wgh.rag.data.scope.ResourceVisibility;
+import com.wgh.rag.execution.error.ExecutionCancelledException;
+import com.wgh.rag.execution.error.LeaseLostException;
+import com.wgh.rag.execution.job.JobContext;
+import com.wgh.rag.execution.run.JobRunSupport;
 import com.wgh.rag.workflow.constant.WorkflowConstants;
 import com.wgh.rag.workflow.constant.WorkflowEvents;
 import com.wgh.rag.workflow.dto.RunContext;
@@ -424,7 +428,18 @@ public class WorkflowService {
      * 本方法不切线程，作业的租约、超时与取消由调度层负责。
      */
     public WorkflowRun runHeadlessBlocking(Long workflowId, String input) {
+        return runHeadlessBlocking(workflowId, input, null);
+    }
+
+    /**
+     * 无 SSE 同步运行，并在 run 记录插入后立即回调（作业用于持久化 runId，重试时复用）。
+     */
+    public WorkflowRun runHeadlessBlocking(Long workflowId, String input,
+                                           java.util.function.Consumer<WorkflowRun> onCreated) {
         HeadlessRun headless = prepareHeadlessRun(workflowId, input);
+        if (onCreated != null) {
+            onCreated.accept(headless.run());
+        }
         executeHeadless(headless, true);
         return headless.run();
     }
@@ -559,6 +574,49 @@ public class WorkflowService {
     private record HitlResumeState(WorkflowRun run, WorkflowGraph graph,
                                    GraphValidator.GraphValidationResult validation,
                                    RunContext ctx) {
+    }
+
+    /**
+     * 实例中断后的续跑入口（供 RUN_RESUME 作业调用）。
+     *
+     * <p>只接受 RUNNING 状态的 run；PAUSED 属 HITL，仍走 HITL 确认接口；
+     * 终态直接返回，保证重复投递幂等。租约丢失/作业取消向上抛出，不写业务终态。
+     */
+    public WorkflowRun resumeInterrupted(Long runId, JobContext context) {
+        WorkflowRun run = runMapper.selectById(runId);
+        if (run == null) {
+            throw new BusinessException("运行记录不存在：" + runId);
+        }
+        if (!WorkflowConstants.STATUS_RUNNING.equals(run.getStatus())) {
+            return run;
+        }
+
+        WorkflowGraph graph;
+        try {
+            graph = objectMapper.readValue(run.getGraphSnapshot(), WorkflowGraph.class);
+        } catch (Exception e) {
+            throw new BusinessException("运行图快照解析失败：" + e.getMessage());
+        }
+        GraphValidator.GraphValidationResult validation = graphValidator.validate(graph);
+        RunContext ctx = engine.parseContext(run.getContextJson());
+        // 调试运行由调试会话自己推进，调度续跑不得接管
+        if (ctx.getDebugFrontier() != null) {
+            return run;
+        }
+
+        try {
+            engine.resumeInterrupted(run, graph, validation, ctx,
+                    JobRunSupport.events(context), JobRunSupport.lifecycle(context));
+        } catch (PauseSignal pause) {
+            log.info("工作流 {} 续跑后再次进入 HITL", runId);
+        } catch (LeaseLostException | ExecutionCancelledException stop) {
+            throw stop;
+        } catch (Exception e) {
+            log.error("工作流中断续跑失败 runId={}", runId, e);
+            markRunFailed(runId, e.getMessage());
+            throw new BusinessException("工作流续跑失败：" + e.getMessage());
+        }
+        return runMapper.selectById(runId);
     }
 
     // ==================== 单步调试 ====================

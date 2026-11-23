@@ -1,5 +1,6 @@
 package com.wgh.rag.scheduler.facade;
 
+import com.wgh.rag.common.log.MdcContext;
 import com.wgh.rag.execution.api.ExecutionFacade;
 import com.wgh.rag.execution.error.ExecutionCancelledException;
 import com.wgh.rag.execution.error.ExecutionErrorCodes;
@@ -163,13 +164,14 @@ public class DefaultExecutionFacade implements ExecutionFacade {
                     "交互式车道在途已达上限", executionId);
         }
         try {
-            laneExecutors.executor(ExecutionLane.INTERACTIVE).execute(() -> {
+            // 交互式执行沿用提交线程的 MDC（requestId / traceId），执行日志不丢链路
+            laneExecutors.executor(ExecutionLane.INTERACTIVE).execute(MdcContext.wrap(() -> {
                 try {
                     runInteractive(ticket, bus);
                 } finally {
                     laneExecutors.release(ExecutionLane.INTERACTIVE);
                 }
-            });
+            }));
         } catch (RejectedExecutionException e) {
             laneExecutors.release(ExecutionLane.INTERACTIVE);
             cleanupInteractive(executionId);

@@ -85,3 +85,16 @@ spring:
 统一调度中心键前缀为 `wgh.scheduler`，绑定类为 `com.wgh.rag.scheduler.config.SchedulerProperties`；启用前必须先执行 `sql/migrations/20261120/01_execution_job.sql`。业务背景见同一文档第 3.9 节。
 
 配额退款补偿键前缀为 `wgh.rag.quota.charge`，绑定类为 `com.wgh.rag.quota.properties.QuotaProperties.Charge`；扣费流水位于聊天主链路，**部署本代码前**必须先执行 `sql/migrations/20261120/02_quota_charge.sql`（本轮只创建脚本，执行需我方批准）。业务背景见同一文档第 3.11 节。
+
+## 2026-11-22 片段清单
+
+| 文件 | 分区 | 键数 | 目标文件 |
+| --- | --- | --- | --- |
+| `01_auth-jwks-shared-cache.yml` | 多实例共享 JWKS 缓存 | 1（新增） | `application.yml` |
+| `02_tracing.yml` | 分布式链路追踪 | 2（新增）+ 日志格式 | `application.yml` |
+
+说明：JWKS 共享缓存键为 `wgh.auth.oidc.jwks-shared-cache-enabled`，绑定类 `com.wgh.rag.auth.security.OidcProperties`；复用既有 `wgh.rag.redis.*`，Redis 不可用时自动回退本地缓存。
+
+链路追踪键为 `management.tracing.enabled` / `management.tracing.sampling.probability`，并调整 `logging.pattern.console/file` 与 `logback-spring.xml` 的日志格式（新增 `[trace=%X{traceId:--}]`）。
+
+同日 SQL 增量：`sql/migrations/20261122/01_execution_job_trace.sql`，为 `wgh_execution_job` 增加可空列 `trace_id VARCHAR(64)`；业务背景见 [1.3.1-change-summary-2026-11-21.md](../../../docs/version/1.3.1-change-summary-2026-11-21.md) 第 8 节。

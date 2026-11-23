@@ -20,8 +20,8 @@ import java.util.Map;
  * <p>由定时触发器提交，执行体只依赖 {@code rag-execution} 契约，不感知调度实现。
  * 同步执行：作业的租约、超时与取消由调度层负责；本处理器在开始与结束处检查取消标记。
  *
- * <p>幂等说明：同一触发 slot 通过 {@code bizKey} 去重，不会重复提交；租约过期后的重放
- * 会创建新的运行记录（{@code wgh_workflow_run} 尚无外部幂等键），属于已知限制。
+ * <p>幂等说明：同一触发 slot 通过 {@code bizKey} 去重；首次创建 run 后立即把 runId 写入
+ * 作业 {@code result_json}，租约回收后的重试按该 runId 走中断续跑，不再新建运行记录。
  */
 @Component
 public class WorkflowRunJobHandler implements JobHandler {
@@ -65,7 +65,28 @@ public class WorkflowRunJobHandler implements JobHandler {
                     "WF_RUN 负载 workflowId 非法: " + workflowIdText, context.executionId());
         }
         context.cancellation().throwIfCancellationRequested();
-        WorkflowRun run = workflowService.runHeadlessBlocking(workflowId, payload.getString(PAYLOAD_INPUT));
+
+        // 租约回收后的重试：result_json 已保存首次创建的 runId，按原 run 续跑而不是新建
+        Object existingRunId = context.savedResult().get("runId");
+        if (existingRunId != null) {
+            long runId;
+            try {
+                runId = Long.parseLong(String.valueOf(existingRunId));
+            } catch (NumberFormatException e) {
+                throw new ExecutionException(ExecutionErrorCodes.INCOMPATIBLE_PAYLOAD,
+                        "WF_RUN 已保存的 runId 非法: " + existingRunId, context.executionId());
+            }
+            WorkflowRun run = workflowService.resumeInterrupted(runId, context);
+            context.saveResult(Map.of("runId", run.getId(), "status", run.getStatus()));
+            context.events().emit(new ExecutionEvent(context.executionId(), 1, ExecutionEventTypes.PROGRESS,
+                    Map.of("event", "workflow.run.resumed", "runId", String.valueOf(run.getId())),
+                    Instant.now()));
+            return;
+        }
+
+        WorkflowRun run = workflowService.runHeadlessBlocking(workflowId, payload.getString(PAYLOAD_INPUT),
+                created -> context.saveResult(Map.of("runId", created.getId())));
+        context.saveResult(Map.of("runId", run.getId(), "status", run.getStatus()));
         context.cancellation().throwIfCancellationRequested();
         context.events().emit(new ExecutionEvent(context.executionId(), 1, ExecutionEventTypes.PROGRESS,
                 Map.of("event", "workflow.run.completed", "runId", String.valueOf(run.getId())),

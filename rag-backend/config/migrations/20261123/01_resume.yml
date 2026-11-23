@@ -1,0 +1,19 @@
+# =====================================================================
+# 增量配置：执行域中断续跑（2026-11-23）
+# ---------------------------------------------------------------------
+# 目标文件：rag-backend/rag-app/src/main/resources/application-features.yml
+# 分区：resume（今日新增 4 个键）
+# 绑定类：com.wgh.rag.controller.service.resume.ResumeProperties
+# 说明：增量覆盖片段，不参与自动加载；合并方式见 config/migrations/README.md
+# 依赖：需要调度中心已启用（wgh.scheduler.enabled=true）且作业表已建
+# =====================================================================
+wgh:
+  resume:
+    # 中断扫描总开关
+    enabled: ${WGH_RESUME_ENABLED:true}
+    # 最后活动超过该分钟数视为中断候选
+    stale-minutes: 30
+    # 每轮最多投递的续跑作业数
+    batch-size: 20
+    # 扫描间隔
+    scan-interval: 5m

@@ -49,6 +49,12 @@ public class OidcProperties {
     /** 未知 kid / 网络失败触发刷新时的最小间隔（秒），避免被伪造 kid 打爆 */
     private long jwksRefreshMinIntervalSeconds = 30;
 
+    /**
+     * 是否启用跨实例共享 JWKS 缓存（复用 {@code wgh.rag.redis}）。
+     * <p>关闭或 Redis 不可用时自动退回进程内缓存 + 回源，不影响验签。</p>
+     */
+    private boolean jwksSharedCacheEnabled = true;
+
     /** exp / nbf 校验的时钟偏差容忍（秒） */
     private long clockSkewSeconds = 30;
 }

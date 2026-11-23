@@ -139,6 +139,18 @@ public class QuotaChargeLedger {
         return chargeMapper.selectDueRefunds(protectionCutoff, now, size);
     }
 
+    /** 管理端查询退款异常流水（只读）。 */
+    public List<QuotaChargeEntity> findRefundIssues(String status, String username, int offset, int limit) {
+        int safeLimit = Math.max(1, Math.min(limit, 200));
+        int safeOffset = Math.max(0, offset);
+        return chargeMapper.selectRefundIssues(status, username, safeOffset, safeLimit);
+    }
+
+    /** 管理端退款异常流水总数。 */
+    public long countRefundIssues(String status, String username) {
+        return chargeMapper.countRefundIssues(status, username);
+    }
+
     private static String truncate(String message) {
         if (message == null || message.length() <= MAX_ERROR_LENGTH) {
             return message;

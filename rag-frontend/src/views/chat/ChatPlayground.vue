@@ -165,27 +165,6 @@
           </div>
         </div>
 
-        <!-- 未完成任务提示：进入会话或流中断后检测，可一键继续执行 -->
-        <div v-if="pendingTaskVisible" class="resume-banner">
-          <div class="resume-info">
-            <el-icon class="resume-icon"><WarningFilled /></el-icon>
-            <div>
-              <div class="resume-title">
-                检测到未完成任务：{{ taskTypeLabel(pendingTask.taskType) }}
-              </div>
-              <div class="resume-detail">
-                状态 {{ taskStatusLabel(pendingTask.status) }}
-                <span v-if="pendingTask.stayMinutes != null"> · 已停留 {{ formatStayMinutes(pendingTask.stayMinutes) }}</span>
-                <span v-if="pendingTask.startTime"> · 开始于 {{ formatTime(pendingTask.startTime) }}</span>
-              </div>
-            </div>
-          </div>
-          <el-button type="warning" :icon="RefreshRight"
-                     :loading="resuming" :disabled="resuming || streaming" @click="resumeTask">
-            继续
-          </el-button>
-        </div>
-
         <div class="input-area">
           <!-- 待发送图片预览（多模态，仅视觉模型窗口可用） -->
           <div v-if="pendingImages.length" class="pending-images">
@@ -286,7 +265,7 @@
 import { reactive, ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowLeft, Link, Promotion, VideoPause, Plus, Document, Loading, Tools, Delete, Connection, User, WarningFilled, RefreshRight } from '@element-plus/icons-vue'
+import { ArrowLeft, Link, Promotion, VideoPause, Plus, Document, Loading, Tools, Delete, Connection, User } from '@element-plus/icons-vue'
 import { renderMarkdownWithCitations } from '../../utils/markdown'
 import SourcePanel from '../../components/SourcePanel.vue'
 import { stopGeneration } from '../../utils/chatStream'
@@ -294,7 +273,7 @@ import { windowGet, streamChatApi, windowMessages, windowSessions, windowCreateS
   agentGetPlanState, agentCancelPlan, agentRetryStep, agentSkipStep, agentGetPlanBySession,
   chatWorkflowState, streamChatWorkflowHitl, chatWorkflowCancel,
   submitMessageFeedback, windowFeedbackStats, chatUploadImage, chatModelGet,
-  chatPendingTask, chatResumeTask, chatStopSession } from '../../api'
+  chatStopSession } from '../../api'
 import AgentPlanTree from '../../components/AgentPlanTree.vue'
 import WorkflowRunPanel from '../../components/WorkflowRunPanel.vue'
 import PromptTemplateInput from '../../components/PromptTemplateInput.vue'
@@ -335,94 +314,6 @@ const workflowPrompt = ref('')
 const workflowConfirming = ref(false)
 let workflowPollTimer = null
 let workflowAbort = null
-
-// ============ 未完成任务（继续执行） ============
-const pendingTask = ref(null)
-const resuming = ref(false)
-let pendingTaskSeq = 0
-
-// 任务正常执行中（streaming）不展示，避免误导；恢复请求进行中保留按钮以展示加载态
-const pendingTaskVisible = computed(() => !!pendingTask.value?.hasPending && !streaming.value)
-
-const TASK_TYPE_LABELS = {
-  AGENT: 'Agent 自动执行',
-  MULTI_AGENT: '多 Agent 协作',
-  WORKFLOW: '工作流',
-  CHAT: '普通对话'
-}
-const TASK_STATUS_LABELS = {
-  RUNNING: '执行中',
-  PENDING: '等待中',
-  PAUSED: '已暂停',
-  INTERRUPTED: '已中断',
-  HITL_PENDING: '等待人工确认',
-  FAILED: '失败',
-  COMPLETED: '已完成',
-  CANCELLED: '已取消'
-}
-
-const taskTypeLabel = (type) => TASK_TYPE_LABELS[type] || type || '未知任务'
-const taskStatusLabel = (status) => TASK_STATUS_LABELS[status] || status || '未知状态'
-
-// 已停留时长（分钟）→ 可读文案
-const formatStayMinutes = (minutes) => {
-  const m = Number(minutes)
-  if (!isFinite(m) || m < 0) return '—'
-  if (m < 60) return `${Math.round(m)} 分钟`
-  const h = Math.floor(m / 60)
-  const rest = Math.round(m % 60)
-  if (h < 24) return rest ? `${h} 小时 ${rest} 分钟` : `${h} 小时`
-  const d = Math.floor(h / 24)
-  return rest ? `${d} 天 ${h % 24} 小时` : `${d} 天`
-}
-
-// 查询当前会话是否存在未完成任务；接口未就绪时静默降级（不显示按钮、不弹错误）
-const loadPendingTask = async () => {
-  const sessionId = currentSessionId.value
-  if (!sessionId) {
-    pendingTask.value = null
-    return
-  }
-  const seq = ++pendingTaskSeq
-  try {
-    const res = await chatPendingTask(sessionId)
-    // 会话已切换或请求返回顺序错乱时丢弃结果
-    if (seq !== pendingTaskSeq || sessionId !== currentSessionId.value) return
-    const data = res?.data
-    pendingTask.value = data?.hasPending ? data : null
-  } catch {
-    if (seq === pendingTaskSeq) pendingTask.value = null
-  }
-}
-
-const resumeTask = async () => {
-  if (resuming.value || streaming.value) return
-  const sessionId = currentSessionId.value
-  if (!sessionId) return
-  resuming.value = true
-  try {
-    const res = await chatResumeTask(sessionId)
-    const data = res?.data || {}
-    if (data.success === false) {
-      ElMessage.error(data.message || '继续执行失败')
-      return
-    }
-    ElMessage.success(data.message || '已触发继续执行')
-    pendingTask.value = null
-    // 刷新会话消息与运行状态（Agent / 工作流会基于恢复后的状态继续轮询）
-    await loadHistory()
-    await restoreAgentPlan()
-    await restoreWorkflowRun()
-    loadSessions()
-    await loadPendingTask()
-  } catch (e) {
-    // 优先展示后端返回的 message
-    ElMessage.error(e?.response?.data?.message || e?.message || '继续执行失败')
-    await loadPendingTask()
-  } finally {
-    resuming.value = false
-  }
-}
 
 // 右侧「当前状态」栏的文案与样式（无内容时也要有兜底展示）
 const statusInfo = computed(() => {
@@ -608,7 +499,6 @@ const load = async () => {
   await loadHistory()
   await restoreAgentPlan()
   await restoreWorkflowRun()
-  await loadPendingTask()
 }
 
 // 加载左侧历史会话列表
@@ -631,11 +521,9 @@ const selectSession = async (s) => {
   if (streaming.value) stop()
   currentSessionId.value = s.id
   messages.value = []
-  pendingTask.value = null
   await loadHistory()
   await restoreAgentPlan()
   await restoreWorkflowRun()
-  await loadPendingTask()
 }
 
 // 新建会话：调用后端创建，选中后清空消息区
@@ -653,7 +541,6 @@ const newSession = async () => {
     historyPage.value = 1
     historyTotal.value = 0
     noMoreHistory.value = false
-    pendingTask.value = null
   } catch (e) {
     ElMessage.error('新建会话失败')
   }
@@ -684,15 +571,12 @@ const deleteSession = async (s) => {
       if (next) {
         currentSessionId.value = next.id
         await loadHistory()
-        pendingTask.value = null
-        await loadPendingTask()
       } else {
         currentSessionId.value = null
         messages.value = []
         historyPage.value = 1
         historyTotal.value = 0
         noMoreHistory.value = false
-        pendingTask.value = null
       }
     }
   } catch (e) {
@@ -824,15 +708,12 @@ const send = async () => {
       streaming.value = false
       aiMsg.streaming = false
       nextTick(scrollToBottom)
-      loadPendingTask()
     },
     (err) => {
       streaming.value = false
       aiMsg.streaming = false
       aiMsg.content = '抱歉，请求失败: ' + err.message
       ElMessage.error('聊天请求失败')
-      // 流中断后检查是否有可恢复的未完成任务
-      loadPendingTask()
     }
   )
 }
@@ -848,8 +729,6 @@ const stop = () => {
     request: sessionId ? () => chatStopSession(windowId, sessionId) : null
   })
   nextTick(scrollToBottom)
-  // 停止后任务可能仍可续跑，交由后端判定是否展示继续入口
-  loadPendingTask()
 }
 
 const handleEvent = (event, data, aiMsg) => {
@@ -1208,7 +1087,6 @@ const startPlanPolling = () => {
         // Agent 在后台执行完成：补拉消息列表，把最终答复显示到聊天区
         if (!streaming.value) await loadHistory()
         loadSessions()
-        loadPendingTask()
       }
     } catch (e) {
       // 主动取消（切换会话/刷新）不当作错误
@@ -1362,7 +1240,6 @@ const startWorkflowPolling = () => {
         stopWorkflowPolling()
         if (!streaming.value) await loadHistory()
         loadSessions()
-        loadPendingTask()
       }
     } catch (e) {
       if (e.name !== 'CanceledError' && e.name !== 'AbortError') {
@@ -1417,14 +1294,12 @@ const onWorkflowConfirm = async (userInput) => {
       aiMsg.streaming = false
       workflowConfirming.value = false
       nextTick(scrollToBottom)
-      loadPendingTask()
     },
     (err) => {
       streaming.value = false
       aiMsg.streaming = false
       workflowConfirming.value = false
       aiMsg.content = '抱歉，确认失败: ' + err.message
-      loadPendingTask()
     }
   )
   streamer.doStream()
@@ -1639,21 +1514,6 @@ onUnmounted(() => {
     display: flex; align-items: center; gap: 4px;
     padding: 4px 0; color: #606266;
   }
-}
-.resume-banner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin: 0 16px;
-  padding: 10px 14px;
-  background: linear-gradient(135deg, #fdf6ec 0%, #faecd8 100%);
-  border: 1px solid #f5dab1;
-  border-radius: 8px;
-  .resume-info { display: flex; align-items: flex-start; gap: 10px; }
-  .resume-icon { color: #e6a23c; font-size: 18px; margin-top: 2px; }
-  .resume-title { font-size: 13px; font-weight: 600; color: #b88230; }
-  .resume-detail { font-size: 12px; color: #909399; margin-top: 4px; }
 }
 .input-area {
   display: flex;

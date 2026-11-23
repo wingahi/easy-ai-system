@@ -29,6 +29,11 @@
             <groupId>com.wgh</groupId>
             <artifactId>rag-config</artifactId>
         </dependency>
+        <!-- MDC / traceId 跨线程传递工具 -->
+        <dependency>
+            <groupId>com.wgh</groupId>
+            <artifactId>rag-common</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter</artifactId>

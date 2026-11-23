@@ -107,6 +107,47 @@ public interface QuotaChargeMapper extends BaseMapper<QuotaChargeEntity> {
     int attachSession(@Param("chargeId") String chargeId, @Param("sessionId") Long sessionId);
 
     /**
+     * 管理端分页查询退款异常流水（退款失败 / 人工处理）。
+     * <p>只读查询，不参与退款状态机；status 为空时返回两类异常。</p>
+     */
+    @Select("""
+            <script>
+            SELECT * FROM wgh_quota_charge
+             WHERE deleted = 0
+               AND status IN ('REFUND_FAILED', 'DEAD')
+            <if test="status != null and status != ''">
+               AND status = #{status}
+            </if>
+            <if test="username != null and username != ''">
+               AND username = #{username}
+            </if>
+             ORDER BY update_time DESC, id DESC
+             LIMIT #{limit} OFFSET #{offset}
+            </script>
+            """)
+    List<QuotaChargeEntity> selectRefundIssues(@Param("status") String status,
+                                               @Param("username") String username,
+                                               @Param("offset") int offset,
+                                               @Param("limit") int limit);
+
+    /** 管理端退款异常流水总数。 */
+    @Select("""
+            <script>
+            SELECT COUNT(*) FROM wgh_quota_charge
+             WHERE deleted = 0
+               AND status IN ('REFUND_FAILED', 'DEAD')
+            <if test="status != null and status != ''">
+               AND status = #{status}
+            </if>
+            <if test="username != null and username != ''">
+               AND username = #{username}
+            </if>
+            </script>
+            """)
+    long countRefundIssues(@Param("status") String status,
+                           @Param("username") String username);
+
+    /**
      * 扫描待补偿流水：
      * <ul>
      *   <li>已扣未决：{@code CHARGED} 且超过保护期；</li>

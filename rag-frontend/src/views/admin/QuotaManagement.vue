@@ -68,6 +68,55 @@
                      :page-size="size" :current-page="page" @current-change="load" />
     </el-card>
 
+    <el-card shadow="never" class="refund-card">
+      <template #header>
+        <div class="card-header">
+          <span>退款异常流水</span>
+          <div>
+            <el-select v-model="refundQuery.status" placeholder="全部异常" size="small" clearable
+                       style="width: 150px; margin-right: 8px">
+              <el-option label="退款失败" value="REFUND_FAILED" />
+              <el-option label="人工处理（DEAD）" value="DEAD" />
+            </el-select>
+            <el-input v-model="refundQuery.username" placeholder="按用户名筛选" size="small" clearable
+                      style="width: 160px; margin-right: 8px" @keyup.enter="loadRefunds(1)" />
+            <el-button size="small" type="primary" @click="loadRefunds(1)">查询</el-button>
+            <el-button size="small" @click="loadRefunds(refundPage)">刷新</el-button>
+          </div>
+        </div>
+      </template>
+
+      <el-table :data="refundRows" v-loading="refundLoading" size="small" row-key="chargeId">
+        <el-table-column prop="chargeId" label="扣费标识" min-width="190" show-overflow-tooltip>
+          <template #default="{ row }"><span class="mono">{{ row.chargeId }}</span></template>
+        </el-table-column>
+        <el-table-column prop="username" label="用户名" width="130" show-overflow-tooltip />
+        <el-table-column prop="periodKey" label="周期键" width="110" />
+        <el-table-column prop="amount" label="条数" width="70" />
+        <el-table-column label="状态" width="110">
+          <template #default="{ row }">
+            <el-tag size="small" :type="row.status === 'DEAD' ? 'danger' : 'warning'">
+              {{ row.status === 'DEAD' ? '人工处理' : '退款失败' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="retryCount" label="已重试" width="80" />
+        <el-table-column label="下次重试" width="160">
+          <template #default="{ row }">{{ formatTime(row.nextRetryAt) }}</template>
+        </el-table-column>
+        <el-table-column prop="lastError" label="最近错误" min-width="200" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.lastError || '—' }}</template>
+        </el-table-column>
+        <el-table-column label="更新时间" width="160">
+          <template #default="{ row }">{{ formatTime(row.updateTime) }}</template>
+        </el-table-column>
+      </el-table>
+
+      <el-pagination class="pager" layout="total, prev, pager, next" :total="refundTotal"
+                     :page-size="refundSize" :current-page="refundPage"
+                     @current-change="loadRefunds" />
+    </el-card>
+
     <el-dialog v-model="dialogVisible" title="编辑用户配额" width="440px">
       <el-form :model="form" label-width="110px">
         <el-form-item label="用户名">
@@ -110,7 +159,8 @@ import {
   quotaAdminPage,
   quotaAdminSave,
   quotaAdminResetUsage,
-  quotaAdminRestoreDefault
+  quotaAdminRestoreDefault,
+  quotaRefundIssues
 } from '../../api'
 
 const query = reactive({ username: '' })
@@ -119,6 +169,13 @@ const total = ref(0)
 const page = ref(1)
 const size = ref(20)
 const loading = ref(false)
+
+const refundQuery = reactive({ status: '', username: '' })
+const refundRows = ref([])
+const refundTotal = ref(0)
+const refundPage = ref(1)
+const refundSize = ref(20)
+const refundLoading = ref(false)
 
 const dialogVisible = ref(false)
 const saving = ref(false)
@@ -144,6 +201,23 @@ async function load(toPage = 1) {
     total.value = res.data.total || 0
   } finally {
     loading.value = false
+  }
+}
+
+async function loadRefunds(toPage = 1) {
+  refundPage.value = toPage
+  refundLoading.value = true
+  try {
+    const res = await quotaRefundIssues({
+      page: refundPage.value,
+      size: refundSize.value,
+      status: refundQuery.status || undefined,
+      username: refundQuery.username || undefined
+    })
+    refundRows.value = res.data.records || []
+    refundTotal.value = res.data.total || 0
+  } finally {
+    refundLoading.value = false
   }
 }
 
@@ -230,6 +304,7 @@ async function restoreDefault(row) {
 }
 
 load(1)
+loadRefunds(1)
 </script>
 
 <style scoped>
@@ -238,9 +313,15 @@ load(1)
   align-items: center;
   justify-content: space-between;
 }
+.refund-card {
+  margin-top: 16px;
+}
 .pager {
   margin-top: 12px;
   justify-content: flex-end;
+}
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 .hint {
   margin-left: 10px;

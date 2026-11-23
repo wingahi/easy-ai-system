@@ -1,6 +1,7 @@
 package com.wgh.rag.scheduler.job;
 
 import com.wgh.rag.execution.model.ExecutionLane;
+import com.wgh.rag.common.log.MdcContext;
 import com.wgh.rag.execution.model.ExecutionRequest;
 import com.wgh.rag.execution.model.ExecutionSnapshot;
 import com.wgh.rag.execution.model.ExecutionStatus;
@@ -61,6 +62,8 @@ public class JobStore {
         }
         ExecutionJob job = new ExecutionJob();
         job.setExecutionId(UUID.randomUUID().toString());
+        // 提交线程若处于链路中，把 traceId 一并持久化；执行实例恢复后日志可跨实例关联
+        job.setTraceId(MdcContext.currentTraceId());
         job.setJobType(request.jobType());
         job.setLane(request.lane());
         job.setTenantId(request.tenantId());
@@ -143,6 +146,24 @@ public class JobStore {
 
     public boolean complete(Long id, String owner, Map<String, Object> result) {
         return mapper.complete(id, owner, codec.toJson(result)) > 0;
+    }
+
+    /** 执行中持久化进度；租约丢失返回 {@code false}。 */
+    public boolean saveResult(Long id, String owner, Map<String, Object> result) {
+        return mapper.updateResult(id, owner, codec.toJson(result)) > 0;
+    }
+
+    /** 读取已持久化的执行进度；解析失败按空进度处理，避免历史脏数据阻断续跑。 */
+    public Map<String, Object> resultOf(ExecutionJob job) {
+        if (job == null || job.getResultJson() == null || job.getResultJson().isBlank()) {
+            return Map.of();
+        }
+        try {
+            return codec.fromJson(job.getResultJson());
+        } catch (IllegalArgumentException e) {
+            log.warn("作业进度 JSON 无法解析，按空进度处理 executionId={}", job.getExecutionId());
+            return Map.of();
+        }
     }
 
     /**

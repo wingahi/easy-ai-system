@@ -25,6 +25,9 @@ public class ExecutionJob extends BaseEntity {
     /** 对外执行标识（UUID），{@code ExecutionFacade} 的查询/取消/订阅都使用它。 */
     private String executionId;
 
+    /** 提交时的链路 traceId，执行实例恢复该值后可按 traceId 关联提交与执行日志。 */
+    private String traceId;
+
     /** 作业类型，对应 {@code JobHandler#jobType()}。 */
     private String jobType;
 

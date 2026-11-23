@@ -1,0 +1,21 @@
+# =====================================================================
+# 增量配置：分布式链路追踪（2026-11-22）
+# ---------------------------------------------------------------------
+# 目标文件：rag-backend/rag-app/src/main/resources/application.yml
+# 分区：management.tracing / logging.pattern（今日新增 2 个键 + 日志格式调整）
+# 说明：增量覆盖片段，不参与自动加载；合并方式见 config/migrations/README.md
+# 注意：未配置采集端时仅本地生成 traceId/spanId，不发起网络请求
+# =====================================================================
+management:
+  tracing:
+    # 总开关；关闭后不生成 traceId，日志 trace 位输出 "--"
+    enabled: ${WGH_TRACING_ENABLED:true}
+    sampling:
+      # 采样率；1.0 表示全量采样，保证每个请求都有 traceId 可排查
+      probability: ${WGH_TRACING_SAMPLING_PROBABILITY:1.0}
+
+logging:
+  pattern:
+    # 在既有 rid 之后追加 trace；logback-spring.xml 的 LOG_PATTERN 同步调整
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] [rid=%X{requestId:--}] [trace=%X{traceId:--}] %-5level %logger{36} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] [rid=%X{requestId:--}] [trace=%X{traceId:--}] %-5level %logger{36} - %msg%n"

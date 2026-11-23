@@ -26,6 +26,11 @@
             <groupId>com.wgh</groupId>
             <artifactId>rag-log</artifactId>
         </dependency>
+        <!-- 复用 RedisCommandPort 与 key 命名空间，实现多实例共享 JWKS 缓存 -->
+        <dependency>
+            <groupId>com.wgh</groupId>
+            <artifactId>rag-config</artifactId>
+        </dependency>
         <!-- Spring Security（SecurityFilterChain / PasswordEncoder） -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
