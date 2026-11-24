@@ -1,0 +1,86 @@
+# 前端 Deployment：nginx 静态资源 + /api 反向代理（代理到 Service backend）。
+#
+# 安全上下文说明：
+#   现有 nginx:1.27-alpine 镜像的 master 进程以 root 启动并绑定 80 端口，
+#   因此这里只授予 NET_BIND_SERVICE，不做 runAsNonRoot；
+#   若后续改用 nginx-unprivileged（K0 建议项），可移除该 capability 并设为非 root。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wgh-frontend
+  labels:
+    app.kubernetes.io/name: wgh-rag
+    app.kubernetes.io/component: frontend
+    app.kubernetes.io/part-of: wgh-rag
+spec:
+  replicas: 1
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  minReadySeconds: 5
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: wgh-rag
+      app.kubernetes.io/component: frontend
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: wgh-rag
+        app.kubernetes.io/component: frontend
+    spec:
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: frontend
+          image: wgh-rag-frontend:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 80
+              protocol: TCP
+          volumeMounts:
+            - name: nginx-cache
+              mountPath: /var/cache/nginx
+            - name: nginx-run
+              mountPath: /var/run
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 4
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sh", "-c", "sleep 3"]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+              add: ["NET_BIND_SERVICE"]
+      volumes:
+        - name: nginx-cache
+          emptyDir: {}
+        - name: nginx-run
+          emptyDir: {}

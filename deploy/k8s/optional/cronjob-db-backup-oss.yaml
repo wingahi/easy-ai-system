@@ -1,0 +1,172 @@
+# 可选（K3）：数据库逻辑备份直传对象存储。
+#
+# 与 cronjob-db-backup.yaml 的关系：二选一，或错峰运行。本文件是生产推荐形态：
+#   - dump 落在 emptyDir，不依赖集群内 PVC，节点故障不影响备份可用性；
+#   - 同一 Pod 内 upload 容器等 dump 完成后用 rclone 直传 OSS；
+#   - 保留策略交给 bucket 生命周期规则（README §10.4），避免 Job 内做时间清理。
+#
+# 前置（缺失时 Pod 起不来，属于刻意失败）：
+#   1. Secret wgh-backend-secrets 含 WGH_OSS_ACCESS_KEY_ID / WGH_OSS_ACCESS_KEY_SECRET；
+#   2. ConfigMap wgh-backend-config 含 WGH_OSS_ENDPOINT / WGH_OSS_BUCKET（K1/K2/K3 都有）；
+#   3. 该 AK 对 bucket 具备 PutObject 权限，且 bucket 已开启版本化。
+#
+# 不承诺 PITR：逻辑备份的 RPO 取决于调度间隔（默认每日）。RPO≤5 分钟需托管库自动快照
+# 或 WAL 归档，见 README §10.4。
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: wgh-db-backup-oss
+  labels:
+    app.kubernetes.io/name: wgh-rag
+    app.kubernetes.io/component: backup
+spec:
+  schedule: "30 2 * * *"
+  timeZone: "Asia/Shanghai"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 1800
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 5400
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: wgh-rag
+            app.kubernetes.io/component: backup
+        spec:
+          restartPolicy: Never
+          securityContext:
+            # postgres:15-alpine 的 postgres 用户为 70；统一用户让两个容器共享 emptyDir。
+            runAsNonRoot: true
+            runAsUser: 70
+            runAsGroup: 70
+            fsGroup: 70
+            fsGroupChangePolicy: OnRootMismatch
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: dump
+              image: postgres:15-alpine
+              imagePullPolicy: IfNotPresent
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -eu
+                  ts="$(date +%Y%m%d-%H%M%S)"
+                  out="/work/wgh_rag_prod-${ts}.dump"
+                  echo "[backup] dumping to ${out}"
+                  pg_dump -h "${PGHOST}" -p "${PGPORT}" -U "${PGUSER}" -d "${PGDATABASE}" \
+                    --format=custom --no-owner --no-acl --compress=6 -f "${out}"
+                  sha256sum "${out}" > "${out}.sha256"
+                  echo "wgh_rag_prod-${ts}.dump" > /work/.done
+                  ls -lh /work
+              env:
+                - name: PGHOST
+                  value: postgres
+                - name: PGPORT
+                  value: "5432"
+                - name: PGDATABASE
+                  value: wgh_rag_prod
+                - name: PGUSER
+                  value: postgres
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: wgh-backend-secrets
+                      key: SPRING_DATASOURCE_PASSWORD
+                - name: HOME
+                  value: /tmp
+              volumeMounts:
+                - name: work
+                  mountPath: /work
+                - name: tmp
+                  mountPath: /tmp
+              resources:
+                requests:
+                  cpu: 200m
+                  memory: 256Mi
+                limits:
+                  cpu: "1"
+                  memory: 1Gi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+            - name: upload
+              image: rclone/rclone:1.68.1
+              imagePullPolicy: IfNotPresent
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -eu
+                  echo "[upload] waiting for dump"
+                  i=0
+                  while [ ! -f /work/.done ]; do
+                    i=$((i + 1))
+                    if [ "${i}" -ge 360 ]; then
+                      echo "[upload] dump did not finish in 60m" >&2
+                      exit 1
+                    fi
+                    sleep 10
+                  done
+                  f="$(cat /work/.done)"
+                  echo "[upload] uploading ${f}"
+                  rclone copyto "/work/${f}" "oss:${WGH_OSS_BUCKET}/db-backup/${f}" --s3-chunk-size 64M
+                  rclone copyto "/work/${f}.sha256" "oss:${WGH_OSS_BUCKET}/db-backup/${f}.sha256" --s3-chunk-size 64M
+                  echo "[upload] done"
+              env:
+                - name: RCLONE_CONFIG_OSS_TYPE
+                  value: s3
+                - name: RCLONE_CONFIG_OSS_PROVIDER
+                  value: Alibaba
+                - name: RCLONE_CONFIG_OSS_ENV_AUTH
+                  value: "false"
+                - name: RCLONE_CONFIG_OSS_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: wgh-backend-secrets
+                      key: WGH_OSS_ACCESS_KEY_ID
+                - name: RCLONE_CONFIG_OSS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: wgh-backend-secrets
+                      key: WGH_OSS_ACCESS_KEY_SECRET
+                - name: WGH_OSS_ENDPOINT
+                  valueFrom:
+                    configMapKeyRef:
+                      name: wgh-backend-config
+                      key: WGH_OSS_ENDPOINT
+                - name: WGH_OSS_BUCKET
+                  valueFrom:
+                    configMapKeyRef:
+                      name: wgh-backend-config
+                      key: WGH_OSS_BUCKET
+                - name: RCLONE_CONFIG_OSS_ENDPOINT
+                  value: "$(WGH_OSS_ENDPOINT)"
+                - name: HOME
+                  value: /tmp
+              volumeMounts:
+                - name: work
+                  mountPath: /work
+                - name: tmp
+                  mountPath: /tmp
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 128Mi
+                limits:
+                  cpu: 500m
+                  memory: 512Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+          volumes:
+            - name: work
+              emptyDir: {}
+            - name: tmp
+              emptyDir: {}

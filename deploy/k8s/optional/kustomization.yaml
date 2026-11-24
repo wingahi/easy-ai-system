@@ -1,0 +1,24 @@
+# 可选组件入口（默认不随 base/overlay 部署，按需 apply）：
+#   - 数据库逻辑备份（PVC 版 / 对象存储直传版，二选一或错峰）
+#   - 备份恢复演练 CronJob（默认挂起）
+#
+#   kubectl apply -k deploy/k8s/optional
+#
+# 前置：命名空间 wgh 与 Secret wgh-backend-secrets 已存在；
+#       对象存储相关组件还要求 ConfigMap wgh-backend-config 已存在（K1/K2/K3 都会创建）。
+# 说明：sealedsecret.example.yaml 只是模板，刻意不纳入本 kustomization，避免用占位密文覆盖真实密钥。
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: wgh
+resources:
+  - cronjob-db-backup.yaml
+  - cronjob-db-backup-oss.yaml
+  - cronjob-restore-drill.yaml
+configMapGenerator:
+  - name: wgh-restore-drill-script
+    files:
+      - restore/restore-drill.sh
+    options:
+      labels:
+        app.kubernetes.io/name: wgh-rag
+        app.kubernetes.io/component: backup

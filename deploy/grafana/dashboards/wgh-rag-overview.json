@@ -4,7 +4,7 @@
   "tags": ["wgh-rag", "observability"],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 1,
+  "version": 2,
   "refresh": "30s",
   "time": {"from": "now-6h", "to": "now"},
   "templating": {"list": []},
@@ -15,7 +15,7 @@
       "type": "stat",
       "title": "对话请求 QPS",
       "datasource": {"type": "prometheus", "uid": "wgh-prometheus"},
-      "gridPos": {"h": 6, "w": 6, "x": 0, "y": 0},
+      "gridPos": {"h": 5, "w": 6, "x": 0, "y": 0},
       "targets": [{"refId": "A", "expr": "sum(rate(wgh_chat_requests_total[$__rate_interval]))", "legendFormat": "QPS"}],
       "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"},
       "fieldConfig": {"defaults": {"unit": "reqps", "decimals": 2}, "overrides": []}
@@ -25,7 +25,7 @@
       "type": "stat",
       "title": "检索命中率（5m）",
       "datasource": {"type": "prometheus", "uid": "wgh-prometheus"},
-      "gridPos": {"h": 6, "w": 6, "x": 6, "y": 0},
+      "gridPos": {"h": 5, "w": 6, "x": 6, "y": 0},
       "targets": [{"refId": "A", "expr": "sum(rate(wgh_retrieval_hits_total{hit=\"true\"}[$__rate_interval])) / clamp_min(sum(rate(wgh_retrieval_hits_total[$__rate_interval])), 1e-9)", "legendFormat": "hit ratio"}],
       "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"},
       "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0, "max": 1, "decimals": 3}, "overrides": []}
@@ -35,7 +35,7 @@
       "type": "stat",
       "title": "LLM 成本速率（元/分钟）",
       "datasource": {"type": "prometheus", "uid": "wgh-prometheus"},
-      "gridPos": {"h": 6, "w": 6, "x": 12, "y": 0},
+      "gridPos": {"h": 5, "w": 6, "x": 12, "y": 0},
       "targets": [{"refId": "A", "expr": "sum(rate(wgh_llm_cost_total[$__rate_interval])) * 60", "legendFormat": "cost"}],
       "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"},
       "fieldConfig": {"defaults": {"unit": "currencyCNY", "decimals": 4}, "overrides": []}
@@ -45,26 +45,200 @@
       "type": "stat",
       "title": "限流拒绝（5m）",
       "datasource": {"type": "prometheus", "uid": "wgh-prometheus"},
-      "gridPos": {"h": 6, "w": 6, "x": 18, "y": 0},
+      "gridPos": {"h": 5, "w": 6, "x": 18, "y": 0},
       "targets": [{"refId": "A", "expr": "sum(increase(wgh_rate_limit_rejected_total[$__rate_interval]))", "legendFormat": "rejected"}],
       "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"},
       "fieldConfig": {"defaults": {"unit": "short", "decimals": 0}, "overrides": []}
     },
+
+    {"id": 5, "type": "row", "title": "调度队列与作业状态", "gridPos": {"h": 1, "w": 24, "x": 0, "y": 5}, "collapsed": false, "panels": []},
     {
-      "id": 5,
+      "id": 6,
+      "type": "timeseries",
+      "title": "调度作业状态分布（来源：wgh_execution_job）",
+      "datasource": {"type": "prometheus", "uid": "wgh-prometheus"},
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 6},
+      "targets": [{"refId": "A", "expr": "sum by (status) (wgh_execution_job_count)", "legendFormat": "{{status}}"}],
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0}, "overrides": []}
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "待执行作业最老等待时长（按车道）",
+      "datasource": {"type": "prometheus", "uid": "wgh-prometheus"},
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 6},
+      "targets": [{"refId": "A", "expr": "max by (lane) (wgh_execution_job_oldest_age_seconds{status=\"PENDING\"})", "legendFormat": "{{lane}}"}],
+      "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []}
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "执行器队列积压与活跃线程",
+      "datasource": {"type": "prometheus", "uid": "wgh-prometheus"},
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 6},
+      "targets": [
+        {"refId": "A", "expr": "executor_queued_tasks{name=\"workflowExecutor\"}", "legendFormat": "queued workflowExecutor"},
+        {"refId": "B", "expr": "executor_active_threads{name=\"workflowExecutor\"}", "legendFormat": "active workflowExecutor"},
+        {"refId": "C", "expr": "executor_queued_tasks{name=\"workflowTriggerScheduler\"}", "legendFormat": "queued triggerScheduler"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0}, "overrides": []}
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "作业按车道/状态（含死信）",
+      "datasource": {"type": "prometheus", "uid": "wgh-prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 14},
+      "targets": [{"refId": "A", "expr": "sum by (lane, status) (wgh_execution_job_count{status=~\"PENDING|LEASED|RUNNING|FAILED|DEAD\"})", "legendFormat": "{{lane}} / {{status}}"}],
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0}, "overrides": []}
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "工作流运行结果与节点失败",
+      "datasource": {"type": "prometheus", "uid": "wgh-prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 14},
+      "targets": [
+        {"refId": "A", "expr": "sum by (status) (rate(wgh_workflow_runs_total[$__rate_interval]))", "legendFormat": "run {{status}}"},
+        {"refId": "B", "expr": "sum by (nodeType) (rate(wgh_workflow_node_failures_total[$__rate_interval]))", "legendFormat": "node failure {{nodeType}}"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []}
+    },
+
+    {"id": 11, "type": "row", "title": "配额退款结果分布", "gridPos": {"h": 1, "w": 24, "x": 0, "y": 22}, "collapsed": false, "panels": []},
+    {
+      "id": 12,
+      "type": "piechart",
+      "title": "退款结果占比（当前时间范围）",
+      "datasource": {"type": "prometheus", "uid": "wgh-prometheus"},
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 23},
+      "targets": [{"refId": "A", "expr": "sum by (result) (increase(wgh_quota_refund_total[$__range]))", "legendFormat": "{{result}}"}],
+      "options": {
+        "pieType": "pie",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "legend": {"displayMode": "list", "placement": "right", "showLegend": true},
+        "tooltip": {"mode": "single", "sort": "none"}
+      },
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0}, "overrides": []}
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "退款结果速率",
+      "datasource": {"type": "prometheus", "uid": "wgh-prometheus"},
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 23},
+      "targets": [{"refId": "A", "expr": "sum by (result) (rate(wgh_quota_refund_total[$__rate_interval]))", "legendFormat": "{{result}}"}],
+      "fieldConfig": {"defaults": {"unit": "ops", "decimals": 3}, "overrides": []}
+    },
+    {
+      "id": 14,
+      "type": "stat",
+      "title": "退款失败（当前时间范围）",
+      "datasource": {"type": "prometheus", "uid": "wgh-prometheus"},
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 23},
+      "targets": [{"refId": "A", "expr": "sum(increase(wgh_quota_refund_total{result=\"failed\"}[$__range]))", "legendFormat": "failed"}],
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "background", "graphMode": "none"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}
+        },
+        "overrides": []
+      }
+    },
+
+    {"id": 15, "type": "row", "title": "存储孤儿与缺失引用", "gridPos": {"h": 1, "w": 24, "x": 0, "y": 31}, "collapsed": false, "panels": []},
+    {
+      "id": 16,
+      "type": "stat",
+      "title": "孤儿对象检测（当前时间范围）",
+      "datasource": {"type": "prometheus", "uid": "wgh-prometheus"},
+      "gridPos": {"h": 8, "w": 6, "x": 0, "y": 32},
+      "targets": [{"refId": "A", "expr": "sum(increase(wgh_storage_orphans_total{action=\"detected\"}[$__range]))", "legendFormat": "detected"}],
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"},
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0}, "overrides": []}
+    },
+    {
+      "id": 17,
+      "type": "stat",
+      "title": "缺失存储引用（当前时间范围）",
+      "datasource": {"type": "prometheus", "uid": "wgh-prometheus"},
+      "gridPos": {"h": 8, "w": 6, "x": 6, "y": 32},
+      "targets": [{"refId": "A", "expr": "sum(increase(wgh_storage_orphans_total{action=\"missing\"}[$__range]))", "legendFormat": "missing"}],
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "background", "graphMode": "none"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 18,
+      "type": "timeseries",
+      "title": "存储孤儿处理动作",
+      "datasource": {"type": "prometheus", "uid": "wgh-prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 32},
+      "targets": [{"refId": "A", "expr": "sum by (action) (rate(wgh_storage_orphans_total[$__rate_interval]))", "legendFormat": "{{action}}"}],
+      "fieldConfig": {"defaults": {"unit": "ops", "decimals": 3}, "overrides": []}
+    },
+
+    {"id": 19, "type": "row", "title": "实例级状态", "gridPos": {"h": 1, "w": 24, "x": 0, "y": 40}, "collapsed": false, "panels": []},
+    {
+      "id": 20,
+      "type": "stat",
+      "title": "在线后端实例（抓取 UP）",
+      "datasource": {"type": "prometheus", "uid": "wgh-prometheus"},
+      "gridPos": {"h": 8, "w": 6, "x": 0, "y": 41},
+      "targets": [{"refId": "A", "expr": "sum(up{job=\"wgh-rag-backend\"})", "legendFormat": "up"}, {"refId": "B", "expr": "count(up{job=\"wgh-rag-backend\"})", "legendFormat": "total"}],
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 21,
+      "type": "timeseries",
+      "title": "共享状态存储降级",
+      "datasource": {"type": "prometheus", "uid": "wgh-prometheus"},
+      "gridPos": {"h": 8, "w": 9, "x": 6, "y": 41},
+      "targets": [{"refId": "A", "expr": "sum by (store, reason) (rate(wgh_state_store_fallbacks_total[$__rate_interval]))", "legendFormat": "{{store}} / {{reason}}"}],
+      "fieldConfig": {"defaults": {"unit": "ops", "decimals": 3}, "overrides": []}
+    },
+    {
+      "id": 22,
+      "type": "timeseries",
+      "title": "实例抓取状态（1=UP）",
+      "datasource": {"type": "prometheus", "uid": "wgh-prometheus"},
+      "gridPos": {"h": 8, "w": 9, "x": 15, "y": 41},
+      "targets": [{"refId": "A", "expr": "up{job=~\"wgh-rag-backend|wgh-rag-postgres-exporter\"}", "legendFormat": "{{job}} {{instance}}"}],
+      "fieldConfig": {"defaults": {"unit": "short", "min": 0, "max": 1, "decimals": 0}, "overrides": []}
+    },
+
+    {"id": 23, "type": "row", "title": "对话 / 检索 / LLM", "gridPos": {"h": 1, "w": 24, "x": 0, "y": 49}, "collapsed": false, "panels": []},
+    {
+      "id": 24,
       "type": "timeseries",
       "title": "对话请求按路由 / 分享态",
       "datasource": {"type": "prometheus", "uid": "wgh-prometheus"},
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 6},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 50},
       "targets": [{"refId": "A", "expr": "sum by (route, share) (rate(wgh_chat_requests_total[$__rate_interval]))", "legendFormat": "{{route}} / share={{share}}"}],
       "fieldConfig": {"defaults": {"unit": "reqps"}, "overrides": []}
     },
     {
-      "id": 6,
+      "id": 25,
       "type": "timeseries",
       "title": "对话耗时与首 Token 延迟 P95",
       "datasource": {"type": "prometheus", "uid": "wgh-prometheus"},
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 6},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 50},
       "targets": [
         {"refId": "A", "expr": "histogram_quantile(0.95, sum by (le, route) (rate(wgh_chat_duration_seconds_bucket[$__rate_interval])))", "legendFormat": "duration p95 {{route}}"},
         {"refId": "B", "expr": "histogram_quantile(0.95, sum by (le, route) (rate(wgh_chat_first_token_seconds_bucket[$__rate_interval])))", "legendFormat": "first token p95 {{route}}"}
@@ -72,44 +246,32 @@
       "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []}
     },
     {
-      "id": 7,
+      "id": 26,
       "type": "timeseries",
       "title": "对话错误按阶段",
       "datasource": {"type": "prometheus", "uid": "wgh-prometheus"},
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 14},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 58},
       "targets": [{"refId": "A", "expr": "sum by (stage) (rate(wgh_chat_errors_total[$__rate_interval]))", "legendFormat": "{{stage}}"}],
       "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []}
     },
     {
-      "id": 8,
+      "id": 27,
       "type": "timeseries",
       "title": "检索耗时 P95（hybrid / rerank）",
       "datasource": {"type": "prometheus", "uid": "wgh-prometheus"},
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 14},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 58},
       "targets": [{"refId": "A", "expr": "histogram_quantile(0.95, sum by (le, hybrid, rerank) (rate(wgh_retrieval_duration_seconds_bucket[$__rate_interval])))", "legendFormat": "hybrid={{hybrid}} rerank={{rerank}}"}],
       "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []}
     },
     {
-      "id": 9,
+      "id": 28,
       "type": "timeseries",
       "title": "LLM Token 用量 / 调用次数",
       "datasource": {"type": "prometheus", "uid": "wgh-prometheus"},
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 22},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 66},
       "targets": [
         {"refId": "A", "expr": "sum by (type) (rate(wgh_llm_tokens_total[$__rate_interval]))", "legendFormat": "tokens {{type}}"},
         {"refId": "B", "expr": "sum by (provider) (rate(wgh_llm_calls_total[$__rate_interval]))", "legendFormat": "calls {{provider}}"}
-      ],
-      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []}
-    },
-    {
-      "id": 10,
-      "type": "timeseries",
-      "title": "工作流运行结果与节点失败",
-      "datasource": {"type": "prometheus", "uid": "wgh-prometheus"},
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 22},
-      "targets": [
-        {"refId": "A", "expr": "sum by (status) (rate(wgh_workflow_runs_total[$__rate_interval]))", "legendFormat": "run {{status}}"},
-        {"refId": "B", "expr": "sum by (nodeType) (rate(wgh_workflow_node_failures_total[$__rate_interval]))", "legendFormat": "node failure {{nodeType}}"}
       ],
       "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []}
     }

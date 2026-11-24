@@ -19,7 +19,7 @@
 set -uo pipefail
 
 SRV=${SRV:-http://localhost:8080}
-DB=${DB:-wgh_rag}
+DB=${DB:-wgh_rag_test}
 PG=${PG:-postgres-with-vector}
 
 PASS=0; FAIL=0; SKIP=0

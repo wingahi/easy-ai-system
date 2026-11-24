@@ -1,0 +1,236 @@
+# K3 网络策略：命名空间内默认拒绝，按调用链最小放行。
+#
+# 允许矩阵（详见 README §10.5）：
+#   入站：Ingress→frontend:80、Ingress→backend:8080、frontend→backend:8080、监控→backend:9090
+#   出站：frontend→backend:8080、backend→PG:5432/Redis:6379/HTTPS:443、迁移与备份→PG（备份另加 443）
+#   所有 Pod 仅允许向 kube-dns 出站 53（UDP/TCP）。
+#
+# 重要前提与占位值：
+#   1. PG/Redis 走 ExternalName 时解析到集群外地址，只能用 ipBlock 放行，
+#      必须把 10.0.0.0/8 换成托管实例的真实网段（或对端安全组 ID 对应的网段）；
+#   2. OSS/模型服务走公网 HTTPS：放行 0.0.0.0/0:443，但排除集群私网段与云元数据地址；
+#      若使用 OSS 内网 endpoint，请把其网段合并进上面的 PG/Redis 私网 ipBlock；
+#   3. ingress-nginx 与 monitoring 命名空间名按实际集群替换；
+#   4. kubelet 探针：多数 CNI（Calico/Cilium）对来自本节点的探针不套用 NetworkPolicy，
+#      但并非所有实现都如此。若上线后 Pod 因探针失败反复重启，按 README §10.9 的
+#      「探针放行」片段追加节点网段，而不是放开 8080/9090 给全部来源。
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: wgh-default-deny
+  labels:
+    app.kubernetes.io/name: wgh-rag
+    app.kubernetes.io/component: network-policy
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+# DNS：默认拒绝后仍必须能解析 Service 与外部域名。
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: wgh-allow-dns-egress
+  labels:
+    app.kubernetes.io/name: wgh-rag
+    app.kubernetes.io/component: network-policy
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+---
+# 后端入站：前端代理、Ingress 的 /api 直连、监控抓取管理端口。
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: wgh-backend-ingress
+  labels:
+    app.kubernetes.io/name: wgh-rag
+    app.kubernetes.io/component: network-policy
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: wgh-rag
+      app.kubernetes.io/component: backend
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: wgh-rag
+              app.kubernetes.io/component: frontend
+      ports:
+        - port: 8080
+          protocol: TCP
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - port: 8080
+          protocol: TCP
+    # 管理端口只对监控命名空间开放，不经过 Ingress，也不进 Service 的对外路径。
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - port: 9090
+          protocol: TCP
+---
+# 后端出站：PG / Redis（私网）与 OSS、模型服务（公网 HTTPS）。
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: wgh-backend-egress
+  labels:
+    app.kubernetes.io/name: wgh-rag
+    app.kubernetes.io/component: network-policy
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: wgh-rag
+      app.kubernetes.io/component: backend
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 10.0.0.0/8
+      ports:
+        - port: 5432
+          protocol: TCP
+        - port: 6379
+          protocol: TCP
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 169.254.169.254/32
+      ports:
+        - port: 443
+          protocol: TCP
+---
+# 前端入站：只接受 Ingress 控制器。
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: wgh-frontend-ingress
+  labels:
+    app.kubernetes.io/name: wgh-rag
+    app.kubernetes.io/component: network-policy
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: wgh-rag
+      app.kubernetes.io/component: frontend
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - port: 80
+          protocol: TCP
+---
+# 前端出站：只允许代理到后端 8080（DNS 由 wgh-allow-dns-egress 统一放行）。
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: wgh-frontend-egress
+  labels:
+    app.kubernetes.io/name: wgh-rag
+    app.kubernetes.io/component: network-policy
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: wgh-rag
+      app.kubernetes.io/component: frontend
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: wgh-rag
+              app.kubernetes.io/component: backend
+      ports:
+        - port: 8080
+          protocol: TCP
+---
+# 迁移 Job：只需访问 PG。
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: wgh-migrate-egress
+  labels:
+    app.kubernetes.io/name: wgh-rag
+    app.kubernetes.io/component: network-policy
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: wgh-rag
+      app.kubernetes.io/component: migrate
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 10.0.0.0/8
+      ports:
+        - port: 5432
+          protocol: TCP
+---
+# 备份 CronJob：PG 读取 + 对象存储上传；恢复演练需要写 PG（建临时库）。
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: wgh-backup-egress
+  labels:
+    app.kubernetes.io/name: wgh-rag
+    app.kubernetes.io/component: network-policy
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: wgh-rag
+      app.kubernetes.io/component: backup
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 10.0.0.0/8
+      ports:
+        - port: 5432
+          protocol: TCP
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 169.254.169.254/32
+      ports:
+        - port: 443
+          protocol: TCP

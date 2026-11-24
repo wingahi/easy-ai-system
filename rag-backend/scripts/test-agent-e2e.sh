@@ -142,22 +142,22 @@ rm -f "$TMP_SSE"
 # ---- 4. 数据库验证：Agent Plan / Step 持久化 ----
 echo ""
 echo "## 4. 数据持久化验证"
-PLAN_COUNT=$(docker exec postgres-with-vector psql -U postgres -d wgh_rag -tAc "SELECT COUNT(*) FROM wgh_agent_plan WHERE deleted=0")
-STEP_COUNT=$(docker exec postgres-with-vector psql -U postgres -d wgh_rag -tAc "SELECT COUNT(*) FROM wgh_agent_step WHERE deleted=0")
+PLAN_COUNT=$(docker exec postgres-with-vector psql -U postgres -d wgh_rag_test -tAc "SELECT COUNT(*) FROM wgh_agent_plan WHERE deleted=0")
+STEP_COUNT=$(docker exec postgres-with-vector psql -U postgres -d wgh_rag_test -tAc "SELECT COUNT(*) FROM wgh_agent_step WHERE deleted=0")
 echo "  wgh_agent_plan: $PLAN_COUNT 条"
 echo "  wgh_agent_step: $STEP_COUNT 条"
 [ "$PLAN_COUNT" -ge 1 ] && log_pass "Agent Plan 已持久化" || log_fail "Agent Plan 未持久化"
 [ "$STEP_COUNT" -ge 2 ] && log_pass "Agent Step 已持久化 (≥2)" || log_fail "Agent Step 未持久化"
 
 # 最新 Plan 状态
-LATEST_PLAN=$(docker exec postgres-with-vector psql -U postgres -d wgh_rag -tAc "SELECT id,status,current_step_index FROM wgh_agent_plan WHERE deleted=0 ORDER BY id DESC LIMIT 1")
+LATEST_PLAN=$(docker exec postgres-with-vector psql -U postgres -d wgh_rag_test -tAc "SELECT id,status,current_step_index FROM wgh_agent_plan WHERE deleted=0 ORDER BY id DESC LIMIT 1")
 echo "  最新 Plan: $LATEST_PLAN"
 
 # ---- 5. Agent REST API 验证 ----
 echo ""
 echo "## 5. Agent REST 控制 API"
-LATEST_PLAN_ID=$(docker exec postgres-with-vector psql -U postgres -d wgh_rag -tAc "SELECT id FROM wgh_agent_plan WHERE deleted=0 ORDER BY id DESC LIMIT 1")
-LATEST_STEP_ID=$(docker exec postgres-with-vector psql -U postgres -d wgh_rag -tAc "SELECT id FROM wgh_agent_step WHERE plan_id=$LATEST_PLAN_ID AND deleted=0 ORDER BY id DESC LIMIT 1")
+LATEST_PLAN_ID=$(docker exec postgres-with-vector psql -U postgres -d wgh_rag_test -tAc "SELECT id FROM wgh_agent_plan WHERE deleted=0 ORDER BY id DESC LIMIT 1")
+LATEST_STEP_ID=$(docker exec postgres-with-vector psql -U postgres -d wgh_rag_test -tAc "SELECT id FROM wgh_agent_step WHERE plan_id=$LATEST_PLAN_ID AND deleted=0 ORDER BY id DESC LIMIT 1")
 
 if [ -n "$LATEST_PLAN_ID" ]; then
   # 先查 state（在 cancel 之前）— 写入文件避免 heredoc 控制字符问题

@@ -1,0 +1,47 @@
+# 入口 Ingress（nginx ingress controller）。
+#
+# SSE 关键参数（对齐 rag-frontend/nginx.conf#L8-L26）：
+#   proxy-buffering: off        关闭响应缓冲，事件逐条下发
+#   proxy-read-timeout: 3600    聊天/多 Agent/工作流最长 30 分钟，留足余量
+#   proxy-send-timeout: 3600
+#   proxy-body-size: 210m       覆盖后端 200MB 单文件上限
+#
+# 路由说明：/api 直接进后端（避免多一跳 nginx），其余路径交给前端 SPA。
+# TLS：生产环境解除 tls 段注释，并预先创建 Ingress TLS Secret。
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: wgh-rag
+  labels:
+    app.kubernetes.io/name: wgh-rag
+    app.kubernetes.io/component: ingress
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-body-size: "210m"
+    nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: wgh.example.com
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 8080
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 80
+  # tls:
+  #   - hosts:
+  #       - wgh.example.com
+  #     secretName: wgh-tls

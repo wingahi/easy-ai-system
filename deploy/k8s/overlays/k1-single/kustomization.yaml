@@ -1,0 +1,49 @@
+# K1 单副本可编排 overlay：镜像地址 + 域名替换。
+# 依赖：外部 PostgreSQL/Redis（见 base/services-external.yaml）、默认 StorageClass、nginx ingress。
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: wgh
+resources:
+  - ../../base
+images:
+  - name: wgh-rag-backend
+    newName: registry.example.com/wgh-rag/wgh-rag-backend
+    newTag: "0.1.0"
+  - name: wgh-rag-frontend
+    newName: registry.example.com/wgh-rag/wgh-rag-frontend
+    newTag: "0.1.0"
+patches:
+  - target:
+      kind: Ingress
+      name: wgh-rag
+    patch: |-
+      - op: replace
+        path: /spec/rules/0/host
+        value: wgh.example.com
+  # K1 为单副本小规模/验证环境，数据库落到开发库
+  - target:
+      kind: ConfigMap
+      name: wgh-backend-config
+    patch: |-
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: wgh-backend-config
+      data:
+        SPRING_DATASOURCE_URL: "jdbc:postgresql://postgres:5432/wgh_rag_dev?currentSchema=public&stringtype=unspecified"
+  - target:
+      kind: Job
+      name: wgh-migrate
+    patch: |-
+      apiVersion: batch/v1
+      kind: Job
+      metadata:
+        name: wgh-migrate
+      spec:
+        template:
+          spec:
+            containers:
+              - name: migrate
+                env:
+                  - name: PGDATABASE
+                    value: wgh_rag_dev

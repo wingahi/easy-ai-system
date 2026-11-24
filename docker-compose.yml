@@ -8,7 +8,7 @@ services:
     image: pgvector/pgvector:pg15
     container_name: wgh-rag-postgres
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-wgh_rag}
+      POSTGRES_DB: ${POSTGRES_DB:-wgh_rag_prod}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?必须设置 POSTGRES_PASSWORD}
       # 数据文件放在子目录，便于卷与镜像升级
@@ -62,7 +62,7 @@ services:
       WGH_INSTANCE_ID: ${WGH_INSTANCE_ID:-}
       # 数据源唯一真相是 POSTGRES_*；应用侧统一用 SPRING_DATASOURCE_*（优先级最高）
       # 切外部库：把 POSTGRES_HOST/PORT/DB/USER/PASSWORD 指向外部实例即可
-      SPRING_DATASOURCE_URL: jdbc:postgresql://${POSTGRES_HOST:-postgres}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-wgh_rag}?currentSchema=public&stringtype=unspecified
+      SPRING_DATASOURCE_URL: jdbc:postgresql://${POSTGRES_HOST:-postgres}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-wgh_rag_prod}?currentSchema=public&stringtype=unspecified
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-postgres}
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:?必须设置 POSTGRES_PASSWORD}
       PROD_DB_POOL_MAX: ${PROD_DB_POOL_MAX:-50}

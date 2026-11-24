@@ -1,0 +1,80 @@
+# 数据库迁移 Job：新环境建表 / 升级前执行。
+#
+# 使用前提：
+#   - 已创建 Secret wgh-backend-secrets（复用 SPRING_DATASOURCE_PASSWORD）；
+#   - 集群内可解析 postgres（ExternalName 或集群内数据库 Service）。
+#
+# 重要：
+#   - Job 的 Pod 模板不可变。重复执行前先删除同名 Job：
+#       kubectl -n wgh delete job wgh-migrate --ignore-not-found
+#   - RUN_SEED=true 会写入示例模型数据，生产默认 false。
+#   - 脚本清单与 SQL 来源分别为 base/migrate/run-migrations.sh 与 rag-backend/sql/；
+#     SQL 通过 kustomize configMapGenerator 打包，不做复制，避免双份真相。
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: wgh-migrate
+  labels:
+    app.kubernetes.io/name: wgh-rag
+    app.kubernetes.io/component: migrate
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 1800
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: wgh-rag
+        app.kubernetes.io/component: migrate
+    spec:
+      restartPolicy: Never
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: migrate
+          image: postgres:15-alpine
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "/scripts/run-migrations.sh"]
+          env:
+            - name: PGHOST
+              value: postgres
+            - name: PGPORT
+              value: "5432"
+            - name: PGDATABASE
+              value: wgh_rag_prod
+            - name: PGUSER
+              value: postgres
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: wgh-backend-secrets
+                  key: SPRING_DATASOURCE_PASSWORD
+            - name: RUN_SEED
+              value: "false"
+            - name: HOME
+              value: /tmp
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: scripts
+          configMap:
+            name: wgh-migrate-sql
+        - name: tmp
+          emptyDir: {}

@@ -1,0 +1,34 @@
+# 外部中间件接入（推荐：托管 PostgreSQL + 托管 Redis）。
+#
+# 用 ExternalName Service 保持应用配置中的主机名稳定（postgres / redis），
+# 切换实例时只改 externalName，不需要改应用配置。
+#
+# 若不用 ExternalName，也可直接把 configmap-backend.yaml 的
+# SPRING_DATASOURCE_URL / WGH_REDIS_HOST 改成外部域名或 IP。
+#
+# 前置要求：
+#   - PostgreSQL 15+ 且安装 pgvector 与 pg_trgm 扩展；
+#   - 迁移 Job 需要能从集群内访问该地址。
+#
+# 注意：外部地址只支持域名（ExternalName 不支持 IP）。
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  labels:
+    app.kubernetes.io/name: wgh-rag
+    app.kubernetes.io/component: postgres
+spec:
+  type: ExternalName
+  externalName: postgres.example.internal
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  labels:
+    app.kubernetes.io/name: wgh-rag
+    app.kubernetes.io/component: redis
+spec:
+  type: ExternalName
+  externalName: redis.example.internal

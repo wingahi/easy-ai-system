@@ -1,0 +1,29 @@
+# 仅 K2 使用：保证节点维护/驱逐时至少保留 1 个可用副本。
+# PDB 只约束主动驱逐（drain/eviction），不阻止滚动发布。
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: wgh-backend
+  labels:
+    app.kubernetes.io/name: wgh-rag
+    app.kubernetes.io/component: backend
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: wgh-rag
+      app.kubernetes.io/component: backend
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: wgh-frontend
+  labels:
+    app.kubernetes.io/name: wgh-rag
+    app.kubernetes.io/component: frontend
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: wgh-rag
+      app.kubernetes.io/component: frontend

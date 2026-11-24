@@ -1,0 +1,39 @@
+# 仅 K2 使用，且必须已安装 metrics-server（或等效指标适配器）。
+#
+# 注意：SSE 长连接不会随请求结束立即释放，CPU 下降滞后；
+#       scaleDown 使用 600s 稳定窗口，避免频繁抖动导致连接被反复断开。
+# 后续可选：接入 wgh.scheduler.queued 自定义指标（需 Prometheus Adapter）。
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: wgh-backend
+  labels:
+    app.kubernetes.io/name: wgh-rag
+    app.kubernetes.io/component: backend
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: wgh-backend
+  minReplicas: 2
+  maxReplicas: 4
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 600
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 120

@@ -1,0 +1,41 @@
+# Kustomize base：通用清单（单副本 + 本地 PVC 存储的可运行基线）。
+#
+# 渲染命令必须允许读取仓库内其它目录的 SQL 文件：
+#   kubectl kustomize --load-restrictor LoadRestrictionsNone deploy/k8s/overlays/k1-single
+#
+# 注意：SQL 文件以文件名作为 ConfigMap 的 key，文件名需全局唯一；
+#       新增迁移脚本时同时更新 base/migrate/run-migrations.sh 的执行顺序。
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: wgh
+resources:
+  - namespace.yaml
+  - serviceaccount.yaml
+  - configmap-backend.yaml
+  - pvc-uploads.yaml
+  - services-external.yaml
+  - deployment-backend.yaml
+  - service-backend.yaml
+  - deployment-frontend.yaml
+  - service-frontend.yaml
+  - ingress.yaml
+  - job-migrate.yaml
+configMapGenerator:
+  - name: wgh-migrate-sql
+    files:
+      - ../../../rag-backend/sql/schema/01-schema.sql
+      - ../../../rag-backend/sql/migrations/20261113/01_resource_visibility.sql
+      - ../../../rag-backend/sql/migrations/20261118/01_eval_dataset_versioning.sql
+      - ../../../rag-backend/sql/migrations/20261118/02_kb_connector.sql
+      - ../../../rag-backend/sql/migrations/20261118/03_upload_session.sql
+      - ../../../rag-backend/sql/migrations/20261118/04_llm_model_capability.sql
+      - ../../../rag-backend/sql/migrations/20261118/05_agent_memory.sql
+      - ../../../rag-backend/sql/migrations/20261120/01_execution_job.sql
+      - ../../../rag-backend/sql/migrations/20261120/02_quota_charge.sql
+      - ../../../rag-backend/sql/migrations/20261122/01_execution_job_trace.sql
+      - ../../../rag-backend/sql/seed/02-data.sql
+      - migrate/run-migrations.sh
+    options:
+      labels:
+        app.kubernetes.io/name: wgh-rag
+        app.kubernetes.io/component: migrate

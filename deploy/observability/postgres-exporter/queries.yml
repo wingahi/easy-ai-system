@@ -1,0 +1,27 @@
+# 调度作业状态导出（只读查询）。
+# 说明：postgres_exporter 0.21 仍支持 --extend.query-path（有弃用告警），
+# 其配置为「查询名 -> {query, metrics}」映射；指标名 = 查询名_列名。
+# 生成的指标：
+#   wgh_execution_job_count{status,lane}
+#   wgh_execution_job_oldest_age_seconds{status,lane}
+wgh_execution_job:
+  query: |
+    SELECT status, lane,
+           count(*) AS count,
+           COALESCE(max(EXTRACT(EPOCH FROM (now() - COALESCE(not_before, scheduled_at)))), 0)::double precision AS oldest_age_seconds
+    FROM wgh_execution_job
+    WHERE status IN ('PENDING', 'LEASED', 'RUNNING', 'SUCCEEDED', 'FAILED', 'DEAD', 'CANCELLED')
+    GROUP BY status, lane
+  metrics:
+    - status:
+        usage: "LABEL"
+        description: "Execution job status"
+    - lane:
+        usage: "LABEL"
+        description: "Execution lane"
+    - count:
+        usage: "GAUGE"
+        description: "Number of execution jobs in this status/lane"
+    - oldest_age_seconds:
+        usage: "GAUGE"
+        description: "Age in seconds of the oldest job in this status/lane"

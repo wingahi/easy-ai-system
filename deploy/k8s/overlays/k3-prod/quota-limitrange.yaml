@@ -1,0 +1,55 @@
+# K3 资源边界：命名空间配额 + 容器默认规格。
+#
+# 为什么两个都要：
+#   ResourceQuota 约束「整个命名空间的上限」，防失控；它要求 Pod 内的容器都声明 requests/limits，
+#   否则创建会被拒绝。base 的 Deployment/Job 已全部声明，LimitRange 只负责兜底与上限校验。
+#   LimitRange 约束「单个容器/PVC」的默认值与最大值，避免有人漏写 requests 时把节点打满。
+#
+# 数值口径（按 K3 默认拓扑复算，修改副本数或规格后必须同步）：
+#   backend 3 副本、HPA 上限 8：requests.cpu 500m × 8 = 4，limits.cpu 2 × 8 = 16；
+#   requests.memory 1Gi × 8 = 8Gi，limits.memory 2Gi × 8 = 16Gi；
+#   frontend 2 副本：requests.cpu 50m × 2，limits.cpu 500m × 2；
+#   迁移 Job / 备份 Job / 恢复演练 Job: 各 ≤ 1 CPU、1Gi。
+#   → 配额留出约 2 倍余量，覆盖滚动发布时的 maxSurge 与临时 Job。
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: wgh-quota
+  labels:
+    app.kubernetes.io/name: wgh-rag
+    app.kubernetes.io/component: quota
+spec:
+  hard:
+    requests.cpu: "16"
+    requests.memory: 32Gi
+    limits.cpu: "32"
+    limits.memory: 64Gi
+    pods: "40"
+    services: "10"
+    secrets: "30"
+    configmaps: "30"
+    persistentvolumeclaims: "6"
+    requests.storage: 200Gi
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: wgh-defaults
+  labels:
+    app.kubernetes.io/name: wgh-rag
+    app.kubernetes.io/component: quota
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: "1"
+        memory: 1Gi
+      defaultRequest:
+        cpu: 200m
+        memory: 256Mi
+      max:
+        cpu: "4"
+        memory: 8Gi
+    - type: PersistentVolumeClaim
+      max:
+        storage: 100Gi

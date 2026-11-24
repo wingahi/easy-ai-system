@@ -1,0 +1,100 @@
+# K2 多副本 overlay：2 副本 + HPA + PDB + OSS 共享存储。
+#
+# 前置条件已满足（代码层）：
+#   1. 调度中心 S0：实例心跳、失联回收、作业/业务对账；
+#   2. 多租户阶段 0/1 与执行者租约、启动对账；
+#   3. 共享存储：wgh.rag.storage.mode=shared 启动自检 + OSS 实现；
+#   4. 连接池按副本数重算：PROD_DB_POOL_MAX=25，4 副本上限 100 连接；
+#   5. SSE 事件重放（Last-Event-ID）已实现，但独立工作流/多 Agent 流未接共享缓冲，
+#      因此保留 Cookie 亲和作为过渡，去留条件见 README §5.2。
+#
+# 占位项（部署前必须替换，均以 REPLACE_ME_ 开头）：
+#   - images: REPLACE_ME_REGISTRY / REPLACE_ME_TAG
+#   - WGH_OSS_ENDPOINT / WGH_OSS_BUCKET
+#   - Secret wgh-backend-secrets 中的 WGH_OSS_ACCESS_KEY_ID / WGH_OSS_ACCESS_KEY_SECRET
+#     （模板见 ../../base/secret.example.yaml，缺失时 shared 自检会让容器启动失败）
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: wgh
+resources:
+  - ../../base
+  - hpa-backend.yaml
+  - pdb-backend.yaml
+images:
+  - name: wgh-rag-backend
+    newName: REPLACE_ME_REGISTRY/wgh-rag/wgh-rag-backend
+    newTag: "REPLACE_ME_TAG"
+  - name: wgh-rag-frontend
+    newName: REPLACE_ME_REGISTRY/wgh-rag/wgh-rag-frontend
+    newTag: "REPLACE_ME_TAG"
+replicas:
+  - name: wgh-backend
+    count: 2
+  - name: wgh-frontend
+    count: 2
+patches:
+  # 上传卷：K2 下仍挂载 wgh-uploads，有两个用途：
+  #   1) 滚动切换期回落读旧对象（WGH_STORAGE_READ_FALLBACK=true）；
+  #   2) ChatImageService 仍直接写本地 WGH_UPLOAD_DIR（/app/uploads/chat-images），未接入存储抽象。
+  # 多副本可能调度到不同节点，因此过渡期必须是 ReadWriteMany（单节点集群可改用 RWO）。
+  # 仅关闭回落读不能摘卷；要等聊天图片也迁到 OSS 后，才能移除本 patch 与 uploads 挂载。
+  - target:
+      kind: PersistentVolumeClaim
+      name: wgh-uploads
+    patch: |-
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: wgh-uploads
+      spec:
+        accessModes:
+          - ReadWriteMany
+  # 存储切换为 OSS + 共享模式。
+  # WGH_STORAGE_READ_FALLBACK 仅在迁移窗口内为 true，迁移完成后改回 false。
+  - target:
+      kind: ConfigMap
+      name: wgh-backend-config
+    patch: |-
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: wgh-backend-config
+      data:
+        PROD_DB_POOL_MAX: "25"
+        SPRING_DATASOURCE_URL: "jdbc:postgresql://postgres:5432/wgh_rag_test?currentSchema=public&stringtype=unspecified"
+        WGH_STORAGE_TYPE: "oss"
+        WGH_STORAGE_MODE: "shared"
+        WGH_STORAGE_READ_FALLBACK: "true"
+        WGH_OSS_ENDPOINT: "REPLACE_ME_OSS_ENDPOINT"
+        WGH_OSS_BUCKET: "REPLACE_ME_OSS_BUCKET"
+  # SSE 过渡方案：会话亲和。去除前置见 README §5.2。
+  - target:
+      kind: Ingress
+      name: wgh-rag
+    patch: |-
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: wgh-rag
+        annotations:
+          nginx.ingress.kubernetes.io/affinity: "cookie"
+          nginx.ingress.kubernetes.io/session-cookie-name: "WGH_AFFINITY"
+          nginx.ingress.kubernetes.io/session-cookie-hash: "sha1"
+          nginx.ingress.kubernetes.io/session-cookie-max-age: "3600"
+  # K2 为多副本预发/验证环境，数据库落到测试库
+  - target:
+      kind: Job
+      name: wgh-migrate
+    patch: |-
+      apiVersion: batch/v1
+      kind: Job
+      metadata:
+        name: wgh-migrate
+      spec:
+        template:
+          spec:
+            containers:
+              - name: migrate
+                env:
+                  - name: PGDATABASE
+                    value: wgh_rag_test

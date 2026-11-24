@@ -1,0 +1,51 @@
+# 后端非敏感配置。
+# 敏感项（数据库密码、JWT 密钥、初始管理员密码、OSS 凭据）见 secret.example.yaml。
+# 说明：数据库连接地址优先使用 SPRING_DATASOURCE_*（与 docker-compose 一致），
+#      其优先级高于 application-prod.yml 中的 PROD_DB_* 默认值。
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: wgh-backend-config
+  labels:
+    app.kubernetes.io/name: wgh-rag
+    app.kubernetes.io/component: backend
+data:
+  WGH_PROFILE: "prod"
+  SERVER_PORT: "8080"
+  WGH_MANAGEMENT_PORT: "9090"
+  # 管理端口需被 kubelet 探针与 Prometheus 访问，默认监听全部网卡；
+  # 业务端口不暴露 actuator（见 application.yml 的 management 段）。
+  WGH_MANAGEMENT_ADDRESS: "0.0.0.0"
+
+  # 堆大小按容器内存上限的 65% 计算，为 Metaspace(256m)、线程栈、直接内存留余量。
+  JAVA_OPTS: "-XX:MaxRAMPercentage=65.0 -XX:+UseG1GC -XX:MaxMetaspaceSize=256m"
+
+  # ===== PostgreSQL（默认走集群内 ExternalName Service，见 services-external.yaml）=====
+  SPRING_DATASOURCE_URL: "jdbc:postgresql://postgres:5432/wgh_rag_prod?currentSchema=public&stringtype=unspecified"
+  SPRING_DATASOURCE_USERNAME: "postgres"
+  # 单副本默认值；多副本时必须按 PG max_connections 重算（K2 overlay 改为 25）。
+  PROD_DB_POOL_MAX: "50"
+  PROD_DB_POOL_MIN: "5"
+
+  # ===== Redis：跨实例共享限流计数、密码锁定、取消标记、迁移单飞锁 =====
+  WGH_REDIS_ENABLED: "true"
+  WGH_REDIS_HOST: "redis"
+  WGH_REDIS_PORT: "6379"
+  WGH_REDIS_DATABASE: "0"
+  WGH_REDIS_TIMEOUT: "2s"
+  WGH_REDIS_KEY_PREFIX: "wgh"
+
+  # ===== 存储：默认本地磁盘 + PVC（单副本）。
+  # K2 改为 OSS + 共享模式（见 overlays/k2-multi）：WGH_STORAGE_TYPE=oss、WGH_STORAGE_MODE=shared，
+  # 并用 WGH_STORAGE_READ_FALLBACK 在迁移窗口内回落读取 PVC 上的旧对象。
+  WGH_STORAGE_TYPE: "local"
+  WGH_UPLOAD_DIR: "/app/uploads"
+  WGH_STORAGE_MAX_FILE_MB: "200"
+
+  # ===== 其它运行参数 =====
+  WGH_PGVECTOR_SKIP_EXT: "false"
+  WGH_PGVECTOR_HNSW: "true"
+  WGH_SKILL_BASE_PATH: "/app/skills"
+  WGH_LOG_LEVEL: "INFO"
+  # 沙箱默认关闭：bwrap 依赖宿主能力，集群内需独立安全域，见部署说明「沙箱」。
+  # WGH_SANDBOX_ENABLED: "false"

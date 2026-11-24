@@ -1,0 +1,19 @@
+# 本地上传卷（WGH_STORAGE_TYPE=local）与聊天图片目录（ChatImageService 仍写 WGH_UPLOAD_DIR）。
+# K1 单副本：ReadWriteOnce 即可。
+# K2 以 OSS 为主存储，本 PVC 只在 local → oss 滚动切换窗口内用于回落读取旧对象；
+#     需要所有副本都能读到同一卷时改为 ReadWriteMany（见 overlays/k2-multi），
+#     OSS 数据迁移完成后摘除挂载并删除本 PVC。
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: wgh-uploads
+  labels:
+    app.kubernetes.io/name: wgh-rag
+    app.kubernetes.io/component: backend
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi
+  # storageClassName: ""   # 留空使用集群默认 StorageClass

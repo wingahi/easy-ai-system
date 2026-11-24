@@ -26,7 +26,7 @@ class KeywordSearchServicePgProbeTest {
     @Test
     @DisplayName("PostgreSQL word_similarity：512 字 chunk + 10 字 query 命中")
     void longChunkShortQuery_hitsInRealPostgres() throws Exception {
-        String url = env("WGH_IT_DB_URL", "jdbc:postgresql://localhost:5432/wgh_rag");
+        String url = env("WGH_IT_DB_URL", "jdbc:postgresql://localhost:5432/wgh_rag_test");
         DriverManagerDataSource ds = new DriverManagerDataSource(url,
                 env("WGH_IT_DB_USER", "postgres"), env("WGH_IT_DB_PASSWORD", "123456"));
         KeywordSearchService service = new KeywordSearchService(ds, new ObjectMapper());

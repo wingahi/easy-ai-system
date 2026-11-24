@@ -1,0 +1,187 @@
+# 可选（K3）：备份恢复演练 CronJob（默认挂起，按需手动触发）。
+#
+# 为什么默认挂起：演练会创建/删除一个临时库，属于有副作用的运维动作，
+# 不应该在 apply 时自动执行；也避免与备份窗口、业务高峰重叠。
+#
+# 触发方式（任选）：
+#   kubectl -n wgh create job --from=cronjob/wgh-restore-drill restore-drill-$(date +%s)
+#   kubectl -n wgh patch cronjob wgh-restore-drill -p '{"spec":{"suspend":false}}'   # 临时启用后记得改回
+#
+# 数据来源（RESTORE_SOURCE，initContainer 与主容器两处 env 必须同时修改）：
+#   pvc  从 wgh-backup PVC 读（配合 cronjob-db-backup.yaml）
+#   oss  由 initContainer 用 rclone 从对象存储拉取最新 dump（配合 cronjob-db-backup-oss.yaml）
+#
+# 前置：目标 PG 账号具备 CREATEDB 权限；实例已安装 vector / pg_trgm；
+#       wgh-backup PVC 存在（随 optional/kustomization.yaml 一并创建）。
+#       本文件依赖 optional 里生成的脚本 ConfigMap，必须用 kubectl apply -k 应用，不要单独 apply 本文件。
+# 步骤与判读标准见 README §10.4「恢复演练」。
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: wgh-restore-drill
+  labels:
+    app.kubernetes.io/name: wgh-rag
+    app.kubernetes.io/component: backup
+spec:
+  schedule: "0 3 1 * *"
+  timeZone: "Asia/Shanghai"
+  suspend: true
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 7200
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: wgh-rag
+            app.kubernetes.io/component: backup
+        spec:
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 70
+            runAsGroup: 70
+            fsGroup: 70
+            fsGroupChangePolicy: OnRootMismatch
+            seccompProfile:
+              type: RuntimeDefault
+          initContainers:
+            - name: fetch
+              image: rclone/rclone:1.68.1
+              imagePullPolicy: IfNotPresent
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -eu
+                  if [ "${RESTORE_SOURCE:-pvc}" != "oss" ]; then
+                    echo "[fetch] source is pvc, skipping"
+                    exit 0
+                  fi
+                  : "${WGH_OSS_BUCKET:?WGH_OSS_BUCKET is required when RESTORE_SOURCE=oss}"
+                  echo "[fetch] locating latest dump in oss:${WGH_OSS_BUCKET}/db-backup/"
+                  f="$(rclone lsf "oss:${WGH_OSS_BUCKET}/db-backup/" --files-only --include "*.dump" | sort | tail -n 1)"
+                  if [ -z "${f}" ]; then
+                    echo "[fetch] no dump found in bucket" >&2
+                    exit 1
+                  fi
+                  echo "[fetch] downloading ${f}"
+                  rclone copyto "oss:${WGH_OSS_BUCKET}/db-backup/${f}" "/work/${f}" --s3-chunk-size 64M
+                  rclone copyto "oss:${WGH_OSS_BUCKET}/db-backup/${f}.sha256" "/work/${f}.sha256" --s3-chunk-size 64M || \
+                    echo "[fetch] WARN: ${f}.sha256 not found"
+                  echo "${f}" > /work/.selected
+              env:
+                - name: RESTORE_SOURCE
+                  value: "pvc"
+                - name: RCLONE_CONFIG_OSS_TYPE
+                  value: s3
+                - name: RCLONE_CONFIG_OSS_PROVIDER
+                  value: Alibaba
+                - name: RCLONE_CONFIG_OSS_ENV_AUTH
+                  value: "false"
+                - name: RCLONE_CONFIG_OSS_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: wgh-backend-secrets
+                      key: WGH_OSS_ACCESS_KEY_ID
+                      optional: true
+                - name: RCLONE_CONFIG_OSS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: wgh-backend-secrets
+                      key: WGH_OSS_ACCESS_KEY_SECRET
+                      optional: true
+                - name: WGH_OSS_BUCKET
+                  valueFrom:
+                    configMapKeyRef:
+                      name: wgh-backend-config
+                      key: WGH_OSS_BUCKET
+                      optional: true
+                - name: RCLONE_CONFIG_OSS_ENDPOINT
+                  valueFrom:
+                    configMapKeyRef:
+                      name: wgh-backend-config
+                      key: WGH_OSS_ENDPOINT
+                      optional: true
+                - name: HOME
+                  value: /tmp
+              volumeMounts:
+                - name: work
+                  mountPath: /work
+                - name: tmp
+                  mountPath: /tmp
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 128Mi
+                limits:
+                  cpu: 500m
+                  memory: 512Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+          containers:
+            - name: drill
+              image: postgres:15-alpine
+              imagePullPolicy: IfNotPresent
+              command: ["/bin/sh", "/scripts/restore-drill.sh"]
+              env:
+                - name: PGHOST
+                  value: postgres
+                - name: PGPORT
+                  value: "5432"
+                - name: PGDATABASE
+                  value: wgh_rag_prod
+                - name: PGUSER
+                  value: postgres
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: wgh-backend-secrets
+                      key: SPRING_DATASOURCE_PASSWORD
+                - name: RESTORE_SOURCE
+                  value: "pvc"
+                - name: KEEP_DRILL_DB
+                  value: "false"
+                - name: HOME
+                  value: /tmp
+              volumeMounts:
+                - name: scripts
+                  mountPath: /scripts
+                  readOnly: true
+                - name: backup
+                  mountPath: /backup
+                  readOnly: true
+                - name: work
+                  mountPath: /work
+                - name: tmp
+                  mountPath: /tmp
+              resources:
+                requests:
+                  cpu: 200m
+                  memory: 256Mi
+                limits:
+                  cpu: "2"
+                  memory: 2Gi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+          volumes:
+            - name: scripts
+              configMap:
+                name: wgh-restore-drill-script
+            # 与 cronjob-db-backup.yaml 共用；RESTORE_SOURCE=oss 时该卷仍会挂载但只读不写。
+            - name: backup
+              persistentVolumeClaim:
+                claimName: wgh-backup
+                readOnly: true
+            - name: work
+              emptyDir: {}
+            - name: tmp
+              emptyDir: {}

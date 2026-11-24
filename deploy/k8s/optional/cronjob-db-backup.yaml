@@ -1,0 +1,111 @@
+# 可选：数据库逻辑备份 CronJob（K3 方向的最小实现）。
+#
+# 仅提供「能跑起来」的起点，不等于生产备份方案：
+#   - 备份落在集群内 RWO PVC，节点故障时不可用，需定期转存到对象存储/异地；
+#   - 未做 PITR；RTO/RPO 承诺需 WAL 归档或托管数据库能力；
+#   - 恢复时目标库需已安装 pgvector / pg_trgm 扩展。
+#
+# 与「应用内周期任务」的边界：
+#   应用内的 CRON、连接器、清理作业仍由应用调度器负责（Redis 租约单飞），
+#   不迁移到 K8s CronJob；这里只承载运维类数据库备份。
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: wgh-backup
+  labels:
+    app.kubernetes.io/name: wgh-rag
+    app.kubernetes.io/component: backup
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: wgh-db-backup
+  labels:
+    app.kubernetes.io/name: wgh-rag
+    app.kubernetes.io/component: backup
+spec:
+  schedule: "0 2 * * *"
+  timeZone: "Asia/Shanghai"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 3600
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: wgh-rag
+            app.kubernetes.io/component: backup
+        spec:
+          restartPolicy: Never
+          securityContext:
+            # postgres:15-alpine 的默认用户为 postgres(70)；fsGroup 让备份卷可写。
+            runAsUser: 70
+            runAsGroup: 70
+            fsGroup: 70
+            fsGroupChangePolicy: OnRootMismatch
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: backup
+              image: postgres:15-alpine
+              imagePullPolicy: IfNotPresent
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -eu
+                  ts="$(date +%Y%m%d-%H%M%S)"
+                  out="/backup/wgh_rag_prod-${ts}.dump"
+                  echo "[backup] dumping to ${out}"
+                  pg_dump -h "${PGHOST}" -p "${PGPORT}" -U "${PGUSER}" -d "${PGDATABASE}" \
+                    --format=custom --no-owner --no-acl -f "${out}"
+                  # 保留最近 7 份，其余删除
+                  ls -1t /backup/*.dump 2>/dev/null | tail -n +8 | xargs -r rm -f
+                  ls -lh /backup | tail -n 10
+              env:
+                - name: PGHOST
+                  value: postgres
+                - name: PGPORT
+                  value: "5432"
+                - name: PGDATABASE
+                  value: wgh_rag_prod
+                - name: PGUSER
+                  value: postgres
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: wgh-backend-secrets
+                      key: SPRING_DATASOURCE_PASSWORD
+                - name: HOME
+                  value: /tmp
+              volumeMounts:
+                - name: backup
+                  mountPath: /backup
+                - name: tmp
+                  mountPath: /tmp
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                limits:
+                  cpu: "1"
+                  memory: 1Gi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+          volumes:
+            - name: backup
+              persistentVolumeClaim:
+                claimName: wgh-backup
+            - name: tmp
+              emptyDir: {}

@@ -17,7 +17,7 @@ spring:
       - optional:nacos:wgh-rag-prod?group=DEFAULT_GROUP
   datasource:
     driver-class-name: org.postgresql.Driver
-    url: jdbc:postgresql://${PROD_DB_HOST:pg-cluster}:${PROD_DB_PORT:5432}/${PROD_DB_NAME:wgh_rag}?currentSchema=public&stringtype=unspecified
+    url: jdbc:postgresql://${PROD_DB_HOST:pg-cluster}:${PROD_DB_PORT:5432}/${PROD_DB_NAME:wgh_rag_prod}?currentSchema=public&stringtype=unspecified
     username: ${PROD_DB_USERNAME:postgres}
     password: ${PROD_DB_PASSWORD:}
     hikari:

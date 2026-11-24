@@ -1,0 +1,129 @@
+groups:
+  - name: wgh-rag-instance
+    rules:
+      - alert: WghBackendInstanceDown
+        expr: up{job="wgh-rag-backend"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: backend
+        annotations:
+          summary: "RAG 后端实例抓取失败（{{ $labels.instance }}）"
+          description: "Prometheus 连续 2 分钟无法抓取 {{ $labels.instance }}，请检查进程/管理端口 9090/网络。"
+
+      - alert: WghBackendNoTargets
+        expr: absent(up{job="wgh-rag-backend"})
+        for: 5m
+        labels:
+          severity: critical
+          component: backend
+        annotations:
+          summary: "RAG 后端无可用抓取目标"
+          description: "dns_sd 未解析到 backend 地址，或服务名变更；请检查 Compose 服务名/DNS 与服务发现配置。"
+
+      - alert: WghStateStoreDegraded
+        expr: increase(wgh_state_store_fallbacks_total[15m]) > 0
+        labels:
+          severity: warning
+          component: state-store
+        annotations:
+          summary: "共享状态存储降级（{{ $labels.store }}/{{ $labels.reason }}）"
+          description: "限流/取消等共享状态已回退到进程内实现，多副本间可能不一致；请检查 Redis 可用性。"
+
+  - name: wgh-rag-scheduler
+    rules:
+      - alert: WghSchedulerJobsPendingHigh
+        expr: sum by (lane) (wgh_execution_job_count{status="PENDING"}) > 50
+        for: 10m
+        labels:
+          severity: warning
+          component: scheduler
+        annotations:
+          summary: "调度作业堆积（lane={{ $labels.lane }}）"
+          description: "PENDING 作业数连续 10 分钟超过 50，消费能力可能不足或执行器被阻塞。"
+
+      - alert: WghSchedulerPendingTooOld
+        expr: max by (lane) (wgh_execution_job_oldest_age_seconds{status="PENDING"}) > 600
+        for: 5m
+        labels:
+          severity: warning
+          component: scheduler
+        annotations:
+          summary: "最早待执行作业等待过久（lane={{ $labels.lane }}）"
+          description: "最老 PENDING 作业等待超过 10 分钟，请检查作业分发器/线程池是否停滞。"
+
+      - alert: WghSchedulerDeadLetter
+        expr: increase(wgh_execution_job_count{status="DEAD"}[1h]) > 0
+        labels:
+          severity: critical
+          component: scheduler
+        annotations:
+          summary: "出现调度死信作业（lane={{ $labels.lane }}）"
+          description: "近 1 小时新增 DEAD 作业，通常为作业类型未注册、负载不兼容或重试耗尽。"
+
+      - alert: WghWorkflowExecutorQueueSaturated
+        expr: executor_queued_tasks{name="workflowExecutor"} > 50
+        for: 5m
+        labels:
+          severity: warning
+          component: workflow
+        annotations:
+          summary: "工作流执行队列积压"
+          description: "workflowExecutor 排队任务数持续超过 50（容量 100），请检查下游 LLM/检索耗时。"
+
+  - name: wgh-rag-quota
+    rules:
+      - alert: WghQuotaRefundFailed
+        expr: increase(wgh_quota_refund_total{result="failed"}[10m]) > 0
+        labels:
+          severity: critical
+          component: quota
+        annotations:
+          summary: "配额退款失败"
+          description: "近 10 分钟存在退款失败（result=failed），可能导致用户额度被重复扣减或无法归还。"
+
+  - name: wgh-rag-storage
+    rules:
+      - alert: WghStorageOrphanGrowth
+        expr: increase(wgh_storage_orphans_total{action="detected"}[1h]) > 0
+        for: 5m
+        labels:
+          severity: warning
+          component: storage
+        annotations:
+          summary: "存储孤儿对象增长"
+          description: "近 1 小时检测到新的孤儿对象，请检查上传/删除链路与清理任务。"
+
+      - alert: WghStorageMissingReference
+        expr: increase(wgh_storage_orphans_total{action="missing"}[1h]) > 0
+        labels:
+          severity: critical
+          component: storage
+        annotations:
+          summary: "存在缺失存储引用"
+          description: "数据库记录了知识文件但存储对象不存在，可能导致下载/解析失败。"
+
+      - alert: WghStorageOrphanDeleteFailed
+        expr: increase(wgh_storage_orphans_total{action="delete_failed"}[15m]) > 0
+        labels:
+          severity: warning
+          component: storage
+        annotations:
+          summary: "孤儿对象删除失败"
+          description: "清理任务删除孤儿对象失败，请检查存储权限与后端连通性。"
+
+  - name: wgh-rag-http
+    rules:
+      - alert: WghHttp5xxRatioHigh
+        expr: |
+          sum(rate(http_server_requests_seconds_count{job="wgh-rag-backend",status=~"5.."}[5m]))
+            /
+          clamp_min(sum(rate(http_server_requests_seconds_count{job="wgh-rag-backend"}[5m])), 1e-9)
+            > 0.05
+        for: 5m
+        labels:
+          severity: critical
+          component: http
+        annotations:
+          summary: "HTTP 5xx 比例过高"
+          description: "近 5 分钟 5xx 占比超过 5%，请结合日志与错误阶段指标定位。"

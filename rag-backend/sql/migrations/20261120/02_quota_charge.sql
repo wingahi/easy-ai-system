@@ -10,7 +10,7 @@
 -- 状态机：CHARGED（已扣未决）→ SETTLED（执行已开始，扣费生效）
 --                         └→ REFUNDED（已退款）
 --          CHARGED → REFUND_FAILED（退款失败，等待退避重试）→ REFUNDED / DEAD（人工处理）
--- 说明：本脚本只创建对象，不执行；需在两个库（wgh_rag / wgh_rag_fresh）分别由我方批准后执行。
+-- 说明：本脚本只创建对象，不执行；需在两个库（wgh_rag_dev / wgh_rag_test）分别由我方批准后执行。
 -- ========================================================
 
 BEGIN;

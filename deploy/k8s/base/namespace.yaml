@@ -1,0 +1,8 @@
+# 平台命名空间：租户隔离在应用层与数据库层完成，不按租户建命名空间。
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: wgh
+  labels:
+    app.kubernetes.io/name: wgh-rag
+    app.kubernetes.io/part-of: wgh-rag

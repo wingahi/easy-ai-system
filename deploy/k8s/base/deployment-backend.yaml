@@ -1,0 +1,131 @@
+# 后端 Deployment（无状态）。
+#
+# 探针说明：
+#   应用已开启 management.endpoint.health.probes 分组（见 rag-backend/rag-app/src/main/resources/application.yml），
+#   管理端口 9090 提供 /actuator/health/liveness 与 /actuator/health/readiness：
+#     - liveness 只聚合 livenessState，反映进程自身活性，不查 DB/Redis，依赖抖动不会触发重启；
+#     - readiness 聚合 readinessState + db，启动未完成或 DB 不可用时返回 503 被摘流；
+#       Redis 可降级、磁盘余量不阻断服务，均不纳入 readiness。
+#   startupProbe 复用 readiness，等启动完成且 DB 可用后才放行 liveness/readiness 检测。
+#
+# 探针端口均为管理端口 9090，不经过业务端口 8080。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wgh-backend
+  labels:
+    app.kubernetes.io/name: wgh-rag
+    app.kubernetes.io/component: backend
+    app.kubernetes.io/part-of: wgh-rag
+spec:
+  replicas: 1
+  revisionHistoryLimit: 5
+  # 滚动发布：先起新 Pod 就绪，再摘旧 Pod；配合 PDB 保证多副本时不断流。
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  minReadySeconds: 10
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: wgh-rag
+      app.kubernetes.io/component: backend
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: wgh-rag
+        app.kubernetes.io/component: backend
+    spec:
+      serviceAccountName: wgh-backend
+      # preStop(5s) + 优雅停机超时(45s) = 50s，须小于该值；应用已开启 server.shutdown=graceful。
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        runAsNonRoot: true
+        # 镜像内 wgh 为 Alpine 系统用户（UID/GID 通常为 100），
+        # 用于让 PVC/emptyDir 对运行用户可写；替换基础镜像后需用 `id` 复核。
+        fsGroup: 100
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: backend
+          image: wgh-rag-backend:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            - name: management
+              containerPort: 9090
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: wgh-backend-config
+            - secretRef:
+                name: wgh-backend-secrets
+          env:
+            # 实例标识写入 metrics tag，便于区分副本；Pod 名天然唯一。
+            - name: WGH_INSTANCE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: logs
+              mountPath: /var/log/wgh-rag
+            - name: skills
+              mountPath: /app/skills
+            - name: uploads
+              mountPath: /app/uploads
+          startupProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: management
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 36          # 最多等待 180s 冷启动
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: management
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 4
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: management
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+            successThreshold: 1
+          lifecycle:
+            # 先让 Endpoint 摘除，再发 SIGTERM。
+            preStop:
+              exec:
+                command: ["sh", "-c", "sleep 5"]
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        # 文件日志仅用于排障；集群采集应走 stdout（K0 待改造），Pod 重建即丢。
+        - name: logs
+          emptyDir: {}
+        - name: skills
+          emptyDir: {}
+        - name: uploads
+          persistentVolumeClaim:
+            claimName: wgh-uploads

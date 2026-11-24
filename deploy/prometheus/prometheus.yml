@@ -1,10 +1,17 @@
 global:
   scrape_interval: 15s
   evaluation_interval: 15s
+  external_labels:
+    cluster: wgh-rag
+    env: local
+
+# 告警规则：实例下线、调度作业堆积/死信、配额退款失败、存储孤儿增长等
+rule_files:
+  - /etc/prometheus/rules/*.yml
 
 scrape_configs:
-  # 多副本：backend 的 DNS 会解析出多个容器地址，使用 dns_sd 逐副本抓取；
-  # 单副本时同样有效（仅一个地址）。
+  # 后端：多副本时 DNS 会解析出多个容器地址，dns_sd 逐副本抓取；
+  # 单副本时同样有效（仅一个地址）。job 标签固定为 wgh-rag-backend。
   - job_name: wgh-rag-backend
     metrics_path: /actuator/prometheus
     dns_sd_configs:
@@ -15,3 +22,19 @@ scrape_configs:
     relabel_configs:
       - target_label: service
         replacement: wgh-rag-backend
+      - target_label: env
+        replacement: local
+
+  # 调度作业状态由 Postgres 导出（wgh_execution_job 表），
+  # 业务代码不改动即可获得 PENDING/DEAD 等状态与等待时长。
+  - job_name: wgh-rag-postgres-exporter
+    static_configs:
+      - targets: ["postgres-exporter:9187"]
+        labels:
+          service: wgh-rag-postgres
+          env: local
+
+  # Prometheus 自监控，用于验证抓取链路自身是否健康
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]

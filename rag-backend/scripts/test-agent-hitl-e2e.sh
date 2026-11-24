@@ -12,7 +12,7 @@
 set -uo pipefail
 
 SRV=${SRV:-http://localhost:8080}
-DB=${DB:-wgh_rag}
+DB=${DB:-wgh_rag_test}
 PG=${PG:-postgres-with-vector}
 WIN_HITL=${WIN_HITL:-17}      # 已启用 HITL 的窗口
 WIN_NO_HITL=${WIN_NO_HITL:-15} # 未启用 HITL 的窗口
