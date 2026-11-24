@@ -2,9 +2,11 @@ package com.wgh.rag.controller.admin;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wgh.rag.auth.cache.UserInfoCacheService;
+import com.wgh.rag.auth.constant.AuthConstants;
 import com.wgh.rag.auth.service.AccountAuditService;
 import com.wgh.rag.auth.service.LocalLoginService;
 import com.wgh.rag.auth.service.LocalPasswordService;
+import com.wgh.rag.auth.tenant.TenantService;
 import com.wgh.rag.auth.entity.WghRole;
 import com.wgh.rag.auth.entity.WghUser;
 import com.wgh.rag.common.exception.BusinessException;
@@ -14,8 +16,12 @@ import com.wgh.rag.auth.mapper.UserRoleMapper;
 import com.wgh.rag.common.result.PageResult;
 import com.wgh.rag.common.result.Result;
 import com.wgh.rag.common.result.ResultCode;
+import com.wgh.rag.common.security.LoginUser;
+import com.wgh.rag.common.security.SecurityUtils;
+import com.wgh.rag.common.security.TenantContext;
 import com.wgh.rag.controller.dto.AdminUserRequest;
 import com.wgh.rag.controller.dto.PasswordResetRequest;
+import com.wgh.rag.log.constant.AuditConstants;
 import com.wgh.rag.quota.entity.UserQuotaConfig;
 import com.wgh.rag.quota.service.QuotaAdminGuard;
 import com.wgh.rag.quota.service.QuotaService;
@@ -72,6 +78,7 @@ public class AdminUserController {
     private final LocalPasswordService localPasswordService;
     private final UserInfoCacheService userInfoCacheService;
     private final AccountAuditService accountAuditService;
+    private final TenantService tenantService;
 
     @Operation(summary = "分页列出用户（支持用户名/来源/角色/启用状态筛选）")
     @GetMapping
@@ -87,6 +94,7 @@ public class AdminUserController {
         List<WghUser> users = userMapper.selectList(new LambdaQueryWrapper<WghUser>()
                 .orderByAsc(WghUser::getId));
         String kw = StringUtils.hasText(username) ? username.trim() : null;
+        Map<String, String> tenantNames = tenantService.codeNameMap();
 
         List<Map<String, Object>> rows = new ArrayList<>();
         for (WghUser user : users) {
@@ -103,7 +111,7 @@ public class AdminUserController {
             if (StringUtils.hasText(role) && !roles.contains(role)) {
                 continue;
             }
-            rows.add(buildRow(user, roles));
+            rows.add(buildRow(user, roles, tenantNames));
         }
 
         rows.sort(Comparator.comparing(row -> String.valueOf(row.get("username"))));
@@ -141,6 +149,7 @@ public class AdminUserController {
         user.setStatus(request.getEnabled() == null || request.getEnabled() ? 1 : 0);
         user.setExpireAt(request.getExpireAt());
         user.setRemark(request.getRemark());
+        user.setTenantId(resolveTenantForCreate(request.getTenantId()));
         userMapper.insert(user);
 
         Long roleId = roleMapper.selectOne(new LambdaQueryWrapper<WghRole>()
@@ -152,7 +161,7 @@ public class AdminUserController {
         userInfoCacheService.evictAfterCommit(user.getId());
         accountAuditService.success(AccountAuditService.ACTION_CREATE, username);
         log.info("创建体验账号 username={}, role={}, expireAt={}", username, role, request.getExpireAt());
-        return Result.success(buildRow(user, rolesOf(user.getId())));
+        return Result.success(buildRow(user, rolesOf(user.getId()), tenantService.codeNameMap()));
     }
 
     @Operation(summary = "修改体验账号（角色/启用/备注/有效期/配额）")
@@ -183,6 +192,21 @@ public class AdminUserController {
         if (request.getRemark() != null) {
             user.setRemark(request.getRemark());
         }
+        // 所属租户：显式提交才处理；变更需 tenant:manage，且禁止改自己
+        String requestedTenant = StringUtils.hasText(request.getTenantId())
+                ? tenantService.requireAssignable(request.getTenantId()) : null;
+        String oldTenant = user.getTenantId();
+        boolean tenantChanged = requestedTenant != null && !requestedTenant.equals(oldTenant);
+        if (tenantChanged) {
+            if (username.equalsIgnoreCase(SecurityUtils.currentUsername())) {
+                throw new BusinessException(ResultCode.OPERATION_NOT_ALLOWED,
+                        "不能修改自己的所属租户，避免当前会话立即失权");
+            }
+            if (!requestedTenant.equals(TenantContext.tenantIdOrDefault())) {
+                requireTenantAssignPermission();
+            }
+            user.setTenantId(requestedTenant);
+        }
         // 编辑表单会显式提交 expireAt（含 null 表示改为长期），因此直接覆盖
         user.setExpireAt(request.getExpireAt());
         userMapper.updateById(user);
@@ -196,8 +220,14 @@ public class AdminUserController {
             accountAuditService.success(request.getEnabled()
                     ? AccountAuditService.ACTION_ENABLE : AccountAuditService.ACTION_DISABLE, username);
         }
+        if (tenantChanged) {
+            accountAuditService.record(AccountAuditService.ACTION_TENANT_CHANGE, username,
+                    SecurityUtils.currentUsername(), AuditConstants.STATUS_SUCCESS,
+                    "tenant " + (oldTenant == null ? "-" : oldTenant) + " -> " + requestedTenant);
+        }
         log.info("修改体验账号 username={}", username);
-        return Result.success(buildRow(userMapper.selectById(user.getId()), rolesOf(user.getId())));
+        return Result.success(buildRow(userMapper.selectById(user.getId()), rolesOf(user.getId()),
+                tenantService.codeNameMap()));
     }
 
     @Operation(summary = "重置体验账号口令（重置后该账号下次登录须先改密）")
@@ -223,7 +253,8 @@ public class AdminUserController {
         userInfoCacheService.evictAfterCommit(user.getId());
         accountAuditService.success(AccountAuditService.ACTION_DISABLE, username);
         log.info("禁用体验账号 username={}", username);
-        return Result.success(buildRow(userMapper.selectById(user.getId()), rolesOf(user.getId())));
+        return Result.success(buildRow(userMapper.selectById(user.getId()), rolesOf(user.getId()),
+                tenantService.codeNameMap()));
     }
 
     // ==================== 内部辅助 ====================
@@ -292,6 +323,32 @@ public class AdminUserController {
         quotaService.saveUserConfig(config);
     }
 
+    /**
+     * 创建用户时的租户解析：未指定则落操作者当前租户；跨租户分配需要 tenant:manage。
+     */
+    private String resolveTenantForCreate(String requested) {
+        if (!StringUtils.hasText(requested)) {
+            return TenantContext.tenantIdOrDefault();
+        }
+        String target = tenantService.requireAssignable(requested);
+        if (!target.equals(TenantContext.tenantIdOrDefault())) {
+            requireTenantAssignPermission();
+        }
+        return target;
+    }
+
+    /**
+     * 跨租户分配用户的权限校验：复用 {@code tenant:manage}（平台级租户分配能力）。
+     */
+    private void requireTenantAssignPermission() {
+        LoginUser loginUser = LoginUser.get();
+        Set<String> permissions = loginUser == null ? null : loginUser.getPermissions();
+        if (permissions == null || !permissions.contains(AuthConstants.PERM_TENANT_MANAGE)) {
+            throw new BusinessException(ResultCode.PERMISSION_DENIED,
+                    "无权限修改用户所属租户（需要权限码 tenant:manage）");
+        }
+    }
+
     private Set<String> rolesOf(Long userId) {
         List<String> roleCodes = userRoleMapper.selectRoleCodesByUserId(userId);
         return roleCodes == null ? Set.of() : new java.util.LinkedHashSet<>(roleCodes);
@@ -302,11 +359,14 @@ public class AdminUserController {
                 ? user.getSource().toLowerCase() : LocalLoginService.SOURCE_LOCAL;
     }
 
-    private Map<String, Object> buildRow(WghUser user, Set<String> roles) {
+    private Map<String, Object> buildRow(WghUser user, Set<String> roles, Map<String, String> tenantNames) {
         UserQuotaConfig config = quotaService.findUserConfig(user.getUsername());
         Map<String, Object> row = new LinkedHashMap<>();
         row.put("id", user.getId());
         row.put("username", user.getUsername());
+        row.put("tenantId", user.getTenantId());
+        row.put("tenantName", user.getTenantId() == null ? null
+                : tenantNames.getOrDefault(user.getTenantId(), user.getTenantId()));
         row.put("source", effectiveSource(user));
         row.put("trial", user.getTrial() != null && user.getTrial() == 1);
         row.put("roles", new ArrayList<>(roles));

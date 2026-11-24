@@ -14,6 +14,8 @@ export const useUserStore = defineStore('user', {
     username: localStorage.getItem(STORAGE_KEYS.USERNAME) || '',
     userId: localStorage.getItem(STORAGE_KEYS.USER_ID) || '',
     roles: JSON.parse(localStorage.getItem(STORAGE_KEYS.ROLES) || '[]'),
+    // 权限码（后端 /auth/me 返回）；按钮级控制使用 hasPerm()
+    permissions: JSON.parse(localStorage.getItem(STORAGE_KEYS.PERMISSIONS) || '[]'),
     // 本地账号被要求先改密（刷新后沿用上次登录返回的标记）
     passwordMustChange: localStorage.getItem(STORAGE_KEYS.PWD_MUST_CHANGE) === '1',
     // 是否已用当前 token 拉取过 /auth/me（页面刷新后需要重新 hydrate）
@@ -23,7 +25,13 @@ export const useUserStore = defineStore('user', {
   getters: {
     isLoggedIn: (state) => !!state.token,
     // 管理入口按后端返回的角色判断（后端接口另有数据库角色/权限校验）
-    isAdmin: (state) => Array.isArray(state.roles) && state.roles.includes('admin')
+    isAdmin: (state) => Array.isArray(state.roles) && state.roles.includes('admin'),
+    // 权限码判断：admin 视为拥有全部权限（与后端 role=admin 的授权口径一致）
+    hasPerm: (state) => (code) => {
+      if (!code) return true
+      if (Array.isArray(state.roles) && state.roles.includes('admin')) return true
+      return Array.isArray(state.permissions) && state.permissions.includes(code)
+    }
   },
 
   actions: {
@@ -43,11 +51,13 @@ export const useUserStore = defineStore('user', {
       this.username = data.username || ''
       this.userId = data.userId ?? ''
       this.roles = Array.isArray(data.roles) ? data.roles : []
+      this.permissions = Array.isArray(data.permissions) ? data.permissions : []
       this.passwordMustChange = data.passwordMustChange === true
       this.hydrated = true
       localStorage.setItem(STORAGE_KEYS.USERNAME, this.username)
       localStorage.setItem(STORAGE_KEYS.USER_ID, String(this.userId))
       localStorage.setItem(STORAGE_KEYS.ROLES, JSON.stringify(this.roles))
+      localStorage.setItem(STORAGE_KEYS.PERMISSIONS, JSON.stringify(this.permissions))
       localStorage.setItem(STORAGE_KEYS.PWD_MUST_CHANGE, this.passwordMustChange ? '1' : '0')
     },
 
@@ -56,12 +66,14 @@ export const useUserStore = defineStore('user', {
       this.username = ''
       this.userId = ''
       this.roles = []
+      this.permissions = []
       this.passwordMustChange = false
       this.hydrated = false
       localStorage.removeItem(STORAGE_KEYS.TOKEN)
       localStorage.removeItem(STORAGE_KEYS.USERNAME)
       localStorage.removeItem(STORAGE_KEYS.USER_ID)
       localStorage.removeItem(STORAGE_KEYS.ROLES)
+      localStorage.removeItem(STORAGE_KEYS.PERMISSIONS)
       localStorage.removeItem(STORAGE_KEYS.PWD_MUST_CHANGE)
     }
   }

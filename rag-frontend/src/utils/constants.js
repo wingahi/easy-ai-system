@@ -7,6 +7,7 @@ export const STORAGE_KEYS = {
   USERNAME: 'wgh_username',
   USER_ID: 'wgh_userId',
   ROLES: 'wgh_roles',
+  PERMISSIONS: 'wgh_permissions',
   PWD_MUST_CHANGE: 'wgh_pwd_must_change',
   VISITOR_ID: 'wgh_visitor_id'
 }

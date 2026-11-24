@@ -39,4 +39,10 @@ public class AdminUserRequest {
 
     /** 是否启用该用户的自定义配额（关闭回退全局默认） */
     private Boolean quotaEnabled;
+
+    /**
+     * 所属租户编码。创建时为空则落到操作者当前租户；修改时为空表示不改。
+     * 跨租户分配需要 {@code tenant:manage} 权限。
+     */
+    private String tenantId;
 }

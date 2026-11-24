@@ -60,7 +60,8 @@ class LocalLoginServiceTest {
         localTokenService = new LocalTokenService(properties);
         AccountAuditService accountAuditService = new AccountAuditService(
                 new com.wgh.rag.log.service.AuditLogService(
-                        mock(com.wgh.rag.log.mapper.AuditLogMapper.class)));
+                        mock(com.wgh.rag.log.mapper.AuditLogMapper.class),
+                        mock(com.wgh.rag.data.tenant.TenantTransactionTemplate.class)));
         localLoginService = new LocalLoginService(userMapper, userRoleMapper,
                 rolePermissionMapper, passwordEncoder, localTokenService, properties, accountAuditService);
     }
@@ -210,7 +211,8 @@ class LocalLoginServiceTest {
         LocalLoginService disabledService = new LocalLoginService(userMapper, userRoleMapper,
                 rolePermissionMapper, passwordEncoder, localTokenService, properties,
                 new AccountAuditService(new com.wgh.rag.log.service.AuditLogService(
-                        mock(com.wgh.rag.log.mapper.AuditLogMapper.class))));
+                        mock(com.wgh.rag.log.mapper.AuditLogMapper.class),
+                        mock(com.wgh.rag.data.tenant.TenantTransactionTemplate.class))));
 
         assertThatThrownBy(() -> disabledService.login("admin", "admin"))
                 .isInstanceOf(BusinessException.class)

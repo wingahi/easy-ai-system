@@ -24,6 +24,10 @@ public interface AuthConstants {
     String PERM_SHARE_MANAGE = "share:manage";
     String PERM_PRICING_MANAGE = "pricing:manage";
     String PERM_TENANT_MANAGE = "tenant:manage";
+    String PERM_TENANT_UPDATE = "tenant:update";
+    String PERM_TENANT_DISABLE = "tenant:disable";
+    String PERM_TENANT_QUOTA = "tenant:quota";
+    String PERM_TENANT_SCHEDULE = "tenant:schedule";
     String PERM_CHAT_WRITE = "chat:write";
     String PERM_USAGE_READ = "usage:read";
 

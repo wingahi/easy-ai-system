@@ -31,6 +31,15 @@
 
       <el-table :data="rows" v-loading="loading" size="small" row-key="username">
         <el-table-column prop="username" label="用户名" width="140" show-overflow-tooltip />
+        <el-table-column label="租户" width="170" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span v-if="row.tenantId">
+              {{ row.tenantName || row.tenantId }}
+              <span class="tenant-code">({{ row.tenantId }})</span>
+            </span>
+            <span v-else class="hint">—</span>
+          </template>
+        </el-table-column>
         <el-table-column label="来源" width="100">
           <template #default="{ row }">
             <el-tag :type="row.source === 'local' ? 'success' : 'info'" size="small">
@@ -95,6 +104,14 @@
         <el-form-item v-if="!editing" label="密码">
           <el-input v-model="form.password" type="password" show-password placeholder="BCrypt 加密入库" />
         </el-form-item>
+        <el-form-item v-if="canAssignTenant" label="所属租户">
+          <el-select v-model="form.tenantId" clearable filterable style="width: 260px"
+                     :disabled="editing && form.username === userStore.username"
+                     placeholder="留空则使用当前租户">
+            <el-option v-for="t in tenantOptions" :key="t.code" :label="tenantLabel(t)" :value="t.code" />
+          </el-select>
+          <div class="hint block">跨租户分配需要 tenant:manage；变更后需该用户重新登录生效</div>
+        </el-form-item>
         <el-form-item label="角色">
           <el-select v-model="form.role" style="width: 200px">
             <el-option label="viewer（只读）" value="viewer" />
@@ -140,9 +157,25 @@
 </template>
 
 <script setup>
-import { reactive, ref } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { adminUsersPage, adminUserCreate, adminUserUpdate, adminUserDisable } from '../../api'
+import {
+  adminUsersPage, adminUserCreate, adminUserUpdate, adminUserDisable, tenantList
+} from '../../api'
+import { useUserStore } from '../../stores/user'
+
+const userStore = useUserStore()
+const canAssignTenant = computed(() => userStore.hasPerm('tenant:manage'))
+const tenants = ref([])
+const tenantOptions = computed(() => {
+  const options = tenants.value.filter(t => t.status === 1)
+  // 编辑一个已停用/已下线租户下的用户时，保留当前值以免被静默清空
+  if (editing.value && form.tenantId && !options.some(t => t.code === form.tenantId)) {
+    const current = tenants.value.find(t => t.code === form.tenantId)
+    options.push(current || { code: form.tenantId, name: form.tenantId, status: 0 })
+  }
+  return options
+})
 
 const rows = ref([])
 const total = ref(0)
@@ -158,9 +191,23 @@ const query = reactive({ username: '', source: '', role: '', enabled: null })
 const emptyForm = () => ({
   username: '', password: '', role: 'viewer', enabled: true,
   expireAt: null, remark: '',
-  period: 'DAY', chatLimit: null, tokenLimit: null, quotaEnabled: true
+  period: 'DAY', chatLimit: null, tokenLimit: null, quotaEnabled: true,
+  tenantId: ''
 })
 const form = reactive(emptyForm())
+const initialTenantId = ref('')
+
+const loadTenants = async () => {
+  if (!canAssignTenant.value) return
+  try {
+    const res = await tenantList()
+    tenants.value = res.data || []
+  } catch {
+    tenants.value = []
+  }
+}
+
+const tenantLabel = (t) => `${t.name || t.code} (${t.code})${t.status === 1 ? '' : ' — 已停用'}`
 
 const load = async (p = page.value) => {
   page.value = p
@@ -181,6 +228,7 @@ const load = async (p = page.value) => {
 
 const openCreate = () => {
   Object.assign(form, emptyForm())
+  initialTenantId.value = ''
   editing.value = false
   dialogVisible.value = true
 }
@@ -196,8 +244,10 @@ const openEdit = (row) => {
     period: row.period || 'DAY',
     chatLimit: row.chatLimit ?? null,
     tokenLimit: row.tokenLimit ?? null,
-    quotaEnabled: row.customQuota ? row.quotaEnabled : false
+    quotaEnabled: row.customQuota ? row.quotaEnabled : false,
+    tenantId: row.tenantId || ''
   })
+  initialTenantId.value = row.tenantId || ''
   editing.value = true
   dialogVisible.value = true
 }
@@ -223,10 +273,17 @@ const save = async () => {
       tokenLimit: form.tokenLimit,
       quotaEnabled: form.quotaEnabled
     }
+    if (canAssignTenant.value) {
+      payload.tenantId = form.tenantId || null
+    }
     if (editing.value) {
       delete payload.password
       await adminUserUpdate(form.username, payload)
-      ElMessage.success('已保存')
+      if (canAssignTenant.value && (form.tenantId || '') !== initialTenantId.value) {
+        ElMessage.warning('租户已变更，需重新登录生效')
+      } else {
+        ElMessage.success('已保存')
+      }
     } else {
       await adminUserCreate(payload)
       ElMessage.success('体验账号已创建')
@@ -260,6 +317,7 @@ const formatNum = (value) => {
 }
 
 load(1)
+loadTenants()
 </script>
 
 <style scoped lang="scss">
@@ -271,6 +329,8 @@ load(1)
   }
   .pager { margin-top: 12px; text-align: right; }
   .hint { margin-left: 8px; color: #909399; font-size: 12px; }
+  .hint.block { margin-left: 0; margin-top: 4px; width: 100%; line-height: 1.4; }
+  .tenant-code { color: #909399; font-size: 12px; }
   .expired { color: #f56c6c; }
 }
 </style>

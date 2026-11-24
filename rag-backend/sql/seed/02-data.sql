@@ -77,7 +77,11 @@ INSERT INTO wgh_permission (perm_code, perm_name, resource_type) VALUES
 ('apikey:manage', '管理开放APIKey',  'API_KEY'),
 ('share:manage',  '管理分享链接',    'SHARE_LINK'),
 ('pricing:manage','管理模型价格',    'MODEL_PRICE'),
-('tenant:manage', '管理租户',        'TENANT')
+('tenant:manage', '管理租户',        'TENANT'),
+('tenant:update', '更新租户信息',    'TENANT'),
+('tenant:disable','租户下线',        'TENANT'),
+('tenant:quota',  '管理租户配额',    'TENANT'),
+('tenant:schedule','管理租户调度策略','TENANT')
 ON CONFLICT (perm_code) DO NOTHING;
 
 -- admin 角色拥有全部模块权限

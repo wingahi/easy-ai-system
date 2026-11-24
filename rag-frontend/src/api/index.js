@@ -541,6 +541,19 @@ export const schedulerRuntime = () => request.get('/admin/scheduler/runtime')
 export const schedulerInstances = () => request.get('/admin/scheduler/instances')
 export const schedulerReconcile = () => request.get('/admin/scheduler/reconcile')
 
+// ===== 管理端：租户管理 =====
+export const tenantList = () => request.get('/admin/tenants')
+export const tenantCreate = (data) => request.post('/admin/tenants', data)
+export const tenantUpdate = (id, data) => request.put(`/admin/tenants/${id}`, data)
+export const tenantUpdateStatus = (id, status) =>
+  request.patch(`/admin/tenants/${id}/status`, null, { params: { status } })
+export const tenantOffline = (id) => request.delete(`/admin/tenants/${id}`)
+export const tenantQuota = (id) => request.get(`/admin/tenants/${id}/quota`)
+export const tenantSaveQuota = (id, data) => request.put(`/admin/tenants/${id}/quota`, data)
+export const tenantSchedulePolicies = (id) => request.get(`/admin/tenants/${id}/schedule-policy`)
+export const tenantUpdateSchedulePolicies = (id, updates) =>
+  request.put(`/admin/tenants/${id}/schedule-policy`, updates)
+
 // ===== 管理端：体验账号（用户管理） =====
 export const adminUsersPage = (params) => request.get('/admin/users', { params })
 export const adminUserCreate = (data) => request.post('/admin/users', data)

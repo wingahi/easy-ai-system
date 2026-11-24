@@ -33,6 +33,7 @@ public class AccountAuditService {
     public static final String ACTION_DISABLE = "ACCOUNT_DISABLE";
     public static final String ACTION_PASSWORD_CHANGE = "ACCOUNT_PASSWORD_CHANGE";
     public static final String ACTION_PASSWORD_RESET = "ACCOUNT_PASSWORD_RESET";
+    public static final String ACTION_TENANT_CHANGE = "ACCOUNT_TENANT_CHANGE";
 
     private final AuditLogService auditLogService;
 

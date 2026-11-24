@@ -15,6 +15,7 @@ import com.wgh.rag.auth.mapper.UserMapper;
 import com.wgh.rag.auth.mapper.UserRoleMapper;
 import com.wgh.rag.auth.service.AccountAuditService;
 import com.wgh.rag.auth.service.LocalPasswordService;
+import com.wgh.rag.auth.tenant.TenantService;
 import com.wgh.rag.common.constant.RoleCodes;
 import com.wgh.rag.common.security.LoginUser;
 import com.wgh.rag.controller.dto.AdminUserRequest;
@@ -166,7 +167,7 @@ class AuditCoverageTest {
 
         AdminUserController controller = new AdminUserController(userMapper, userRoleMapper, roleMapper,
                 quotaService, new QuotaAdminGuard(), passwordEncoder, localPasswordService,
-                mock(UserInfoCacheService.class), accountAuditService);
+                mock(UserInfoCacheService.class), accountAuditService, mock(TenantService.class));
 
         loginAsAdmin();
         when(passwordEncoder.encode(anyString())).thenReturn("$2a$bcrypt-hash");

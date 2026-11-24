@@ -12,8 +12,11 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
 
 /**
  * 租户目录服务：租户查询、状态校验与平台侧管理。
@@ -26,17 +29,30 @@ import java.util.Locale;
 @RequiredArgsConstructor
 public class TenantService {
 
+    /** 套餐取值（新增值需同步管理端下拉与本文档） */
+    private static final Set<String> PLANS = Set.of("standard", "professional", "enterprise");
+
+    /** 隔离模式取值；schema/database 为阶段 4 预留，当前只做取值校验 */
+    private static final Set<String> ISOLATION_MODES = Set.of("shared", "schema", "database");
+
     private final TenantMapper tenantMapper;
     private final TenantProperties properties;
 
-    /** 按编码查询；不存在返回 {@code null}。 */
+    /** 按编码查询（含已下线）；不存在返回 {@code null}。 */
     public WghTenant findByCode(String code) {
         if (!StringUtils.hasText(code)) {
             return null;
         }
-        return tenantMapper.selectOne(new LambdaQueryWrapper<WghTenant>()
-                .eq(WghTenant::getCode, code.trim())
-                .last("LIMIT 1"));
+        return tenantMapper.selectByCodeIncludeDeleted(code.trim());
+    }
+
+    /** 按主键查询；不存在抛 404。 */
+    public WghTenant requireById(Long id) {
+        WghTenant tenant = id == null ? null : tenantMapper.selectById(id);
+        if (tenant == null) {
+            throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "租户不存在");
+        }
+        return tenant;
     }
 
     /** 租户是否存在且启用。 */
@@ -49,6 +65,35 @@ public class TenantService {
     public List<WghTenant> list() {
         return tenantMapper.selectList(new LambdaQueryWrapper<WghTenant>()
                 .orderByAsc(WghTenant::getId));
+    }
+
+    /**
+     * 校验租户可作为用户归属：必须存在，且未停用、未下线。
+     *
+     * @return 规范化后的租户编码
+     */
+    public String requireAssignable(String code) {
+        if (!StringUtils.hasText(code)) {
+            throw new BusinessException(ResultCode.PARAM_ERROR, "租户编码不能为空");
+        }
+        WghTenant tenant = findByCode(code);
+        if (tenant == null) {
+            throw new BusinessException(ResultCode.PARAM_ERROR, "租户不存在：" + code.trim());
+        }
+        if (tenant.getStatus() == null || tenant.getStatus() != 1) {
+            throw new BusinessException(ResultCode.PARAM_ERROR, "租户已停用或已下线：" + tenant.getCode());
+        }
+        return tenant.getCode();
+    }
+
+    /** 租户编码 → 名称（含已停用/已下线，用于展示历史归属）。 */
+    public Map<String, String> codeNameMap() {
+        Map<String, String> names = new LinkedHashMap<>();
+        for (WghTenant tenant : tenantMapper.selectAllIncludingDeleted()) {
+            names.put(tenant.getCode(), StringUtils.hasText(tenant.getName())
+                    ? tenant.getName() : tenant.getCode());
+        }
+        return names;
     }
 
     @Transactional
@@ -66,9 +111,7 @@ public class TenantService {
         tenant.setName(displayName);
         tenant.setStatus(1);
         String normalizedPlan = StringUtils.hasText(plan) ? plan.trim() : "standard";
-        if (normalizedPlan.length() > 32) {
-            throw new BusinessException(ResultCode.PARAM_ERROR, "套餐标识长度不能超过 32");
-        }
+        validatePlan(normalizedPlan);
         tenant.setPlan(normalizedPlan);
         tenant.setIsolationMode("shared");
         tenantMapper.insert(tenant);
@@ -76,12 +119,71 @@ public class TenantService {
         return tenant;
     }
 
+    /**
+     * 更新租户基本信息（名称 / 套餐 / 隔离模式）。
+     *
+     * <p>字段为 {@code null} 表示不修改；空字符串视为非法值，避免把名称改空。
+     */
+    @Transactional
+    public WghTenant update(Long id, String name, String plan, String isolationMode) {
+        WghTenant tenant = requireById(id);
+        if (name != null) {
+            String displayName = name.trim();
+            if (displayName.isEmpty() || displayName.length() > 128) {
+                throw new BusinessException(ResultCode.PARAM_ERROR, "租户名称不能为空且长度不能超过 128");
+            }
+            tenant.setName(displayName);
+        }
+        if (plan != null) {
+            String normalizedPlan = plan.trim();
+            validatePlan(normalizedPlan);
+            tenant.setPlan(normalizedPlan);
+        }
+        if (isolationMode != null) {
+            String normalizedMode = isolationMode.trim().toLowerCase(Locale.ROOT);
+            if (!ISOLATION_MODES.contains(normalizedMode)) {
+                throw new BusinessException(ResultCode.PARAM_ERROR,
+                        "隔离模式仅支持 shared / schema / database");
+            }
+            tenant.setIsolationMode(normalizedMode);
+        }
+        tenantMapper.updateById(tenant);
+        log.info("更新租户: code={}, plan={}, isolationMode={}",
+                tenant.getCode(), tenant.getPlan(), tenant.getIsolationMode());
+        return tenant;
+    }
+
+    /**
+     * 租户下线：置停用并做逻辑删除，保留全部业务数据。
+     *
+     * <p>默认租户不允许下线；已下线的租户重复调用按幂等处理返回成功。
+     */
+    @Transactional
+    public void offline(Long id) {
+        WghTenant tenant = requireById(id);
+        if (TenantContext.DEFAULT_TENANT.equals(tenant.getCode())) {
+            throw new BusinessException(ResultCode.OPERATION_NOT_ALLOWED, "默认租户不允许下线");
+        }
+        if (tenant.getStatus() != null && tenant.getStatus() == 0) {
+            return;
+        }
+        tenant.setStatus(0);
+        tenantMapper.updateById(tenant);
+        // 逻辑删除：只置 deleted=1，不物理删除任何租户或业务数据
+        tenantMapper.deleteById(id);
+        log.info("租户下线（逻辑删除）: code={}", tenant.getCode());
+    }
+
+    private void validatePlan(String plan) {
+        if (!PLANS.contains(plan)) {
+            throw new BusinessException(ResultCode.PARAM_ERROR,
+                    "套餐仅支持 standard / professional / enterprise");
+        }
+    }
+
     @Transactional
     public WghTenant updateStatus(Long id, Integer status) {
-        WghTenant tenant = id == null ? null : tenantMapper.selectById(id);
-        if (tenant == null) {
-            throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "租户不存在");
-        }
+        WghTenant tenant = requireById(id);
         if (status == null || (status != 0 && status != 1)) {
             throw new BusinessException(ResultCode.PARAM_ERROR, "租户状态仅支持 0/1");
         }
@@ -113,7 +215,7 @@ public class TenantService {
             return TenantContext.DEFAULT_TENANT;
         }
         if (tenant.getStatus() == null || tenant.getStatus() != 1) {
-            throw new BusinessException(ResultCode.TOKEN_INVALID, "租户已停用：" + tenantId);
+            throw new BusinessException(ResultCode.TOKEN_INVALID, "租户已停用或已下线：" + tenantId);
         }
         return tenantId;
     }
