@@ -75,6 +75,10 @@
               <div v-if="msg.streaming" class="typing">
                 <span></span><span></span><span></span>
               </div>
+              <!-- 断线重连补发结果提示（缺口 / 未能完整收口） -->
+              <div v-if="msg.replayNotice" class="replay-notice">
+                <el-tag size="small" :type="msg.replayNotice.tone">{{ msg.replayNotice.text }}</el-tag>
+              </div>
               <div v-if="msg.role === 'ASSISTANT' && msg.stopped" class="stopped-tip">
                 <el-tag size="small" type="info">已停止生成</el-tag>
               </div>
@@ -165,6 +169,8 @@
           </div>
         </div>
 
+        <!-- 断线自动重连的可感知反馈 -->
+        <div v-if="reconnectTip" class="reconnect-tip">{{ reconnectTip }}</div>
         <div class="input-area">
           <!-- 待发送图片预览（多模态，仅视觉模型窗口可用） -->
           <div v-if="pendingImages.length" class="pending-images">
@@ -268,7 +274,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft, Link, Promotion, VideoPause, Plus, Document, Loading, Tools, Delete, Connection, User } from '@element-plus/icons-vue'
 import { renderMarkdownWithCitations } from '../../utils/markdown'
 import SourcePanel from '../../components/SourcePanel.vue'
-import { stopGeneration } from '../../utils/chatStream'
+import { stopGeneration, describeReplayNotice } from '../../utils/chatStream'
 import { windowGet, streamChatApi, windowMessages, windowSessions, windowCreateSession, windowDeleteSession,
   agentGetPlanState, agentCancelPlan, agentRetryStep, agentSkipStep, agentGetPlanBySession,
   chatWorkflowState, streamChatWorkflowHitl, chatWorkflowCancel,
@@ -294,9 +300,23 @@ const modelSupportsVision = ref(false)
 const imageInputRef = ref(null)
 const currentSessionId = ref(null)
 const messagesRef = ref(null)
+// 断线自动重连的界面反馈（空字符串表示未在重连）
+const reconnectTip = ref('')
 let streamer = null
 let planPollTimer = null
 let planAbort = null
+
+// SSE 连接状态：重连中给出提示，恢复/终止时清空
+const handleStreamStatus = (status) => {
+  if (status.phase === 'reconnecting') {
+    reconnectTip.value = `网络连接中断，正在重新连接（第 ${status.attempt}/${status.maxAttempts} 次）…`
+  } else if (status.phase === 'reconnected') {
+    reconnectTip.value = ''
+  } else {
+    reconnectTip.value = ''
+  }
+}
+const streamHooks = () => ({ onStatus: handleStreamStatus, getSessionId: () => currentSessionId.value })
 
 // ============ Agent 计划状态 ============
 const agentPlan = ref({
@@ -700,19 +720,27 @@ const send = async () => {
   await scrollToBottom()
   streaming.value = true
 
-  streamer = streamChatApi(windowId, text || '请描述这张图片', currentSessionId.value, imageUrls)
+  streamer = streamChatApi(windowId, text || '请描述这张图片', currentSessionId.value, imageUrls, streamHooks())
   
   streamer.doStream(
-    (event, data) => handleEvent(event, data, aiMsg),
+    (event, data) => {
+      handleEvent(event, data, aiMsg)
+      // 未能完整收口：服务端已结束跟随，立即结束流式态
+      if (event === 'stream_replay_incomplete') streaming.value = false
+    },
     () => {
       streaming.value = false
+      reconnectTip.value = ''
       aiMsg.streaming = false
       nextTick(scrollToBottom)
     },
     (err) => {
       streaming.value = false
+      reconnectTip.value = ''
       aiMsg.streaming = false
-      aiMsg.content = '抱歉，请求失败: ' + err.message
+      // 已有部分内容时保留，仅追加提示，避免重连失败把回答清空
+      if (aiMsg.content) aiMsg.content += '\n\n⚠️ ' + err.message
+      else aiMsg.content = '抱歉，请求失败: ' + err.message
       ElMessage.error('聊天请求失败')
     }
   )
@@ -721,6 +749,7 @@ const send = async () => {
 // 停止生成：立即中断 SSE，保留已生成内容并标记「已停止」
 const stop = () => {
   if (!streaming.value) return
+  reconnectTip.value = ''
   const last = messages.value[messages.value.length - 1]
   const sessionId = currentSessionId.value
   stopGeneration(streamer, streaming, last?.role === 'ASSISTANT' ? last : null, {
@@ -915,6 +944,15 @@ const handleEvent = (event, data, aiMsg) => {
       if (workflowRun.value) workflowRun.value.status = 'CANCELLED'
       break
 
+    // ===== 断线重连补发信令 =====
+    case 'stream_replay_gap':
+    case 'stream_replay_incomplete': {
+      const notice = describeReplayNotice(event, data)
+      if (notice) aiMsg.replayNotice = notice
+      if (event === 'stream_replay_incomplete') aiMsg.streaming = false
+      break
+    }
+
     case 'sources':
       aiMsg.sources = dedupeSources(data)
       break
@@ -953,6 +991,7 @@ const handleEvent = (event, data, aiMsg) => {
       break
     case 'done':
       streaming.value = false
+      reconnectTip.value = ''
       aiMsg.streaming = false
       if (data.sessionId) currentSessionId.value = data.sessionId
       if (data.cacheHit) aiMsg.cacheHit = true
@@ -1288,19 +1327,25 @@ const onWorkflowConfirm = async (userInput) => {
 
   streamer = streamChatWorkflowHitl(
     windowId, runId, currentSessionId.value, userInput,
-    (event, data) => handleEvent(event, data, aiMsg),
+    (event, data) => {
+      handleEvent(event, data, aiMsg)
+      if (event === 'stream_replay_incomplete') streaming.value = false
+    },
     () => {
       streaming.value = false
+      reconnectTip.value = ''
       aiMsg.streaming = false
       workflowConfirming.value = false
       nextTick(scrollToBottom)
     },
     (err) => {
       streaming.value = false
+      reconnectTip.value = ''
       aiMsg.streaming = false
       workflowConfirming.value = false
-      aiMsg.content = '抱歉，确认失败: ' + err.message
-    }
+      aiMsg.content = (aiMsg.content ? aiMsg.content + '\n\n⚠️ ' : '抱歉，确认失败: ') + err.message
+    },
+    streamHooks()
   )
   streamer.doStream()
 }
@@ -1486,6 +1531,16 @@ onUnmounted(() => {
 }
 .stopped-tip {
   margin-top: 8px;
+}
+.replay-notice {
+  margin-top: 8px;
+}
+.reconnect-tip {
+  padding: 8px 16px;
+  font-size: 12px;
+  color: #b88230;
+  background: #fdf6ec;
+  border-top: 1px solid #faecd8;
 }
 .msg-feedback {
   margin-top: 8px;

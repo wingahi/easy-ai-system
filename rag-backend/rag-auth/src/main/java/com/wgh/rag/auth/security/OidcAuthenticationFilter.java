@@ -1,11 +1,11 @@
 package com.wgh.rag.auth.security;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.wgh.rag.auth.cache.UserInfoCacheService;
 import com.wgh.rag.auth.entity.WghRole;
 import com.wgh.rag.auth.entity.WghUser;
 import com.wgh.rag.auth.mapper.RoleMapper;
 import com.wgh.rag.auth.mapper.RolePermissionMapper;
-import com.wgh.rag.auth.mapper.UserMapper;
 import com.wgh.rag.auth.mapper.UserRoleMapper;
 import com.wgh.rag.auth.constant.AuthConstants;
 import com.wgh.rag.common.constant.HttpConstants;
@@ -54,7 +54,7 @@ public class OidcAuthenticationFilter extends OncePerRequestFilter {
 
     private final OidcTokenVerifier tokenVerifier;
     private final LocalTokenService localTokenService;
-    private final UserMapper userMapper;
+    private final UserInfoCacheService userInfoCacheService;
     private final UserRoleMapper userRoleMapper;
     private final RoleMapper roleMapper;
     private final RolePermissionMapper rolePermissionMapper;
@@ -166,7 +166,7 @@ public class OidcAuthenticationFilter extends OncePerRequestFilter {
             writeUnauthorized(response, ResultCode.TOKEN_EXPIRED.getCode(), "会话凭证无效");
             return;
         }
-        WghUser user = userMapper.selectById(userId);
+        WghUser user = userInfoCacheService.load(userId);
         if (user == null) {
             log.warn("本地会话凭证无效：用户不存在 userId={}", userId);
             writeUnauthorized(response, ResultCode.TOKEN_EXPIRED.getCode(), "账号不存在，请重新登录");

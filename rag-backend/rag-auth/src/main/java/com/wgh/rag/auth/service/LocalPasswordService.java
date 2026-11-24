@@ -1,5 +1,6 @@
 package com.wgh.rag.auth.service;
 
+import com.wgh.rag.auth.cache.UserInfoCacheService;
 import com.wgh.rag.auth.security.PasswordPolicy;
 import com.wgh.rag.auth.entity.WghUser;
 import com.wgh.rag.common.exception.BusinessException;
@@ -26,6 +27,7 @@ public class LocalPasswordService {
     private final PasswordEncoder passwordEncoder;
     private final PasswordPolicy passwordPolicy;
     private final AccountAuditService accountAuditService;
+    private final UserInfoCacheService userInfoCacheService;
 
     /**
      * 当前登录者修改本人密码
@@ -60,6 +62,7 @@ public class LocalPasswordService {
         user.setPasswordMustChange(0);
         user.bumpPasswordVersion();
         userMapper.updateById(user);
+        userInfoCacheService.evictAfterCommit(user.getId());
         accountAuditService.success(AccountAuditService.ACTION_PASSWORD_CHANGE, user.getUsername());
         log.info("本地账号改密成功 username={}", user.getUsername());
     }
@@ -86,6 +89,7 @@ public class LocalPasswordService {
         target.setPasswordMustChange(1);
         target.bumpPasswordVersion();
         userMapper.updateById(target);
+        userInfoCacheService.evictAfterCommit(target.getId());
         accountAuditService.success(AccountAuditService.ACTION_PASSWORD_RESET, target.getUsername());
         log.info("管理员重置体验账号口令 username={}，下次登录需先改密", target.getUsername());
     }

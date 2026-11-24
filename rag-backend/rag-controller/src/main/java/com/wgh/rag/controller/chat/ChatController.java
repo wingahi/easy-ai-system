@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wgh.rag.auth.constant.AuthConstants;
 import com.wgh.rag.controller.support.RunAccessGuard;
 import com.wgh.rag.controller.support.SseExecutionStreamSink;
+import com.wgh.rag.controller.support.SseReplaySupport;
 import com.wgh.rag.chat.constant.ChatConstants;
 import com.wgh.rag.chat.service.ChatImageService;
 import com.wgh.rag.chat.service.ChatCancellationStore;
@@ -12,6 +13,7 @@ import com.wgh.rag.chat.service.ChatWorkflowService;
 import com.wgh.rag.chat.service.FeedbackService;
 import com.wgh.rag.chat.service.RagChatService;
 import com.wgh.rag.chat.service.stream.ChatStreamHandle;
+import com.wgh.rag.chat.service.stream.replay.StreamReplayService;
 import com.wgh.rag.chat.entity.ChatMessage;
 import com.wgh.rag.chat.entity.ChatSession;
 import com.wgh.rag.chat.entity.ChatWindow;
@@ -22,8 +24,11 @@ import com.wgh.rag.tool.service.ToolConfigService;
 import com.wgh.rag.log.annotation.Audit;
 import com.wgh.rag.common.result.PageResult;
 import com.wgh.rag.common.result.Result;
+import com.wgh.rag.common.result.ResultCode;
+import com.wgh.rag.common.exception.BusinessException;
 import com.wgh.rag.common.security.LoginUser;
 import com.wgh.rag.common.security.RequiresPermission;
+import com.wgh.rag.execution.event.ExecutionStreamSink;
 import com.wgh.rag.workflow.service.WorkflowService;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.data.message.ToolExecutionResultMessage;
@@ -62,6 +67,8 @@ public class ChatController {
     private final RunAccessGuard runAccessGuard;
     /** 跨实例取消标记：显式停止写入 Redis，由流式实例轮询感知 */
     private final ChatCancellationStore chatCancellationStore;
+    /** SSE 事件重放：按 Last-Event-ID 从共享缓冲补齐缺失事件 */
+    private final StreamReplayService streamReplayService;
 
     // ===== 管理端：聊天窗口 =====
 
@@ -216,15 +223,36 @@ public class ChatController {
     @PostMapping(value = "/windows/{windowId}/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter streamChat(
             @PathVariable Long windowId,
+            @RequestHeader(value = SseReplaySupport.HEADER_LAST_EVENT_ID, required = false) String lastEventIdHeader,
             @RequestBody Map<String, Object> params) {
         Long sessionId = params.get("sessionId") != null ?
                 Long.parseLong(params.get("sessionId").toString()) : null;
+        String lastEventId = StreamReplayService.resolveLastEventId(lastEventIdHeader, params.get("lastEventId"));
+        if (lastEventId != null) {
+            return resumeChatStream(windowId, sessionId, lastEventId);
+        }
         String message = (String) params.get("message");
         List<String> imageUrls = parseImageUrls(params.get("imageUrls"));
         SseEmitter emitter = newEmitter();
         ChatStreamHandle handle = ragChatService.streamChat(windowId, sessionId, message, false, imageUrls,
                 new SseExecutionStreamSink(emitter));
         wireLifecycle(emitter, handle);
+        return emitter;
+    }
+
+    /**
+     * 按 {@code Last-Event-ID} 重连对话流：只回放/跟随已有事件，不重新生成、不重复扣费。
+     * 流不存在/已过期/已被新生成取代时返回明确错误，由客户端回退到会话历史。
+     */
+    private SseEmitter resumeChatStream(Long windowId, Long sessionId, String lastEventId) {
+        if (sessionId == null) {
+            throw new BusinessException(ResultCode.PARAM_ERROR, "重连需要提供 sessionId");
+        }
+        windowService.getById(windowId);
+        windowService.getOwnedSession(windowId, sessionId, currentUsername());
+        SseEmitter emitter = newEmitter();
+        streamReplayService.resume(StreamReplayService.KIND_CHAT, sessionId, lastEventId,
+                new SseExecutionStreamSink(emitter), SseReplaySupport.wireCloseFlag(emitter));
         return emitter;
     }
 
@@ -275,10 +303,23 @@ public class ChatController {
     @PostMapping(value = "/share/{shareToken}/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter streamShareChat(
             @PathVariable String shareToken,
+            @RequestHeader(value = SseReplaySupport.HEADER_LAST_EVENT_ID, required = false) String lastEventIdHeader,
             @RequestBody Map<String, Object> params) {
         String message = (String) params.get("message");
         Long sessionId = params.get("sessionId") != null
                 ? Long.parseLong(params.get("sessionId").toString()) : null;
+        String lastEventId = StreamReplayService.resolveLastEventId(lastEventIdHeader, params.get("lastEventId"));
+        if (lastEventId != null) {
+            if (sessionId == null) {
+                throw new BusinessException(ResultCode.PARAM_ERROR, "重连需要提供 sessionId");
+            }
+            ChatWindow shareWindow = windowService.getByShareToken(shareToken);
+            windowService.getOwnedSession(shareWindow.getId(), sessionId, currentUsername());
+            SseEmitter resumeEmitter = newEmitter();
+            streamReplayService.resume(StreamReplayService.KIND_CHAT, sessionId, lastEventId,
+                    new SseExecutionStreamSink(resumeEmitter), SseReplaySupport.wireCloseFlag(resumeEmitter));
+            return resumeEmitter;
+        }
         List<String> imageUrls = parseImageUrls(params.get("imageUrls"));
         SseEmitter emitter = newEmitter();
         ChatStreamHandle handle = ragChatService.streamShareChat(shareToken, message, currentUsername(),
@@ -339,6 +380,7 @@ public class ChatController {
     public SseEmitter workflowHitlConfirm(
             @PathVariable Long windowId,
             @PathVariable Long runId,
+            @RequestHeader(value = SseReplaySupport.HEADER_LAST_EVENT_ID, required = false) String lastEventIdHeader,
             @RequestBody(required = false) Map<String, Object> params) {
         windowService.getById(windowId);
         runAccessGuard.assertAccessible(runId);
@@ -346,9 +388,23 @@ public class ChatController {
         if (sessionId != null) {
             windowService.getOwnedSession(windowId, sessionId, currentUsername());
         }
+        String lastEventId = StreamReplayService.resolveLastEventId(lastEventIdHeader,
+                params == null ? null : params.get("lastEventId"));
+        if (lastEventId != null) {
+            return resumeHitlStream(StreamReplayService.KIND_WORKFLOW_HITL, runId, lastEventId);
+        }
         SseEmitter emitter = newEmitter();
-        chatWorkflowService.hitlConfirm(runId, sessionId, extractUserInput(params), false,
-                new SseExecutionStreamSink(emitter));
+        ExecutionStreamSink sink = streamReplayService.open(StreamReplayService.KIND_WORKFLOW_HITL,
+                runId, new SseExecutionStreamSink(emitter));
+        chatWorkflowService.hitlConfirm(runId, sessionId, extractUserInput(params), false, sink);
+        return emitter;
+    }
+
+    /** 按 {@code Last-Event-ID} 重连执行流：只回放/跟随，不重复执行 HITL 确认。 */
+    private SseEmitter resumeHitlStream(String kind, Long subjectId, String lastEventId) {
+        SseEmitter emitter = newEmitter();
+        streamReplayService.resume(kind, subjectId, lastEventId,
+                new SseExecutionStreamSink(emitter), SseReplaySupport.wireCloseFlag(emitter));
         return emitter;
     }
 
@@ -376,15 +432,22 @@ public class ChatController {
     public SseEmitter shareWorkflowHitlConfirm(
             @PathVariable String shareToken,
             @PathVariable Long runId,
+            @RequestHeader(value = SseReplaySupport.HEADER_LAST_EVENT_ID, required = false) String lastEventIdHeader,
             @RequestBody(required = false) Map<String, Object> params) {
         ChatWindow window = windowService.getByShareToken(shareToken);
         Long sessionId = parseSessionId(params);
         if (sessionId != null) {
             windowService.getOwnedSession(window.getId(), sessionId, currentUsername());
         }
+        String lastEventId = StreamReplayService.resolveLastEventId(lastEventIdHeader,
+                params == null ? null : params.get("lastEventId"));
+        if (lastEventId != null) {
+            return resumeHitlStream(StreamReplayService.KIND_WORKFLOW_HITL, runId, lastEventId);
+        }
         SseEmitter emitter = newEmitter();
-        chatWorkflowService.hitlConfirm(runId, sessionId, extractUserInput(params), true,
-                new SseExecutionStreamSink(emitter));
+        ExecutionStreamSink sink = streamReplayService.open(StreamReplayService.KIND_WORKFLOW_HITL,
+                runId, new SseExecutionStreamSink(emitter));
+        chatWorkflowService.hitlConfirm(runId, sessionId, extractUserInput(params), true, sink);
         return emitter;
     }
 

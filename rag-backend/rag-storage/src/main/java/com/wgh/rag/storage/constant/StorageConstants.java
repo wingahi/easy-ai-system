@@ -13,6 +13,11 @@ public interface StorageConstants {
     String TYPE_LOCAL = "local";
     String TYPE_OSS = "oss";
 
+    /** 部署模式：单实例（默认），本地目录不要求跨副本共享 */
+    String MODE_SINGLE = "single";
+    /** 部署模式：多实例共享，必须 OSS 或已挂载的共享卷 */
+    String MODE_SHARED = "shared";
+
     /** 对象 key 的一级目录 */
     String KEY_PREFIX_KB = "kb/";
 
@@ -46,4 +51,7 @@ public interface StorageConstants {
     String TEMP_SUFFIX = ".part";
     /** OSS 上传暂存临时文件前缀 */
     String OSS_TEMP_PREFIX = "wgh-oss-upload-";
+
+    /** 共享卷启动写探测文件名前缀（探测结束即删除） */
+    String PROBE_FILE_PREFIX = ".wgh-storage-probe-";
 }

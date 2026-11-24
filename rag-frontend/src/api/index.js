@@ -1,6 +1,7 @@
 // API 统一入口 - 按需引入
 import request from '../utils/request'
 import { STORAGE_KEYS } from '../utils/constants'
+import { createSseStream } from '../utils/sseStream'
 
 // 认证：本地管理员/体验账号密码登录（返回内部会话凭证）；getMe 查询当前凭证用户信息
 export const login = (data) => request.post('/auth/login', data)
@@ -167,83 +168,16 @@ export const promptTemplateRender = (id, vars) => request.post(`/prompt-template
 export const promptTemplateSuggest = (params) => request.get('/prompt-templates/suggest', { params })
 
 // SSE 流式聊天（需要原生 fetch）
-export function streamChatApi(windowId, message, sessionId, imageUrls) {
+// hooks.getSessionId：重连时读取最新会话 id；hooks.onStatus：连接状态回调（重连中/已恢复）
+export function streamChatApi(windowId, message, sessionId, imageUrls, hooks = {}) {
   const token = localStorage.getItem(STORAGE_KEYS.TOKEN)
-  const controller = new AbortController()
-
-  const doStream = async (onEvent, onDone, onError) => {
-    try {
-      const res = await fetch(`/api/chat/windows/${windowId}/stream`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-        },
-        body: JSON.stringify({ message, sessionId, ...(imageUrls?.length ? { imageUrls } : {}) }),
-        signal: controller.signal
-      })
-      
-      // 配额超限等业务错误以 JSON 返回（HTTP 200 + code=429），需解析为可读提示
-      const contentType = res.headers.get('content-type') || ''
-      if (!res.ok || contentType.includes('application/json')) {
-        let msg = `HTTP ${res.status}`
-        try {
-          const body = await res.json()
-          if (body?.message) msg = body.message
-        } catch { /* 非 JSON 时保持 HTTP 状态提示 */ }
-        throw new Error(msg)
-      }
-      
-      const reader = res.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-      
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        
-        buffer += decoder.decode(value, { stream: true })
-        
-        // SSE 格式: event:xxx\ndata:xxx\n\n
-        let idx
-        while ((idx = buffer.indexOf('\n\n')) !== -1) {
-          const chunk = buffer.substring(0, idx)
-          buffer = buffer.substring(idx + 2)
-          
-          const lines = chunk.split('\n')
-          let eventType = 'message'
-          let data = ''
-          
-          for (const line of lines) {
-            if (line.startsWith('event:')) {
-              eventType = line.substring(6).trim()
-            } else if (line.startsWith('data:')) {
-              // SSE 规范：多个 data 行用 \n 拼接；不能 trim，会丢行内空格
-              if (data) data += '\n'
-              data += line.substring(5)
-            }
-          }
-          
-          if (data) {
-            try {
-              const parsed = JSON.parse(data)
-              onEvent(eventType, parsed)
-            } catch {
-              onEvent(eventType, data)
-            }
-          }
-        }
-      }
-      
-      onDone?.()
-    } catch (err) {
-      // 主动 abort / 页面刷新卸载导致的中断都视为正常结束，不回调错误（避免 ERR_ABORTED 报错）
-      if (controller.signal.aborted || err.name === 'AbortError') return
-      onError?.(err)
-    }
-  }
-  
-  return { doStream, abort: () => controller.abort() }
+  return createSseStream({
+    url: `/api/chat/windows/${windowId}/stream`,
+    headers: () => (token ? { Authorization: `Bearer ${token}` } : {}),
+    body: { message, sessionId, ...(imageUrls?.length ? { imageUrls } : {}) },
+    getSessionId: hooks.getSessionId || (() => sessionId),
+    onStatus: hooks.onStatus
+  })
 }
 
 // 分享页停止生成（登录态）：通知后端取消任务
@@ -251,72 +185,15 @@ export const shareStopSession = (shareToken, sessionId) =>
   request.post(`/chat/share/${shareToken}/sessions/${sessionId}/stop`, null, { silent: true })
 
 // 分享页面 SSE（需登录，userIdentifier 取当前登录用户名）
-export function streamShareApi(shareToken, message, sessionId) {
+export function streamShareApi(shareToken, message, sessionId, hooks = {}) {
   const token = localStorage.getItem(STORAGE_KEYS.TOKEN)
-  const controller = new AbortController()
-
-  const doStream = async (onEvent, onDone, onError) => {
-    try {
-      const res = await fetch(`/api/chat/share/${shareToken}/stream`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-        },
-        body: JSON.stringify({ message, sessionId }),
-        signal: controller.signal
-      })
-      
-      // 配额超限等业务错误以 JSON 返回（HTTP 200 + code=429），需解析为可读提示
-      const contentType = res.headers.get('content-type') || ''
-      if (!res.ok || contentType.includes('application/json')) {
-        let msg = `HTTP ${res.status}`
-        try {
-          const body = await res.json()
-          if (body?.message) msg = body.message
-        } catch { /* 非 JSON 时保持 HTTP 状态提示 */ }
-        throw new Error(msg)
-      }
-      
-      const reader = res.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-      
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        
-        buffer += decoder.decode(value, { stream: true })
-        
-        let idx
-        while ((idx = buffer.indexOf('\n\n')) !== -1) {
-          const chunk = buffer.substring(0, idx)
-          buffer = buffer.substring(idx + 2)
-          
-          const lines = chunk.split('\n')
-          let eventType = 'message'
-          let data = ''
-          
-          for (const line of lines) {
-            if (line.startsWith('event:')) eventType = line.substring(6).trim()
-            else if (line.startsWith('data:')) data += line.substring(5).trim()
-          }
-          
-          if (data) {
-            try { onEvent(eventType, JSON.parse(data)) } 
-            catch { onEvent(eventType, data) }
-          }
-        }
-      }
-      onDone?.()
-    } catch (err) {
-      // 主动 abort / 页面刷新卸载导致的中断都视为正常结束，不回调错误
-      if (controller.signal.aborted || err.name === 'AbortError') return
-      onError?.(err)
-    }
-  }
-  
-  return { doStream, abort: () => controller.abort() }
+  return createSseStream({
+    url: `/api/chat/share/${shareToken}/stream`,
+    headers: () => (token ? { Authorization: `Bearer ${token}` } : {}),
+    body: { message, sessionId },
+    getSessionId: hooks.getSessionId || (() => sessionId),
+    onStatus: hooks.onStatus
+  })
 }
 
 // 工具管理
@@ -464,10 +341,21 @@ export function streamWorkflowResume(runId, userInput, onEvent, onDone, onError)
 export const chatWorkflowState = (windowId, sessionId, signal) =>
   request.get(`/chat/windows/${windowId}/sessions/${sessionId}/workflow-state`, signal ? { signal } : undefined)
 
-/** 调试页工作流 HITL 确认（SSE） */
-export function streamChatWorkflowHitl(windowId, runId, sessionId, userInput, onEvent, onDone, onError) {
-  return streamPost(`/api/chat/windows/${windowId}/workflow-runs/${runId}/hitl-confirm`,
-    { sessionId, userInput }, onEvent, onDone, onError)
+/** 调试页工作流 HITL 确认（SSE，支持按 Last-Event-ID 断线重连，不重复确认） */
+export function streamChatWorkflowHitl(windowId, runId, sessionId, userInput, onEvent, onDone, onError, hooks = {}) {
+  const token = localStorage.getItem(STORAGE_KEYS.TOKEN)
+  return createSseStream({
+    url: `/api/chat/windows/${windowId}/workflow-runs/${runId}/hitl-confirm`,
+    headers: () => (token ? { Authorization: `Bearer ${token}` } : {}),
+    body: { sessionId, userInput },
+    getSessionId: hooks.getSessionId || (() => sessionId),
+    // HITL 流的所属对象是 path 上的 runId，sessionId 仅用于归属校验
+    requiresSessionId: false,
+    onStatus: hooks.onStatus,
+    onEvent,
+    onDone,
+    onError
+  })
 }
 
 /** 调试页取消工作流运行 */
@@ -478,10 +366,20 @@ export const chatWorkflowCancel = (windowId, runId) =>
 export const shareWorkflowState = (shareToken, sessionId, signal) =>
   request.get(`/chat/share/${shareToken}/sessions/${sessionId}/workflow-state`, signal ? { signal } : undefined)
 
-/** 分享页工作流 HITL 确认（安全模式，SSE） */
-export function streamShareWorkflowHitl(shareToken, runId, sessionId, userInput, onEvent, onDone, onError) {
-  return streamPost(`/api/chat/share/${shareToken}/workflow-runs/${runId}/hitl-confirm`,
-    { sessionId, userInput }, onEvent, onDone, onError)
+/** 分享页工作流 HITL 确认（安全模式，SSE，支持按 Last-Event-ID 断线重连） */
+export function streamShareWorkflowHitl(shareToken, runId, sessionId, userInput, onEvent, onDone, onError, hooks = {}) {
+  const token = localStorage.getItem(STORAGE_KEYS.TOKEN)
+  return createSseStream({
+    url: `/api/chat/share/${shareToken}/workflow-runs/${runId}/hitl-confirm`,
+    headers: () => (token ? { Authorization: `Bearer ${token}` } : {}),
+    body: { sessionId, userInput },
+    getSessionId: hooks.getSessionId || (() => sessionId),
+    requiresSessionId: false,
+    onStatus: hooks.onStatus,
+    onEvent,
+    onDone,
+    onError
+  })
 }
 
 /** 分享页取消工作流运行 */
@@ -646,6 +544,12 @@ export const adminRolePermissionsUpdate = (roleCode, permCodes) =>
 // ===== 配额管理（管理端 + 用户自查） =====
 export const quotaAdminPage = (params) => request.get('/admin/quota/users', { params })
 export const quotaRefundIssues = (params) => request.get('/admin/quota/refunds', { params })
+export const quotaRefundDetail = (chargeId) =>
+  request.get(`/admin/quota/refunds/${encodeURIComponent(chargeId)}`)
+export const quotaRefundManual = (chargeId, data) =>
+  request.post(`/admin/quota/refunds/${encodeURIComponent(chargeId)}/refund`, data)
+export const quotaRefundWriteOff = (chargeId, data) =>
+  request.post(`/admin/quota/refunds/${encodeURIComponent(chargeId)}/write-off`, data)
 export const quotaAdminGet = (username) => request.get(`/admin/quota/users/${encodeURIComponent(username)}`)
 export const quotaAdminSave = (username, data) => request.put(`/admin/quota/users/${encodeURIComponent(username)}`, data)
 export const quotaAdminResetUsage = (username) => request.post(`/admin/quota/users/${encodeURIComponent(username)}/reset-usage`)
@@ -715,57 +619,21 @@ export const publicShareStopSession = (token, sessionId, password) =>
     ...publicShareConfig(password)
   })
 
-/** 分享页匿名 SSE 问答 */
-export function streamPublicShareChat(token, message, sessionId, password, imageUrls) {
-  const controller = new AbortController()
-  const doStream = async (onEvent, onDone, onError) => {
-    try {
-      const res = await fetch(`/api/public/share/${token}/stream`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Visitor-Id': getVisitorId(),
-          ...(password ? { 'X-Share-Password': password } : {}),
-          ...(publicShareEmbedGrant
-            ? { 'X-Embed-Grant': publicShareEmbedGrant, 'X-Embed-Mode': '1' }
-            : {})
-        },
-        body: JSON.stringify({ message, sessionId, ...(imageUrls?.length ? { imageUrls } : {}) }),
-        signal: controller.signal
-      })
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const reader = res.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
-        let idx
-        while ((idx = buffer.indexOf('\n\n')) !== -1) {
-          const chunk = buffer.substring(0, idx)
-          buffer = buffer.substring(idx + 2)
-          let eventType = 'message'
-          let data = ''
-          for (const line of chunk.split('\n')) {
-            if (line.startsWith('event:')) eventType = line.substring(6).trim()
-            else if (line.startsWith('data:')) {
-              if (data) data += '\n'
-              data += line.substring(5)
-            }
-          }
-          if (data) {
-            try { onEvent(eventType, JSON.parse(data)) } catch { onEvent(eventType, data) }
-          }
-        }
-      }
-      onDone?.()
-    } catch (err) {
-      if (controller.signal.aborted || err.name === 'AbortError') return
-      onError?.(err)
-    }
-  }
-  return { doStream, abort: () => controller.abort() }
+/** 分享页匿名 SSE 问答（支持按 Last-Event-ID 断线重连，不重复消费分享次数） */
+export function streamPublicShareChat(token, message, sessionId, password, imageUrls, hooks = {}) {
+  return createSseStream({
+    url: `/api/public/share/${token}/stream`,
+    headers: () => ({
+      'X-Visitor-Id': getVisitorId(),
+      ...(password ? { 'X-Share-Password': password } : {}),
+      ...(publicShareEmbedGrant
+        ? { 'X-Embed-Grant': publicShareEmbedGrant, 'X-Embed-Mode': '1' }
+        : {})
+    }),
+    body: { message, sessionId, ...(imageUrls?.length ? { imageUrls } : {}) },
+    getSessionId: hooks.getSessionId || (() => sessionId),
+    onStatus: hooks.onStatus
+  })
 }
 
 // ===== 管理端：分享链接 / 开放 API Key =====

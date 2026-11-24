@@ -1,0 +1,21 @@
+# =====================================================================
+# 增量配置：多副本共享存储（2026-11-24，K8s 共享存储应用侧）
+# ---------------------------------------------------------------------
+# 目标文件：rag-backend/rag-app/src/main/resources/application.yml
+# 分区：wgh.rag.storage
+# 键数：2（新增）
+# 说明：增量覆盖片段，不参与自动加载；合并方式见 config/migrations/README.md
+# 绑定类：com.wgh.rag.storage.properties.StorageProperties
+# 依赖：deploy/k8s/base/configmap-backend.yaml 的 WGH_STORAGE_TYPE / WGH_UPLOAD_DIR；
+#       多副本清单另见 deploy/k8s/overlays/k2-multi（RWX PVC）与 README「文件存储切换」
+# =====================================================================
+wgh:
+  rag:
+    storage:
+      # 部署模式：single（默认，单实例本地，行为与现网一致）/ shared（多实例共享）
+      # shared 启动自检：type=oss 要求 OSS 必填项完整；type=local 要求 base-dir 为可写独立挂载卷
+      # 并执行写-读-删探测，校验失败即启动失败（容器 CrashLoop，避免各副本各写本地盘）
+      mode: ${WGH_STORAGE_MODE:single}
+      # 迁移期兼容读（仅 type=oss 生效）：主存储未命中时回落 local.base-dir 读取旧对象
+      # 用于 local → oss 滚动切换窗口；迁移完成、旧 PVC 摘除前关闭
+      read-fallback-enabled: ${WGH_STORAGE_READ_FALLBACK:false}

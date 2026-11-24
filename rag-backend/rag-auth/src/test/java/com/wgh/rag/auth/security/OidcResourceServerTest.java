@@ -7,15 +7,21 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.sun.net.httpserver.HttpServer;
+import com.wgh.rag.auth.cache.UserCacheProperties;
+import com.wgh.rag.auth.cache.UserInfoCacheService;
 import com.wgh.rag.auth.entity.WghRole;
 import com.wgh.rag.auth.mapper.RoleMapper;
 import com.wgh.rag.auth.mapper.RolePermissionMapper;
 import com.wgh.rag.auth.mapper.UserMapper;
 import com.wgh.rag.auth.mapper.UserRoleMapper;
+import com.wgh.rag.common.metrics.RagMetrics;
 import com.wgh.rag.common.security.LoginUser;
+import com.wgh.rag.config.redis.RedisCommandPort;
+import com.wgh.rag.config.redis.RedisDistributedLock;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import jakarta.servlet.FilterChain;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.AfterEach;
@@ -76,6 +82,7 @@ class OidcResourceServerTest {
     private UserMapper userMapper;
     private UserRoleMapper userRoleMapper;
     private LocalTokenService localTokenService;
+    private UserInfoCacheService userInfoCacheService;
     private TestJwksServer jwksServer;
     private OidcProperties properties;
     private OidcTokenVerifier verifier;
@@ -88,6 +95,11 @@ class OidcResourceServerTest {
         rolePermissionMapper = mock(RolePermissionMapper.class);
         userMapper = mock(UserMapper.class);
         userRoleMapper = mock(UserRoleMapper.class);
+        // Redis 关闭时 UserInfoCacheService 直接回源 userMapper，保持既有桩生效
+        RedisCommandPort disabledRedis = RedisCommandPort.disabled();
+        userInfoCacheService = new UserInfoCacheService(
+                userMapper, disabledRedis, new RedisDistributedLock(disabledRedis),
+                new UserCacheProperties(), new RagMetrics(new SimpleMeterRegistry()));
         LocalAuthProperties localAuthProperties = new LocalAuthProperties();
         localAuthProperties.setJwtSecret("test-local-secret-0123456789abcdef0123456789abcdef");
         localTokenService = new LocalTokenService(localAuthProperties);
@@ -132,7 +144,7 @@ class OidcResourceServerTest {
         properties.setClockSkewSeconds(30);
 
         verifier = new OidcTokenVerifier(properties, new JwksProvider(properties));
-        filter = new OidcAuthenticationFilter(verifier, localTokenService, userMapper, userRoleMapper,
+        filter = new OidcAuthenticationFilter(verifier, localTokenService, userInfoCacheService, userRoleMapper,
                 roleMapper, rolePermissionMapper, properties);
     }
 
@@ -346,8 +358,8 @@ class OidcResourceServerTest {
 
         OidcTokenVerifier unreachableVerifier = new OidcTokenVerifier(properties, new JwksProvider(properties));
         OidcAuthenticationFilter unreachableFilter =
-                new OidcAuthenticationFilter(unreachableVerifier, localTokenService, userMapper, userRoleMapper,
-                        roleMapper, rolePermissionMapper, properties);
+                new OidcAuthenticationFilter(unreachableVerifier, localTokenService, userInfoCacheService,
+                        userRoleMapper, roleMapper, rolePermissionMapper, properties);
 
         MockHttpServletResponse response = doFilter(unreachableFilter, "Bearer " + token(KID_1, KEY_PAIR_1,
                 ISSUER, AUDIENCE, "alice", List.of("admin"), null, null));

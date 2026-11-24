@@ -1,0 +1,18 @@
+# ========================================================
+# 配置增量：配额计数异常处理策略（2026-11-24）
+# 目标文件：rag-backend/rag-app/src/main/resources/application.yml
+# 键数：1（新增）
+# 合并方式：由部署侧把本文件内容合并进 application.yml 对应的 wgh.rag.quota 节点，
+#           或按 Spring Boot 配置导入机制加载；本文件不覆盖任何既有键。
+#
+# 语义（wgh.rag.quota.fail-open-on-count-error）：
+#   false（默认）：计数写入异常时拒绝本次对话，返回业务错误码 5004（计费服务暂不可用），
+#                 避免「说了话却没扣费」。DB 抖动/连接池耗尽时聊天与分享对话会直接失败。
+#   true        ：计数写入异常时仅打 [ALERT] 日志与 wgh.quota.count.failure{result=allow} 指标后放行，
+#                 本次不扣费。仅建议在数据库短时抖动、且业务更看重可用性时临时开启，事后需按
+#                 wgh.quota.count.failure{result=allow} 排查是否有存量免费请求。
+# ========================================================
+wgh:
+  rag:
+    quota:
+      fail-open-on-count-error: false

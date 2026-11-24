@@ -44,3 +44,37 @@ export function stopGeneration(streamer, streamingRef, aiMsg, options) {
     aiMsg.stopped = true
   }
 }
+
+// 重放信令的面向用户文案：不暴露 stream_replay_* 等技术术语
+const REPLAY_INCOMPLETE_TEXT = {
+  'generation-stopped': '回答生成已中止，内容可能不完整。',
+  'idle-timeout': '长时间没有新的生成内容，连接已结束，回答可能不完整。',
+  'buffer-degraded': '服务端记录不完整，部分内容可能缺失。',
+  'follow-timeout': '等待生成结果超时，连接已结束，回答可能不完整。',
+  'stream-expired': '会话连接已过期，请刷新会话查看最新内容。',
+  'replay-error': '恢复连接时出错，请刷新会话查看最新内容。'
+}
+
+/**
+ * 把重连补发信令转换为页面提示。
+ *
+ * @param {string} event SSE 事件名
+ * @param {any} data 事件负载
+ * @returns {{ tone: 'warning' | 'info', text: string } | null} 非重放信令返回 null
+ */
+export function describeReplayNotice(event, data) {
+  if (event === 'stream_replay_gap') {
+    return {
+      tone: 'warning',
+      text: '网络恢复后部分内容已过期，当前回答可能不完整，建议刷新会话查看完整结果。'
+    }
+  }
+  if (event === 'stream_replay_incomplete') {
+    const reason = data && typeof data === 'object' ? data.reason : ''
+    return {
+      tone: 'info',
+      text: REPLAY_INCOMPLETE_TEXT[reason] || '连接未能完整恢复，回答可能缺失部分内容。'
+    }
+  }
+  return null
+}

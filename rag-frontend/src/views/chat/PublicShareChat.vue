@@ -77,6 +77,10 @@
               <div class="msg-content" v-html="renderMarkdownWithCitations(msg.content)"
                    @click="onCitationClick"></div>
               <div v-if="msg.streaming" class="typing"><span></span><span></span><span></span></div>
+              <!-- 断线重连补发结果提示（缺口 / 未能完整收口） -->
+              <div v-if="msg.replayNotice" class="replay-notice">
+                <el-tag size="small" :type="msg.replayNotice.tone">{{ msg.replayNotice.text }}</el-tag>
+              </div>
               <div v-if="msg.stopped" class="stopped-tip">
                 <el-tag size="small" type="info">已停止生成</el-tag>
               </div>
@@ -86,6 +90,8 @@
             </div>
           </div>
         </div>
+        <!-- 断线自动重连的可感知反馈 -->
+        <div v-if="reconnectTip" class="reconnect-tip">{{ reconnectTip }}</div>
         <div v-if="!readOnly" class="input-area">
           <el-input v-model="input" type="textarea" :rows="2" placeholder="输入消息..."
                     @keydown.enter.exact.prevent="send" :disabled="streaming" resize="none" />
@@ -121,7 +127,7 @@ import { ElMessage } from 'element-plus'
 import { Promotion, VideoPause, Plus, Delete } from '@element-plus/icons-vue'
 import { renderMarkdownWithCitations } from '../../utils/markdown'
 import SourcePanel from '../../components/SourcePanel.vue'
-import { stopGeneration } from '../../utils/chatStream'
+import { stopGeneration, describeReplayNotice } from '../../utils/chatStream'
 import {
   publicShareInfo, publicShareUnlock, publicShareSessions, publicShareCreateSession,
   publicShareDeleteSession, publicShareMessages, publicShareKbSearch, streamPublicShareChat,
@@ -151,7 +157,18 @@ const messages = ref([])
 const input = ref('')
 const streaming = ref(false)
 const messagesRef = ref(null)
+// 断线自动重连的界面反馈（空字符串表示未在重连）
+const reconnectTip = ref('')
 let streamer = null
+
+const handleStreamStatus = (status) => {
+  if (status.phase === 'reconnecting') {
+    reconnectTip.value = `网络连接中断，正在重新连接（第 ${status.attempt}/${status.maxAttempts} 次）…`
+  } else {
+    reconnectTip.value = ''
+  }
+}
+const streamHooks = () => ({ onStatus: handleStreamStatus, getSessionId: () => currentSessionId.value })
 
 const kbQuery = ref('')
 const kbResults = ref([])
@@ -275,6 +292,7 @@ const deleteSession = async (s) => {
 // 停止生成：中断 SSE，保留已生成内容并标记「已停止」
 const stop = () => {
   if (!streaming.value) return
+  reconnectTip.value = ''
   const last = messages.value[messages.value.length - 1]
   const sessionId = currentSessionId.value
   stopGeneration(streamer, streaming, last?.role === 'ASSISTANT' ? last : null, {
@@ -295,17 +313,23 @@ const send = async () => {
   streaming.value = true
   await nextTick(scroll)
 
-  streamer = streamPublicShareChat(token, text, currentSessionId.value, password.value)
+  streamer = streamPublicShareChat(token, text, currentSessionId.value, password.value, undefined, streamHooks())
   streamer.doStream(
     (event, data) => {
       if (event === 'start') {
         if (data?.sessionId) currentSessionId.value = data.sessionId
+      } else if (event === 'stream_replay_gap' || event === 'stream_replay_incomplete') {
+        const notice = describeReplayNotice(event, data)
+        if (notice) aiMsg.replayNotice = notice
+        if (event === 'stream_replay_incomplete') streaming.value = false
+        aiMsg.streaming = false
       } else if (event === 'content') {
         aiMsg.content += (data && typeof data === 'object' ? (data.text ?? '') : data)
       } else if (event === 'sources') {
         aiMsg.sources = data
       } else if (event === 'done') {
         streaming.value = false
+        reconnectTip.value = ''
         aiMsg.streaming = false
         if (!aiMsg.content && data?.fullResponse) aiMsg.content = data.fullResponse
         if (data?.sessionId) currentSessionId.value = data.sessionId
@@ -313,11 +337,13 @@ const send = async () => {
       }
       nextTick(scroll)
     },
-    () => { streaming.value = false; aiMsg.streaming = false },
+    () => { streaming.value = false; reconnectTip.value = ''; aiMsg.streaming = false },
     (err) => {
       streaming.value = false
+      reconnectTip.value = ''
       aiMsg.streaming = false
-      aiMsg.content += '\n⚠️ ' + (err.message || '请求失败')
+      // 已有部分内容时保留，仅追加提示
+      aiMsg.content += (aiMsg.content ? '\n\n⚠️ ' : '⚠️ ') + (err.message || '请求失败')
     }
   )
 }
@@ -425,6 +451,14 @@ onUnmounted(() => {
   span:nth-child(2) { animation-delay: 0.2s; }
   span:nth-child(3) { animation-delay: 0.4s; } }
 .stopped-tip { margin-top: 8px; }
+.replay-notice { margin-top: 8px; }
+.reconnect-tip {
+  padding: 8px 14px;
+  font-size: 12px;
+  color: #b88230;
+  background: #fdf6ec;
+  border-top: 1px solid #faecd8;
+}
 @keyframes blink { 0%, 80%, 100% { opacity: 0.2; } 40% { opacity: 1; } }
 .error-panel { flex: 1; display: flex; align-items: center; justify-content: center; }
 .pwd-lock-hint { margin-top: 8px; font-size: 12px; color: #f56c6c; line-height: 1.5; }

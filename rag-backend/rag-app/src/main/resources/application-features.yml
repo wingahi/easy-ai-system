@@ -19,9 +19,75 @@ wgh:
   # -------------------------------------------------------------------
   resume:
     enabled: ${WGH_RESUME_ENABLED:true}   # 中断扫描总开关
-    stale-minutes: 5                     # 最后活动超过该分钟数视为中断候选
+    stale-minutes: 30                    # 最后活动超过该分钟数视为中断候选
     batch-size: 20                        # 每轮最多投递的续跑作业数
     scan-interval: 5m                     # 扫描间隔
+
+  # -------------------------------------------------------------------
+  # 统一调度中心（SchedulerProperties，前缀 wgh.scheduler）
+  # 交互式进程内执行、后台落作业表按租约执行、维护走 Redis 单飞；
+  # 启用前需先执行 sql/migrations/20261120/01_execution_job.sql。
+  # -------------------------------------------------------------------
+  scheduler:
+    enabled: ${WGH_SCHEDULER_ENABLED:true}      # 总开关；关闭后不创建车道线程池与调度循环
+    instance-id: ${WGH_INSTANCE_ID:}            # 留空时取 HOSTNAME-pid，用于租约归属与单飞锁
+
+    lease-ttl: 60s                              # 作业租约 TTL；持有者需在到期前续租
+    heartbeat-interval: 10s                     # 续约与取消轮询间隔，须显著小于 lease-ttl
+    claim-interval: 2s                          # 后台车道领取作业轮询间隔
+    reclaim-interval: 30s                       # 租约过期回收扫描间隔
+    queue-sweep-interval: 15s                   # 排队超时扫描间隔
+
+    default-timeout: 30m                        # 单次执行默认超时（请求未指定时）
+    queue-timeout: 5m                           # 后台作业排队超时；超时落 FAILED 且不重试
+    retry-backoff: 30s                          # 失败重试退避基数（按尝试次数线性递增）
+    max-attempts: 3                             # 默认最大尝试次数（含首次）
+    event-retention: 5m                         # 终态事件保留时长（供本实例 attach 重放）
+    tenant-max-concurrent: 2                    # 单租户后台并发上限（S1 为进程内口径）
+
+    # 交互式：进程内执行，不落作业表
+    interactive:
+      core-size: 4
+      max-size: 16
+      queue-capacity: 100                       # 线程池有界队列容量
+      thread-name-prefix: sched-interactive-
+    # 后台：落作业表，租约保证一作业一执行者
+    background:
+      core-size: 2
+      max-size: 8
+      queue-capacity: 500                       # 作业表 PENDING 上限（准入拒绝阈值）
+      thread-name-prefix: sched-background-
+    # 维护：Redis 单飞，跨实例同类作业只跑一份
+    maintenance:
+      core-size: 1
+      max-size: 2
+      queue-capacity: 50
+      thread-name-prefix: sched-maintenance-
+
+    single-flight:
+      lock-ttl: 120s                            # 单飞锁 TTL（执行期间按心跳续约）
+      retry-delay: 10s                          # 未抢到锁或 Redis 不可用时回 PENDING 的延迟
+
+    # ===== 多副本能力（需先执行 sql/migrations/20261124/01_scheduler_instance.sql）=====
+    instance-heartbeat-interval: ${WGH_SCHEDULER_INSTANCE_HEARTBEAT_INTERVAL:10s}   # 实例心跳写入间隔
+    instance-liveness-ttl: ${WGH_SCHEDULER_INSTANCE_LIVENESS_TTL:45s}               # 失联阈值，建议 >= 3 倍心跳
+    instance-sweep-interval: ${WGH_SCHEDULER_INSTANCE_SWEEP_INTERVAL:10s}           # 失联扫描间隔
+    instance-retention: ${WGH_SCHEDULER_INSTANCE_RETENTION:7d}                      # 实例注册行保留时长
+
+    # 作业状态与业务状态对账（SCHEDULER_RECONCILE，维护车道 + 周期作业）
+    reconcile:
+      enabled: ${WGH_SCHEDULER_RECONCILE_ENABLED:true}                 # 是否启用周期对账
+      interval: ${WGH_SCHEDULER_RECONCILE_INTERVAL:10m}                # 对账间隔
+      lookback: ${WGH_SCHEDULER_RECONCILE_LOOKBACK:24h}                # 只对账该时长内创建/更新的作业
+      pending-grace: ${WGH_SCHEDULER_RECONCILE_PENDING_GRACE:5m}       # PENDING 超过该时长才自动取消
+      batch-size: ${WGH_SCHEDULER_RECONCILE_BATCH_SIZE:200}            # 单类型单轮最多检查条数
+
+    # 普通对话运行态登记（ChatRunProperties，前缀 wgh.scheduler.chat-run）
+    # 对话结束即删除登记行；崩溃残留由回收器落终态后按保留期清理。
+    chat-run:
+      enabled: ${WGH_SCHEDULER_CHAT_RUN_ENABLED:true}                  # 关闭后「进行中任务」CHAT 页签为空
+      lease-ttl: ${WGH_SCHEDULER_CHAT_RUN_LEASE_TTL:35m}               # 登记行租约 TTL（对话无周期心跳）
+      terminal-retention: ${WGH_SCHEDULER_CHAT_RUN_TERMINAL_RETENTION:24h}   # 崩溃残留终态行保留时长
 
   # -------------------------------------------------------------------
   # 检索式长期记忆（RagProperties.Memory，前缀 wgh.rag.memory）
@@ -71,6 +137,20 @@ wgh:
         interval-minutes: 1440          # 扫描间隔（分钟，最小 5）
         min-age-minutes: 60             # 删除保护期（分钟）：窗口内对象只报告不删除
         max-report-entries: 100         # 报告与逐条日志保留的孤儿 key 上限
+
+    # -----------------------------------------------------------------
+    # 配额扣费退款补偿（QuotaProperties.Charge，前缀 wgh.rag.quota.charge）
+    # 扣费流水位于聊天主链路，部署前需先执行 sql/migrations/20261120/02_quota_charge.sql。
+    # -----------------------------------------------------------------
+    quota:
+      charge:
+        refund-enabled: true            # 是否启用退款补偿作业；关闭后不扫描流水
+        refund-protection: 5m           # 已扣未决保护期：超过该时长仍未确认才补偿
+        refund-scan-interval: 60s       # 补偿作业提交间隔（维护车道）
+        refund-max-attempts: 5          # 单条流水最大退款尝试次数（含首次）
+        refund-backoff: 60s             # 退款重试退避基数（按尝试次数指数递增）
+        refund-backoff-max: 30m         # 退款重试退避上限
+        refund-batch-size: 200          # 单次扫描最多处理的流水条数
 
   # -------------------------------------------------------------------
   # 代码沙箱（SandboxProperties，前缀 wgh.sandbox）

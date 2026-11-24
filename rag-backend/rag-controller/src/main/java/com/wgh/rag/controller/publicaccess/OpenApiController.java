@@ -7,10 +7,12 @@ import com.wgh.rag.chat.mapper.ChatSessionMapper;
 import com.wgh.rag.chat.service.ChatWindowService;
 import com.wgh.rag.chat.service.RagChatService;
 import com.wgh.rag.chat.service.stream.ChatStreamHandle;
+import com.wgh.rag.chat.service.stream.replay.StreamReplayService;
 import com.wgh.rag.common.exception.BusinessException;
 import com.wgh.rag.common.result.Result;
 import com.wgh.rag.common.result.ResultCode;
 import com.wgh.rag.controller.support.SseExecutionStreamSink;
+import com.wgh.rag.controller.support.SseReplaySupport;
 import com.wgh.rag.kb.service.RagRetrieveService;
 import com.wgh.rag.kb.service.RetrievalOptions;
 import com.wgh.rag.publicaccess.config.PublicAccessProperties;
@@ -59,6 +61,8 @@ public class OpenApiController {
     private final ChatWindowService windowService;
     private final ChatSessionMapper sessionMapper;
     private final RagChatService ragChatService;
+    /** SSE 事件重放：按 Last-Event-ID 从共享缓冲补齐缺失事件 */
+    private final StreamReplayService streamReplayService;
     private final RagRetrieveService retrieveService;
     private final QuotaService quotaService;
     private final ClientIpResolver clientIpResolver;
@@ -78,7 +82,9 @@ public class OpenApiController {
 
     @Operation(summary = "开放 API：匿名流式问答（scope=chat:write）")
     @PostMapping(value = "/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public SseEmitter chatStream(@RequestBody Map<String, Object> body, HttpServletRequest request) {
+    public SseEmitter chatStream(
+            @RequestHeader(value = SseReplaySupport.HEADER_LAST_EVENT_ID, required = false) String lastEventIdHeader,
+            @RequestBody Map<String, Object> body, HttpServletRequest request) {
         ApiKey key = currentKey();
         rateLimit(key, request);
 
@@ -95,6 +101,18 @@ public class OpenApiController {
         String identifier = "api_" + key.getId();
         Long sessionId = body.get("sessionId") == null ? null
                 : Long.parseLong(String.valueOf(body.get("sessionId")));
+        String lastEventId = StreamReplayService.resolveLastEventId(lastEventIdHeader, body.get("lastEventId"));
+        if (lastEventId != null) {
+            // 重连只回放/跟随已有事件，不重新生成
+            if (sessionId == null) {
+                throw new BusinessException(ResultCode.PARAM_ERROR, "重连需要提供 sessionId");
+            }
+            windowService.getOwnedSession(windowId, sessionId, identifier);
+            SseEmitter resumeEmitter = new SseEmitter(ChatConstants.SSE_TIMEOUT_MS);
+            streamReplayService.resume(StreamReplayService.KIND_CHAT, sessionId, lastEventId,
+                    new SseExecutionStreamSink(resumeEmitter), SseReplaySupport.wireCloseFlag(resumeEmitter));
+            return resumeEmitter;
+        }
         if (sessionId == null) {
             sessionId = windowService.createSession(windowId, identifier).getId();
         } else {

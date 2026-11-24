@@ -25,6 +25,16 @@ public final class SseExecutionStreamSink implements ExecutionStreamSink {
     }
 
     @Override
+    public void emit(String type, Object payload, String eventId) throws IOException {
+        SseEmitter.SseEventBuilder builder = SseEmitter.event().name(type);
+        if (eventId != null && !eventId.isBlank()) {
+            // SSE 标准 id 字段：客户端断线重连时通过 Last-Event-ID 头回传
+            builder.id(eventId);
+        }
+        emitter.send(builder.data(payload));
+    }
+
+    @Override
     public void complete() {
         emitter.complete();
     }

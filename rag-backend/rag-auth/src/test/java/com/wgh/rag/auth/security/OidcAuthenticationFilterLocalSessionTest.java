@@ -1,12 +1,18 @@
 package com.wgh.rag.auth.security;
 
+import com.wgh.rag.auth.cache.UserCacheProperties;
+import com.wgh.rag.auth.cache.UserInfoCacheService;
 import com.wgh.rag.auth.entity.WghUser;
 import com.wgh.rag.auth.mapper.RoleMapper;
 import com.wgh.rag.auth.mapper.RolePermissionMapper;
 import com.wgh.rag.auth.mapper.UserMapper;
 import com.wgh.rag.auth.mapper.UserRoleMapper;
+import com.wgh.rag.common.metrics.RagMetrics;
 import com.wgh.rag.common.result.ResultCode;
 import com.wgh.rag.common.security.LoginUser;
+import com.wgh.rag.config.redis.RedisCommandPort;
+import com.wgh.rag.config.redis.RedisDistributedLock;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -53,9 +59,14 @@ class OidcAuthenticationFilterLocalSessionTest {
         userMapper = mock(UserMapper.class);
         userRoleMapper = mock(UserRoleMapper.class);
         rolePermissionMapper = mock(RolePermissionMapper.class);
+        // Redis 关闭时 UserInfoCacheService 直接回源 userMapper，保持既有桩生效
+        RedisCommandPort disabledRedis = RedisCommandPort.disabled();
+        UserInfoCacheService userInfoCacheService = new UserInfoCacheService(
+                userMapper, disabledRedis, new RedisDistributedLock(disabledRedis),
+                new UserCacheProperties(), new RagMetrics(new SimpleMeterRegistry()));
         filter = new OidcAuthenticationFilter(
                 new OidcTokenVerifier(oidc, new JwksProvider(oidc)),
-                localTokenService, userMapper, userRoleMapper, mock(RoleMapper.class),
+                localTokenService, userInfoCacheService, userRoleMapper, mock(RoleMapper.class),
                 rolePermissionMapper, oidc);
     }
 

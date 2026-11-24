@@ -14,6 +14,7 @@ import com.wgh.rag.auth.constant.AuthConstants;
 import com.wgh.rag.auth.mapper.PermissionMapper;
 import com.wgh.rag.auth.mapper.RoleMapper;
 import com.wgh.rag.auth.mapper.RolePermissionMapper;
+import com.wgh.rag.auth.cache.UserInfoCacheService;
 import com.wgh.rag.auth.mapper.UserMapper;
 import com.wgh.rag.auth.mapper.UserRoleMapper;
 import com.wgh.rag.auth.security.PermissionAspect;
@@ -165,7 +166,8 @@ class AdminEndpointPermissionTest {
         AdminUserController controller = new AdminUserController(
                 mock(UserMapper.class), mock(UserRoleMapper.class), mock(RoleMapper.class),
                 mock(QuotaService.class), new QuotaAdminGuard(), mock(PasswordEncoder.class),
-                mock(LocalPasswordService.class), mock(AccountAuditService.class));
+                mock(LocalPasswordService.class), mock(UserInfoCacheService.class),
+                mock(AccountAuditService.class));
 
         BusinessException ex = catchThrowableOfType(
                 () -> controller.list(1, 20, null, null, null, null), BusinessException.class);

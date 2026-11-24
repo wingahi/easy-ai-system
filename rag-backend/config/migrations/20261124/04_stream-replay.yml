@@ -1,0 +1,35 @@
+# =====================================================================
+# 增量配置：SSE 事件重放缓冲（2026-11-24）
+# ---------------------------------------------------------------------
+# 目标配置类：rag-backend/rag-chat/src/main/java/com/wgh/rag/chat/service/stream/replay/StreamReplayProperties.java
+# 前缀：wgh.rag.stream.replay
+# 键数：9（全部为新增）
+# 说明：增量覆盖片段，不参与自动加载；合并方式见 rag-backend/config/migrations/README.md
+# 依赖：共享 Redis（wgh.rag.redis.*）。Redis 未启用/故障时仍保持「客户端断开不等于执行失败」，
+#       只是无法跨副本重放；重连请求会显式失败并上报 wgh.stream.replay.fallbacks。
+#       只有总开关显式关闭时才退回「实时流 + 断连即取消」的旧语义。
+# 口径：ttl 需覆盖单次流式生成上限（聊天 30 分钟）；completed-ttl 只服务「刚结束就重连」；
+#       max-events-per-stream 按 token 级事件估算（5000 条约 250KB~1MB），超出从头截断。
+# =====================================================================
+wgh:
+  rag:
+    stream:
+      replay:
+        # 总开关；关闭后不产生任何缓冲写入
+        enabled: true
+        # 活跃流缓冲 TTL（每次写入续期）
+        ttl: 35m
+        # 流终态后的缓冲 TTL
+        completed-ttl: 5m
+        # 单流最多保留事件条数
+        max-events-per-stream: 5000
+        # 事件批量刷盘间隔
+        flush-interval: 200ms
+        # 重连跟随轮询间隔
+        poll-interval: 300ms
+        # 单次轮询读取的尾部条数
+        poll-batch-size: 200
+        # 生成实例存活但无新事件的判定阈值
+        idle-timeout: 120s
+        # 单次重连跟随最长时间（须小于 SSE 连接超时 30 分钟）
+        follow-timeout: 29m

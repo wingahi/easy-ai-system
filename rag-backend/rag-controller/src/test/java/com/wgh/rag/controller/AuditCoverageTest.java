@@ -10,6 +10,7 @@ import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.wgh.rag.agentmulti.entity.MultiAgentCrew;
 import com.wgh.rag.auth.entity.WghRole;
 import com.wgh.rag.auth.mapper.RoleMapper;
+import com.wgh.rag.auth.cache.UserInfoCacheService;
 import com.wgh.rag.auth.mapper.UserMapper;
 import com.wgh.rag.auth.mapper.UserRoleMapper;
 import com.wgh.rag.auth.service.AccountAuditService;
@@ -164,7 +165,8 @@ class AuditCoverageTest {
         AccountAuditService accountAuditService = new AccountAuditService(auditLogService);
 
         AdminUserController controller = new AdminUserController(userMapper, userRoleMapper, roleMapper,
-                quotaService, new QuotaAdminGuard(), passwordEncoder, localPasswordService, accountAuditService);
+                quotaService, new QuotaAdminGuard(), passwordEncoder, localPasswordService,
+                mock(UserInfoCacheService.class), accountAuditService);
 
         loginAsAdmin();
         when(passwordEncoder.encode(anyString())).thenReturn("$2a$bcrypt-hash");

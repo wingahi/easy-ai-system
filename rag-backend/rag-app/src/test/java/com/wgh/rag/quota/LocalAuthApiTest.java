@@ -2,6 +2,8 @@ package com.wgh.rag.quota;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.wgh.rag.auth.cache.UserCacheProperties;
+import com.wgh.rag.auth.cache.UserInfoCacheService;
 import com.wgh.rag.auth.config.SecurityConfig;
 import com.wgh.rag.auth.security.LocalAuthProperties;
 import com.wgh.rag.auth.security.LocalTokenService;
@@ -18,6 +20,8 @@ import com.wgh.rag.auth.service.LocalPasswordService;
 import com.wgh.rag.common.metrics.RagMetrics;
 import com.wgh.rag.common.result.Result;
 import com.wgh.rag.common.security.RequiresPermission;
+import com.wgh.rag.config.redis.RedisCommandPort;
+import com.wgh.rag.config.redis.RedisDistributedLock;
 import com.wgh.rag.log.service.AuditLogService;
 import com.wgh.rag.data.mybatis.MetaObjectHandlerImpl;
 import com.wgh.rag.common.exception.GlobalExceptionHandler;
@@ -42,6 +46,7 @@ import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -92,6 +97,9 @@ class LocalAuthApiTest {
             PasswordPolicy.class,
             LocalLoginService.class,
             LocalPasswordService.class,
+            UserCacheProperties.class,
+            RedisDistributedLock.class,
+            UserInfoCacheService.class,
             AccountAuditService.class,
             AuditLogService.class,
             MetaObjectHandlerImpl.class,
@@ -99,6 +107,7 @@ class LocalAuthApiTest {
             RagMetrics.class,
             QuotaService.class,
             com.wgh.rag.quota.service.QuotaChargeLedger.class,
+            com.wgh.rag.quota.service.QuotaUsageRowInserter.class,
             DefaultQuotaUserResolver.class,
             QuotaAdminGuard.class,
             PermissionAspect.class,
@@ -110,6 +119,12 @@ class LocalAuthApiTest {
             TestPermissionController.class
     })
     static class TestApp {
+
+        /** 测试不依赖 Redis：关闭缓存命令端口，UserInfoCacheService 自动回源数据库 */
+        @Bean
+        RedisCommandPort redisCommandPort() {
+            return RedisCommandPort.disabled();
+        }
     }
 
     /** 测试专用：验证"权限变更立即生效"的最小受保护接口 */

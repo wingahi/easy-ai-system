@@ -1,0 +1,20 @@
+# =====================================================================
+# 增量配置：用户信息 Redis 缓存（2026-11-24）
+# ---------------------------------------------------------------------
+# 目标文件：rag-backend/rag-app/src/main/resources/application.yml
+# 分区：wgh.auth.user-cache
+# 键数：3（全部为新增）
+# 绑定类：com.wgh.rag.auth.cache.UserCacheProperties
+# 说明：增量覆盖片段，不参与自动加载；合并方式见 config/migrations/README.md
+# 注意：复用 wgh.rag.redis.*；Redis 不可用时直读数据库并输出 WARN + wgh.user.cache 指标，
+#       不降级为进程内锁。缓存只存身份/账号状态字段，额度与用量不入缓存。
+# =====================================================================
+wgh:
+  auth:
+    user-cache:
+      # 是否启用用户信息缓存
+      enabled: true
+      # 缓存有效期（固定 30 分钟，不使用永久键）
+      ttl: 30m
+      # 未命中回填时等待分布式锁的上限；超时直接回源且不再写缓存
+      lock-wait-timeout: 200ms

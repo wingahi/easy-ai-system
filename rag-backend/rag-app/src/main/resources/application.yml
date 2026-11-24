@@ -2,6 +2,11 @@ server:
   port: 8080
   servlet:
     context-path: /
+  # ===== 优雅停机（K8s 滚动更新 / SIGTERM）=====
+  # 收到 SIGTERM 后停止接收新连接，等在途请求（含 SSE 长连接）自然结束再退出；
+  # 超时由 spring.lifecycle.timeout-per-shutdown-phase 控制，须小于 Pod 的
+  # terminationGracePeriodSeconds 减去 preStop 时长。
+  shutdown: graceful
 
 spring:
   profiles:
@@ -18,7 +23,7 @@ spring:
   # ===== PostgreSQL 数据源（pgvector 向量化复用同一连接池） =====
   datasource:
     driver-class-name: org.postgresql.Driver
-    url: jdbc:postgresql://${WGH_DB_HOST:localhost}:${WGH_DB_PORT:5432}/${WGH_DB_NAME:wgh_rag}?currentSchema=public&stringtype=unspecified
+    url: jdbc:postgresql://${WGH_DB_HOST:localhost}:${WGH_DB_PORT:5432}/${WGH_DB_NAME:wgh_rag_dev}?currentSchema=public&stringtype=unspecified
     username: ${WGH_DB_USERNAME:postgres}
     password: ${WGH_DB_PASSWORD:postgres}
     hikari:
@@ -45,6 +50,11 @@ spring:
     serialization:
       write-dates-as-timestamps: false
     time-zone: Asia/Shanghai
+
+  # 优雅停机单阶段最长等待时间：需小于 Pod terminationGracePeriodSeconds - preStop。
+  # 超出后强制关闭剩余连接（SSE 事件重放未实现，超长连接仍会被断开）。
+  lifecycle:
+    timeout-per-shutdown-phase: 45s
 
 # ===== MyBatis Plus =====
 mybatis-plus:
@@ -94,6 +104,12 @@ wgh:
   # ===== 外部 OIDC 资源服务器（本系统只验签，不签发 token） =====
   # token 由上游 IdP 签发；issuer / audience / jwks-uri 必配（jwks-uri 留空则自动发现）。
   auth:
+    # 用户信息缓存（按 userId 维度；仅身份/账号状态字段，不含密码哈希与额度/用量计数）
+    # Redis 不可用时自动降级为直读数据库，不影响登录态校验
+    user-cache:
+      enabled: ${WGH_AUTH_USER_CACHE_ENABLED:true}
+      ttl: ${WGH_AUTH_USER_CACHE_TTL:30m}
+      lock-wait-timeout: ${WGH_AUTH_USER_CACHE_LOCK_WAIT:200ms}
     oidc:
       issuer: ${WGH_OIDC_ISSUER:}
       audience: ${WGH_OIDC_AUDIENCE:}
@@ -135,6 +151,12 @@ wgh:
     # 切换只改 type 与本段 OSS 配置，业务代码无需改动；OSS 配置为空时应用仍可启动（仅调用时返回明确错误）
     storage:
       type: ${WGH_STORAGE_TYPE:local}
+      # 部署模式：single（默认，单实例，行为与未配置时一致）/ shared（多实例共享）。
+      # shared 时启动自检：type=oss 要求 OSS 必填项完整；type=local 要求 base-dir 为可写的独立挂载卷。
+      mode: ${WGH_STORAGE_MODE:single}
+      # 迁移期兼容读（仅 type=oss 生效）：主存储未命中时回落 local.base-dir 读取旧对象；
+      # 用于 local → oss 滚动切换窗口，迁移完成后关闭。
+      read-fallback-enabled: ${WGH_STORAGE_READ_FALLBACK:false}
       local:
         base-dir: ${WGH_UPLOAD_DIR:./uploads}          # 本地根目录（沿用历史 WGH_UPLOAD_DIR）
         url-prefix: ${WGH_STORAGE_URL_PREFIX:/uploads} # 仅用于 resolveUrl 返回逻辑地址
@@ -196,6 +218,24 @@ wgh:
       # 全局默认配额：用户无自定义配置或自定义配置被禁用时生效（<=0 表示不限制）
       chat-daily-limit: ${WGH_QUOTA_CHAT_DAILY_LIMIT:200}       # 每人每天对话条数上限
       token-daily-limit: ${WGH_QUOTA_TOKEN_DAILY_LIMIT:2000000} # 每人每天 token 上限
+      # 计数写入异常时的策略：false=拒绝本次对话（业务码 5004，避免“说了话却没扣费”）；
+      # true=仅打 ALERT 日志与指标后放行（本次不扣费），仅建议 DB 短时抖动时临时开启。
+      fail-open-on-count-error: ${WGH_QUOTA_FAIL_OPEN_ON_COUNT_ERROR:false}
+
+    # ===== SSE 事件重放缓冲（依赖 wgh.rag.redis.*）=====
+    # 关闭后回到「实时流 + 断连即取消」旧语义；Redis 不可用时无法跨副本重放，
+    # 但客户端断开不再等同执行失败（重连请求显式报错并上报 fallback 指标）。
+    stream:
+      replay:
+        enabled: ${WGH_STREAM_REPLAY_ENABLED:true}                              # 总开关；关闭后不写缓冲
+        ttl: ${WGH_STREAM_REPLAY_TTL:35m}                                       # 活跃流缓冲 TTL（每次写入续期）
+        completed-ttl: ${WGH_STREAM_REPLAY_COMPLETED_TTL:5m}                    # 流终态后的缓冲 TTL
+        max-events-per-stream: ${WGH_STREAM_REPLAY_MAX_EVENTS_PER_STREAM:5000}  # 单流最多保留事件条数
+        flush-interval: ${WGH_STREAM_REPLAY_FLUSH_INTERVAL:200ms}               # 事件批量刷盘间隔
+        poll-interval: ${WGH_STREAM_REPLAY_POLL_INTERVAL:300ms}                 # 重连跟随轮询间隔
+        poll-batch-size: ${WGH_STREAM_REPLAY_POLL_BATCH_SIZE:200}               # 单次轮询读取尾部条数
+        idle-timeout: ${WGH_STREAM_REPLAY_IDLE_TIMEOUT:120s}                    # 无新事件的空闲判定阈值
+        follow-timeout: ${WGH_STREAM_REPLAY_FOLLOW_TIMEOUT:29m}                 # 单次重连跟随最长时间
   
   file:
     upload-dir: ${WGH_UPLOAD_DIR:./uploads}
@@ -271,6 +311,17 @@ management:
   endpoint:
     health:
       show-details: always
+      # ===== K8s 探针分组 =====
+      # liveness 只反映进程自身活性（ApplicationAvailability），不聚合 DB/Redis，
+      # 避免依赖抖动导致容器被反复重启；readiness 在启动完成（readinessState）的
+      # 基础上叠加关键依赖 db。Redis 可降级、磁盘余量不阻断服务，均不纳入 readiness。
+      probes:
+        enabled: true
+      group:
+        liveness:
+          include: livenessState
+        readiness:
+          include: readinessState,db
   health:
     db:
       enabled: true

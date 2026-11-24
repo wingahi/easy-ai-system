@@ -1,6 +1,7 @@
 package com.wgh.rag.controller.admin;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.wgh.rag.auth.cache.UserInfoCacheService;
 import com.wgh.rag.auth.service.AccountAuditService;
 import com.wgh.rag.auth.service.LocalLoginService;
 import com.wgh.rag.auth.service.LocalPasswordService;
@@ -69,6 +70,7 @@ public class AdminUserController {
     private final QuotaAdminGuard quotaAdminGuard;
     private final PasswordEncoder passwordEncoder;
     private final LocalPasswordService localPasswordService;
+    private final UserInfoCacheService userInfoCacheService;
     private final AccountAuditService accountAuditService;
 
     @Operation(summary = "分页列出用户（支持用户名/来源/角色/启用状态筛选）")
@@ -147,6 +149,7 @@ public class AdminUserController {
         userRoleMapper.insert(user.getId(), roleId);
 
         applyQuota(username, request);
+        userInfoCacheService.evictAfterCommit(user.getId());
         accountAuditService.success(AccountAuditService.ACTION_CREATE, username);
         log.info("创建体验账号 username={}, role={}, expireAt={}", username, role, request.getExpireAt());
         return Result.success(buildRow(user, rolesOf(user.getId())));
@@ -183,6 +186,7 @@ public class AdminUserController {
         // 编辑表单会显式提交 expireAt（含 null 表示改为长期），因此直接覆盖
         user.setExpireAt(request.getExpireAt());
         userMapper.updateById(user);
+        userInfoCacheService.evictAfterCommit(user.getId());
 
         applyQuota(username, request);
         if (roleChanged) {
@@ -216,6 +220,7 @@ public class AdminUserController {
         user.setStatus(0);
         user.bumpPasswordVersion();
         userMapper.updateById(user);
+        userInfoCacheService.evictAfterCommit(user.getId());
         accountAuditService.success(AccountAuditService.ACTION_DISABLE, username);
         log.info("禁用体验账号 username={}", username);
         return Result.success(buildRow(userMapper.selectById(user.getId()), rolesOf(user.getId())));

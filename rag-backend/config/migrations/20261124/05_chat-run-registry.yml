@@ -1,0 +1,20 @@
+# =====================================================================
+# 增量配置：普通对话运行态登记（2026-11-24）
+# ---------------------------------------------------------------------
+# 目标配置类：rag-backend/rag-scheduler/src/main/java/com/wgh/rag/scheduler/config/ChatRunProperties.java
+# 前缀：wgh.scheduler.chat-run
+# 键数：3（全部为新增，均有代码默认值，不配置即按默认运行）
+# 说明：增量覆盖片段，不参与自动加载；合并方式见 rag-backend/config/migrations/README.md
+# 依赖：wgh.scheduler.enabled=true（调度中心启用）。关闭登记开关时「进行中任务」的 CHAT 页签返回空。
+# 口径：lease-ttl 需覆盖单次流式生成上限（聊天 30 分钟），对话无周期心跳；
+#       terminal-retention 只清理崩溃残留的终态登记行，正常运行结束的行在注销时已物理删除。
+# =====================================================================
+wgh:
+  scheduler:
+    chat-run:
+      # 是否登记普通对话运行态
+      enabled: true
+      # 登记行租约 TTL；到期未注销视为异常退出，由回收器落终态
+      lease-ttl: 35m
+      # 终态登记行（崩溃残留）保留时长
+      terminal-retention: 24h

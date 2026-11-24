@@ -8,10 +8,12 @@ import java.util.concurrent.atomic.AtomicBoolean;
 /**
  * 单次对话生成的可取消句柄。
  *
- * <p>取消来源有三类：客户端断连（SSE 写失败 / onError / onTimeout）、显式取消，
- * 以及其它实例写入的共享取消标记。取消后所有流式回调通过 {@link #isCancelled()}
- * 短路，不再继续消费 token；同时只允许一个终态落库（正常完成 / 用户停止 / 失败），
- * 避免重复写入。</p>
+ * <p>取消来源：显式停止（用户点停止 / stop 接口），以及真实的生成异常。
+ * 客户端刷新、卸载、网络断开属于传输层事件，由可重放出口吞掉并保持执行状态，
+ * <b>不再</b>经由这里取消；只有总开关关闭时才回退为「断连即取消」。</p>
+ *
+ * <p>取消后所有流式回调通过 {@link #isCancelled()} 短路，不再继续消费 token；
+ * 同时只允许一个终态落库（正常完成 / 用户停止 / 失败），避免重复写入。</p>
  *
  * <p>多实例：构造时传入会话级共享 key 与 {@link ChatCancellationStore} 后，
  * {@link #cancel(String)} 在来源为 {@code explicit} 时写入 Redis 标记；

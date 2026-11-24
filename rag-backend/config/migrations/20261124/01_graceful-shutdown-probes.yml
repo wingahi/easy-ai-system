@@ -1,0 +1,31 @@
+# =====================================================================
+# 增量配置：优雅停机与 K8s 探针分组（2026-11-24，K0 应用侧）
+# ---------------------------------------------------------------------
+# 目标文件：rag-backend/rag-app/src/main/resources/application.yml
+# 分区：server / spring.lifecycle / management.endpoint.health
+# 键数：6（新增 5，补充既有 health 段 1 个分组节点）
+# 说明：增量覆盖片段，不参与自动加载；合并方式见 config/migrations/README.md
+# 依赖：K8s 清单 deploy/k8s/base/deployment-backend.yaml 使用对应分组路径
+# =====================================================================
+server:
+  # 收到 SIGTERM 后停止接收新连接，等在途请求自然结束
+  shutdown: graceful
+
+spring:
+  lifecycle:
+    # 单阶段最长等待时间；须小于 Pod terminationGracePeriodSeconds(60s) - preStop(5s)
+    timeout-per-shutdown-phase: 45s
+
+management:
+  endpoint:
+    health:
+      # 开启 liveness/readiness 两个探针分组端点
+      probes:
+        enabled: true
+      group:
+        # 仅进程自身活性，不聚合 DB/Redis，避免依赖抖动触发重启
+        liveness:
+          include: livenessState
+        # 启动完成 + 关键依赖 DB；Redis 可降级、磁盘余量不阻断服务，不纳入
+        readiness:
+          include: readinessState,db

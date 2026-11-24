@@ -2,6 +2,8 @@ package com.wgh.rag.quota;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.wgh.rag.auth.cache.UserCacheProperties;
+import com.wgh.rag.auth.cache.UserInfoCacheService;
 import com.wgh.rag.auth.config.SecurityConfig;
 import com.wgh.rag.auth.security.LocalAuthProperties;
 import com.wgh.rag.auth.security.LocalTokenService;
@@ -11,6 +13,8 @@ import com.wgh.rag.auth.security.OidcTokenVerifier;
 import com.wgh.rag.data.mybatis.MetaObjectHandlerImpl;
 import com.wgh.rag.common.exception.GlobalExceptionHandler;
 import com.wgh.rag.common.metrics.RagMetrics;
+import com.wgh.rag.config.redis.RedisCommandPort;
+import com.wgh.rag.config.redis.RedisDistributedLock;
 import com.wgh.rag.controller.quota.QuotaAdminController;
 import com.wgh.rag.controller.quota.QuotaUserController;
 import com.wgh.rag.quota.properties.QuotaProperties;
@@ -29,6 +33,7 @@ import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -76,16 +81,26 @@ class QuotaApiTest {
             LocalAuthProperties.class,
             LocalTokenService.class,
             MetaObjectHandlerImpl.class,
+            UserCacheProperties.class,
+            RedisDistributedLock.class,
+            UserInfoCacheService.class,
             GlobalExceptionHandler.class,
             RagMetrics.class,
             QuotaService.class,
             QuotaChargeLedger.class,
+            com.wgh.rag.quota.service.QuotaUsageRowInserter.class,
             DefaultQuotaUserResolver.class,
             QuotaAdminGuard.class,
             QuotaAdminController.class,
             QuotaUserController.class
     })
     static class TestApp {
+
+        /** 测试不依赖 Redis：关闭缓存命令端口，UserInfoCacheService 自动回源数据库 */
+        @Bean
+        RedisCommandPort redisCommandPort() {
+            return RedisCommandPort.disabled();
+        }
     }
 
     @Autowired

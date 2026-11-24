@@ -19,6 +19,22 @@ public class StorageProperties {
     /** 存储类型：local（默认）/ oss */
     private String type = StorageConstants.TYPE_LOCAL;
 
+    /**
+     * 部署模式：single（默认，单实例本地）/ shared（多实例共享）。
+     * <p>
+     * shared 时启动自检要求 type=oss 且配置完整，或 type=local 的 base-dir 为可写的独立挂载卷；
+     * single 保持历史行为，不做共享性校验。默认值不得破坏现有单实例部署。
+     */
+    private String mode = StorageConstants.MODE_SINGLE;
+
+    /**
+     * 迁移期兼容读：仅 type=oss 时生效。
+     * <p>
+     * 主存储未命中时回落读取旧本地目录（{@code local.base-dir}），写与删仍以主存储为准（删除同时清理旧对象）。
+     * 用于 local → oss 滚动切换期间旧对象尚未迁移完成的窗口，迁移结束后应关闭。
+     */
+    private boolean readFallbackEnabled = false;
+
     private Local local = new Local();
 
     private Oss oss = new Oss();

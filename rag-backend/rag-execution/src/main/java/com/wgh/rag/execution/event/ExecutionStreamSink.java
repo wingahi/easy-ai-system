@@ -30,6 +30,19 @@ public interface ExecutionStreamSink {
     void emit(String type, Object payload) throws IOException;
 
     /**
+     * 发送一个带事件标识的事件。
+     *
+     * <p>{@code eventId} 供支持 SSE 断点续传的传输层写入 {@code id:} 字段；默认实现忽略该参数，
+     * 因此既有实现与调用方无需改动，事件名与负载结构也不受影响。</p>
+     *
+     * @param eventId 事件标识（如 {@code <streamId>:<seq>}），可为 null
+     * @throws IOException 下游已断开或写出失败
+     */
+    default void emit(String type, Object payload, String eventId) throws IOException {
+        emit(type, payload);
+    }
+
+    /**
      * 正常结束输出。默认无操作。
      */
     default void complete() {
