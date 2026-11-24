@@ -80,16 +80,14 @@ public class ExecutionEventBus {
     /**
      * 订阅事件。
      *
-     * @param fromSeq 只重放 seq 大于该值的事件；传 0 表示不重放、只推送新事件
+     * @param fromSeq 只重放 seq 大于该值的事件；传 0 表示从头重放全部历史
      * @param sink    事件出口
      * @return 取消订阅句柄
      */
     public AutoCloseable attach(long fromSeq, ExecutionEventSink sink) {
-        List<ExecutionEvent> replay = List.of();
+        List<ExecutionEvent> replay;
         synchronized (this) {
-            if (fromSeq > 0) {
-                replay = history.stream().filter(event -> event.seq() > fromSeq).toList();
-            }
+            replay = history.stream().filter(event -> event.seq() > fromSeq).toList();
             if (!closed) {
                 subscribers.add(sink);
             }

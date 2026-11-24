@@ -34,8 +34,11 @@ import org.springframework.stereotype.Component;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -185,13 +188,9 @@ public class JobRunner {
             ExecutionRequest request = toRequest(job, payload);
             // 执行期恢复提交时刻冻结的租户/属主，避免异步线程写出的租户与 create_by 错位
             TenantContext.set(request.tenantId(), null, request.ownerUserId());
-            if (request.ownerUserId() != null) {
-                LoginUser workerUser = new LoginUser();
-                workerUser.setUsername(request.ownerUserId());
-                workerUser.setTenantId(request.tenantId());
-                workerUser.setRoles(java.util.Set.of());
-                workerUser.setPermissions(java.util.Set.of());
-                LoginUser.set(workerUser);
+            LoginUser ownerLogin = ownerLogin(request, payload);
+            if (ownerLogin != null) {
+                LoginUser.set(ownerLogin);
             }
             JobContext context = new JobContextImpl(executionId, request, sequencedSink(bus), cancellation,
                     () -> renewOrFail(job, owner, singleFlightRef.get(), leaseLost, cancellation),
@@ -387,6 +386,35 @@ public class JobRunner {
                 .priority(job.getPriority() == null ? 0 : job.getPriority())
                 .timeout(job.getTimeoutSeconds() == null ? null : Duration.ofSeconds(job.getTimeoutSeconds()))
                 .build();
+    }
+
+    /**
+     * 用提交时刻冻结的属主角色恢复登录态。
+     *
+     * <p>负载里有角色键说明提交方处于登录态，必须以该用户身份执行（否则数据权限会按
+     * 「无登录上下文」放行）；没有角色键说明是系统任务，保持无登录态按内部调用处理。
+     */
+    private static LoginUser ownerLogin(ExecutionRequest request, JobPayload payload) {
+        Object rawRoles = payload.data().get(JobPayload.KEY_OWNER_ROLES);
+        if (rawRoles == null || request.ownerUserId() == null) {
+            return null;
+        }
+        Set<String> roles = new LinkedHashSet<>();
+        if (rawRoles instanceof Collection<?> values) {
+            for (Object value : values) {
+                if (value != null) {
+                    roles.add(String.valueOf(value));
+                }
+            }
+        } else {
+            roles.add(String.valueOf(rawRoles));
+        }
+        LoginUser user = new LoginUser();
+        user.setUsername(request.ownerUserId());
+        user.setTenantId(request.tenantId());
+        user.setRoles(roles);
+        user.setPermissions(Set.of());
+        return user;
     }
 
     private static Map<String, Object> eventPayload(String status, String errorCode) {

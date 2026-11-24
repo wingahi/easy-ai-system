@@ -136,7 +136,7 @@
         <el-table-column label="发起人" width="120" show-overflow-tooltip>
           <template #default="{ row }">{{ row.ownerUserId || '系统' }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="130" fixed="right">
+        <el-table-column label="操作" width="165" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="openDetail(row)">详情</el-button>
             <el-tooltip :disabled="cancellable(row)" :content="'当前状态不可取消：' + statusLabel(row.status)"
@@ -145,6 +145,12 @@
                 <el-button link type="danger" :disabled="!cancellable(row)"
                            :loading="cancellingId === row.executionId"
                            @click="cancelJob(row)">取消</el-button>
+              </span>
+            </el-tooltip>
+            <el-tooltip :disabled="reclaimable(row)" :content="'仅已领取/运行中可回收，当前：' + statusLabel(row.status)"
+                        placement="top">
+              <span>
+                <el-button link type="warning" :disabled="!reclaimable(row)" @click="reclaimJob(row)">回收</el-button>
               </span>
             </el-tooltip>
           </template>
@@ -317,11 +323,10 @@
             <el-table-column label="结束时间" width="165">
               <template #default="{ row }">{{ formatTime(row.finishTime) }}</template>
             </el-table-column>
-            <el-table-column label="操作" width="180" fixed="right">
+            <el-table-column label="操作" width="130" fixed="right">
               <template #default="{ row }">
                 <el-button link type="primary" @click="openDetail(row)">详情</el-button>
                 <el-button link type="success" @click="retryJob(row)">重试</el-button>
-                <el-button link type="warning" @click="reclaimJob(row)">回收</el-button>
               </template>
             </el-table-column>
           </el-table>
@@ -418,6 +423,8 @@ const JOB_TYPE_LABELS = {
 }
 
 const CANCELLABLE_STATUS = ['PENDING', 'LEASED', 'RUNNING']
+
+const RECLAIMABLE_STATUS = ['LEASED', 'RUNNING']
 
 const rows = ref([])
 const total = ref(0)
@@ -619,6 +626,8 @@ const statusTag = (status) => ({
 const laneTag = (lane) => ({ BACKGROUND: 'primary', MAINTENANCE: 'success', INTERACTIVE: 'info' }[lane] || 'info')
 
 const cancellable = (row) => CANCELLABLE_STATUS.includes(row?.status)
+
+const reclaimable = (row) => RECLAIMABLE_STATUS.includes(row?.status)
 
 /** 概览卡片下钻：按状态过滤并回到第一页。 */
 const filterStatus = (status) => {

@@ -9,12 +9,15 @@ import com.wgh.rag.agentmulti.mapper.MultiAgentStepMapper;
 import com.wgh.rag.agentmulti.runtime.MultiAgentRuntime;
 import com.wgh.rag.agentmulti.service.MultiAgentService;
 import com.wgh.rag.common.result.Result;
+import com.wgh.rag.execution.api.ExecutionFacade;
+import com.wgh.rag.scheduler.job.JobStore;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.beans.factory.ObjectProvider;
 
 import java.util.HashMap;
 import java.util.List;
@@ -39,13 +42,18 @@ class MultiAgentControllerCreateRunTest {
     private MultiAgentStepMapper stepMapper;
     @Mock
     private MultiAgentCrewMapper crewMapper;
+    @Mock
+    private ObjectProvider<ExecutionFacade> executionFacadeProvider;
+    @Mock
+    private ObjectProvider<JobStore> jobStoreProvider;
 
     private MultiAgentController controller;
 
     @BeforeEach
     void setUp() {
         controller = new MultiAgentController(runtime, service, stepMapper, crewMapper, new ObjectMapper(),
-                org.mockito.Mockito.mock(org.springframework.core.task.AsyncTaskExecutor.class));
+                org.mockito.Mockito.mock(org.springframework.core.task.AsyncTaskExecutor.class),
+                executionFacadeProvider, jobStoreProvider);
         when(runtime.newRunId()).thenReturn("mag-test-0001");
     }
 

@@ -35,17 +35,18 @@ class ExecutionEventBusTest {
     }
 
     @Test
-    void shouldOnlyPushNewEventsWhenFromSeqIsZero() {
+    void shouldReplayFromBeginningWhenFromSeqIsZero() {
         ExecutionEventBus bus = new ExecutionEventBus("e-1");
         bus.publish("execution.started", Map.of());
 
         List<ExecutionEvent> received = new ArrayList<>();
         bus.attach(0, received::add);
 
-        assertThat(received).isEmpty();
-        bus.publish("execution.completed", Map.of());
         assertThat(received).hasSize(1);
-        assertThat(received.get(0).type()).isEqualTo("execution.completed");
+        assertThat(received.get(0).type()).isEqualTo("execution.started");
+        bus.publish("execution.completed", Map.of());
+        assertThat(received).hasSize(2);
+        assertThat(received.get(1).type()).isEqualTo("execution.completed");
     }
 
     @Test

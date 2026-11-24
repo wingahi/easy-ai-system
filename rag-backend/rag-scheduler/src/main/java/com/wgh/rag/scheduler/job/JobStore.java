@@ -6,6 +6,9 @@ import com.wgh.rag.execution.model.ExecutionRequest;
 import com.wgh.rag.execution.model.ExecutionSnapshot;
 import com.wgh.rag.execution.model.ExecutionStatus;
 import com.wgh.rag.execution.model.JobPayload;
+import com.wgh.rag.common.security.TenantContext;
+import com.wgh.rag.data.tenant.DatabaseRoleTemplate;
+import com.wgh.rag.data.tenant.TenantTransactionTemplate;
 import com.wgh.rag.scheduler.entity.ExecutionJob;
 import com.wgh.rag.scheduler.mapper.ExecutionJobMapper;
 import lombok.extern.slf4j.Slf4j;
@@ -17,29 +20,46 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Supplier;
 
 /**
  * 作业持久化门面。
  *
  * <p>所有状态迁移都通过 Mapper 的条件 UPDATE 完成，并在返回「影响行数为 0」时视为租约丢失；
  * 这里不缓存任何状态，确保跨实例读取的是数据库事实。
+ *
+ * <p>RLS 下的角色划分：
+ * <ul>
+ *   <li>租户可见路径（提交、注销、按 executionId 查询、取消）→ 应用角色 + {@code app.tenant_id}；</li>
+ *   <li>跨租户协调路径（领取、回收、重排、清理、全局计数、执行中的状态迁移）
+ *       → 独立事务内 {@code SET LOCAL ROLE wgh_scheduler}，不依赖线程是否带租户上下文。</li>
+ * </ul>
  */
 @Slf4j
 @Component
 public class JobStore {
 
     private static final int MAX_ERROR_MESSAGE = 2000;
+    private static final String SCHEDULER_ROLE = "wgh_scheduler";
 
     private final ExecutionJobMapper mapper;
 
     private final JobPayloadCodec codec;
 
-    public JobStore(ExecutionJobMapper mapper, JobPayloadCodec codec) {
+    private final DatabaseRoleTemplate roles;
+
+    private final TenantTransactionTemplate transactions;
+
+    public JobStore(ExecutionJobMapper mapper, JobPayloadCodec codec,
+                    DatabaseRoleTemplate roles, TenantTransactionTemplate transactions) {
         this.mapper = mapper;
         this.codec = codec;
+        this.roles = roles;
+        this.transactions = transactions;
     }
 
     /**
@@ -53,6 +73,25 @@ public class JobStore {
      * @return 已持久化的作业
      */
     public ExecutionJob submit(ExecutionRequest request, int maxAttempts, Integer timeoutSeconds) {
+        String tenantId = resolveTenant(request.tenantId());
+        try {
+            return transactions.execute(tenantId, false,
+                    () -> doSubmit(request, tenantId, maxAttempts, timeoutSeconds));
+        } catch (DuplicateKeyException e) {
+            String bizKey = request.bizKey();
+            ExecutionJob existing = bizKey == null || bizKey.isBlank() ? null
+                    : transactions.execute(tenantId, true, () -> mapper.selectByBizKey(request.jobType(), bizKey));
+            if (existing == null) {
+                throw e;
+            }
+            log.debug("作业已存在，按幂等键复用 jobType={} bizKey={} executionId={}",
+                    request.jobType(), bizKey, existing.getExecutionId());
+            return existing;
+        }
+    }
+
+    private ExecutionJob doSubmit(ExecutionRequest request, String tenantId,
+                                  int maxAttempts, Integer timeoutSeconds) {
         String bizKey = request.bizKey();
         if (bizKey != null && !bizKey.isBlank()) {
             ExecutionJob existing = mapper.selectByBizKey(request.jobType(), bizKey);
@@ -66,7 +105,7 @@ public class JobStore {
         job.setTraceId(MdcContext.currentTraceId());
         job.setJobType(request.jobType());
         job.setLane(request.lane());
-        job.setTenantId(request.tenantId());
+        job.setTenantId(tenantId);
         job.setOwnerUserId(request.ownerUserId());
         job.setBizKey(bizKey);
         JobPayload payload = request.payload();
@@ -80,18 +119,8 @@ public class JobStore {
         job.setTimeoutSeconds(timeoutSeconds);
         job.setCancelRequested(0);
         job.setVersion(0);
-        try {
-            mapper.insert(job);
-            return job;
-        } catch (DuplicateKeyException e) {
-            ExecutionJob existing = bizKey == null ? null : mapper.selectByBizKey(request.jobType(), bizKey);
-            if (existing == null) {
-                throw e;
-            }
-            log.debug("作业已存在，按幂等键复用 jobType={} bizKey={} executionId={}",
-                    request.jobType(), bizKey, existing.getExecutionId());
-            return existing;
-        }
+        mapper.insert(job);
+        return job;
     }
 
     /**
@@ -106,31 +135,34 @@ public class JobStore {
      * @return 已持久化的运行态记录
      */
     public ExecutionJob registerRunning(ExecutionRequest request, String leaseOwner, Duration leaseTtl) {
-        LocalDateTime now = LocalDateTime.now();
-        ExecutionJob job = new ExecutionJob();
-        job.setExecutionId(UUID.randomUUID().toString());
-        job.setTraceId(MdcContext.currentTraceId());
-        job.setJobType(request.jobType());
-        job.setLane(ExecutionLane.INTERACTIVE);
-        job.setTenantId(request.tenantId());
-        job.setOwnerUserId(request.ownerUserId());
-        job.setBizKey(request.bizKey());
-        JobPayload payload = request.payload();
-        job.setPayloadJson(codec.toJson(payload.data()));
-        job.setPayloadSchemaVersion(payload.schemaVersion());
-        job.setPriority(request.priority());
-        job.setStatus(ExecutionStatus.RUNNING);
-        job.setScheduledAt(now);
-        job.setStartTime(now);
-        job.setHeartbeatTime(now);
-        job.setLeaseOwner(leaseOwner);
-        job.setLeaseExpireTime(now.plus(leaseTtl == null ? Duration.ofMinutes(35) : leaseTtl));
-        job.setAttempt(1);
-        job.setMaxAttempts(1);
-        job.setCancelRequested(0);
-        job.setVersion(0);
-        mapper.insert(job);
-        return job;
+        String tenantId = resolveTenant(request.tenantId());
+        return transactions.execute(tenantId, false, () -> {
+            LocalDateTime now = LocalDateTime.now();
+            ExecutionJob job = new ExecutionJob();
+            job.setExecutionId(UUID.randomUUID().toString());
+            job.setTraceId(MdcContext.currentTraceId());
+            job.setJobType(request.jobType());
+            job.setLane(ExecutionLane.INTERACTIVE);
+            job.setTenantId(tenantId);
+            job.setOwnerUserId(request.ownerUserId());
+            job.setBizKey(request.bizKey());
+            JobPayload payload = request.payload();
+            job.setPayloadJson(codec.toJson(payload.data()));
+            job.setPayloadSchemaVersion(payload.schemaVersion());
+            job.setPriority(request.priority());
+            job.setStatus(ExecutionStatus.RUNNING);
+            job.setScheduledAt(now);
+            job.setStartTime(now);
+            job.setHeartbeatTime(now);
+            job.setLeaseOwner(leaseOwner);
+            job.setLeaseExpireTime(now.plus(leaseTtl == null ? Duration.ofMinutes(35) : leaseTtl));
+            job.setAttempt(1);
+            job.setMaxAttempts(1);
+            job.setCancelRequested(0);
+            job.setVersion(0);
+            mapper.insert(job);
+            return job;
+        });
     }
 
     /**
@@ -145,29 +177,29 @@ public class JobStore {
         if (id == null) {
             return false;
         }
-        return mapper.deleteRunningInteractive(id, leaseOwner) > 0;
+        return transactions.execute(false, () -> mapper.deleteRunningInteractive(id, leaseOwner) > 0);
     }
 
-    /** 清理崩溃残留的终态交互式运行态记录。 */
+    /** 清理崩溃残留的终态交互式运行态记录（跨租户，调度角色）。 */
     public int purgeTerminalInteractiveRuns(Duration retention) {
         long seconds = retention == null || retention.isNegative() || retention.isZero()
                 ? Duration.ofHours(24).toSeconds() : Math.max(60L, retention.toSeconds());
-        return mapper.purgeTerminalInteractiveRuns(seconds);
+        return schedulerWrite(() -> mapper.purgeTerminalInteractiveRuns(seconds));
     }
 
-    /** 按执行标识查作业。 */
     /** 按幂等键查询作业（用于后台化入口在页面刷新/重连时定位同一次执行）。 */
     public Optional<ExecutionJob> findByBizKey(String jobType, String bizKey) {
         if (jobType == null || bizKey == null || bizKey.isBlank()) {
             return Optional.empty();
         }
-        return Optional.ofNullable(mapper.selectByBizKey(jobType, bizKey));
+        return Optional.ofNullable(transactions.execute(true, () -> mapper.selectByBizKey(jobType, bizKey)));
     }
 
-    public Optional<ExecutionJob> find(String executionId) {        if (executionId == null || executionId.isBlank()) {
+    public Optional<ExecutionJob> find(String executionId) {
+        if (executionId == null || executionId.isBlank()) {
             return Optional.empty();
         }
-        return Optional.ofNullable(mapper.selectByExecutionId(executionId));
+        return Optional.ofNullable(transactions.execute(true, () -> mapper.selectByExecutionId(executionId)));
     }
 
     /** 按执行标识查快照。 */
@@ -181,44 +213,49 @@ public class JobStore {
      * @return {@code true} 表示已置取消标记或已置终态
      */
     public boolean cancel(String executionId, String reason) {
-        Optional<ExecutionJob> found = find(executionId);
-        if (found.isEmpty()) {
+        if (executionId == null || executionId.isBlank()) {
             return false;
         }
-        ExecutionJob job = found.get();
-        if (job.getStatus() != null && job.getStatus().isTerminal()) {
-            return false;
-        }
-        if (mapper.cancelPending(job.getId(), reason) > 0) {
-            return true;
-        }
-        return mapper.requestCancel(job.getId(), reason) > 0;
+        return Boolean.TRUE.equals(transactions.execute(false, () -> {
+            ExecutionJob job = mapper.selectByExecutionId(executionId);
+            if (job == null) {
+                return false;
+            }
+            if (job.getStatus() != null && job.getStatus().isTerminal()) {
+                return false;
+            }
+            if (mapper.cancelPending(job.getId(), reason) > 0) {
+                return true;
+            }
+            return mapper.requestCancel(job.getId(), reason) > 0;
+        }));
     }
 
-    /** 领取一条到期作业。 */
+    /** 领取一条到期作业（跨租户，调度角色；领取与回读同一事务）。 */
     public Optional<ExecutionJob> claim(ExecutionLane lane, String owner, Duration leaseTtl) {
-        Long id = mapper.claimNext(lane.name(), owner, seconds(leaseTtl));
-        if (id == null) {
-            return Optional.empty();
-        }
-        return Optional.ofNullable(mapper.selectById(id));
+        return schedulerWrite(() -> {
+            Long id = mapper.claimNext(lane.name(), owner, seconds(leaseTtl));
+            return id == null ? Optional.<ExecutionJob>empty() : Optional.ofNullable(mapper.selectById(id));
+        });
     }
 
     public boolean markRunning(Long id, String owner) {
-        return mapper.markRunning(id, owner) > 0;
+        return schedulerWrite(() -> mapper.markRunning(id, owner) > 0);
     }
 
     public boolean renewLease(Long id, String owner, Duration leaseTtl) {
-        return mapper.renewLease(id, owner, seconds(leaseTtl)) > 0;
+        return schedulerWrite(() -> mapper.renewLease(id, owner, seconds(leaseTtl)) > 0);
     }
 
     public boolean complete(Long id, String owner, Map<String, Object> result) {
-        return mapper.complete(id, owner, codec.toJson(result)) > 0;
+        String json = codec.toJson(result);
+        return schedulerWrite(() -> mapper.complete(id, owner, json) > 0);
     }
 
     /** 执行中持久化进度；租约丢失返回 {@code false}。 */
     public boolean saveResult(Long id, String owner, Map<String, Object> result) {
-        return mapper.updateResult(id, owner, codec.toJson(result)) > 0;
+        String json = codec.toJson(result);
+        return schedulerWrite(() -> mapper.updateResult(id, owner, json) > 0);
     }
 
     /** 读取已持久化的执行进度；解析失败按空进度处理，避免历史脏数据阻断续跑。 */
@@ -244,40 +281,44 @@ public class JobStore {
                         Instant retryAt) {
         LocalDateTime notBefore = retryAt == null ? null : toLocal(retryAt);
         LocalDateTime finishTime = status == ExecutionStatus.DEAD ? LocalDateTime.now() : null;
-        return mapper.fail(id, owner, status.name(), errorCode, truncate(errorMessage), notBefore, finishTime) > 0;
+        String truncated = truncate(errorMessage);
+        return schedulerWrite(() -> mapper.fail(id, owner, status.name(), errorCode, truncated,
+                notBefore, finishTime) > 0);
     }
 
     /** 持有者落取消终态。 */
     public boolean cancelOwned(Long id, String owner, String reason) {
-        return mapper.cancelOwned(id, owner, reason) > 0;
+        return schedulerWrite(() -> mapper.cancelOwned(id, owner, reason) > 0);
     }
 
     /** 放弃本次领取（单飞锁未抢到 / Redis 不可用），按延迟回到 PENDING。 */
     public boolean releaseClaim(Long id, String owner, Duration delay) {
         LocalDateTime notBefore = toLocal(Instant.now().plus(delay == null ? Duration.ZERO : delay));
-        return mapper.releaseClaim(id, owner, notBefore) > 0;
+        return schedulerWrite(() -> mapper.releaseClaim(id, owner, notBefore) > 0);
     }
 
     /** 是否已请求取消。 */
     public boolean isCancelRequested(Long id) {
-        Integer flag = mapper.selectCancelRequested(id);
-        return flag != null && flag == 1;
+        return schedulerWrite(() -> {
+            Integer flag = mapper.selectCancelRequested(id);
+            return flag != null && flag == 1;
+        });
     }
 
     public long countPending(ExecutionLane lane) {
-        return mapper.countPending(lane.name());
+        return schedulerWrite(() -> mapper.countPending(lane.name()));
     }
 
     public long countTenantActive(String tenantId, ExecutionLane lane) {
-        return mapper.countTenantActive(tenantId, lane.name());
+        return transactions.execute(tenantId, true, () -> mapper.countTenantActive(tenantId, lane.name()));
     }
 
     public long countPendingByTenant(String tenantId, ExecutionLane lane) {
-        return mapper.countPendingByTenant(tenantId, lane.name());
+        return transactions.execute(tenantId, true, () -> mapper.countPendingByTenant(tenantId, lane.name()));
     }
 
     public int reclaimExpired() {
-        return mapper.reclaimExpired();
+        return schedulerWrite(mapper::reclaimExpired);
     }
 
     /**
@@ -290,15 +331,40 @@ public class JobStore {
         if (owner == null || owner.isBlank()) {
             return 0;
         }
-        return mapper.reclaimByOwner(owner);
+        return schedulerWrite(() -> mapper.reclaimByOwner(owner));
     }
 
     public int requeueFailed() {
-        return mapper.requeueFailed();
+        return schedulerWrite(mapper::requeueFailed);
     }
 
     public int expireQueued(Duration queueTimeout) {
-        return mapper.expireQueued(seconds(queueTimeout));
+        long seconds = seconds(queueTimeout);
+        return schedulerWrite(() -> mapper.expireQueued(seconds));
+    }
+
+    /**
+     * 对账候选（跨租户，调度角色只读短事务）。
+     *
+     * <p>候选本身跨租户，所以这里不依赖线程租户上下文；调用方拿到每条作业的 {@code tenantId}
+     * 后再逐条开启租户只读事务读取业务记录。
+     */
+    public List<ExecutionJob> reconcileCandidates(String jobType, LocalDateTime since, int limit) {
+        int size = Math.max(1, limit);
+        return roles.runReadOnlyAs(SCHEDULER_ROLE,
+                () -> mapper.selectReconcileCandidates(jobType, since, size));
+    }
+
+    /**
+     * 对账修复：仅取消仍为 {@code PENDING} 的作业（跨租户，调度角色短事务）。
+     *
+     * @return {@code false} 表示作业已被领取或已终态，本轮不修复
+     */
+    public boolean cancelPendingForReconcile(Long id, String reason) {
+        if (id == null) {
+            return false;
+        }
+        return schedulerWrite(() -> mapper.cancelPending(id, reason) > 0);
     }
 
     /** 作业 → 统一快照。 */
@@ -331,6 +397,14 @@ public class JobStore {
         int schemaVersion = job.getPayloadSchemaVersion() == null
                 ? JobPayload.CURRENT_SCHEMA_VERSION : job.getPayloadSchemaVersion();
         return new JobPayload(schemaVersion, codec.fromJson(job.getPayloadJson()));
+    }
+
+    private <T> T schedulerWrite(Supplier<T> action) {
+        return roles.runAs(SCHEDULER_ROLE, action);
+    }
+
+    private static String resolveTenant(String tenantId) {
+        return tenantId == null || tenantId.isBlank() ? TenantContext.tenantIdOrDefault() : tenantId;
     }
 
     private Map<String, Object> safeResult(String json) {

@@ -1,5 +1,6 @@
 package com.wgh.rag.scheduler.mapper;
 
+import com.baomidou.mybatisplus.annotation.InterceptorIgnore;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.wgh.rag.scheduler.entity.ExecutionJob;
 import org.apache.ibatis.annotations.Delete;
@@ -20,8 +21,12 @@ public interface ExecutionJobMapper extends BaseMapper<ExecutionJob> {
      *
      * <p>领取即把状态置为 LEASED、写入租约、尝试次数 +1。
      *
+     * <p>跳过租户拦截器改写：JSqlParser 4.9 会把子查询里的 {@code FOR UPDATE SKIP LOCKED}
+     * 重排到 {@code ORDER BY} 之前，PostgreSQL 直接报语法错误。
+     *
      * @return 被领取作业的主键；无可用作业返回 {@code null}
      */
+    @InterceptorIgnore(tenantLine = "true")
     @Select("""
             UPDATE wgh_execution_job
             SET status = 'LEASED',

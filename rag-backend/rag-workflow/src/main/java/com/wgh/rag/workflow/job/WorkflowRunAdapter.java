@@ -12,6 +12,7 @@ import com.wgh.rag.workflow.mapper.WorkflowRunMapper;
 import com.wgh.rag.workflow.service.WorkflowService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.ZoneId;
 import java.util.Map;
@@ -33,6 +34,7 @@ public class WorkflowRunAdapter implements RunAdapter {
     }
 
     @Override
+    @Transactional(readOnly = true)
     public Optional<ExecutionSnapshot> load(String runId) {
         WorkflowRun run = find(runId);
         if (run == null) {

@@ -34,6 +34,8 @@ public class SchedulerMetrics {
     public static final String RECONCILE_MISMATCH = "wgh.scheduler.reconcile.mismatch";
     /** 对账自动修复数（type=job_cancelled）。 */
     public static final String RECONCILE_REPAIRED = "wgh.scheduler.reconcile.repaired";
+    /** 对账跳过数（reason=tenant_missing/business_read_failed；跳过不做判定）。 */
+    public static final String RECONCILE_SKIPPED = "wgh.scheduler.reconcile.skipped";
     /** 准入拒绝数（lane + reason）。 */
     public static final String JOB_REJECTED = "wgh.scheduler.rejected";
     /** 作业排队时长（lane + jobType）。 */
@@ -92,6 +94,11 @@ public class SchedulerMetrics {
 
     public void recordReconcileRepaired(String type) {
         counter(RECONCILE_REPAIRED, "type", type == null ? "unknown" : type).increment();
+    }
+
+    /** 对账跳过：只有原因标签，不带租户/执行标识。 */
+    public void recordReconcileSkipped(String reason) {
+        counter(RECONCILE_SKIPPED, "reason", reason == null ? "unknown" : reason).increment();
     }
 
     /** 准入拒绝：租户标识不进标签（高基数），只保留车道与原因。 */

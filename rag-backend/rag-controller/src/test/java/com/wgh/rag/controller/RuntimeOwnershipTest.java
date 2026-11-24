@@ -1,6 +1,7 @@
 package com.wgh.rag.controller;
 
 import com.wgh.rag.controller.agent.AgentController;
+import com.wgh.rag.controller.agent.AgentHitlResumeService;
 import com.wgh.rag.agent.config.AgentProperties;
 import com.wgh.rag.agent.entity.AgentPlan;
 import com.wgh.rag.agent.mapper.AgentPlanMapper;
@@ -9,12 +10,12 @@ import com.wgh.rag.agent.service.AgentOrchestrator;
 import com.wgh.rag.chat.entity.ChatSession;
 import com.wgh.rag.chat.mapper.ChatSessionMapper;
 import com.wgh.rag.chat.service.ChatWindowService;
-import com.wgh.rag.chat.service.RagChatService;
 import com.wgh.rag.common.constant.RoleCodes;
 import com.wgh.rag.common.exception.BusinessException;
 import com.wgh.rag.common.result.Result;
 import com.wgh.rag.common.security.LoginUser;
 import com.wgh.rag.controller.support.RunAccessGuard;
+import com.wgh.rag.execution.api.ExecutionFacade;
 import com.wgh.rag.llm.service.ModelRouter;
 import com.wgh.rag.workflow.entity.WorkflowRun;
 import com.wgh.rag.workflow.service.WorkflowService;
@@ -23,6 +24,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.beans.factory.ObjectProvider;
 
 import java.util.List;
 import java.util.Set;
@@ -49,15 +51,15 @@ class RuntimeOwnershipTest {
     @Mock
     private AgentOrchestrator agentOrchestrator;
     @Mock
-    private com.wgh.rag.agent.service.AgentHitlConfirmService agentHitlConfirmService;
+    private AgentHitlResumeService agentHitlResumeService;
     @Mock
     private AgentProperties agentProperties;
-    @Mock
-    private RagChatService ragChatService;
     @Mock
     private ChatWindowService chatWindowService;
     @Mock
     private ModelRouter modelRouter;
+    @Mock
+    private ObjectProvider<ExecutionFacade> executionFacadeProvider;
 
     @AfterEach
     void tearDown() {
@@ -156,8 +158,8 @@ class RuntimeOwnershipTest {
     }
 
     private AgentController agentController() {
-        return new AgentController(agentOrchestrator, agentHitlConfirmService, planMapper, stepMapper, agentProperties,
-                ragChatService, chatWindowService, modelRouter);
+        return new AgentController(agentOrchestrator, agentHitlResumeService, planMapper, stepMapper, agentProperties,
+                chatWindowService, modelRouter, executionFacadeProvider);
     }
 
     private AgentPlan planOwnedBy() {

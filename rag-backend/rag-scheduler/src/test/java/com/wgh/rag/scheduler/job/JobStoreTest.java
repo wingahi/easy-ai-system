@@ -1,6 +1,8 @@
 package com.wgh.rag.scheduler.job;
 
 import com.wgh.rag.common.log.MdcContext;
+import com.wgh.rag.data.tenant.DatabaseRoleTemplate;
+import com.wgh.rag.data.tenant.TenantTransactionTemplate;
 import com.wgh.rag.execution.model.ExecutionLane;
 import com.wgh.rag.execution.model.ExecutionRequest;
 import com.wgh.rag.execution.model.ExecutionSnapshot;
@@ -19,11 +21,14 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Supplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -35,11 +40,27 @@ class JobStoreTest {
     @Mock
     private ExecutionJobMapper mapper;
 
+    @Mock
+    private DatabaseRoleTemplate roles;
+
+    @Mock
+    private TenantTransactionTemplate transactions;
+
     private JobStore store;
 
     @BeforeEach
+    @SuppressWarnings("unchecked")
     void setUp() {
-        store = new JobStore(mapper, new JobPayloadCodec());
+        store = new JobStore(mapper, new JobPayloadCodec(), roles, transactions);
+        // 角色切换与租户事务在单元测试中直接穿透，聚焦作业状态机本身
+        lenient().when(roles.runAs(anyString(), any()))
+                .thenAnswer(inv -> ((Supplier<Object>) inv.getArgument(1)).get());
+        lenient().when(roles.runReadOnlyAs(anyString(), any()))
+                .thenAnswer(inv -> ((Supplier<Object>) inv.getArgument(1)).get());
+        lenient().when(transactions.execute(anyString(), anyBoolean(), any()))
+                .thenAnswer(inv -> ((Supplier<Object>) inv.getArgument(2)).get());
+        lenient().when(transactions.execute(anyBoolean(), any()))
+                .thenAnswer(inv -> ((Supplier<Object>) inv.getArgument(1)).get());
     }
 
     @Test

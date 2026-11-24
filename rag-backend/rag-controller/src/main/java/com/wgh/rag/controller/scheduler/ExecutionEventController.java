@@ -8,6 +8,7 @@ import com.wgh.rag.common.security.LoginUser;
 import com.wgh.rag.common.security.SecurityUtils;
 import com.wgh.rag.execution.api.ExecutionFacade;
 import com.wgh.rag.execution.event.ExecutionEvent;
+import com.wgh.rag.execution.event.ExecutionEventSink;
 import com.wgh.rag.execution.model.ExecutionSnapshot;
 import io.swagger.v3.oas.annotations.Operation;import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
@@ -86,7 +87,19 @@ public class ExecutionEventController {
         emitter.onError(error -> cleanup.run());
 
         try {
-            handle.set(facade.attach(executionId, fromSeq, event -> send(emitter, event, closed)));
+            // 事件表轮询在终态时会回调 close：必须同时收口 SSE，否则活动执行订阅会一直挂到超时
+            handle.set(facade.attach(executionId, fromSeq, new ExecutionEventSink() {
+                @Override
+                public void emit(ExecutionEvent event) {
+                    send(emitter, event, closed);
+                }
+
+                @Override
+                public void close() {
+                    cleanup.run();
+                    emitter.complete();
+                }
+            }));
         } catch (RuntimeException e) {
             cleanup.run();
             throw new BusinessException(ResultCode.FAIL, "订阅执行事件失败: " + e.getMessage());

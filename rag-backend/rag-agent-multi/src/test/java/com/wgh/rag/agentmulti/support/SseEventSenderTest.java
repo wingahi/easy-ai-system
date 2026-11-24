@@ -1,97 +1,135 @@
 package com.wgh.rag.agentmulti.support;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.junit.jupiter.api.Test;
-import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
-import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.doThrow;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.verify;
 
 /**
- * SseEventSender 现有语义钉住测试（R7 重构安全网）：
- * null emitter 跳过、正常发送、IOException 仅告警并 completeWithError。
- * 注意：ObjectMapper 必须注册 JavaTimeModule（与 Spring 注入的一致），
- * 否则 payload 的 timestamp（LocalDateTime）序列化失败。
+ * SseEventSender 语义钉住测试（已切换到传输无关的 {@link AgentEventStream}）：
+ * null 出口跳过、正常发送、下游异常仅标记关闭并 complete、kv 重载容忍 null。
+ * 注意：下游实现负责序列化，本测试只验证发送契约与断流语义。
  */
 class SseEventSenderTest {
 
-    private final SseEventSender sender =
-            new SseEventSender(new ObjectMapper().registerModule(new JavaTimeModule()));
+    private final SseEventSender sender = new SseEventSender();
 
-    /** null emitter：静默跳过 */
+    /** null 出口：静默跳过 */
     @Test
-    void send_nullEmitter_skipsSilently() {
+    void send_nullStream_skipsSilently() {
         assertThatCode(() -> sender.send(null, "agent_start", Map.of()))
                 .doesNotThrowAnyException();
     }
 
-    /** 正常发送：调用 emitter.send，不触发 completeWithError */
+    /** 正常发送：调用 stream.sendEvent，payload 自动补充 timestamp */
     @Test
-    void send_normal_sendsEvent() throws IOException {
-        SseEmitter emitter = mock(SseEmitter.class);
+    void send_normal_sendsEvent() {
+        RecordingStream stream = new RecordingStream();
 
-        sender.send(emitter, "agent_start", Map.of("agentId", "a1"));
+        sender.send(stream, "agent_start", Map.of("agentId", "a1"));
 
-        verify(emitter).send(any(SseEmitter.SseEventBuilder.class));
-        verify(emitter, never()).completeWithError(any());
+        assertThat(stream.events).hasSize(1);
+        assertThat(stream.events.get(0).name()).isEqualTo("agent_start");
+        assertThat(stream.events.get(0).payload()).containsEntry("agentId", "a1").containsKey("timestamp");
     }
 
-    /** IOException（客户端断开）：仅告警 + completeWithError，不向调用方抛出 */
+    /** 下游异常（客户端断开）：标记关闭 + complete，不向调用方抛出 */
     @Test
-    void send_ioException_completesWithErrorWithoutThrowing() throws IOException {
-        SseEmitter emitter = mock(SseEmitter.class);
-        IOException boom = new IOException("客户端断开");
-        doThrow(boom).when(emitter).send(any(SseEmitter.SseEventBuilder.class));
+    void send_downstreamException_completesWithoutThrowing() {
+        RecordingStream stream = new RecordingStream();
+        stream.failOnSend = new IllegalStateException("客户端断开");
 
-        assertThatCode(() -> sender.send(emitter, "agent_done", Map.of()))
+        assertThatCode(() -> sender.send(stream, "agent_done", Map.of()))
                 .doesNotThrowAnyException();
-        verify(emitter).completeWithError(boom);
+        assertThat(stream.completed.get()).isEqualTo(1);
     }
 
-    /** 心跳注释：null emitter 跳过 */
+    /** 断流后不再推送后续事件 */
     @Test
-    void sendComment_nullEmitter_skipsSilently() {
+    void send_afterClosed_skipsFurtherEvents() {
+        RecordingStream stream = new RecordingStream();
+        stream.failOnSend = new IllegalStateException("断开");
+
+        sender.send(stream, "agent_done", Map.of());
+        sender.send(stream, "agent_done", Map.of());
+
+        assertThat(stream.events).isEmpty();
+        assertThat(stream.completed.get()).isEqualTo(1);
+    }
+
+    /** 心跳注释：null 出口跳过 */
+    @Test
+    void sendComment_nullStream_skipsSilently() {
         assertThatCode(() -> sender.sendComment(null, "hb"))
                 .doesNotThrowAnyException();
     }
 
-    /** 心跳注释：IOException 仅告警，不 completeWithError（与 send 的语义差异钉住） */
+    /** 心跳注释：下游异常仅标记关闭，不抛出 */
     @Test
-    void sendComment_ioException_swallowedWithoutComplete() throws IOException {
-        SseEmitter emitter = mock(SseEmitter.class);
-        doThrow(new IOException("断开")).when(emitter).send(any(SseEmitter.SseEventBuilder.class));
+    void sendComment_downstreamException_swallowedWithoutThrow() {
+        RecordingStream stream = new RecordingStream();
+        stream.failOnComment = new IllegalStateException("断开");
 
-        assertThatCode(() -> sender.sendComment(emitter, "hb"))
+        assertThatCode(() -> sender.sendComment(stream, "hb"))
                 .doesNotThrowAnyException();
-        verify(emitter, never()).completeWithError(any());
+        assertThat(stream.completed.get()).isEqualTo(1);
     }
 
     /** kv 重载：value 为 null 不抛 NPE（Map.of 遇 null 直接 NPE，曾导致 run 秒败） */
     @Test
-    void send_kvOverload_toleratesNullValues() throws IOException {
-        SseEmitter emitter = mock(SseEmitter.class);
+    void send_kvOverload_toleratesNullValues() {
+        RecordingStream stream = new RecordingStream();
 
-        assertThatCode(() -> sender.send(emitter, "agent_start",
+        assertThatCode(() -> sender.send(stream, "agent_start",
                 "runId", "r1", "agentName", null, "role", null))
                 .doesNotThrowAnyException();
-        verify(emitter).send(any(SseEmitter.SseEventBuilder.class));
+        assertThat(stream.events).hasSize(1);
+        assertThat(stream.events.get(0).payload()).containsEntry("runId", "r1").containsEntry("agentName", null);
     }
 
     /** kv 重载：奇数个参数时末尾孤 key 被忽略（不抛异常、不越界） */
     @Test
-    void send_kvOverload_oddArgsIgnoresTrailingKey() throws IOException {
-        SseEmitter emitter = mock(SseEmitter.class);
+    void send_kvOverload_oddArgsIgnoresTrailingKey() {
+        RecordingStream stream = new RecordingStream();
 
-        assertThatCode(() -> sender.send(emitter, "agent_start", "runId", "r1", "lonelyKey"))
+        assertThatCode(() -> sender.send(stream, "agent_start", "runId", "r1", "lonelyKey"))
                 .doesNotThrowAnyException();
-        verify(emitter).send(any(SseEmitter.SseEventBuilder.class));
+        assertThat(stream.events).hasSize(1);
+        assertThat(stream.events.get(0).payload()).containsEntry("runId", "r1").doesNotContainKey("lonelyKey");
+    }
+
+    private record SentEvent(String name, Map<String, Object> payload) {
+    }
+
+    private static final class RecordingStream implements AgentEventStream {
+        private final List<SentEvent> events = new ArrayList<>();
+        private final AtomicInteger completed = new AtomicInteger();
+        private RuntimeException failOnSend;
+        private RuntimeException failOnComment;
+
+        @Override
+        public void sendEvent(String eventName, Map<String, Object> payload) {
+            if (failOnSend != null) {
+                throw failOnSend;
+            }
+            events.add(new SentEvent(eventName, payload));
+        }
+
+        @Override
+        public void sendComment(String comment) {
+            if (failOnComment != null) {
+                throw failOnComment;
+            }
+        }
+
+        @Override
+        public void complete() {
+            completed.incrementAndGet();
+        }
     }
 }

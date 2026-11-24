@@ -1,5 +1,6 @@
 package com.wgh.rag.execution.model;
 
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 
@@ -19,11 +20,33 @@ public record JobPayload(int schemaVersion, Map<String, Object> data) {
     /** 当前负载结构版本。 */
     public static final int CURRENT_SCHEMA_VERSION = 1;
 
+    /**
+     * 保留键：提交时刻冻结的属主角色。
+     *
+     * <p>后台作业在其它线程/实例执行时，线程上已没有登录态；提交方把属主角色随负载冻结下来，
+     * 执行方据此恢复 {@code LoginUser}，避免以空角色运行导致数据权限误判。
+     */
+    public static final String KEY_OWNER_ROLES = "wgh.owner.roles";
+
     public JobPayload {
         if (schemaVersion <= 0) {
             throw new IllegalArgumentException("schemaVersion 必须为正数");
         }
-        data = data == null ? Map.of() : Map.copyOf(data);
+        data = compact(data);
+    }
+
+    /** 过滤 {@code null} 键/值：{@link Map#copyOf} 不接受空值，提交方常以可选参数直接放入负载。 */
+    private static Map<String, Object> compact(Map<String, Object> data) {
+        if (data == null || data.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, Object> filtered = new LinkedHashMap<>(data.size());
+        data.forEach((key, value) -> {
+            if (key != null && value != null) {
+                filtered.put(key, value);
+            }
+        });
+        return Map.copyOf(filtered);
     }
 
     /**

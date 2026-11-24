@@ -1,5 +1,6 @@
 package com.wgh.rag.scheduler.support;
 
+import com.wgh.rag.data.tenant.DatabaseRoleTemplate;
 import com.wgh.rag.scheduler.config.SchedulerProperties;
 import com.wgh.rag.scheduler.entity.SchedulerInstance;
 import com.wgh.rag.scheduler.job.JobPayloadCodec;
@@ -37,6 +38,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 @ConditionalOnProperty(prefix = "wgh.scheduler", name = "enabled", havingValue = "true", matchIfMissing = true)
 public class SchedulerInstanceRegistry {
 
+    private static final String SCHEDULER_ROLE = "wgh_scheduler";
+
     private final SchedulerProperties properties;
 
     private final SchedulerIdentity identity;
@@ -48,6 +51,9 @@ public class SchedulerInstanceRegistry {
     private final JobPayloadCodec codec;
 
     private final SchedulerMetrics metrics;
+
+    /** 实例表跨租户读写：独立事务内 SET LOCAL ROLE wgh_scheduler */
+    private final DatabaseRoleTemplate roles;
 
     private final AtomicBoolean registryHealthy = new AtomicBoolean(true);
 
@@ -62,13 +68,15 @@ public class SchedulerInstanceRegistry {
                                      SchedulerInstanceMapper mapper,
                                      LaneExecutors laneExecutors,
                                      JobPayloadCodec codec,
-                                     SchedulerMetrics metrics) {
+                                     SchedulerMetrics metrics,
+                                     DatabaseRoleTemplate roles) {
         this.properties = properties;
         this.identity = identity;
         this.mapper = mapper;
         this.laneExecutors = laneExecutors;
         this.codec = codec;
         this.metrics = metrics;
+        this.roles = roles;
     }
 
     @PostConstruct
@@ -92,18 +100,19 @@ public class SchedulerInstanceRegistry {
     /** 失联实例列表（排除当前实例），供调度循环提前回收其作业。 */
     public List<SchedulerInstance> deadInstances() {
         long livenessSeconds = Math.max(1L, properties.getInstanceLivenessTtl().toSeconds());
-        return mapper.selectDeadInstances(identity.instanceId(), livenessSeconds);
+        return roles.runReadOnlyAs(SCHEDULER_ROLE,
+                () -> mapper.selectDeadInstances(identity.instanceId(), livenessSeconds));
     }
 
     /** 把实例标记为已下线，避免每轮扫描重复处理同一实例。 */
     public void markStopped(String instanceId) {
-        mapper.markStopped(instanceId);
+        roles.runAs(SCHEDULER_ROLE, () -> mapper.markStopped(instanceId));
     }
 
     /** 清理历史实例行（由调度循环低频调用）。 */
     public int purgeStaleInstances() {
         long retentionSeconds = Math.max(60L, properties.getInstanceRetention().toSeconds());
-        return mapper.purgeStale(retentionSeconds);
+        return roles.runAs(SCHEDULER_ROLE, () -> mapper.purgeStale(retentionSeconds));
     }
 
     @PreDestroy
@@ -117,7 +126,7 @@ public class SchedulerInstanceRegistry {
 
     private void register() {
         try {
-            mapper.register(identity.instanceId(), lanesJson());
+            roles.runAs(SCHEDULER_ROLE, () -> mapper.register(identity.instanceId(), lanesJson()));
             registryHealthy.set(true);
             log.info("调度实例已注册 instanceId={} 心跳间隔={} 存活阈值={}",
                     identity.instanceId(), properties.getInstanceHeartbeatInterval(),
@@ -134,7 +143,8 @@ public class SchedulerInstanceRegistry {
     private void heartbeatSafely() {
         try {
             if (registryHealthy.get()) {
-                int updated = mapper.heartbeat(identity.instanceId(), lanesJson());
+                int updated = roles.runAs(SCHEDULER_ROLE,
+                        () -> mapper.heartbeat(identity.instanceId(), lanesJson()));
                 if (updated == 0) {
                     // 行被清理或首次注册失败：重新注册
                     register();

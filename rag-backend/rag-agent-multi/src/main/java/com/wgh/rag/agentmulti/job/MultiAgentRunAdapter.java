@@ -13,6 +13,7 @@ import com.wgh.rag.execution.run.RunAdapter;
 import com.wgh.rag.execution.run.RunTypes;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.ZoneId;
 import java.util.Map;
@@ -34,6 +35,7 @@ public class MultiAgentRunAdapter implements RunAdapter {
     }
 
     @Override
+    @Transactional(readOnly = true)
     public Optional<ExecutionSnapshot> load(String runId) {
         MultiAgentRun run = runMapper.selectOne(new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<MultiAgentRun>()
                 .eq(MultiAgentRun::getRunId, runId)

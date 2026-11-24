@@ -1,5 +1,6 @@
 package com.wgh.rag.scheduler.policy;
 
+import com.wgh.rag.data.tenant.DatabaseRoleTemplate;
 import com.wgh.rag.execution.model.ExecutionLane;
 import com.wgh.rag.scheduler.config.SchedulerProperties;
 import com.wgh.rag.scheduler.entity.TenantSchedulePolicy;
@@ -33,11 +34,15 @@ import java.util.concurrent.atomic.AtomicBoolean;
 @ConditionalOnProperty(prefix = "wgh.scheduler", name = "enabled", havingValue = "true", matchIfMissing = true)
 public class PolicyCache {
 
+    private static final String SCHEDULER_ROLE = "wgh_scheduler";
+
     private final SchedulerProperties properties;
 
     private final TenantSchedulePolicyMapper mapper;
 
     private final ObjectProvider<SchedulerMetrics> metrics;
+
+    private final DatabaseRoleTemplate roles;
 
     /** tenantId → lane → 覆盖策略；{@code enabled=0} 的行不放入，按默认策略处理。 */
     private final Map<String, Map<ExecutionLane, EffectiveSchedulePolicy>> overrides = new ConcurrentHashMap<>();
@@ -52,10 +57,12 @@ public class PolicyCache {
 
     public PolicyCache(SchedulerProperties properties,
                        TenantSchedulePolicyMapper mapper,
-                       ObjectProvider<SchedulerMetrics> metrics) {
+                       ObjectProvider<SchedulerMetrics> metrics,
+                       DatabaseRoleTemplate roles) {
         this.properties = properties;
         this.mapper = mapper;
         this.metrics = metrics;
+        this.roles = roles;
     }
 
     @PostConstruct
@@ -105,7 +112,8 @@ public class PolicyCache {
 
     private void refreshSafely() {
         try {
-            List<TenantSchedulePolicy> rows = mapper.selectAllPolicies();
+            List<TenantSchedulePolicy> rows =
+                    roles.runReadOnlyAs(SCHEDULER_ROLE, mapper::selectAllPolicies);
             Map<String, Map<ExecutionLane, EffectiveSchedulePolicy>> loaded = new ConcurrentHashMap<>();
             int count = 0;
             for (TenantSchedulePolicy row : rows) {

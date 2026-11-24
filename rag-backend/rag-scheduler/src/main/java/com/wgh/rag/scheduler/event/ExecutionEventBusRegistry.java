@@ -50,8 +50,9 @@ public class ExecutionEventBusRegistry {
             ExecutionEventBus created = new ExecutionEventBus(id);
             ExecutionEventStore store = eventStoreProvider == null ? null : eventStoreProvider.getIfAvailable();
             if (store != null) {
-                // 订阅者方式落库：所有生命周期与执行体事件都自动进入事件表
-                created.attach(0, store.sink());
+                // 订阅者方式落库：所有生命周期与执行体事件都自动进入事件表。
+                // 从当前序号开始订阅：复用未关闭的旧总线时不把历史事件重复写回事件表。
+                created.attach(created.currentSeq(), store.sink());
             }
             return created;
         });

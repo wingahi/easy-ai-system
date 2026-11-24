@@ -1,5 +1,6 @@
 package com.wgh.rag.scheduler.policy;
 
+import com.wgh.rag.data.tenant.DatabaseRoleTemplate;
 import com.wgh.rag.execution.model.ExecutionLane;
 import com.wgh.rag.scheduler.config.SchedulerProperties;
 import com.wgh.rag.scheduler.mapper.TenantRuntimeSlotMapper;
@@ -34,9 +35,13 @@ public class TenantSlotManager {
     /** 槽位与作业表实际在跑数的偏差（绝对值之和）。 */
     public static final String SLOT_DRIFT = "wgh.scheduler.slot.drift";
 
+    private static final String SCHEDULER_ROLE = "wgh_scheduler";
+
     private final SchedulerProperties properties;
 
     private final TenantRuntimeSlotMapper mapper;
+
+    private final DatabaseRoleTemplate roles;
 
     private final AtomicLong drift = new AtomicLong();
 
@@ -50,9 +55,11 @@ public class TenantSlotManager {
 
     public TenantSlotManager(SchedulerProperties properties,
                              TenantRuntimeSlotMapper mapper,
-                             MeterRegistry meterRegistry) {
+                             MeterRegistry meterRegistry,
+                             DatabaseRoleTemplate roles) {
         this.properties = properties;
         this.mapper = mapper;
+        this.roles = roles;
         Gauge.builder(SLOT_DRIFT, drift, AtomicLong::get).register(meterRegistry);
     }
 
@@ -74,7 +81,8 @@ public class TenantSlotManager {
      */
     public boolean tryAcquire(String tenantId, ExecutionLane lane, int limit) {
         try {
-            boolean acquired = mapper.tryAcquire(tenantId, lane.name(), Math.max(1, limit)) > 0;
+            boolean acquired = roles.runAs(SCHEDULER_ROLE,
+                    () -> mapper.tryAcquire(tenantId, lane.name(), Math.max(1, limit)) > 0);
             if (acquired) {
                 markHealthy();
             }
@@ -88,7 +96,7 @@ public class TenantSlotManager {
     /** 释放槽位；异常只告警，由下轮对账校正。 */
     public void release(String tenantId, ExecutionLane lane) {
         try {
-            mapper.release(tenantId, lane.name());
+            roles.runAs(SCHEDULER_ROLE, () -> mapper.release(tenantId, lane.name()));
             markHealthy();
         } catch (Exception e) {
             markUnavailable("释放槽位", tenantId, lane, e);
@@ -107,9 +115,12 @@ public class TenantSlotManager {
 
     private void reconcileSafely() {
         try {
-            drift.set(mapper.currentDrift());
-            mapper.refreshFromJobs();
-            mapper.zeroIdleSlots();
+            roles.runAs(SCHEDULER_ROLE, () -> {
+                drift.set(mapper.currentDrift());
+                mapper.refreshFromJobs();
+                mapper.zeroIdleSlots();
+                return null;
+            });
             markHealthy();
             if (drift.get() > 0) {
                 log.warn("租户运行槽与作业表存在偏差，已按作业表校正 drift={}", drift.get());

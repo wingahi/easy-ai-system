@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.wgh.rag.common.exception.BusinessException;
 import com.wgh.rag.common.result.PageResult;
 import com.wgh.rag.common.result.ResultCode;
+import com.wgh.rag.data.tenant.DatabaseRoleTemplate;
 import com.wgh.rag.execution.api.ExecutionFacade;
 import com.wgh.rag.execution.model.ExecutionLane;
 import com.wgh.rag.execution.model.ExecutionStatus;
@@ -52,6 +53,8 @@ public class SchedulerAdminService {
     /** 单页最大条数，避免管理端一次拉取过多大字段。 */
     private static final int MAX_PAGE_SIZE = 200;
 
+    private static final String SCHEDULER_ROLE = "wgh_scheduler";
+
     private final ExecutionJobMapper mapper;
 
     private final SchedulerInstanceMapper instanceMapper;
@@ -76,6 +79,9 @@ public class SchedulerAdminService {
 
     private final ObjectProvider<JobDispatcher> jobDispatcherProvider;
 
+    /** 管理端为跨租户运维视图：读写均在独立事务内切到 wgh_scheduler */
+    private final DatabaseRoleTemplate roles;
+
     public SchedulerAdminService(ExecutionJobMapper mapper,
                                  SchedulerInstanceMapper instanceMapper,
                                  SchedulerProperties properties,
@@ -87,7 +93,8 @@ public class SchedulerAdminService {
                                  ObjectProvider<PolicyCache> policyCacheProvider,
                                  ObjectProvider<TenantSlotManager> slotManagerProvider,
                                  ObjectProvider<LaneExecutors> laneExecutorsProvider,
-                                 ObjectProvider<JobDispatcher> jobDispatcherProvider) {
+                                 ObjectProvider<JobDispatcher> jobDispatcherProvider,
+                                 DatabaseRoleTemplate roles) {
         this.mapper = mapper;
         this.instanceMapper = instanceMapper;
         this.properties = properties;
@@ -100,6 +107,7 @@ public class SchedulerAdminService {
         this.slotManagerProvider = slotManagerProvider;
         this.laneExecutorsProvider = laneExecutorsProvider;
         this.jobDispatcherProvider = jobDispatcherProvider;
+        this.roles = roles;
     }
 
     /**
@@ -149,7 +157,8 @@ public class SchedulerAdminService {
         }
         wrapper.orderByDesc(ExecutionJob::getId);
 
-        Page<ExecutionJob> result = mapper.selectPage(Page.of(current, pageSize), wrapper);
+        Page<ExecutionJob> result = roles.runReadOnlyAs(SCHEDULER_ROLE,
+                () -> mapper.selectPage(Page.of(current, pageSize), wrapper));
         List<SchedulerJobSummary> rows = result.getRecords().stream().map(this::toSummary).toList();
         return new PageResult<>(result.getTotal(), result.getCurrent(), result.getSize(), rows);
     }
@@ -167,7 +176,8 @@ public class SchedulerAdminService {
             wrapper.eq(ExecutionJob::getTenantId, tenantId.trim());
         }
         wrapper.orderByDesc(ExecutionJob::getId);
-        Page<ExecutionJob> result = mapper.selectPage(Page.of(current, pageSize), wrapper);
+        Page<ExecutionJob> result = roles.runReadOnlyAs(SCHEDULER_ROLE,
+                () -> mapper.selectPage(Page.of(current, pageSize), wrapper));
         List<SchedulerJobSummary> rows = result.getRecords().stream().map(this::toSummary).toList();
         return new PageResult<>(result.getTotal(), result.getCurrent(), result.getSize(), rows);
     }
@@ -209,6 +219,10 @@ public class SchedulerAdminService {
 
     /** 概览统计：状态/车道分布与关键计数，数据来源为作业表。 */
     public SchedulerOverview overview() {
+        return roles.runReadOnlyAs(SCHEDULER_ROLE, () -> doOverview());
+    }
+
+    private SchedulerOverview doOverview() {
         Map<String, Long> statusDistribution = new LinkedHashMap<>();
         for (ExecutionStatus value : ExecutionStatus.values()) {
             statusDistribution.put(value.name(), 0L);
@@ -250,8 +264,8 @@ public class SchedulerAdminService {
      * 失联实例会显示为 {@code alive=false}，其作业由调度循环提前回收。
      */
     public List<SchedulerInstanceView> instances() {
-        List<SchedulerInstance> rows = instanceMapper.selectAllInstances();
-        LocalDateTime now = instanceMapper.now();
+        List<SchedulerInstance> rows = roles.runReadOnlyAs(SCHEDULER_ROLE, instanceMapper::selectAllInstances);
+        LocalDateTime now = roles.runReadOnlyAs(SCHEDULER_ROLE, instanceMapper::now);
         if (now == null) {
             now = LocalDateTime.now();
         }
@@ -308,7 +322,8 @@ public class SchedulerAdminService {
 
         String cancelReason = StringUtils.hasText(reason) ? reason.trim() : "管理端手动取消";
         boolean accepted = facade.cancel(executionId, cancelReason);
-        ExecutionJob latest = mapper.selectByExecutionId(executionId);
+        ExecutionJob latest = roles.runReadOnlyAs(SCHEDULER_ROLE,
+                () -> mapper.selectByExecutionId(executionId));
 
         if (!accepted) {
             ExecutionStatus latestStatus = latest == null ? null : latest.getStatus();
@@ -337,6 +352,10 @@ public class SchedulerAdminService {
      * @param tenantId 租户标识；为空时返回全部自定义策略行
      */
     public List<SchedulerPolicyView> policies(String tenantId) {
+        return roles.runReadOnlyAs(SCHEDULER_ROLE, () -> doPolicies(tenantId));
+    }
+
+    private List<SchedulerPolicyView> doPolicies(String tenantId) {
         if (!StringUtils.hasText(tenantId)) {
             return policyMapper.selectAllPolicies().stream()
                     .map(row -> policyView(row.getTenantId(), row.getLane(), row))
@@ -369,32 +388,35 @@ public class SchedulerAdminService {
             throw new BusinessException(ResultCode.PARAM_ERROR, "策略更新内容不能为空");
         }
         String tenant = normalizeTenant(tenantId);
-        for (SchedulerPolicyUpdate update : updates) {
-            if (!StringUtils.hasText(update.lane())) {
-                throw new BusinessException(ResultCode.PARAM_ERROR, "策略更新必须指定车道");
+        roles.runAs(SCHEDULER_ROLE, () -> {
+            for (SchedulerPolicyUpdate update : updates) {
+                if (!StringUtils.hasText(update.lane())) {
+                    throw new BusinessException(ResultCode.PARAM_ERROR, "策略更新必须指定车道");
+                }
+                ExecutionLane lane = parseLane(update.lane());
+                validatePolicyUpdate(update);
+                TenantSchedulePolicy existing = policyMapper.selectOne(new LambdaQueryWrapper<TenantSchedulePolicy>()
+                        .eq(TenantSchedulePolicy::getTenantId, tenant)
+                        .eq(TenantSchedulePolicy::getLane, lane)
+                        .last("LIMIT 1"));
+                if (existing == null) {
+                    policyMapper.insert(newPolicy(tenant, lane, update));
+                    continue;
+                }
+                int expected = update.version() != null ? update.version()
+                        : (existing.getVersion() == null ? 0 : existing.getVersion());
+                if (existing.getVersion() != null && expected != existing.getVersion()) {
+                    throw new BusinessException(ResultCode.OPERATION_NOT_ALLOWED,
+                            "策略已被其它管理员修改（版本 " + existing.getVersion() + "），请刷新后重试");
+                }
+                applyPolicyUpdate(existing, update);
+                if (policyMapper.updateWithVersion(existing, expected) == 0) {
+                    throw new BusinessException(ResultCode.OPERATION_NOT_ALLOWED,
+                            "策略已被其它管理员修改，请刷新后重试");
+                }
             }
-            ExecutionLane lane = parseLane(update.lane());
-            validatePolicyUpdate(update);
-            TenantSchedulePolicy existing = policyMapper.selectOne(new LambdaQueryWrapper<TenantSchedulePolicy>()
-                    .eq(TenantSchedulePolicy::getTenantId, tenant)
-                    .eq(TenantSchedulePolicy::getLane, lane)
-                    .last("LIMIT 1"));
-            if (existing == null) {
-                policyMapper.insert(newPolicy(tenant, lane, update));
-                continue;
-            }
-            int expected = update.version() != null ? update.version()
-                    : (existing.getVersion() == null ? 0 : existing.getVersion());
-            if (existing.getVersion() != null && expected != existing.getVersion()) {
-                throw new BusinessException(ResultCode.OPERATION_NOT_ALLOWED,
-                        "策略已被其它管理员修改（版本 " + existing.getVersion() + "），请刷新后重试");
-            }
-            applyPolicyUpdate(existing, update);
-            if (policyMapper.updateWithVersion(existing, expected) == 0) {
-                throw new BusinessException(ResultCode.OPERATION_NOT_ALLOWED,
-                        "策略已被其它管理员修改，请刷新后重试");
-            }
-        }
+            return null;
+        });
         PolicyCache cache = policyCacheProvider.getIfAvailable();
         if (cache != null) {
             cache.reload();
@@ -425,8 +447,10 @@ public class SchedulerAdminService {
             int maxQueue = update.maxQueue() != null ? update.maxQueue() : current.maxQueue();
             RejectPolicy rejectPolicy = update.rejectPolicy() == null
                     ? current.rejectPolicy() : RejectPolicy.parse(update.rejectPolicy(), current.rejectPolicy());
-            long running = mapper.countTenantActive(tenant, lane.name());
-            long queued = mapper.countPendingByTenant(tenant, lane.name());
+            long running = roles.runReadOnlyAs(SCHEDULER_ROLE,
+                    () -> mapper.countTenantActive(tenant, lane.name()));
+            long queued = roles.runReadOnlyAs(SCHEDULER_ROLE,
+                    () -> mapper.countPendingByTenant(tenant, lane.name()));
             String decision;
             String reason;
             if (running < maxConcurrent) {
@@ -458,7 +482,8 @@ public class SchedulerAdminService {
         PolicyCache cache = policyCacheProvider.getIfAvailable();
         result.put("cachedPolicyCount", cache == null ? 0 : cache.cachedPolicyCount());
         try {
-            result.put("tenantSlots", slotMapper.selectAllSlots());
+            result.put("tenantSlots",
+                    roles.runReadOnlyAs(SCHEDULER_ROLE, slotMapper::selectAllSlots));
         } catch (RuntimeException e) {
             result.put("tenantSlots", List.of());
             log.debug("租户槽位读取失败（可能未执行 20261124-01/04 迁移）: {}", e.getMessage());
@@ -475,7 +500,7 @@ public class SchedulerAdminService {
             throw new BusinessException(ResultCode.OPERATION_NOT_ALLOWED,
                     "仅 FAILED/DEAD/CANCELLED 作业可重试，当前状态: " + (status == null ? "未知" : status.name()));
         }
-        if (mapper.retryJob(job.getId()) == 0) {
+        if (roles.runAs(SCHEDULER_ROLE, () -> mapper.retryJob(job.getId())) == 0) {
             throw new BusinessException(ResultCode.FAIL, "作业状态已变化，请刷新后重试");
         }
         kick();
@@ -492,7 +517,7 @@ public class SchedulerAdminService {
                     "仅 LEASED/RUNNING 作业可强制回收，当前状态: " + (status == null ? "未知" : status.name()));
         }
         String reclaimReason = StringUtils.hasText(reason) ? reason.trim() : "管理端强制回收";
-        if (mapper.reclaimJob(job.getId(), reclaimReason) == 0) {
+        if (roles.runAs(SCHEDULER_ROLE, () -> mapper.reclaimJob(job.getId(), reclaimReason)) == 0) {
             throw new BusinessException(ResultCode.FAIL, "作业状态已变化，请刷新后重试");
         }
         kick();
@@ -502,8 +527,10 @@ public class SchedulerAdminService {
 
     private SchedulerPolicyView policyView(String tenantId, ExecutionLane lane, TenantSchedulePolicy row) {
         EffectiveSchedulePolicy defaults = EffectiveSchedulePolicy.defaults(tenantId, lane, properties);
-        long running = mapper.countTenantActive(tenantId, lane.name());
-        long queued = mapper.countPendingByTenant(tenantId, lane.name());
+        long running = roles.runReadOnlyAs(SCHEDULER_ROLE,
+                () -> mapper.countTenantActive(tenantId, lane.name()));
+        long queued = roles.runReadOnlyAs(SCHEDULER_ROLE,
+                () -> mapper.countPendingByTenant(tenantId, lane.name()));
         if (row == null) {
             return new SchedulerPolicyView(tenantId, lane.name(), true,
                     defaults.maxConcurrent(), defaults.maxQueue(), defaults.weight(), defaults.priorityBoost(),
@@ -628,7 +655,8 @@ public class SchedulerAdminService {
         if (!StringUtils.hasText(executionId)) {
             throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "执行标识不能为空");
         }
-        ExecutionJob job = mapper.selectByExecutionId(executionId.trim());
+        ExecutionJob job = roles.runReadOnlyAs(SCHEDULER_ROLE,
+                () -> mapper.selectByExecutionId(executionId.trim()));
         if (job == null) {
             throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "作业不存在: " + executionId);
         }

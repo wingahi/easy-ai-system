@@ -11,6 +11,7 @@ import com.wgh.rag.agentmulti.mapper.MultiAgentStepMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -40,6 +41,7 @@ public class AgentStepCheckpointService {
     private final ObjectMapper objectMapper;
 
     /** 加载某次运行的全部步骤（含内部轨迹行），构建 stepKey 索引。 */
+    @Transactional(readOnly = true)
     public CheckpointSession open(String runId) {
         List<MultiAgentStep> steps = stepMapper.selectList(new LambdaQueryWrapper<MultiAgentStep>()
                 .eq(MultiAgentStep::getRunId, runId)
@@ -50,6 +52,7 @@ public class AgentStepCheckpointService {
     /**
      * 步骤开始：已完成返回 skip；未完成复用原行并置 RUNNING；不存在则插入 RUNNING。
      */
+    @Transactional
     public StepDecision begin(CheckpointSession session, String stepKey, String nodeId, String agentId,
                               String role, Integer round, String input) {
         MultiAgentStep existing = session.byKey.get(stepKey);
@@ -81,6 +84,7 @@ public class AgentStepCheckpointService {
     }
 
     /** 步骤完成：按主键更新，不新增行。 */
+    @Transactional
     public void complete(CheckpointSession session, MultiAgentStep step, AgentInstanceResult result) {
         if (step == null || result == null) return;
         step.setStatus("SUCCESS");
@@ -102,6 +106,7 @@ public class AgentStepCheckpointService {
     }
 
     /** 步骤失败：按主键更新 FAILED，不新增行。 */
+    @Transactional
     public void fail(CheckpointSession session, MultiAgentStep step, String error) {
         if (step == null) return;
         step.setStatus("FAILED");
@@ -126,6 +131,7 @@ public class AgentStepCheckpointService {
     }
 
     /** 写入决策轨迹（内部行，不参与对外步骤展示）；已存在则不重复插入。 */
+    @Transactional
     public void saveTrace(CheckpointSession session, String stepKey, String nodeId, String kind,
                           Integer round, Map<String, Object> decision) {
         if (session.byKey.containsKey(stepKey)) return;

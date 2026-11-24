@@ -11,6 +11,7 @@ import com.wgh.rag.agentmulti.mapper.MultiAgentStepMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
@@ -82,6 +83,7 @@ public class MultiAgentService {
         runMapper.updateById(run);
     }
 
+    @Transactional(readOnly = true)
     public MultiAgentRun loadRun(String runId) {
         return runMapper.selectOne(
                 new LambdaQueryWrapper<MultiAgentRun>()
@@ -89,6 +91,7 @@ public class MultiAgentService {
                         .last("LIMIT 1"));
     }
 
+    @Transactional(readOnly = true)
     public MultiAgentRun getRunById(Long id) {
         return runMapper.selectById(id);
     }
@@ -113,6 +116,7 @@ public class MultiAgentService {
         stepMapper.updateById(step);
     }
 
+    @Transactional(readOnly = true)
     public List<MultiAgentStep> listSteps(String runId) {
         return stepMapper.selectList(
                 new LambdaQueryWrapper<MultiAgentStep>()
@@ -122,6 +126,7 @@ public class MultiAgentService {
 
     // ==================== 组合查询 ====================
 
+    @Transactional(readOnly = true)
     public Map<String, Object> getRunState(String runId) {
         MultiAgentRun run = loadRun(runId);
         List<MultiAgentStep> steps = listSteps(runId).stream()

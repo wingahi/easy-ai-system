@@ -12,6 +12,7 @@ import java.util.Map;
  * @param mismatches  发现的不一致数
  * @param repaired    自动修复数（仅 PENDING 且业务已终态/缺失的作业被取消）
  * @param alertOnly   仅告警数（运行中/已成功与业务状态不一致等，不自动改业务状态）
+ * @param skipped     因缺少租户归属或业务读取失败而跳过的作业数（跳过时不做任何判定）
  * @param byType      不一致类型分布
  * @param findings    最近若干条明细（有上限，避免报告过大）
  */
@@ -21,12 +22,13 @@ public record ReconcileReport(
         int mismatches,
         int repaired,
         int alertOnly,
+        int skipped,
         Map<String, Integer> byType,
         List<Finding> findings) {
 
     /** 未执行过对账时的空报告。 */
     public static ReconcileReport notRun() {
-        return new ReconcileReport(null, 0, 0, 0, 0, Map.of(), List.of());
+        return new ReconcileReport(null, 0, 0, 0, 0, 0, Map.of(), List.of());
     }
 
     /**

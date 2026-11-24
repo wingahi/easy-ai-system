@@ -17,6 +17,7 @@ import com.wgh.rag.execution.run.RunAdapter;
 import com.wgh.rag.execution.run.RunTypes;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.ZoneId;
 import java.util.List;
@@ -41,6 +42,7 @@ public class AgentPlanRunAdapter implements RunAdapter {
     }
 
     @Override
+    @Transactional(readOnly = true)
     public Optional<ExecutionSnapshot> load(String runId) {
         AgentPlan plan = find(runId);
         if (plan == null) {

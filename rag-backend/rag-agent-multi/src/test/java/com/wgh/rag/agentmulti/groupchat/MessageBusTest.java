@@ -1,17 +1,19 @@
 package com.wgh.rag.agentmulti.groupchat;
 
+import com.wgh.rag.agentmulti.constant.MultiAgentEvents;
 import com.wgh.rag.agentmulti.dto.AgentInstance;
 import com.wgh.rag.agentmulti.groupchat.MessageBus.ChatMessage;
+import com.wgh.rag.agentmulti.support.AgentEventStream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
 /**
@@ -88,18 +90,17 @@ class MessageBusTest {
     }
 
     /**
-     * SSE 推送现状钉住（quirk，不在 R7 修复）：broadcast 的 agent_message 走裸 emitter.send，
-     * payload 内含 LocalDateTime，由现场 new ObjectMapper()（无 JavaTimeModule）序列化会抛异常
-     * 并被 catch (Exception ignore) 静默吞掉 —— 事件实际不会发出，但历史分发不受影响。
+     * 事件出口现状钉住：broadcast 的 agent_message 走传输无关的 AgentEventStream，
+     * 历史分发与事件推送同时生效（旧 SseEmitter 直写因 LocalDateTime 序列化失败而丢事件的 quirk 已消除）。
      */
     @Test
-    void broadcast_withEmitter_sseQuirk_messageNeverDeliveredButHistoryIntact() throws java.io.IOException {
-        SseEmitter emitter = mock(SseEmitter.class);
-        bus.setEmitter(emitter);
+    void broadcast_withEmitter_pushesAgentMessageEvent() {
+        AgentEventStream stream = mock(AgentEventStream.class);
+        bus.setEmitter(stream);
 
         bus.broadcast("a1", ChatMessage.assistant("a1", "大家好"));
 
-        verify(emitter, never()).send(any(SseEmitter.SseEventBuilder.class));
+        verify(stream).sendEvent(eq(MultiAgentEvents.AGENT_MESSAGE), any(Map.class));
         assertThat(bus.getHistory("a2")).extracting(m -> m.content).containsExactly("大家好");
         assertThat(bus.getAllHistory()).hasSize(1);
     }

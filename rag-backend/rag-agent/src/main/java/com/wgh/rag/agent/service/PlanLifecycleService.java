@@ -19,6 +19,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.LocalDateTime;
@@ -45,10 +46,12 @@ public class PlanLifecycleService {
 
     // ==================== 查询 ====================
 
+    @Transactional(readOnly = true)
     public AgentPlan findPlan(Long planId) {
         return planMapper.selectById(planId);
     }
 
+    @Transactional(readOnly = true)
     public AgentStep findStep(Long planId, String stepId) {
         return stepMapper.selectOne(new LambdaQueryWrapper<AgentStep>()
                 .eq(AgentStep::getPlanId, planId)
@@ -57,6 +60,7 @@ public class PlanLifecycleService {
     }
 
     /** 按 stepIndex 升序加载某 plan 的全部未删除步骤。 */
+    @Transactional(readOnly = true)
     public List<AgentStep> loadSteps(Long planId) {
         return stepMapper.selectList(new LambdaQueryWrapper<AgentStep>()
                 .eq(AgentStep::getPlanId, planId)
@@ -65,6 +69,7 @@ public class PlanLifecycleService {
     }
 
     /** 加载某步骤之前的全部 SUCCESS 步骤（retryStep 重建上下文用）。 */
+    @Transactional(readOnly = true)
     public List<AgentStep> loadSucceededStepsBefore(Long planId, int stepIndex) {
         return stepMapper.selectList(new LambdaQueryWrapper<AgentStep>()
                 .eq(AgentStep::getPlanId, planId)
@@ -74,6 +79,7 @@ public class PlanLifecycleService {
     }
 
     /** 收集某 plan 下全部 PENDING 步骤，转成 StepDTO。 */
+    @Transactional(readOnly = true)
     public List<StepDTO> collectPendingRemaining(Long planId) {
         return stepMapper.selectList(new LambdaQueryWrapper<AgentStep>()
                         .eq(AgentStep::getPlanId, planId)
