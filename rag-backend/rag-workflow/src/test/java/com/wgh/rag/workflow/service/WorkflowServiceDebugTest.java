@@ -63,7 +63,8 @@ class WorkflowServiceDebugTest {
 
     private WorkflowService service() {
         return new WorkflowService(workflowMapper, versionMapper, runMapper, nodeRunMapper,
-                graphValidator, engine, objectMapper, workflowExecutor, quotaService, chargeTracker);
+                graphValidator, engine, objectMapper, workflowExecutor, quotaService, chargeTracker,
+                org.mockito.Mockito.mock(org.springframework.transaction.PlatformTransactionManager.class));
     }
 
     private Workflow workflow() {

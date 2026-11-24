@@ -1,5 +1,6 @@
 package com.wgh.rag.workflow.engine.executor;
 
+import com.wgh.rag.common.security.AuthContextPropagation;
 import com.wgh.rag.workflow.constant.WorkflowConstants;
 
 import com.wgh.rag.agent.StepExecutor;
@@ -77,7 +78,9 @@ public class AgentNodeExecutor implements NodeExecutor {
 
         ExecutorService timeoutPool = Executors.newSingleThreadExecutor(r -> new Thread(r, "wf-agent-" + ThreadLocalRandom.current().nextInt()));
         try {
-            Future<NodeResult> future = timeoutPool.submit(() -> doExecute(goal, modelId, plannerModelId, maxSteps, hasKb, kbIds));
+            // 超时子线程不继承 ThreadLocal，需显式透传登录态与租户
+            Future<NodeResult> future = timeoutPool.submit(AuthContextPropagation.wrap(
+                    () -> doExecute(goal, modelId, plannerModelId, maxSteps, hasKb, kbIds)));
             try {
                 return future.get(timeoutMs, TimeUnit.MILLISECONDS);
             } catch (TimeoutException e) {

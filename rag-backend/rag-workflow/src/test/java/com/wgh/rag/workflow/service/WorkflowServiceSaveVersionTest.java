@@ -58,7 +58,8 @@ class WorkflowServiceSaveVersionTest {
 
     private WorkflowService service() {
         return new WorkflowService(workflowMapper, versionMapper, runMapper, nodeRunMapper,
-                graphValidator, engine, new ObjectMapper(), workflowExecutor, quotaService, chargeTracker);
+                graphValidator, engine, new ObjectMapper(), workflowExecutor, quotaService, chargeTracker,
+                org.mockito.Mockito.mock(org.springframework.transaction.PlatformTransactionManager.class));
     }
 
     private Workflow workflow(int version) {

@@ -70,6 +70,7 @@ public class WorkflowService {
     private final ThreadPoolTaskExecutor workflowExecutor;
     private final QuotaService quotaService;
     private final QuotaChargeTracker chargeTracker;
+    private final org.springframework.transaction.PlatformTransactionManager transactionManager;
 
     /** HITL 续跑的异步任务最多等待外层确认事务提交的时间。 */
     private static final long COMMIT_GATE_TIMEOUT_SECONDS = 10L;
@@ -93,7 +94,8 @@ public class WorkflowService {
                            ObjectMapper objectMapper,
                            @Qualifier("workflowExecutor") ThreadPoolTaskExecutor workflowExecutor,
                            QuotaService quotaService,
-                           QuotaChargeTracker chargeTracker) {
+                           QuotaChargeTracker chargeTracker,
+                           org.springframework.transaction.PlatformTransactionManager transactionManager) {
         this.workflowMapper = workflowMapper;
         this.versionMapper = versionMapper;
         this.runMapper = runMapper;
@@ -104,6 +106,7 @@ public class WorkflowService {
         this.workflowExecutor = workflowExecutor;
         this.quotaService = quotaService;
         this.chargeTracker = chargeTracker;
+        this.transactionManager = transactionManager;
     }
 
     // ==================== CRUD ====================
@@ -382,32 +385,55 @@ public class WorkflowService {
      */
     public WorkflowRun runForChat(Long workflowId, String input, Long sessionId,
                                   boolean safeMode, BiConsumer<String, Map<String, Object>> sink) {
+        ChatRunPlan plan = prepareChatRun(workflowId, input, sessionId);
+        workflowExecutor.execute(() -> executeChatRun(plan, safeMode, sink));
+        return plan.run();
+    }
+
+    /**
+     * 聊天工作流阻塞执行（后台作业使用）：在作业线程内同步跑完，不占用请求线程池。
+     *
+     * <p>事件通过 sink 输出，由作业适配器写入执行事件表，前端 attach 重放。
+     */
+    public WorkflowRun runForChatBlocking(Long workflowId, String input, Long sessionId,
+                                          boolean safeMode, BiConsumer<String, Map<String, Object>> sink) {
+        ChatRunPlan plan = prepareChatRun(workflowId, input, sessionId);
+        executeChatRun(plan, safeMode, sink);
+        return plan.run();
+    }
+
+    private ChatRunPlan prepareChatRun(Long workflowId, String input, Long sessionId) {
         Workflow wf = getById(workflowId);
         WorkflowGraph graph = parseGraph(wf.getGraphJson());
         GraphValidator.GraphValidationResult vr = graphValidator.validate(graph);
         assertValid(vr);
-
         WorkflowRun run = createRun(wf, graph, input, sessionId);
+        return new ChatRunPlan(wf, graph, vr, run, input);
+    }
 
-        workflowExecutor.execute(() -> {
-            try {
-                DomainEventPublisher.emit(sink, WorkflowEvents.WORKFLOW_START, Map.of(
-                        "runId", run.getId(),
-                        "workflowId", wf.getId(),
-                        "workflowName", wf.getName(),
-                        "totalNodes", graph.getNodes().size()));
-                engine.run(run, graph, input, vr, safeMode, sink);
-            } catch (PauseSignal pause) {
-                log.info("聊天工作流 {} 在节点暂停，等待人工确认", run.getId());
-            } catch (Exception e) {
-                log.error("聊天工作流运行失败 runId={}", run.getId(), e);
-                markRunFailed(run.getId(), e.getMessage());
-                DomainEventPublisher.emit(sink, WorkflowEvents.WORKFLOW_FAILED, Map.of(
-                        "runId", run.getId(),
-                        "error", e.getMessage() != null ? e.getMessage() : "未知错误"));
-            }
-        });
-        return run;
+    private void executeChatRun(ChatRunPlan plan, boolean safeMode, BiConsumer<String, Map<String, Object>> sink) {
+        Workflow wf = plan.workflow();
+        WorkflowRun run = plan.run();
+        try {
+            DomainEventPublisher.emit(sink, WorkflowEvents.WORKFLOW_START, Map.of(
+                    "runId", run.getId(),
+                    "workflowId", wf.getId(),
+                    "workflowName", wf.getName(),
+                    "totalNodes", plan.graph().getNodes().size()));
+            engine.run(run, plan.graph(), plan.input(), plan.validation(), safeMode, sink);
+        } catch (PauseSignal pause) {
+            log.info("聊天工作流 {} 在节点暂停，等待人工确认", run.getId());
+        } catch (Exception e) {
+            log.error("聊天工作流运行失败 runId={}", run.getId(), e);
+            markRunFailed(run.getId(), e.getMessage());
+            DomainEventPublisher.emit(sink, WorkflowEvents.WORKFLOW_FAILED, Map.of(
+                    "runId", run.getId(),
+                    "error", e.getMessage() != null ? e.getMessage() : "未知错误"));
+        }
+    }
+
+    private record ChatRunPlan(Workflow workflow, WorkflowGraph graph,
+                               GraphValidator.GraphValidationResult validation, WorkflowRun run, String input) {
     }
 
     /** 创建工作流运行实例（统一设置版本快照与节点计数）。 */
@@ -538,6 +564,23 @@ public class WorkflowService {
                                      BiConsumer<String, Map<String, Object>> sink) {
         HitlResumeState rs = prepareHitlResume(runId, userInput, true);
         submitResume(rs, sink, false);
+        return rs.run;
+    }
+
+    /**
+     * 聊天窗口 HITL 确认的阻塞执行（后台作业使用）。
+     *
+     * <p>确认与扣费先在独立事务中提交，再在作业线程同步执行续跑，避免长事务，也不占用请求线程。
+     */
+    public WorkflowRun resumeForChatBlocking(Long runId, String userInput,
+                                             BiConsumer<String, Map<String, Object>> sink) {
+        org.springframework.transaction.support.TransactionTemplate template =
+                new org.springframework.transaction.support.TransactionTemplate(transactionManager);
+        HitlResumeState rs = template.execute(status -> prepareHitlResume(runId, userInput, true));
+        if (rs == null) {
+            throw new IllegalStateException("HITL 确认事务未返回状态");
+        }
+        executeHitlResume(rs, sink, false);
         return rs.run;
     }
 
