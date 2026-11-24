@@ -32,4 +32,10 @@ public class QuotaUsage extends BaseEntity {
      * 当期已用 token 数
      */
     private Long tokenUsed;
+
+    /**
+     * 计数纪元：管理端「重置用量」时 +1。
+     * <p>扣费流水会快照该值，退款只回退同一纪元的计数，避免重置后误退掉新产生的扣费。</p>
+     */
+    private Long usageEpoch;
 }

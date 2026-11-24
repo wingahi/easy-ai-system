@@ -43,6 +43,11 @@
             <groupId>com.wgh</groupId>
             <artifactId>rag-tool</artifactId>
         </dependency>
+        <!-- HITL 续跑计费：复用对话链路的配额计数与扣费流水 -->
+        <dependency>
+            <groupId>com.wgh</groupId>
+            <artifactId>rag-quota</artifactId>
+        </dependency>
 
         <!-- LangChain4j 核心 -->
         <dependency>

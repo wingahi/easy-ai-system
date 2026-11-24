@@ -95,8 +95,8 @@
         <el-table-column prop="amount" label="条数" width="70" />
         <el-table-column label="状态" width="110">
           <template #default="{ row }">
-            <el-tag size="small" :type="row.status === 'DEAD' ? 'danger' : 'warning'">
-              {{ row.status === 'DEAD' ? '人工处理' : '退款失败' }}
+            <el-tag size="small" :type="statusMeta(row.status).type">
+              {{ statusMeta(row.status).label }}
             </el-tag>
           </template>
         </el-table-column>
@@ -110,12 +110,55 @@
         <el-table-column label="更新时间" width="160">
           <template #default="{ row }">{{ formatTime(row.updateTime) }}</template>
         </el-table-column>
+        <el-table-column label="操作" width="190" fixed="right">
+          <template #default="{ row }">
+            <el-button link type="primary" size="small" @click="openRefundDetail(row)">详情</el-button>
+            <el-button v-if="canRefund(row.status)" link type="warning" size="small"
+                       :loading="rowActionLoading[row.chargeId + ':refund']"
+                       @click="manualRefund(row)">人工退款</el-button>
+            <el-button v-if="canWriteOff(row.status)" link type="success" size="small"
+                       :loading="rowActionLoading[row.chargeId + ':writeOff']"
+                       @click="manualWriteOff(row)">核销</el-button>
+          </template>
+        </el-table-column>
       </el-table>
 
       <el-pagination class="pager" layout="total, prev, pager, next" :total="refundTotal"
                      :page-size="refundSize" :current-page="refundPage"
                      @current-change="loadRefunds" />
     </el-card>
+
+    <el-dialog v-model="refundDetailVisible" title="退款流水详情" width="560px">
+      <div v-loading="refundDetailLoading">
+        <el-descriptions v-if="refundDetail" :column="2" border size="small">
+          <el-descriptions-item label="扣费标识" :span="2">
+            <span class="mono">{{ refundDetail.chargeId }}</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="用户名">{{ refundDetail.username || '—' }}</el-descriptions-item>
+          <el-descriptions-item label="周期">{{ refundDetail.periodKey || '—' }}</el-descriptions-item>
+          <el-descriptions-item label="状态">
+            <el-tag size="small" :type="statusMeta(refundDetail.status).type">
+              {{ statusMeta(refundDetail.status).label }}
+            </el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item label="计费条数">{{ refundDetail.amount ?? '—' }}</el-descriptions-item>
+          <el-descriptions-item label="重试次数">{{ refundDetail.retryCount ?? '—' }}</el-descriptions-item>
+          <el-descriptions-item label="下次重试">{{ formatTime(refundDetail.nextRetryAt) }}</el-descriptions-item>
+          <el-descriptions-item label="创建时间">{{ formatTime(refundDetail.createTime) }}</el-descriptions-item>
+          <el-descriptions-item label="更新时间">{{ formatTime(refundDetail.updateTime) }}</el-descriptions-item>
+          <el-descriptions-item label="失败原因" :span="2">{{ refundDetail.lastError || '—' }}</el-descriptions-item>
+        </el-descriptions>
+      </div>
+      <template #footer>
+        <el-button @click="refundDetailVisible = false">关闭</el-button>
+        <el-button v-if="refundDetail && canRefund(refundDetail.status)" type="warning"
+                   :loading="rowActionLoading[refundDetail.chargeId + ':refund']"
+                   @click="manualRefund(refundDetail)">人工退款</el-button>
+        <el-button v-if="refundDetail && canWriteOff(refundDetail.status)" type="success"
+                   :loading="rowActionLoading[refundDetail.chargeId + ':writeOff']"
+                   @click="manualWriteOff(refundDetail)">核销</el-button>
+      </template>
+    </el-dialog>
 
     <el-dialog v-model="dialogVisible" title="编辑用户配额" width="440px">
       <el-form :model="form" label-width="110px">
@@ -160,7 +203,10 @@ import {
   quotaAdminSave,
   quotaAdminResetUsage,
   quotaAdminRestoreDefault,
-  quotaRefundIssues
+  quotaRefundIssues,
+  quotaRefundDetail,
+  quotaRefundManual,
+  quotaRefundWriteOff
 } from '../../api'
 
 const query = reactive({ username: '' })
@@ -176,6 +222,11 @@ const refundTotal = ref(0)
 const refundPage = ref(1)
 const refundSize = ref(20)
 const refundLoading = ref(false)
+
+const refundDetailVisible = ref(false)
+const refundDetailLoading = ref(false)
+const refundDetail = ref(null)
+const rowActionLoading = reactive({})
 
 const dialogVisible = ref(false)
 const saving = ref(false)
@@ -218,6 +269,126 @@ async function loadRefunds(toPage = 1) {
     refundTotal.value = res.data.total || 0
   } finally {
     refundLoading.value = false
+  }
+}
+
+const STATUS_META = {
+  CHARGED: { label: '已扣未决', type: 'primary' },
+  REFUND_FAILED: { label: '退款失败', type: 'warning' },
+  DEAD: { label: '人工处理', type: 'danger' },
+  SETTLED: { label: '已结算', type: 'success' },
+  REFUNDED: { label: '已退款', type: 'info' }
+}
+const statusMeta = (status) => STATUS_META[status] || { label: status || '—', type: 'info' }
+// 可人工退款：死信、退款失败、已扣未决
+const canRefund = (status) => ['DEAD', 'REFUND_FAILED', 'CHARGED'].includes(status)
+// 可核销为已结算：死信与失败态（已结算/已退款不再提供操作）
+const canWriteOff = (status) => ['DEAD', 'REFUND_FAILED'].includes(status)
+
+const GENERIC_SUCCESS_TEXT = new Set(['', '操作成功', 'success'])
+const REFUND_RESULT_TEXT = {
+  REFUNDED: '退款成功，已回退该笔计费',
+  DUPLICATE: '该流水此前已退款，无需重复操作',
+  NOTHING_TO_REFUND: '该流水没有可退的计费',
+  FAILED: '退款失败，请查看流水的失败原因'
+}
+const WRITE_OFF_RESULT_TEXT = {
+  WRITTEN_OFF: '已核销为已结算，该笔计费不再重试',
+  DUPLICATE: '该流水已结算，无需重复核销',
+  NOTHING_TO_REFUND: '该流水无需核销'
+}
+
+/** 优先透传后端业务 message，通用成功文案则回退到本地结果说明。 */
+function resolveBizMessage(res, fallback) {
+  const msg = res && res.message ? String(res.message).trim() : ''
+  return GENERIC_SUCCESS_TEXT.has(msg) ? fallback : msg
+}
+
+async function openRefundDetail(row) {
+  refundDetail.value = row
+  refundDetailVisible.value = true
+  refundDetailLoading.value = true
+  try {
+    const res = await quotaRefundDetail(row.chargeId)
+    refundDetail.value = res.data || row
+  } catch {
+    // 错误提示由请求拦截器统一透传后端 message，此处保留列表行数据兜底
+  } finally {
+    refundDetailLoading.value = false
+  }
+}
+
+async function refreshRefundDetail(chargeId) {
+  if (!refundDetailVisible.value || !refundDetail.value || refundDetail.value.chargeId !== chargeId) {
+    return
+  }
+  try {
+    const res = await quotaRefundDetail(chargeId)
+    refundDetail.value = res.data || refundDetail.value
+  } catch {
+    // 刷新详情失败不阻断主流程，列表仍会刷新
+  }
+}
+
+async function manualRefund(row) {
+  try {
+    await ElMessageBox.confirm(
+      `确认对流水「${row.chargeId}」发起人工退款？将按该笔流水回退一次计费，减少用户「${row.username}」`
+      + `当期（${row.periodKey || '—'}）已用次数。`,
+      '人工退款', { type: 'warning', confirmButtonText: '确认退款', cancelButtonText: '取消' })
+  } catch {
+    // 用户取消确认：不执行退款
+    return
+  }
+  const key = `${row.chargeId}:refund`
+  rowActionLoading[key] = true
+  try {
+    const res = await quotaRefundManual(row.chargeId)
+    const data = res.data || {}
+    const text = resolveBizMessage(res, REFUND_RESULT_TEXT[data.result] || '退款操作已完成')
+    if (data.result === 'FAILED') {
+      ElMessage.error(text)
+    } else if (data.result === 'DUPLICATE' || data.result === 'NOTHING_TO_REFUND') {
+      ElMessage.warning(text)
+    } else {
+      ElMessage.success(text)
+    }
+  } catch {
+    // 错误提示由请求拦截器统一透传后端 message
+  } finally {
+    rowActionLoading[key] = false
+    await loadRefunds(refundPage.value)
+    await refreshRefundDetail(row.chargeId)
+  }
+}
+
+async function manualWriteOff(row) {
+  try {
+    await ElMessageBox.confirm(
+      `确认将流水「${row.chargeId}」核销为已结算？该笔计费将被视为有效，不再重试退款，`
+      + '不会改变用户当期已用次数。',
+      '人工核销', { type: 'warning', confirmButtonText: '确认核销', cancelButtonText: '取消' })
+  } catch {
+    // 用户取消确认：不执行核销
+    return
+  }
+  const key = `${row.chargeId}:writeOff`
+  rowActionLoading[key] = true
+  try {
+    const res = await quotaRefundWriteOff(row.chargeId)
+    const data = res.data || {}
+    const text = resolveBizMessage(res, WRITE_OFF_RESULT_TEXT[data.result] || '核销操作已完成')
+    if (data.applied) {
+      ElMessage.success(text)
+    } else {
+      ElMessage.warning(text)
+    }
+  } catch {
+    // 错误提示由请求拦截器统一透传后端 message
+  } finally {
+    rowActionLoading[key] = false
+    await loadRefunds(refundPage.value)
+    await refreshRefundDetail(row.chargeId)
   }
 }
 

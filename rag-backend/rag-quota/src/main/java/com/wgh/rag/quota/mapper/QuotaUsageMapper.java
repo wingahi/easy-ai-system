@@ -73,6 +73,26 @@ public interface QuotaUsageMapper extends BaseMapper<QuotaUsage> {
     int decrementChatAtomically(@Param("username") String username, @Param("dateKey") String dateKey);
 
     /**
+     * 原子退回一次对话计数（按扣费时的计数纪元精确回退）。
+     * <p>仅当当前 usage_epoch 与扣费快照一致时才减一：管理端「重置用量」会自增纪元，
+     * 重置前的旧流水退款时不会退掉重置后新产生的计数。</p>
+     *
+     * @return 0 表示行不存在、计数已为 0 或纪元已变化（不做回退）
+     */
+    @Update("""
+            UPDATE wgh_quota_usage
+               SET chat_count = chat_count - 1,
+                   update_time = CURRENT_TIMESTAMP
+             WHERE username = #{username}
+               AND date_key = #{dateKey}
+               AND chat_count > 0
+               AND usage_epoch = #{usageEpoch}
+            """)
+    int decrementChatAtomicallyForEpoch(@Param("username") String username,
+                                        @Param("dateKey") String dateKey,
+                                        @Param("usageEpoch") long usageEpoch);
+
+    /**
      * 原子「检查配额并计数」。
      *
      * <p>UPDATE 先行：行存在时由带 limit 条件的 UPDATE 原子判定；
@@ -121,12 +141,14 @@ public interface QuotaUsageMapper extends BaseMapper<QuotaUsage> {
     }
 
     /**
-     * 清零某用户当期用量（管理端「重置用量」）
+     * 清零某用户当期用量（管理端「重置用量」），并自增计数纪元。
+     * <p>纪元自增后，重置前产生的扣费流水退款时不会再回退重置后的计数。</p>
      */
     @Update("""
             UPDATE wgh_quota_usage
                SET chat_count = 0,
                    token_used = 0,
+                   usage_epoch = COALESCE(usage_epoch, 0) + 1,
                    update_time = CURRENT_TIMESTAMP
              WHERE username = #{username}
                AND date_key = #{dateKey}

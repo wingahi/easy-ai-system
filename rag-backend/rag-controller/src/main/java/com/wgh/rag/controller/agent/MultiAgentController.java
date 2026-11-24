@@ -3,6 +3,7 @@ package com.wgh.rag.controller.agent;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.wgh.rag.agentmulti.constant.MultiAgentConstants;
 import com.wgh.rag.agentmulti.dto.AgentInstance;
 import com.wgh.rag.agentmulti.dto.RunCreateRequest;
 import com.wgh.rag.agentmulti.entity.MultiAgentCrew;
@@ -19,6 +20,7 @@ import com.wgh.rag.log.annotation.Audit;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.task.AsyncTaskExecutor;
+import org.springframework.core.task.TaskRejectedException;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -111,7 +113,7 @@ public class MultiAgentController {
         return Result.success(runtime.getRunState(runId));
     }
 
-    /** HITL 恢复（SSE） */
+    /** HITL 恢复（SSE）：确认状态推进与扣费同事务，续跑在本事务提交后异步执行。 */
     @PostMapping("/runs/{runId}/hitl-confirm")
     @RequiresPermission(AuthConstants.PERM_AGENT_USE)
     @Audit(action = "MULTI_AGENT_RUN_HITL_CONFIRM", resourceType = "MULTI_AGENT_RUN")
@@ -123,15 +125,47 @@ public class MultiAgentController {
         SseEmitter emitter = new SseEmitter(10 * 60 * 1000L);
         emitter.onCompletion(() -> log.info("SSE resume runId={} completed", runId));
 
-        ragAsyncExecutor.execute(() -> {
-            try {
-                runtime.resumeFromHitl(runId, userInput, emitter);
-                emitter.complete();
-            } catch (Exception e) {
-                log.error("runId={} resume 异常", runId, e);
-                emitter.completeWithError(e);
-            }
-        });
+        // 保留既有「非暂停态」SSE 错误协议；额度/计费异常直接上抛，沿用普通对话错误码
+        MultiAgentRun run = runtime.loadRun(runId);
+        if (run == null) {
+            runtime.sendSseError(emitter, runId, "Run 不存在");
+            emitter.complete();
+            return emitter;
+        }
+        if (!MultiAgentConstants.STATUS_PAUSED.equals(run.getStatus())) {
+            runtime.sendSseError(emitter, runId, "Run 非 PAUSED 状态");
+            emitter.complete();
+            return emitter;
+        }
+
+        MultiAgentRuntime.HitlResumeClaim claim = runtime.prepareHitlResume(runId);
+        runtime.bindOutputObserver(emitter, claim.billing()::markOutput);
+
+        try {
+            ragAsyncExecutor.execute(() -> {
+                try {
+                    runtime.resumeFromHitl(runId, userInput, emitter, claim);
+                    emitter.complete();
+                } catch (Exception e) {
+                    log.error("runId={} resume 异常", runId, e);
+                    emitter.completeWithError(e);
+                } finally {
+                    runtime.unbindOutputObserver(emitter);
+                    MultiAgentRun latest = runtime.loadRun(runId);
+                    if (latest != null && MultiAgentConstants.STATUS_PAUSED.equals(latest.getStatus())) {
+                        // 再次停在 HITL 不算失败：保持未结算，等下一次续跑复用
+                        claim.billing().finishOnPause();
+                    } else {
+                        claim.billing().finish();
+                    }
+                }
+            });
+        } catch (TaskRejectedException e) {
+            runtime.unbindOutputObserver(emitter);
+            // 任务未提交成功，续跑不会发生：立即退款
+            claim.billing().finish();
+            throw e;
+        }
 
         return emitter;
     }

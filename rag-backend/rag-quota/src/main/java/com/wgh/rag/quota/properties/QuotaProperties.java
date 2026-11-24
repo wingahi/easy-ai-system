@@ -27,6 +27,15 @@ public class QuotaProperties {
      */
     private Long tokenDailyLimit = 2_000_000L;
 
+    /**
+     * 对话计数异常时的放行策略。
+     * <p>{@code false}（默认）：计数失败直接拒绝本次对话，返回稳定的业务错误码
+     * {@code QUOTA_SERVICE_UNAVAILABLE(5004)}，避免「免费聊天」；
+     * {@code true}：仅打 ERROR 告警日志与指标后放行且不扣费，用于数据库短时抖动期间人工兜底，
+     * 但会放出一批无扣费请求，应仅作为临时开关。</p>
+     */
+    private boolean failOpenOnCountError = false;
+
     /** 扣费流水与退款补偿参数。 */
     private Charge charge = new Charge();
 

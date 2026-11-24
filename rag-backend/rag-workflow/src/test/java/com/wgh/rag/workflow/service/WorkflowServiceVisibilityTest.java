@@ -48,10 +48,14 @@ class WorkflowServiceVisibilityTest {
     private WorkflowEngine engine;
     @Mock
     private ThreadPoolTaskExecutor workflowExecutor;
+    @Mock
+    private com.wgh.rag.quota.service.QuotaService quotaService;
+    @Mock
+    private com.wgh.rag.quota.service.QuotaChargeTracker chargeTracker;
 
     private WorkflowService service() {
         return new WorkflowService(workflowMapper, versionMapper, runMapper, nodeRunMapper,
-                graphValidator, engine, new ObjectMapper(), workflowExecutor);
+                graphValidator, engine, new ObjectMapper(), workflowExecutor, quotaService, chargeTracker);
     }
 
     @AfterEach

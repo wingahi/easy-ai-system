@@ -17,6 +17,8 @@ import com.wgh.rag.execution.error.ExecutionCancelledException;
 import com.wgh.rag.execution.error.LeaseLostException;
 import com.wgh.rag.execution.job.JobContext;
 import com.wgh.rag.execution.run.JobRunSupport;
+import com.wgh.rag.quota.service.QuotaChargeTracker;
+import com.wgh.rag.quota.service.QuotaService;
 import com.wgh.rag.workflow.constant.WorkflowConstants;
 import com.wgh.rag.workflow.constant.WorkflowEvents;
 import com.wgh.rag.workflow.dto.RunContext;
@@ -34,15 +36,20 @@ import com.wgh.rag.workflow.mapper.WorkflowRunMapper;
 import com.wgh.rag.workflow.mapper.WorkflowVersionMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.core.task.TaskRejectedException;
 import org.springframework.http.MediaType;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 import java.util.function.BiConsumer;
 import java.util.stream.Collectors;
 
@@ -61,6 +68,11 @@ public class WorkflowService {
     private final WorkflowEngine engine;
     private final ObjectMapper objectMapper;
     private final ThreadPoolTaskExecutor workflowExecutor;
+    private final QuotaService quotaService;
+    private final QuotaChargeTracker chargeTracker;
+
+    /** HITL 续跑的异步任务最多等待外层确认事务提交的时间。 */
+    private static final long COMMIT_GATE_TIMEOUT_SECONDS = 10L;
 
     /** runId → 活跃 SSE 通道（进程内） */
     private final Map<Long, SseEmitter> emitters = new ConcurrentHashMap<>();
@@ -79,7 +91,9 @@ public class WorkflowService {
                            GraphValidator graphValidator,
                            WorkflowEngine engine,
                            ObjectMapper objectMapper,
-                           @Qualifier("workflowExecutor") ThreadPoolTaskExecutor workflowExecutor) {
+                           @Qualifier("workflowExecutor") ThreadPoolTaskExecutor workflowExecutor,
+                           QuotaService quotaService,
+                           QuotaChargeTracker chargeTracker) {
         this.workflowMapper = workflowMapper;
         this.versionMapper = versionMapper;
         this.runMapper = runMapper;
@@ -88,6 +102,8 @@ public class WorkflowService {
         this.engine = engine;
         this.objectMapper = objectMapper;
         this.workflowExecutor = workflowExecutor;
+        this.quotaService = quotaService;
+        this.chargeTracker = chargeTracker;
     }
 
     // ==================== CRUD ====================
@@ -489,30 +505,68 @@ public class WorkflowService {
                                GraphValidator.GraphValidationResult validation) {
     }
 
-    /** HITL 确认后从断点续跑，返回新的 SSE 通道。 */
+    /**
+     * HITL 确认后从断点续跑，返回新的 SSE 通道。
+     *
+     * <p>确认校验、状态推进与扣费在同一事务内提交；异步续跑等 afterCommit 后才开始，
+     * 事务回滚不会留下已扣费。</p>
+     */
+    @Transactional
     public SseEmitter hitlConfirm(Long runId, String userInput) {
-        HitlResumeState rs = prepareHitlResume(runId, userInput);
+        HitlResumeState rs = prepareHitlResume(runId, userInput, false);
 
         SseEmitter emitter = createEmitter(runId);
         BiConsumer<String, Map<String, Object>> sink = sinkFor(runId);
-
-        workflowExecutor.execute(() -> executeHitlResume(rs, sink, true));
+        try {
+            submitResume(rs, sink, true);
+        } catch (RuntimeException e) {
+            // 提交失败：事务将回滚（含扣费），同时清理已注册的通道
+            emitters.remove(runId, emitter);
+            throw e;
+        }
         return emitter;
     }
 
     /**
      * 聊天窗口触发的 HITL 确认：事件通过调用方提供的 sink 输出（映射为聊天 SSE 协议），
      * 不创建独立 SSE 通道。返回更新后的运行记录（续跑异步进行）。
+     *
+     * <p>属于对话链路：若原对话本轮已结算，续跑不再重复扣费（整轮只收一次）。</p>
      */
+    @Transactional
     public WorkflowRun resumeForChat(Long runId, String userInput,
                                      BiConsumer<String, Map<String, Object>> sink) {
-        HitlResumeState rs = prepareHitlResume(runId, userInput);
-        workflowExecutor.execute(() -> executeHitlResume(rs, sink, false));
+        HitlResumeState rs = prepareHitlResume(runId, userInput, true);
+        submitResume(rs, sink, false);
         return rs.run;
     }
 
-    /** 校验断点并准备好续跑所需的上下文（确认输入写入 HITL 节点输出）。 */
-    private HitlResumeState prepareHitlResume(Long runId, String userInput) {
+    /** 提交异步续跑：必须等确认事务提交后才真正执行。 */
+    private void submitResume(HitlResumeState rs,
+                              BiConsumer<String, Map<String, Object>> sink,
+                              boolean completeEmitter) {
+        CompletableFuture<Void> gate = commitGate();
+        try {
+            workflowExecutor.execute(() -> {
+                if (!awaitCommit(gate)) {
+                    log.error("HITL 确认事务未提交或等待超时，放弃续跑: runId={}", rs.run.getId());
+                    rs.billing().finish();
+                    return;
+                }
+                executeHitlResume(rs, sink, completeEmitter);
+            });
+        } catch (TaskRejectedException e) {
+            // 事务内：状态推进与计数/流水随异常整体回滚，无需单独退款
+            throw e;
+        }
+    }
+
+    /**
+     * 校验断点、原子推进确认状态并完成扣费。
+     *
+     * @param chatChain {@code true} 表示来自聊天窗口的续跑，需要判断原对话本轮是否已结算
+     */
+    private HitlResumeState prepareHitlResume(Long runId, String userInput, boolean chatChain) {
         WorkflowRun run = runMapper.selectById(runId);
         if (run == null) throw new BusinessException("运行记录不存在");
         if (!WorkflowConstants.STATUS_PAUSED.equals(run.getStatus())) throw new BusinessException("运行未处于暂停状态，无法确认");
@@ -527,11 +581,12 @@ public class WorkflowService {
         String confirmInput = userInput == null ? "" : userInput;
         Map<String, Object> output = new LinkedHashMap<>();
         output.put("text", confirmInput);
+        String outputJson = toJson(output);
 
-        pending.setStatus(WorkflowConstants.STATUS_SUCCESS);
-        pending.setOutputJson(toJson(output));
-        pending.setEndTime(LocalDateTime.now());
-        nodeRunMapper.updateById(pending);
+        // 幂等闸门：同一暂停项只允许确认一次；并发/重试时其它请求拿不到行数
+        if (nodeRunMapper.claimHitlPending(pending.getId(), outputJson) == 0) {
+            throw new BusinessException("该 HITL 确认已处理，请刷新运行状态");
+        }
 
         RunContext ctx = engine.parseContext(run.getContextJson());
         ctx.getNodeOutputs().put(pending.getNodeId(), output);
@@ -540,7 +595,22 @@ public class WorkflowService {
         run.setStatus(WorkflowConstants.STATUS_RUNNING);
         run.setContextJson(engine.serializeContext(ctx));
         run.setUpdateTime(LocalDateTime.now());
-        runMapper.updateById(run);
+        if (runMapper.claimPausedForResume(runId, run.getContextJson()) == 0) {
+            throw new BusinessException("运行未处于暂停状态，无法确认");
+        }
+        pending.setStatus(WorkflowConstants.STATUS_SUCCESS);
+        pending.setOutputJson(outputJson);
+        pending.setEndTime(LocalDateTime.now());
+
+        // 扣费：校验通过、真正开始执行之前扣一次；与原对话同一轮时不重复扣费
+        Long chatSessionId = chatChain ? run.getSessionId() : null;
+        LocalDateTime roundStart = chatChain
+                ? (run.getStartTime() != null ? run.getStartTime() : run.getCreateTime())
+                : null;
+        QuotaService.ResumeChargeReservation reservation = quotaService.reserveResumeCharge(
+                SecurityUtils.currentUsername(), null, "hitl:workflow:" + runId, chatSessionId, roundStart);
+        quotaService.attachSession(reservation.charge(), run.getSessionId());
+        QuotaChargeTracker.Handle billing = chargeTracker.track(reservation.charge());
 
         WorkflowGraph graph;
         try {
@@ -549,31 +619,85 @@ public class WorkflowService {
             throw new BusinessException("运行图快照解析失败：" + e.getMessage());
         }
         GraphValidator.GraphValidationResult vr = graphValidator.validate(graph);
-        return new HitlResumeState(run, graph, vr, ctx);
+        return new HitlResumeState(run, graph, vr, ctx, billing);
     }
 
     private void executeHitlResume(HitlResumeState rs,
                                    BiConsumer<String, Map<String, Object>> sink,
                                    boolean completeEmitter) {
+        QuotaChargeTracker.Handle billing = rs.billing();
+        // 首个非空最终答复下发即视为本轮有效产出，结算扣费
+        BiConsumer<String, Map<String, Object>> metered = (event, payload) -> {
+            if (WorkflowEvents.WORKFLOW_COMPLETE.equals(event) && payload != null) {
+                Object out = payload.get("output");
+                if (out != null && !String.valueOf(out).isBlank()) {
+                    billing.markOutput();
+                }
+            }
+            sink.accept(event, payload);
+        };
+        boolean pausedAgain = false;
         try {
-            engine.resume(rs.run, rs.graph, rs.validation, rs.ctx, sink);
+            engine.resume(rs.run, rs.graph, rs.validation, rs.ctx, metered);
         } catch (PauseSignal pause) {
+            pausedAgain = true;
             log.info("工作流 {} 再次暂停", rs.run.getId());
         } catch (Exception e) {
             log.error("工作流恢复执行失败 runId={}", rs.run.getId(), e);
             markRunFailed(rs.run.getId(), e.getMessage());
-            DomainEventPublisher.emit(sink, WorkflowEvents.WORKFLOW_FAILED, Map.of(
+            DomainEventPublisher.emit(metered, WorkflowEvents.WORKFLOW_FAILED, Map.of(
                     "runId", rs.run.getId(),
                     "error", e.getMessage() != null ? e.getMessage() : "未知错误"));
         } finally {
+            // 再次停在 HITL 不算失败：保持未结算，等下一次续跑复用，避免反复扣退
+            if (pausedAgain) {
+                billing.finishOnPause();
+            } else {
+                billing.finish();
+            }
             if (completeEmitter) completeEmitter(rs.run.getId());
+        }
+    }
+
+    /** 事务提交闸门：afterCommit 放行；回滚或超时不放行。无事务时立即放行。 */
+    private static CompletableFuture<Void> commitGate() {
+        CompletableFuture<Void> gate = new CompletableFuture<>();
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            gate.complete(null);
+            return gate;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                gate.complete(null);
+            }
+
+            @Override
+            public void afterCompletion(int status) {
+                if (status != TransactionSynchronization.STATUS_COMMITTED) {
+                    gate.completeExceptionally(new IllegalStateException("HITL 确认事务未提交"));
+                }
+            }
+        });
+        return gate;
+    }
+
+    private static boolean awaitCommit(CompletableFuture<Void> gate) {
+        try {
+            gate.get(COMMIT_GATE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            return true;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        } catch (Exception e) {
+            return false;
         }
     }
 
     /** HITL 续跑所需的运行状态快照 */
     private record HitlResumeState(WorkflowRun run, WorkflowGraph graph,
                                    GraphValidator.GraphValidationResult validation,
-                                   RunContext ctx) {
+                                   RunContext ctx, QuotaChargeTracker.Handle billing) {
     }
 
     /**

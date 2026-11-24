@@ -54,12 +54,16 @@ class WorkflowServiceDebugTest {
     private WorkflowEngine engine;
     @Mock
     private ThreadPoolTaskExecutor workflowExecutor;
+    @Mock
+    private com.wgh.rag.quota.service.QuotaService quotaService;
+    @Mock
+    private com.wgh.rag.quota.service.QuotaChargeTracker chargeTracker;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     private WorkflowService service() {
         return new WorkflowService(workflowMapper, versionMapper, runMapper, nodeRunMapper,
-                graphValidator, engine, objectMapper, workflowExecutor);
+                graphValidator, engine, objectMapper, workflowExecutor, quotaService, chargeTracker);
     }
 
     private Workflow workflow() {

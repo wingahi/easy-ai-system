@@ -99,9 +99,14 @@ final class ChatAnswerStreamer {
                 }
                 attempt.appendPartial(partialResponse);
                 try {
+                    // 先落库「已产出」再下发首包：崩溃发生在发送与结算之间时，流水已是 SETTLED，
+                    // 补偿作业不会把已交付内容误退（output_at 同步写入，崩溃后仍可见）。
+                    if (partialResponse != null && !partialResponse.isBlank()) {
+                        ctx.markOutput();
+                    }
                     ctx.events.send(ChatEvents.CONTENT, Map.of("text", partialResponse));
                 } catch (IOException e) {
-                    // 客户端断开：停止后续 token 消费，并把已生成内容落库为 STOPPED
+                    // 仅总开关关闭（未包装可重放出口）时可能触发：按旧语义取消并落 STOPPED
                     log.warn("发送SSE数据失败，取消生成: {}", e.getMessage());
                     ctx.cancellation.cancel();
                 }
@@ -114,7 +119,7 @@ final class ChatAnswerStreamer {
                     return;
                 }
                 if (ctx.cancellation.isCancelled()) {
-                    log.info("客户端已断开，跳过完成事件下发: attempt={}/{}", attempt.index() + 1, attempt.total());
+                    log.info("已取消，跳过完成事件下发: attempt={}/{}", attempt.index() + 1, attempt.total());
                     attempt.deactivate();
                     return;
                 }
@@ -156,11 +161,11 @@ final class ChatAnswerStreamer {
                         }
                     }
 
-                    // 执行所有工具调用（客户端已断开时不再继续执行，避免无谓的副作用与配额消耗）
+                    // 执行所有工具调用（显式停止后才终止，客户端断开不再视为取消）
                     List<ToolExecutionResultMessage> toolResults = new ArrayList<>();
                     for (ToolExecutionRequest req : toolCalls) {
                         if (ctx.cancellation.isCancelled()) {
-                            log.info("客户端已断开，终止剩余工具调用");
+                            log.info("已取消，终止剩余工具调用");
                             attempt.deactivate();
                             return;
                         }
@@ -185,7 +190,7 @@ final class ChatAnswerStreamer {
                     }
 
                     if (ctx.cancellation.isCancelled()) {
-                        log.info("客户端已断开，不再发起下一轮模型调用");
+                        log.info("已取消，不再发起下一轮模型调用");
                         attempt.deactivate();
                         return;
                     }
@@ -199,7 +204,12 @@ final class ChatAnswerStreamer {
                             .toolSpecifications(ctx.toolSpecs)
                             .build();
 
-                    streamChatWithTools(streamingModel, nextRequest, ctx, attempt);
+                    try {
+                        streamChatWithTools(streamingModel, nextRequest, ctx, attempt);
+                    } catch (RuntimeException e) {
+                        // 下一轮发起的同步异常：按既有语义走故障转移/失败收尾（含计费收口）
+                        failoverOf(ctx).handleFailure(attempt, e);
+                    }
                     return;
                 }
 
@@ -232,72 +242,82 @@ final class ChatAnswerStreamer {
             return;
         }
 
-        List<Map<String, Object>> sourceList = ChatCitationAssembler.buildSourcesList(ctx.retrievedMatches);
-        ctx.events.send(ChatEvents.SOURCES, sourceList);
+        try {
+            List<Map<String, Object>> sourceList = ChatCitationAssembler.buildSourcesList(ctx.retrievedMatches);
+            ctx.events.send(ChatEvents.SOURCES, sourceList);
 
-        // 正确率同样依赖知识库 —— 未关联知识库时不下发/不持久化
-        boolean hasKb = !ctx.kbIds.isEmpty();
-        Double accuracyRate = hasKb
-                ? ChatCitationAssembler.calculateAccuracyRate(fullAnswer, ctx.retrievedMatches) : null;
-        if (accuracyRate != null) {
-            ctx.events.send(ChatEvents.ACCURACY, Map.of("accuracyRate", accuracyRate));
-        }
+            // 正确率同样依赖知识库 —— 未关联知识库时不下发/不持久化
+            boolean hasKb = !ctx.kbIds.isEmpty();
+            Double accuracyRate = hasKb
+                    ? ChatCitationAssembler.calculateAccuracyRate(fullAnswer, ctx.retrievedMatches) : null;
+            if (accuracyRate != null) {
+                ctx.events.send(ChatEvents.ACCURACY, Map.of("accuracyRate", accuracyRate));
+            }
 
-        RetrievalMetricsCalculator.RetrievalMetrics retrievalMetrics = null;
-        if (ctx.evaluationScheme.hasMetrics() && hasKb) {
-            retrievalMetrics = RetrievalMetricsCalculator.compute(fullAnswer, ctx.retrievedMatches);
-            ctx.events.send(ChatEvents.METRICS, Map.of(
-                    "mrr", retrievalMetrics.mrr(),
-                    "ndcg", retrievalMetrics.ndcg(),
-                    "citedCount", retrievalMetrics.citedCount(),
-                    "totalRetrieved", retrievalMetrics.totalRetrieved()
-            ));
-        }
+            RetrievalMetricsCalculator.RetrievalMetrics retrievalMetrics = null;
+            if (ctx.evaluationScheme.hasMetrics() && hasKb) {
+                retrievalMetrics = RetrievalMetricsCalculator.compute(fullAnswer, ctx.retrievedMatches);
+                ctx.events.send(ChatEvents.METRICS, Map.of(
+                        "mrr", retrievalMetrics.mrr(),
+                        "ndcg", retrievalMetrics.ndcg(),
+                        "citedCount", retrievalMetrics.citedCount(),
+                        "totalRetrieved", retrievalMetrics.totalRetrieved()
+                ));
+            }
 
-        com.wgh.rag.chat.entity.ChatMessage saved = messageStore.saveAssistantMessage(
-                ctx.session, fullAnswer, sourceList, ctx.hitRate, accuracyRate,
-                retrievalMetrics != null ? retrievalMetrics.mrr() : null,
-                retrievalMetrics != null ? retrievalMetrics.ndcg() : null);
+            com.wgh.rag.chat.entity.ChatMessage saved = messageStore.saveAssistantMessage(
+                    ctx.session, fullAnswer, sourceList, ctx.hitRate, accuracyRate,
+                    retrievalMetrics != null ? retrievalMetrics.mrr() : null,
+                    retrievalMetrics != null ? retrievalMetrics.ndcg() : null);
 
-        costSettler.settle(ctx.window, ctx.userMessage, ctx.retrievedMatches, fullAnswer, saved,
-                ctx.state.inputTokens(), ctx.state.outputTokens(),
-                ctx.actualModel.get(), ctx.quotaUsername);
+            costSettler.settle(ctx.window, ctx.userMessage, ctx.retrievedMatches, fullAnswer, saved,
+                    ctx.state.inputTokens(), ctx.state.outputTokens(),
+                    ctx.actualModel.get(), ctx.quotaUsername);
 
-        // 语义缓存：写入问答对（缓存命中路径提前 return，不会走到这里）
-        if (Boolean.TRUE.equals(ctx.window.getSemanticCacheEnabled())) {
-            semanticCacheService.save(ctx.window.getId(), ctx.kbIds, ctx.userMessage, fullAnswer);
-        }
+            // 语义缓存：写入问答对（缓存命中路径提前 return，不会走到这里）
+            if (Boolean.TRUE.equals(ctx.window.getSemanticCacheEnabled())) {
+                semanticCacheService.save(ctx.window.getId(), ctx.kbIds, ctx.userMessage, fullAnswer);
+            }
 
-        Map<String, Object> doneData = new HashMap<>();
-        doneData.put("fullResponse", fullAnswer);
-        if (accuracyRate != null) doneData.put("accuracyRate", accuracyRate);
-        if (saved != null && saved.getId() != null) doneData.put("assistantMessageId", saved.getId());
-        ctx.events.send(ChatEvents.DONE, doneData);
+            Map<String, Object> doneData = new HashMap<>();
+            doneData.put("fullResponse", fullAnswer);
+            if (accuracyRate != null) doneData.put("accuracyRate", accuracyRate);
+            if (saved != null && saved.getId() != null) doneData.put("assistantMessageId", saved.getId());
+            ctx.events.send(ChatEvents.DONE, doneData);
 
-        if (ctx.evaluationScheme.hasLlmJudge()) {
-            evaluationService.runLlmJudgeAsync(ctx.window, ctx.userMessage, ctx.retrievedMatches,
-                    fullAnswer, ctx.events, saved);
-        } else {
-            ctx.events.completeQuietly();
+            if (ctx.evaluationScheme.hasLlmJudge()) {
+                evaluationService.runLlmJudgeAsync(ctx.window, ctx.userMessage, ctx.retrievedMatches,
+                        fullAnswer, ctx.events, saved);
+            } else {
+                ctx.events.completeQuietly();
+            }
+        } finally {
+            // 流正常结束：本轮不可能再产出，收口（有产出结算 / 无产出退款）
+            ctx.completeTurn();
         }
     }
 
     /**
-     * 用户停止/客户端断连的终态落库：保留已生成内容，状态标记 STOPPED，
-     * 并按实际产出估算 token 照常计入配额（不回滚为 0）。
+     * 用户主动停止的终态落库（explicit 取消；总开关关闭时也用于旧版断连）：保留已生成内容，
+     * 状态标记 STOPPED，并按实际产出估算 token 照常计入配额（不回滚为 0）。
      */
     private void persistStopped(ChatTurnContext ctx, FailoverAttempt attempt) {
         attempt.deactivate();
         String partial = attempt.snapshotContent();
-        log.info("生成已停止：保留 {} 字符，session={}", partial.length(),
-                ctx.session != null ? ctx.session.getId() : null);
-        com.wgh.rag.chat.entity.ChatMessage saved = messageStore.saveAssistantMessage(
-                ctx.session, partial, List.of(), ctx.hitRate, null, null, null,
-                ChatConstants.MESSAGE_STATUS_STOPPED);
-        costSettler.settle(ctx.window, ctx.userMessage, ctx.retrievedMatches, partial, saved,
-                ctx.state.inputTokens(), ctx.state.outputTokens(),
-                ctx.actualModel.get(), ctx.quotaUsername);
-        // SSE 连接已断开，不再发送 done / judge 事件
+        try {
+            log.info("生成已停止：保留 {} 字符，session={}", partial.length(),
+                    ctx.session != null ? ctx.session.getId() : null);
+            com.wgh.rag.chat.entity.ChatMessage saved = messageStore.saveAssistantMessage(
+                    ctx.session, partial, List.of(), ctx.hitRate, null, null, null,
+                    ChatConstants.MESSAGE_STATUS_STOPPED);
+            costSettler.settle(ctx.window, ctx.userMessage, ctx.retrievedMatches, partial, saved,
+                    ctx.state.inputTokens(), ctx.state.outputTokens(),
+                    ctx.actualModel.get(), ctx.quotaUsername);
+            // SSE 连接已断开，不再发送 done / judge 事件
+        } finally {
+            // 生成终止：本轮不可能再产出，收口
+            ctx.completeTurn();
+        }
     }
 
     /**
@@ -308,18 +328,25 @@ final class ChatAnswerStreamer {
         if (partial.isBlank()) {
             // 无内容可保留，前端仅展示错误提示，不写入空消息
             ctx.cancellation.markFinalized();
+            // 异常终止且无产出：本轮不可能再产出，收口（退款）
+            ctx.completeTurn();
             return;
         }
         // 抢占终态落库权；若已被取消路径处理则不重复写入
         if (!ctx.cancellation.markFinalized()) {
             return;
         }
-        com.wgh.rag.chat.entity.ChatMessage saved = messageStore.saveAssistantMessage(
-                ctx.session, partial, List.of(), ctx.hitRate, null, null, null,
-                ChatConstants.MESSAGE_STATUS_FAILED);
-        costSettler.settle(ctx.window, ctx.userMessage, ctx.retrievedMatches, partial, saved,
-                ctx.state.inputTokens(), ctx.state.outputTokens(),
-                ctx.actualModel.get(), ctx.quotaUsername);
+        try {
+            com.wgh.rag.chat.entity.ChatMessage saved = messageStore.saveAssistantMessage(
+                    ctx.session, partial, List.of(), ctx.hitRate, null, null, null,
+                    ChatConstants.MESSAGE_STATUS_FAILED);
+            costSettler.settle(ctx.window, ctx.userMessage, ctx.retrievedMatches, partial, saved,
+                    ctx.state.inputTokens(), ctx.state.outputTokens(),
+                    ctx.actualModel.get(), ctx.quotaUsername);
+        } finally {
+            // 异常终止：本轮不可能再产出，收口（已产出则结算）
+            ctx.completeTurn();
+        }
     }
 
     /** 聊天链路故障转移监听器：把切链状态机接到聊天专属的 SSE / 落库 / 指标语义上。 */
@@ -380,6 +407,8 @@ final class ChatAnswerStreamer {
             ctx.cancellation.markFinalized();
             ctx.events.sendQuietly(ChatEvents.ERROR, Map.of("text", message));
             ctx.events.completeQuietly();
+            // 全部模型失败：本轮不可能再产出，收口（无产出退款）
+            ctx.completeTurn();
         }
 
         @Override

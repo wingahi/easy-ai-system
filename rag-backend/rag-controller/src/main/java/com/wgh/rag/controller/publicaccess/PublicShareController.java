@@ -7,11 +7,14 @@ import com.wgh.rag.chat.mapper.ChatSessionMapper;
 import com.wgh.rag.chat.service.ChatWindowService;
 import com.wgh.rag.chat.service.RagChatService;
 import com.wgh.rag.chat.service.stream.ChatStreamHandle;
+import com.wgh.rag.chat.service.stream.StreamBillingObserver;
+import com.wgh.rag.chat.service.stream.replay.StreamReplayService;
 import com.wgh.rag.common.exception.BusinessException;
 import com.wgh.rag.common.result.PageResult;
 import com.wgh.rag.common.result.Result;
 import com.wgh.rag.common.result.ResultCode;
 import com.wgh.rag.controller.support.SseExecutionStreamSink;
+import com.wgh.rag.controller.support.SseReplaySupport;
 import com.wgh.rag.kb.entity.KnowledgeBase;
 import com.wgh.rag.kb.mapper.KnowledgeBaseMapper;
 import com.wgh.rag.kb.service.RagRetrieveService;
@@ -72,6 +75,8 @@ public class PublicShareController {
     private final ClientIpResolver clientIpResolver;
     private final EmbedAccessService embedAccessService;
     private final SharePasswordGuard passwordGuard;
+    /** SSE 事件重放：按 Last-Event-ID 从共享缓冲补齐缺失事件 */
+    private final StreamReplayService streamReplayService;
 
     @Operation(summary = "分享链接元信息（免登录）")
     @GetMapping("/{token}")
@@ -219,16 +224,30 @@ public class PublicShareController {
             @PathVariable String token,
             @RequestHeader(value = PASSWORD_HEADER, required = false) String password,
             @RequestHeader(value = VISITOR_HEADER, required = false) String visitorId,
+            @RequestHeader(value = SseReplaySupport.HEADER_LAST_EVENT_ID, required = false) String lastEventIdHeader,
             @RequestBody Map<String, Object> body,
             HttpServletRequest request) {
         ShareLink link = access(token, password, ShareLinkService.SCOPE_WINDOW, request);
         rateLimiter.acquire("share-chat", token + ":" + clientIpResolver.resolve(request),
                 request.getRequestURI());
-        shareLinkService.consumeUse(link);
 
         ChatWindow window = loadTargetWindow(link);
         String identifier = visitorIdentifier(visitorId);
         Long sessionId = parseLong(body.get("sessionId"));
+        String lastEventId = StreamReplayService.resolveLastEventId(lastEventIdHeader, body.get("lastEventId"));
+        if (lastEventId != null) {
+            // 重连只回放/跟随已有事件，不重复消费分享次数、不重新生成
+            if (sessionId == null) {
+                throw new BusinessException(ResultCode.PARAM_ERROR, "重连需要提供 sessionId");
+            }
+            windowService.getOwnedSession(window.getId(), sessionId, identifier);
+            SseEmitter resumeEmitter = new SseEmitter(ChatConstants.SSE_TIMEOUT_MS);
+            streamReplayService.resume(StreamReplayService.KIND_CHAT, sessionId, lastEventId,
+                    new SseExecutionStreamSink(resumeEmitter), SseReplaySupport.wireCloseFlag(resumeEmitter));
+            return resumeEmitter;
+        }
+        shareLinkService.consumeUse(link);
+
         if (sessionId == null) {
             sessionId = windowService.createSession(window.getId(), identifier).getId();
         } else {
@@ -237,16 +256,32 @@ public class PublicShareController {
 
         String message = body.get("message") == null ? "" : String.valueOf(body.get("message")).trim();
         if (message.isEmpty()) {
+            shareLinkService.releaseUse(link);
             throw new BusinessException(ResultCode.PARAM_ERROR, "消息内容不能为空");
         }
         List<String> images = parseImages(body.get("imageUrls"));
 
+        // 无产出不计费：本次对话未下发任何有效内容时，回补准入时占用的分享次数
+        StreamBillingObserver billingObserver = new StreamBillingObserver() {
+            @Override
+            public void onNoOutput() {
+                shareLinkService.releaseUse(link);
+            }
+        };
+
         // 匿名身份注入：让既有 RagChatService 复用配额（按访客统计），不改动其内部实现
         final Long chatSessionId = sessionId;
         SseEmitter emitter = new SseEmitter(ChatConstants.SSE_TIMEOUT_MS);
-        ChatStreamHandle handle = asVisitor(identifier, () ->
-                ragChatService.streamChat(window.getId(), chatSessionId, message, true, images,
-                        new SseExecutionStreamSink(emitter)));
+        ChatStreamHandle handle;
+        try {
+            handle = asVisitor(identifier, () ->
+                    ragChatService.streamChat(window.getId(), chatSessionId, message, true, images,
+                            new SseExecutionStreamSink(emitter), billingObserver));
+        } catch (RuntimeException e) {
+            // 准入阶段同步失败（配额超限/事务回滚/执行器拒绝）：释放本次占用的分享次数
+            shareLinkService.releaseUse(link);
+            throw e;
+        }
         emitter.onTimeout(handle::onTimeout);
         emitter.onError(handle::onError);
         emitter.onCompletion(handle::onCompletion);

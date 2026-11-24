@@ -51,6 +51,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.function.BiConsumer;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.atLeastOnce;
@@ -263,11 +264,39 @@ class WorkflowEngineTest {
                 List.of(node("s", "START"), hitl, node("e", "END")),
                 List.of(edge("s", "h"), edge("h", "e")));
 
-        engine.run(newRun(), graph, "数据", validate(graph), this::sink);
+        // 暂停信号必须上抛给调用方（worker 线程吞掉会导致上层误判「正常结束」并触发无产出退款）
+        assertThatThrownBy(() -> engine.run(newRun(), graph, "数据", validate(graph), this::sink))
+                .isInstanceOf(PauseSignal.class)
+                .hasMessageContaining("HITL");
 
         Map<String, Object> pending = lastPayload("node_hitl_pending");
         assertThat(pending.get("nodeId")).isEqualTo("h");
         assertThat(pending.get("prompt")).isEqualTo("请确认：数据");
+        assertThat(eventNames()).doesNotContain("workflow_complete");
+        assertThat(lastRunUpdate().getStatus()).isEqualTo("PAUSED");
+    }
+
+    /** 双 HITL：恢复后再次停在 HITL，暂停信号仍必须上抛，不能被当成「运行正常结束」 */
+    @Test
+    void resume_secondHitl_pausesAgainAndPropagatesSignal() {
+        WorkflowGraph graph = graph(
+                List.of(node("s", "START"),
+                        node("h1", "HITL", Map.of("prompt", "第一次确认")),
+                        node("h2", "HITL", Map.of("prompt", "第二次确认")),
+                        node("e", "END")),
+                List.of(edge("s", "h1"), edge("h1", "h2"), edge("h2", "e")));
+
+        RunContext ctx = new RunContext();
+        ctx.getVars().put("input", "数据");
+        ctx.getVars().put("lastOutput", "第一次确认输入");
+        ctx.getNodeOutputs().put("h1", Map.of("text", "第一次确认输入"));
+        ctx.setPendingNodeIds(new ArrayList<>(List.of("h2")));
+
+        assertThatThrownBy(() -> engine.resume(newRun(), graph, validate(graph), ctx, this::sink))
+                .isInstanceOf(PauseSignal.class)
+                .hasMessageContaining("HITL");
+
+        assertThat(lastPayload("node_hitl_pending").get("nodeId")).isEqualTo("h2");
         assertThat(eventNames()).doesNotContain("workflow_complete");
         assertThat(lastRunUpdate().getStatus()).isEqualTo("PAUSED");
     }

@@ -26,13 +26,42 @@ public interface QuotaChargeMapper extends BaseMapper<QuotaChargeEntity> {
     QuotaChargeEntity selectByChargeId(@Param("chargeId") String chargeId);
 
     /**
-     * 执行已开始，扣费生效：仅允许从 CHARGED 迁移。
+     * 按任务标识取最近一条流水（HITL 续跑按「运行」维度复用一个轮次）。
+     */
+    @Select("""
+            SELECT * FROM wgh_quota_charge
+             WHERE task_id = #{taskId} AND deleted = 0
+             ORDER BY create_time DESC, id DESC
+             LIMIT 1
+            """)
+    QuotaChargeEntity selectLatestByTaskId(@Param("taskId") String taskId);
+
+    /**
+     * 取某个会话在指定时刻之前最近的一条流水（用于识别「本轮对话是否已结算」）。
+     */
+    @Select("""
+            SELECT * FROM wgh_quota_charge
+             WHERE session_id = #{sessionId}
+               AND create_time <= #{before}
+               AND deleted = 0
+             ORDER BY create_time DESC, id DESC
+             LIMIT 1
+            """)
+    QuotaChargeEntity selectLatestBySessionBefore(@Param("sessionId") Long sessionId,
+                                                  @Param("before") LocalDateTime before);
+
+    /**
+     * 执行已开始且已产出，扣费生效：仅允许从 CHARGED 迁移。
+     *
+     * <p>同一条 UPDATE 同时写入 {@code output_at}（首次产出时间），使「已产出」在崩溃后仍可见；
+     * 补偿作业只扫描 {@code output_at IS NULL} 的流水，已产出的一律不自动退款。</p>
      *
      * @return 1 表示迁移成功；0 表示已结算/已退款/不存在
      */
     @Update("""
             UPDATE wgh_quota_charge
                SET status = 'SETTLED',
+                   output_at = COALESCE(output_at, CURRENT_TIMESTAMP),
                    update_time = CURRENT_TIMESTAMP
              WHERE charge_id = #{chargeId}
                AND status = 'CHARGED'
@@ -55,9 +84,46 @@ public interface QuotaChargeMapper extends BaseMapper<QuotaChargeEntity> {
                    update_time = CURRENT_TIMESTAMP
              WHERE charge_id = #{chargeId}
                AND status IN ('CHARGED', 'REFUND_FAILED')
+               AND output_at IS NULL
                AND deleted = 0
             """)
     int markRefunded(@Param("chargeId") String chargeId);
+
+    /**
+     * 人工退款：允许从 CHARGED / REFUND_FAILED / DEAD 迁移（DEAD 只允许人工触发，自动作业不扫描）。
+     *
+     * @return 1 表示本次完成退款迁移；0 表示已退/已结算/不存在
+     */
+    @Update("""
+            UPDATE wgh_quota_charge
+               SET status = 'REFUNDED',
+                   next_retry_at = NULL,
+                   last_error = NULL,
+                   finish_time = CURRENT_TIMESTAMP,
+                   update_time = CURRENT_TIMESTAMP
+             WHERE charge_id = #{chargeId}
+               AND status IN ('CHARGED', 'REFUND_FAILED', 'DEAD')
+               AND deleted = 0
+            """)
+    int markRefundedManually(@Param("chargeId") String chargeId);
+
+    /**
+     * 人工核销：确认该笔扣费有效，置 SETTLED 并结束补偿流程（不改变计数）。
+     *
+     * @return 1 表示核销成功；0 表示已结算/已退款/不存在
+     */
+    @Update("""
+            UPDATE wgh_quota_charge
+               SET status = 'SETTLED',
+                   next_retry_at = NULL,
+                   last_error = #{note},
+                   finish_time = COALESCE(finish_time, CURRENT_TIMESTAMP),
+                   update_time = CURRENT_TIMESTAMP
+             WHERE charge_id = #{chargeId}
+               AND status IN ('CHARGED', 'REFUND_FAILED', 'DEAD')
+               AND deleted = 0
+            """)
+    int markWrittenOff(@Param("chargeId") String chargeId, @Param("note") String note);
 
     /**
      * 退款失败：置 REFUND_FAILED 并累计重试次数。
@@ -158,8 +224,8 @@ public interface QuotaChargeMapper extends BaseMapper<QuotaChargeEntity> {
             SELECT * FROM wgh_quota_charge
              WHERE deleted = 0
                AND (
-                    (status = 'CHARGED' AND create_time <= #{protectionCutoff})
-                    OR (status = 'REFUND_FAILED'
+                    (status = 'CHARGED' AND output_at IS NULL AND create_time <= #{protectionCutoff})
+                    OR (status = 'REFUND_FAILED' AND output_at IS NULL
                         AND create_time <= #{protectionCutoff}
                         AND (next_retry_at IS NULL OR next_retry_at <= #{now}))
                )

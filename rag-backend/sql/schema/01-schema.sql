@@ -2,7 +2,7 @@
 -- WGH RAG System 数据库结构定义（新库基线）
 -- PostgreSQL 15+ with pgvector
 -- 包含完整 DDL + 索引 + 全字段 COMMENT，不依赖任何历史库状态
--- 用法：psql -d wgh_rag -f rag-backend/sql/schema/01-schema.sql  （已切换到目标库）
+-- 用法：psql -d wgh_rag_prod -f rag-backend/sql/schema/01-schema.sql  （已切换到目标库）
 -- ========================================================
 
 CREATE EXTENSION IF NOT EXISTS vector;
@@ -967,6 +967,7 @@ CREATE TABLE IF NOT EXISTS wgh_quota_usage (
   date_key VARCHAR(10) NOT NULL,
   chat_count INT DEFAULT 0,
   token_used BIGINT DEFAULT 0,
+  usage_epoch BIGINT DEFAULT 0,
   create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   create_by VARCHAR(50) DEFAULT 'system',
@@ -974,6 +975,7 @@ CREATE TABLE IF NOT EXISTS wgh_quota_usage (
   deleted SMALLINT DEFAULT 0,
   CONSTRAINT uk_quota_user_date UNIQUE (username, date_key)
 );
+COMMENT ON COLUMN wgh_quota_usage.usage_epoch IS '计数纪元：管理端重置用量时 +1；退款按扣费时的纪元精确回退';
 COMMENT ON TABLE wgh_quota_usage IS '用户周期配额用量（聊天条数 + token 消耗，按 date_key 聚合）';
 COMMENT ON COLUMN wgh_quota_usage.username IS '用户名';
 COMMENT ON COLUMN wgh_quota_usage.date_key IS '周期键（日=yyyy-MM-dd，月=yyyy-MM，服务器本地时区）';
@@ -1019,6 +1021,8 @@ CREATE TABLE IF NOT EXISTS wgh_quota_charge (
   retry_count INT NOT NULL DEFAULT 0,
   next_retry_at TIMESTAMP,
   last_error VARCHAR(500),
+  usage_epoch BIGINT,
+  output_at TIMESTAMP,
   finish_time TIMESTAMP,
   create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -1038,6 +1042,7 @@ COMMENT ON COLUMN wgh_quota_charge.task_id IS '关联任务标识（预留：后
 COMMENT ON COLUMN wgh_quota_charge.retry_count IS '退款补偿已重试次数';
 COMMENT ON COLUMN wgh_quota_charge.next_retry_at IS '下次可补偿时间（退避）';
 COMMENT ON COLUMN wgh_quota_charge.last_error IS '最近一次退款失败原因（截断）';
+COMMENT ON COLUMN wgh_quota_charge.usage_epoch IS '扣费时的计数纪元快照；NULL 表示存量流水，不做纪元校验';
 COMMENT ON COLUMN wgh_quota_charge.finish_time IS '终态时间（REFUNDED / DEAD）';
 COMMENT ON COLUMN wgh_quota_charge.deleted IS '逻辑删除（0 未删除 / 1 已删除）';
 CREATE UNIQUE INDEX IF NOT EXISTS uk_quota_charge_id
@@ -1618,4 +1623,31 @@ CREATE INDEX IF NOT EXISTS idx_exec_job_tenant
   WHERE deleted = 0;
 CREATE INDEX IF NOT EXISTS idx_exec_job_lease
   ON wgh_execution_job(status, lease_expire_time)
+  WHERE deleted = 0;
+
+-- ==================== 调度：实例注册与心跳 ====================
+CREATE TABLE IF NOT EXISTS wgh_scheduler_instance (
+  instance_id VARCHAR(64) PRIMARY KEY,
+  started_at TIMESTAMP NOT NULL DEFAULT now(),
+  last_heartbeat TIMESTAMP NOT NULL DEFAULT now(),
+  stopped_at TIMESTAMP,
+  lanes_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  version INT NOT NULL DEFAULT 0,
+  create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+COMMENT ON TABLE wgh_scheduler_instance IS '调度实例注册与心跳（存活判定；失联实例持有的作业会被提前回收）';
+COMMENT ON COLUMN wgh_scheduler_instance.instance_id IS '实例标识（配置 instance-id，缺省 HOSTNAME-pid；与 wgh_execution_job.lease_owner 同口径）';
+COMMENT ON COLUMN wgh_scheduler_instance.started_at IS '本次进程启动时间；同实例重启后覆盖';
+COMMENT ON COLUMN wgh_scheduler_instance.last_heartbeat IS '最近一次心跳时间（数据库时间）；超过存活阈值即判定失联';
+COMMENT ON COLUMN wgh_scheduler_instance.stopped_at IS '实例下线标记时间（失联检测或主动下线）；非空时其残留作业会被回收';
+COMMENT ON COLUMN wgh_scheduler_instance.lanes_json IS '车道运行时快照（在途/排队/线程数），仅供管理端观测';
+COMMENT ON COLUMN wgh_scheduler_instance.version IS '心跳/状态更新版本号，每次更新 +1';
+CREATE INDEX IF NOT EXISTS idx_sched_instance_heartbeat
+  ON wgh_scheduler_instance(last_heartbeat);
+CREATE INDEX IF NOT EXISTS idx_exec_job_lease_owner
+  ON wgh_execution_job(lease_owner, status)
+  WHERE deleted = 0 AND lease_owner IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_exec_job_type_update
+  ON wgh_execution_job(job_type, update_time DESC)
   WHERE deleted = 0;

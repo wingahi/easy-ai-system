@@ -31,6 +31,10 @@ final class NoResultChatStep implements ChatTurnStep {
         }
 
         String noResultMsg = promptAssembler.noResultMessage(ctx.hasKb);
+        if (noResultMsg != null && !noResultMsg.isBlank()) {
+            // 先落库「已产出」再下发兜底话术，避免崩溃后流水仍为 CHARGED 被补偿退款
+            ctx.markOutput();
+        }
         ctx.events.send(ChatEvents.CONTENT, Map.of("text", noResultMsg));
         ctx.events.send(ChatEvents.SOURCES, List.of());
 

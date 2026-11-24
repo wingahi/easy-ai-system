@@ -35,10 +35,19 @@ public class ChatWorkflowService {
 
     /**
      * 聊天窗口触发工作流：复用当前请求的 SSE 通道，每条用户消息运行一次完整工作流。
+     *
+     * <p>运行异步进行：{@code onOutput} 在有效最终文本下发后回调，
+     * {@code onFinished} 在工作流到达终态（完成/失败/取消/暂停）时回调且只回调一次，
+     * 供调用方在「本轮不可能再产出」时收口计费。</p>
+     *
+     * @param onOutput   有效最终文本下发后的计费回调，可为 {@code null}
+     * @param onFinished 运行终态回调，可为 {@code null}
      */
     public WorkflowRun stream(ChatWindow window, ChatSession session, String userMessage,
-                              ChatEventPublisher events, boolean safeMode) {
-        StreamContext ctx = new StreamContext(events, session, new AtomicBoolean(false));
+                              ChatEventPublisher events, boolean safeMode, Runnable onOutput,
+                              Runnable onFinished) {
+        StreamContext ctx = new StreamContext(events, session, new AtomicBoolean(false),
+                new AtomicBoolean(false), onOutput, onFinished);
         return workflowService.runForChat(window.getWorkflowId(), userMessage, session.getId(), safeMode,
                 (event, payload) -> handleEvent(ctx, event, payload));
     }
@@ -55,7 +64,8 @@ public class ChatWorkflowService {
         ChatSession session = sessionStore.findById(sessionId);
 
         ChatEventPublisher events = new ChatEventPublisher(eventSink);
-        StreamContext ctx = new StreamContext(events, session, new AtomicBoolean(false));
+        StreamContext ctx = new StreamContext(events, session, new AtomicBoolean(false),
+                new AtomicBoolean(false), null, null);
         events.sendQuietly(ChatEvents.START, Map.of("sessionId", sessionId == null ? "" : sessionId));
         workflowService.resumeForChat(runId, userInput, (event, payload) -> handleEvent(ctx, event, payload));
     }
@@ -72,12 +82,15 @@ public class ChatWorkflowService {
                 ctx.events.sendQuietly(event, data);
                 // 暂停后本次运行不会再有事件：主动结束 SSE，前端弹窗确认后另开续跑通道
                 ctx.events.completeQuietly();
+                // 本次运行到此为止，本轮不可能再产出：收口计费
+                finishOnce(ctx);
             }
             case WorkflowEvents.WORKFLOW_COMPLETE -> {
                 ctx.events.sendQuietly(event, data);
                 if (ctx.terminal.compareAndSet(false, true)) {
                     finishSuccess(ctx, data);
                 }
+                finishOnce(ctx);
             }
             case WorkflowEvents.WORKFLOW_FAILED -> {
                 ctx.events.sendQuietly(event, data);
@@ -87,6 +100,7 @@ public class ChatWorkflowService {
                     ctx.events.sendQuietly(ChatEvents.DONE, Map.of("fullResponse", ""));
                     ctx.events.completeQuietly();
                 }
+                finishOnce(ctx);
             }
             case WorkflowEvents.WORKFLOW_CANCELLED -> {
                 ctx.events.sendQuietly(event, data);
@@ -94,14 +108,24 @@ public class ChatWorkflowService {
                     ctx.events.sendQuietly(ChatEvents.DONE, Map.of("fullResponse", ""));
                     ctx.events.completeQuietly();
                 }
+                finishOnce(ctx);
             }
             default -> ctx.events.sendQuietly(event, data);
         }
     }
 
+    /** 工作流终态回调（只回调一次）：通知调用方本轮已不可能再产出。 */
+    private void finishOnce(StreamContext ctx) {
+        if (ctx.finished.compareAndSet(false, true) && ctx.onFinished != null) {
+            ctx.onFinished.run();
+        }
+    }
+
     private void finishSuccess(StreamContext ctx, Map<String, Object> payload) {
         String output = payload.get("output") == null ? "" : String.valueOf(payload.get("output"));
-        if (output.isBlank()) {
+        // 只有工作流真正产出了非空文本才算有效产出；占位话术仅用于展示，不计费
+        boolean produced = !output.isBlank();
+        if (!produced) {
             output = "工作流执行完成，但没有产出文本内容。";
         }
         if (ctx.session != null) {
@@ -112,6 +136,9 @@ public class ChatWorkflowService {
 
         // 与普通聊天一致：最终文本通过 content 事件下发（JSON 包装避免换行丢失）
         ctx.events.sendQuietly(ChatEvents.CONTENT, Map.of("text", output));
+        if (produced && ctx.onOutput != null) {
+            ctx.onOutput.run();
+        }
         ctx.events.sendQuietly(ChatEvents.SOURCES, List.of());
         Map<String, Object> done = new HashMap<>();
         done.put("fullResponse", output);
@@ -120,7 +147,8 @@ public class ChatWorkflowService {
         ctx.events.completeQuietly();
     }
 
-    /** 单次运行的事件流上下文（终态只处理一次） */
-    private record StreamContext(ChatEventPublisher events, ChatSession session, AtomicBoolean terminal) {
+    /** 单次运行的事件流上下文（终态只处理一次、终态回调只触发一次） */
+    private record StreamContext(ChatEventPublisher events, ChatSession session, AtomicBoolean terminal,
+                                 AtomicBoolean finished, Runnable onOutput, Runnable onFinished) {
     }
 }

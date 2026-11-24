@@ -276,15 +276,35 @@ class QuotaServiceTest {
     }
 
     @Test
-    @DisplayName("数据库异常时不阻断主流程")
-    void dbFailureIsSwallowed() {
+    @DisplayName("计数写入异常：默认拒绝（业务码 5004），不再静默免费放行")
+    void dbFailureRejectsByDefault() {
         when(userQuotaConfigMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
         when(quotaUsageMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
         when(quotaUsageMapper.incrementChatAtomically(anyString(), anyString(), anyInt()))
                 .thenThrow(new RuntimeException("db down"));
 
-        quotaService.checkAndIncrementChat("alice"); // 不抛出
-        quotaService.addTokens("alice", 10); // 不抛出
+        BusinessException ex = (BusinessException) org.assertj.core.api.Assertions
+                .catchThrowable(() -> quotaService.checkAndIncrementChat("alice"));
+
+        assertThat(ex.getCode()).isEqualTo(ResultCode.QUOTA_SERVICE_UNAVAILABLE.getCode());
+        verify(ragMetrics).recordQuotaCountFailure("reject");
+        verify(chargeLedger, never()).create(anyString(), anyString(), any(), any(), any());
+        quotaService.addTokens("alice", 10); // token 累加仍只记日志，不阻断
+    }
+
+    @Test
+    @DisplayName("计数写入异常：开关切回放行时不阻断且不产生扣费")
+    void dbFailureFailOpenWhenConfigured() {
+        quotaProperties.setFailOpenOnCountError(true);
+        when(userQuotaConfigMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
+        when(quotaUsageMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
+        when(quotaUsageMapper.incrementChatAtomically(anyString(), anyString(), anyInt()))
+                .thenThrow(new RuntimeException("db down"));
+
+        assertThat(quotaService.checkAndIncrementChat("alice")).isNull();
+
+        verify(ragMetrics).recordQuotaCountFailure("allow");
+        verify(chargeLedger, never()).create(anyString(), anyString(), any(), any(), any());
     }
 
     // ========== 8. 周期切换 / 用量重置 ==========
@@ -435,7 +455,7 @@ class QuotaServiceTest {
     void checkAndIncrementChat_returnsCharge() {
         when(quotaUsageMapper.incrementChatAtomically(eq("alice"), anyString(), anyInt())).thenReturn(1);
         QuotaService.QuotaCharge expected = new QuotaService.QuotaCharge("alice", "2026-11-20", "charge-x");
-        when(chargeLedger.create(eq("alice"), anyString(), isNull())).thenReturn(expected);
+        when(chargeLedger.create(eq("alice"), anyString(), isNull(), isNull(), isNull())).thenReturn(expected);
 
         QuotaService.QuotaCharge charge = quotaService.checkAndIncrementChat("alice");
 
@@ -443,14 +463,14 @@ class QuotaServiceTest {
         assertThat(charge.username()).isEqualTo("alice");
         assertThat(charge.periodKey()).isNotBlank();
         assertThat(charge.chargeId()).isEqualTo("charge-x");
-        verify(chargeLedger).create(eq("alice"), anyString(), isNull());
+        verify(chargeLedger).create(eq("alice"), anyString(), isNull(), isNull(), isNull());
     }
 
     @Test
     @DisplayName("流水落库失败：无事务时补偿减一，不阻断聊天")
     void checkAndIncrementChat_ledgerFailureCompensatesWithoutTransaction() {
         when(quotaUsageMapper.incrementChatAtomically(eq("alice"), anyString(), anyInt())).thenReturn(1);
-        when(chargeLedger.create(eq("alice"), anyString(), any()))
+        when(chargeLedger.create(eq("alice"), anyString(), any(), any(), any()))
                 .thenThrow(new RuntimeException("ledger down"));
 
         // 单测没有真实事务上下文，按「无事务」分支补偿减一

@@ -102,6 +102,7 @@ class QuotaRefundJobHandlerTest {
         when(chargeLedger.findDueRefunds(any(), any(), anyInt()))
                 .thenReturn(List.of(row("charge-1", QuotaConstants.CHARGE_REFUND_FAILED, 4)));
         when(chargeLedger.refund(any())).thenThrow(new RuntimeException("db down"));
+        when(chargeLedger.markDead(eq("charge-1"), anyString())).thenReturn(true);
 
         handler.execute(readyContext());
 

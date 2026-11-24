@@ -49,6 +49,8 @@ class RuntimeOwnershipTest {
     @Mock
     private AgentOrchestrator agentOrchestrator;
     @Mock
+    private com.wgh.rag.agent.service.AgentHitlConfirmService agentHitlConfirmService;
+    @Mock
     private AgentProperties agentProperties;
     @Mock
     private RagChatService ragChatService;
@@ -154,7 +156,7 @@ class RuntimeOwnershipTest {
     }
 
     private AgentController agentController() {
-        return new AgentController(agentOrchestrator, planMapper, stepMapper, agentProperties,
+        return new AgentController(agentOrchestrator, agentHitlConfirmService, planMapper, stepMapper, agentProperties,
                 ragChatService, chatWindowService, modelRouter);
     }
 

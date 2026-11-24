@@ -8,6 +8,7 @@ import com.wgh.rag.agent.entity.AgentStep;
 import com.wgh.rag.agent.mapper.AgentPlanMapper;
 import com.wgh.rag.agent.mapper.AgentStepMapper;
 import com.wgh.rag.agent.service.AgentOrchestrator;
+import com.wgh.rag.agent.service.AgentHitlConfirmService;
 import com.wgh.rag.auth.constant.AuthConstants;
 import com.wgh.rag.chat.entity.ChatWindow;
 import com.wgh.rag.chat.service.ChatWindowService;
@@ -41,6 +42,7 @@ import java.util.stream.Collectors;
 public class AgentController {
 
     private final AgentOrchestrator agentOrchestrator;
+    private final AgentHitlConfirmService agentHitlConfirmService;
     private final AgentPlanMapper planMapper;
     private final AgentStepMapper stepMapper;
     private final AgentProperties agentProperties;
@@ -92,7 +94,7 @@ public class AgentController {
         return Result.success(state);
     }
 
-    /** HITL 步骤用户确认后继续执行。 */
+    /** HITL 步骤用户确认后继续执行（确认状态推进与扣费同一事务）。 */
     @PostMapping("/steps/{stepId}/hitl-confirm")
     @Audit(action = "AGENT_STEP_HITL_CONFIRM", resourceType = "AGENT_STEP")
     public Result<Map<String, Object>> hitlConfirm(
@@ -107,27 +109,44 @@ public class AgentController {
         assertPlanAccessible(plan);
 
         String userInput = body != null ? body.getOrDefault("userInput", "") : "";
-        double threshold = planMapper.selectById(plan.getId()) != null
-                ? agentProperties.getDefaultReflectionThreshold() : 7.0;
+        double threshold = agentProperties.getDefaultReflectionThreshold();
 
         // 恢复入口没有实时窗口上下文，按 plan.chatWindowId 回查窗口路由组，保持与首轮一致的切链口径
         WindowChains chains = resolveWindowChains(plan);
 
-        // 用 no-op sink（REST 不走 SSE）
-        AgentStepResult result = agentOrchestrator.resume(
-                plan.getId(), userInput,
-                threshold, agentProperties.getDefaultReflectionRetries(),
-                null, chains.executor(), chains.planner());
+        // 原子确认 + 扣费一次（重复确认/并发确认由条件更新闸门拦截）
+        AgentHitlConfirmService.Claim claim = agentHitlConfirmService.prepare(stepId, userInput);
+
+        AgentStepResult result;
+        try {
+            // 用 no-op sink（REST 不走 SSE）
+            result = agentOrchestrator.resumeConfirmed(
+                    claim.plan(), claim.step(), userInput,
+                    threshold, agentProperties.getDefaultReflectionRetries(),
+                    null, chains.executor(), chains.planner());
+        } catch (RuntimeException e) {
+            // 执行失败且未产出：立即退款，补偿作业兜底
+            claim.billing().finish();
+            throw e;
+        }
 
         Map<String, Object> resp = new HashMap<>();
-        resp.put("planId", plan.getId());
+        resp.put("planId", claim.plan().getId());
         resp.put("stepId", stepId);
         resp.put("resultStatus", result != null ? result.getStatus() : "PAUSED");
         String finalText = result != null && result.getFinalText() != null ? result.getFinalText() : "";
         resp.put("finalText", finalText);
-        // REST 通道没有 SSE，需把恢复执行后的最终答复补写回聊天会话
         if (!finalText.isBlank()) {
+            // 最终答复即有效产出：结算本次续跑计费
+            claim.billing().markOutput();
+            // REST 通道没有 SSE，需把恢复执行后的最终答复补写回聊天会话
             ragChatService.appendAssistantMessage(plan.getSessionId(), finalText);
+        }
+        if (result == null) {
+            // 再次停在 HITL：不算失败，保持未结算，等下一次续跑复用
+            claim.billing().finishOnPause();
+        } else {
+            claim.billing().finish();
         }
         return Result.success(resp);
     }

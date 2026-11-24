@@ -94,6 +94,9 @@ final class LlmChatStep implements ChatTurnStep {
 
             // 首 token 前失败（异步 onError 或同步异常）统一回到故障转移链路；
             // 链路只有 1 个模型时等价于单模型调用
+            // 流式调用是异步的：本轮收口交给流式终态（完成/停止/失败），
+            // 编排线程返回后不得提前判定「无产出」
+            ctx.deferCompletion();
             answerStreamer.start(ctx, 0);
         } catch (Exception e) {
             metrics.recordChatError("llm");
@@ -105,6 +108,8 @@ final class LlmChatStep implements ChatTurnStep {
             } catch (IOException ex) {
                 log.error("发送错误失败", ex);
             }
+            // 同步失败即未发起流式调用：本轮不可能再有产出，由本处收口
+            ctx.completeTurn();
         }
         return true;
     }

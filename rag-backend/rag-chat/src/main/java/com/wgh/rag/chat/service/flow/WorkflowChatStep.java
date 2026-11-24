@@ -24,7 +24,17 @@ final class WorkflowChatStep implements ChatTurnStep {
             return false;
         }
         ctx.metricCtx.route().set("workflow");
-        chatWorkflowService.stream(ctx.window, ctx.session, ctx.userMessage, ctx.events, ctx.shareMode);
+        // 工作流运行在线程池异步执行：本轮收口交给工作流终态事件，
+        // 编排线程返回后不得提前判定「无产出」
+        ctx.deferCompletion();
+        try {
+            chatWorkflowService.stream(ctx.window, ctx.session, ctx.userMessage, ctx.events, ctx.shareMode,
+                    ctx::markOutput, ctx::completeTurn);
+        } catch (RuntimeException e) {
+            // 提交运行即同步失败：本轮不可能再有产出，由本处收口
+            ctx.completeTurn();
+            throw e;
+        }
         return true;
     }
 }

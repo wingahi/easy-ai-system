@@ -76,6 +76,54 @@ public class QuotaAdminController {
         return Result.success(new PageResult<>(total, current, pageSize, rows));
     }
 
+    @Operation(summary = "查询单笔扣费流水（含退款上下文）")
+    @GetMapping("/refunds/{chargeId}")
+    public Result<Map<String, Object>> getRefund(@PathVariable String chargeId) {
+        quotaAdminGuard.requireAdmin();
+        QuotaChargeEntity row = quotaService.findCharge(chargeId);
+        if (row == null) {
+            throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "扣费流水不存在");
+        }
+        return Result.success(toRefundRow(row));
+    }
+
+    /**
+     * 人工退款：按该笔流水对应的一次计费回退计数，允许处理 DEAD（自动补偿已不再扫描）。
+     * <p>仅管理员可操作，并记录审计日志。</p>
+     */
+    @Operation(summary = "人工退款单笔扣费流水（按该笔流水的一次计费，允许 DEAD）")
+    @PostMapping("/refunds/{chargeId}/refund")
+    @Audit(action = "QUOTA_CHARGE_MANUAL_REFUND", resourceType = "QUOTA")
+    public Result<Map<String, Object>> manualRefund(@PathVariable String chargeId,
+                                                    @RequestBody(required = false) Map<String, String> body) {
+        quotaAdminGuard.requireAdmin();
+        String reason = body == null ? null : body.get("reason");
+        QuotaService.ManualChargeResult result = quotaService.refundManually(chargeId, reason);
+        Map<String, Object> data = toRefundRow(quotaService.findCharge(chargeId));
+        data.put("previousStatus", result.previousStatus());
+        data.put("result", result.result());
+        data.put("applied", result.applied());
+        return Result.success(data);
+    }
+
+    /**
+     * 人工核销：确认该笔扣费有效，结束补偿流程（不改变计数）。
+     */
+    @Operation(summary = "人工核销单笔扣费流水（确认计费有效）")
+    @PostMapping("/refunds/{chargeId}/write-off")
+    @Audit(action = "QUOTA_CHARGE_WRITE_OFF", resourceType = "QUOTA")
+    public Result<Map<String, Object>> writeOff(@PathVariable String chargeId,
+                                                @RequestBody(required = false) Map<String, String> body) {
+        quotaAdminGuard.requireAdmin();
+        String reason = body == null ? null : body.get("reason");
+        QuotaService.ManualChargeResult result = quotaService.writeOff(chargeId, reason);
+        Map<String, Object> data = toRefundRow(quotaService.findCharge(chargeId));
+        data.put("previousStatus", result.previousStatus());
+        data.put("result", result.result());
+        data.put("applied", result.applied());
+        return Result.success(data);
+    }
+
     @Operation(summary = "分页列出用户配额（自定义配置 ∪ 有用量记录的用户）")
     @GetMapping("/users")
     public Result<PageResult<Map<String, Object>>> listUsers(
@@ -160,6 +208,7 @@ public class QuotaAdminController {
         data.put("windowId", row.getWindowId());
         data.put("sessionId", row.getSessionId());
         data.put("retryCount", row.getRetryCount());
+        data.put("usageEpoch", row.getUsageEpoch());
         data.put("nextRetryAt", row.getNextRetryAt());
         data.put("lastError", row.getLastError());
         data.put("createTime", row.getCreateTime());

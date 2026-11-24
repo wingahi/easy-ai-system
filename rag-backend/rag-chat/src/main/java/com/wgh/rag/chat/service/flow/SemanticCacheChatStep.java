@@ -46,6 +46,10 @@ final class SemanticCacheChatStep implements ChatTurnStep {
     private void sendCachedAnswer(ChatTurnContext ctx, SemanticCacheService.CacheHit hit) {
         ctx.events.sendQuietly("cache",
                 Map.of("cacheHit", true, "similarity", hit.score()));
+        if (hit.answer() != null && !hit.answer().isBlank()) {
+            // 先落库「已产出」再下发答案，避免崩溃后流水仍为 CHARGED 被补偿退款
+            ctx.markOutput();
+        }
         ctx.events.sendQuietly("content", Map.of("text", hit.answer()));
         ctx.events.sendQuietly("sources", List.of());
         com.wgh.rag.chat.entity.ChatMessage saved = messageStore.saveAssistantMessage(

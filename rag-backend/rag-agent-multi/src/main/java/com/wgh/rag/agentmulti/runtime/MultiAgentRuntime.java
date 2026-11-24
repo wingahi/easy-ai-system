@@ -22,9 +22,14 @@ import com.wgh.rag.agentmulti.support.SseEventSender;
 import com.wgh.rag.agentmulti.crew.CrewCoordinator;
 import com.wgh.rag.agentmulti.graph.GraphCoordinator;
 import com.wgh.rag.agentmulti.groupchat.GroupChatCoordinator;
+import com.wgh.rag.common.exception.BusinessException;
+import com.wgh.rag.common.security.SecurityUtils;
+import com.wgh.rag.quota.service.QuotaChargeTracker;
+import com.wgh.rag.quota.service.QuotaService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.time.LocalDateTime;
@@ -54,6 +59,8 @@ public class MultiAgentRuntime {
 
     private final MultiAgentService multiAgentService;
     private final AgentStepCheckpointService checkpointService;
+    private final QuotaService quotaService;
+    private final QuotaChargeTracker chargeTracker;
 
     private final CrewCoordinator crewCoordinator;
     private final GraphCoordinator graphCoordinator;
@@ -164,19 +171,74 @@ public class MultiAgentRuntime {
     }
 
     /** 从 HITL 断点恢复 */
-    public String resumeFromHitl(String runId, String userInput, SseEmitter emitter) {
+    /**
+     * HITL 确认的「状态推进 + 扣费」事务边界。
+     *
+     * <p>先校验 PAUSED，再用条件 UPDATE 原子推进；计数与流水同事务提交。
+     * 同一运行再次暂停后再次确认时，复用未决流水，不叠加扣费。</p>
+     */
+    @Transactional
+    public HitlResumeClaim prepareHitlResume(String runId) {
+        MultiAgentRun run = loadRun(runId);
+        if (run == null) {
+            throw new BusinessException("Run 不存在");
+        }
+        if (!MultiAgentConstants.STATUS_PAUSED.equals(run.getStatus())) {
+            throw new BusinessException("Run 非 PAUSED 状态");
+        }
+        if (runMapper.claimPausedForResume(runId) == 0) {
+            throw new BusinessException("该 HITL 确认已处理，请刷新运行状态");
+        }
+        run.setStatus(MultiAgentConstants.STATUS_RUNNING);
+
+        QuotaService.ResumeChargeReservation reservation = quotaService.reserveResumeCharge(
+                SecurityUtils.currentUsername(), run.getChatWindowId(), "hitl:multi-agent:" + runId, null, null);
+        quotaService.attachSession(reservation.charge(), run.getSessionId());
+        log.info("多 Agent HITL 确认计费: runId={}, alreadySettled={}, charge={}", runId,
+                reservation.alreadySettled(),
+                reservation.charge() == null ? null : reservation.charge().chargeId());
+        return new HitlResumeClaim(run, chargeTracker.track(reservation.charge()));
+    }
+
+    /** 确认结果：已推进的运行与计费句柄。 */
+    public record HitlResumeClaim(MultiAgentRun run, QuotaChargeTracker.Handle billing) {
+    }
+
+    /** 绑定产出观察者：输出类事件成功下发后结算扣费。 */
+    public void bindOutputObserver(SseEmitter emitter, Runnable observer) {
+        sse.bindOutputObserver(emitter, observer);
+    }
+
+    /** 解绑产出观察者。 */
+    public void unbindOutputObserver(SseEmitter emitter) {
+        sse.unbindOutputObserver(emitter);
+    }
+
+    /** 发送 SSE 错误事件（保持既有非 PAUSED 场景的协议语义）。 */
+    public void sendSseError(SseEmitter emitter, String runId, String error) {
+        sse.send(emitter, MultiAgentEvents.MULTI_AGENT_ERROR, Map.of("runId", runId, "error", error));
+    }
+
+    /**
+     * HITL 恢复（SSE）。
+     *
+     * @param claim 已由 {@link #prepareHitlResume(String)} 完成状态推进与扣费的凭据；
+     *              为 {@code null} 时沿用旧语义（校验并推进 PAUSED）。
+     */
+    public String resumeFromHitl(String runId, String userInput, SseEmitter emitter, HitlResumeClaim claim) {
         MultiAgentRun run = loadRun(runId);
         if (run == null) {
             sse.send(emitter, MultiAgentEvents.MULTI_AGENT_ERROR, Map.of("runId", runId, "error", "Run 不存在"));
             return runId;
         }
-        if (!MultiAgentConstants.STATUS_PAUSED.equals(run.getStatus())) {
-            sse.send(emitter, MultiAgentEvents.MULTI_AGENT_ERROR, Map.of("runId", runId, "error", "Run 非 PAUSED 状态"));
-            return runId;
+        if (claim == null) {
+            if (!MultiAgentConstants.STATUS_PAUSED.equals(run.getStatus())) {
+                sse.send(emitter, MultiAgentEvents.MULTI_AGENT_ERROR, Map.of("runId", runId, "error", "Run 非 PAUSED 状态"));
+                return runId;
+            }
+            run.setStatus(MultiAgentConstants.STATUS_RUNNING);
+            runMapper.updateById(run);
         }
-
-        run.setStatus(MultiAgentConstants.STATUS_RUNNING);
-        runMapper.updateById(run);
 
         List<AgentInstance> agents = parseAgents(run.getAgentsJson());
         MultiAgentContext ctx = new MultiAgentContext(objectMapper);
@@ -214,6 +276,11 @@ public class MultiAgentRuntime {
         }
 
         return run.getRunId();
+    }
+
+    /** 兼容旧调用：未预扣费的恢复入口。 */
+    public String resumeFromHitl(String runId, String userInput, SseEmitter emitter) {
+        return resumeFromHitl(runId, userInput, emitter, null);
     }
 
     /** 取消运行 */

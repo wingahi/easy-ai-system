@@ -161,22 +161,57 @@ public class AgentOrchestrator {
         List<AgentStep> dbSteps = planLifecycleService.loadSteps(planId);
         AgentStep hitlStep = hitlGate.findHitlPendingStep(dbSteps);
 
+        // 用户确认：注入用户输入，恢复 plan 为 RUNNING
+        hitlGate.confirmAndResumePlan(plan, hitlStep, userInput);
+
+        return executeRemaining(plan, dbSteps, hitlStep, userInput,
+                reflectionThreshold, reflectionMaxRetries, sse, executorChain, plannerChain);
+    }
+
+    /**
+     * 已由确认事务完成状态推进（步骤 SUCCESS + 计划 RUNNING）后的续跑入口。
+     * <p>不再重复状态迁移，只执行命中 HITL 步骤之后的剩余步骤。</p>
+     */
+    public AgentStepResult resumeConfirmed(AgentPlan plan, AgentStep hitlStep, String userInput,
+                                           double reflectionThreshold, int reflectionMaxRetries,
+                                           BiConsumer<String, Map<String, Object>> sse,
+                                           List<LlmModel> executorChain, List<LlmModel> plannerChain) {
+        List<AgentStep> dbSteps = planLifecycleService.loadSteps(plan.getId());
+        return executeRemaining(plan, dbSteps, hitlStep, userInput,
+                reflectionThreshold, reflectionMaxRetries, sse, executorChain, plannerChain);
+    }
+
+    /** 执行 HITL 步骤之后的剩余步骤（确认动作已落库）。 */
+    private AgentStepResult executeRemaining(AgentPlan plan, List<AgentStep> dbSteps, AgentStep hitlStep,
+                                             String userInput, double reflectionThreshold,
+                                             int reflectionMaxRetries,
+                                             BiConsumer<String, Map<String, Object>> sse,
+                                             List<LlmModel> executorChain, List<LlmModel> plannerChain) {
         // 构建上下文：已完成步骤的结构化状态块
         List<AgentStateBlockBuilder.Entry> stateEntries = new ArrayList<>();
         for (AgentStep s : dbSteps) {
+            if (hitlStep.getId() != null && hitlStep.getId().equals(s.getId())) {
+                continue;
+            }
             if (AgentConstants.STATUS_SUCCESS.equals(s.getStatus()) && s.getResultSummary() != null) {
                 stateEntries.add(new AgentStateBlockBuilder.Entry(
                         s.getStepId(), s.getTitle(), s.getResultSummary()));
             }
         }
-
-        // 用户确认：注入用户输入，恢复 plan 为 RUNNING
-        hitlGate.confirmAndResumePlan(plan, hitlStep, userInput);
         stateEntries.add(new AgentStateBlockBuilder.Entry(
                 hitlStep.getStepId(), hitlStep.getTitle(), "用户确认输入: " + userInput));
 
         // 构建剩余步骤列表：HITL_PENDING 之后的 PENDING 步骤
-        int hitlIndex = dbSteps.indexOf(hitlStep);
+        int hitlIndex = -1;
+        for (int i = 0; i < dbSteps.size(); i++) {
+            if (hitlStep.getId().equals(dbSteps.get(i).getId())) {
+                hitlIndex = i;
+                break;
+            }
+        }
+        if (hitlIndex < 0) {
+            throw new AgentException("plan_json 与数据库步骤不一致，无法续跑");
+        }
         List<AgentStep> remainingDbSteps = dbSteps.subList(hitlIndex + 1, dbSteps.size())
                 .stream().filter(s -> AgentConstants.STATUS_PENDING.equals(s.getStatus())).toList();
 
@@ -188,7 +223,7 @@ public class AgentOrchestrator {
                 .map(s -> stepDtoById.get(s.getStepId()))
                 .filter(Objects::nonNull).toList();
 
-        eventPublisher.emit(sse, AgentEvents.PLAN_RESUMED, Map.of("planId", planId, "fromStepId", hitlStep.getStepId()));
+        eventPublisher.emit(sse, AgentEvents.PLAN_RESUMED, Map.of("planId", plan.getId(), "fromStepId", hitlStep.getStepId()));
 
         // 继续执行剩余步骤
         return executeSteps(plan, remainingStepDTOs, plan.getLlmModelId(),

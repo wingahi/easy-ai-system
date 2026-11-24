@@ -108,6 +108,8 @@ final class AgentChatStep implements ChatTurnStep {
             if (!agentFinalText.isBlank()) {
                 messageStore.saveAssistantMessage(ctx.session, agentFinalText, sourceList,
                         ctx.hitRate, agentAccuracy, null, null);
+                // Agent 链路不逐字下发 content，最终答复即有效产出
+                ctx.markOutput();
             } else {
                 log.warn("Agent 未产出最终文本（可能 HITL 暂停），跳过助手消息落库: session={}",
                         ctx.session.getId());

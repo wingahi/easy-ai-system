@@ -43,7 +43,10 @@ public enum ResultCode {
     // LLM相关 5xxx
     LLM_CALL_FAILED(5001, "大模型调用失败"),
     LLM_TIMEOUT(5002, "大模型调用超时"),
-    EMBEDDING_FAILED(5003, "嵌入模型调用失败");
+    EMBEDDING_FAILED(5003, "嵌入模型调用失败"),
+
+    // 计费相关 5xxx
+    QUOTA_SERVICE_UNAVAILABLE(5004, "计费服务暂不可用，请稍后重试");
 
     private final Integer code;
     private final String message;

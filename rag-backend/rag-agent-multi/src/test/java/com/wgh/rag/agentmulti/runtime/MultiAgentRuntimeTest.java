@@ -43,13 +43,18 @@ class MultiAgentRuntimeTest {
     private GraphCoordinator graphCoordinator;
     @Mock
     private GroupChatCoordinator groupChatCoordinator;
+    @Mock
+    private com.wgh.rag.quota.service.QuotaService quotaService;
+    @Mock
+    private com.wgh.rag.quota.service.QuotaChargeTracker chargeTracker;
 
     private MultiAgentRuntime runtime;
 
     @BeforeEach
     void setUp() {
         runtime = new MultiAgentRuntime(runMapper, stepMapper, new ObjectMapper(), sse,
-                multiAgentService, checkpointService, crewCoordinator, graphCoordinator, groupChatCoordinator);
+                multiAgentService, checkpointService, quotaService, chargeTracker,
+                crewCoordinator, graphCoordinator, groupChatCoordinator);
     }
 
     /** newRunId：连续生成 100 个互不重复 */

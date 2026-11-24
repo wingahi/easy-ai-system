@@ -46,8 +46,12 @@ public class RagMetrics {
 
     /** 配额超限次数（type: chat/token） */
     public static final String QUOTA_EXCEEDED = "wgh.quota.exceeded";
-    /** 统一执行器拒绝后的配额退款结果（result=refunded/duplicate/nothing_to_refund/failed） */
+    /** 统一执行器拒绝后的配额退款结果（result=refunded/duplicate/nothing_to_refund/failed/manual） */
     public static final String QUOTA_REFUND = "wgh.quota.refund";
+    /** 配额对话计数异常次数（result=reject 拒绝本次请求 / allow 按 fail-open 放行） */
+    public static final String QUOTA_COUNT_FAILURE = "wgh.quota.count.failure";
+    /** 管理端人工核销次数（确认扣费有效，不退款） */
+    public static final String QUOTA_WRITE_OFF = "wgh.quota.write_off";
 
     /** 公开访问请求量（dimension: share-token/share-ip/share-chat/api-key/api-ip 等） */
     public static final String PUBLIC_ACCESS_REQUESTS = "wgh.public.access.requests";
@@ -64,12 +68,19 @@ public class RagMetrics {
     /** 存储孤儿对象数（action: detected/deleted/delete_failed/skipped_young） */
     public static final String STORAGE_ORPHANS = "wgh.storage.orphans";
 
+    /** 用户信息缓存访问（result: hit/miss/db_load/refill/refill_failed/lock_wait/lock_lost/degraded/evict/evict_failed） */
+    public static final String USER_CACHE = "wgh.user.cache";
+
     /** 共享状态存储降级次数（store: public-access/cancellation；reason: disabled/error） */
     public static final String STATE_STORE_FALLBACKS = "wgh.state.store.fallbacks";
     /** 共享状态存储操作数（store；op: rate-limit/increment/get/set/delete/cancel；backend: redis/memory） */
     public static final String STATE_STORE_OPS = "wgh.state.store.ops";
     /** 对话取消次数（source: client-disconnect/explicit；backend: redis/memory） */
     public static final String CHAT_CANCELLATIONS = "wgh.chat.cancellations";
+    /** SSE 事件重放缓冲操作数（kind: chat/workflow-hitl；result: append/detached/gap/incomplete/detach_cancel） */
+    public static final String STREAM_REPLAY_EVENTS = "wgh.stream.replay.events";
+    /** SSE 事件重放降级次数（kind；reason: disabled/error） */
+    public static final String STREAM_REPLAY_FALLBACKS = "wgh.stream.replay.fallbacks";
 
     /** 长期记忆写入条数（scope: SESSION/TASK） */
     public static final String AGENT_MEMORY_WRITES = "wgh.agent.memory.writes";
@@ -193,6 +204,14 @@ public class RagMetrics {
         counter(QUOTA_REFUND, "result", result == null ? "unknown" : result).increment();
     }
 
+    public void recordQuotaCountFailure(String result) {
+        counter(QUOTA_COUNT_FAILURE, "result", result == null ? "unknown" : result).increment();
+    }
+
+    public void recordQuotaWriteOff() {
+        counter(QUOTA_WRITE_OFF).increment();
+    }
+
     public void recordPublicAccess(String dimension) {
         counter(PUBLIC_ACCESS_REQUESTS, "dimension", dimension == null ? "unknown" : dimension).increment();
     }
@@ -227,6 +246,17 @@ public class RagMetrics {
         }
     }
 
+    // ==================== 用户信息缓存 ====================
+
+    /**
+     * 用户信息缓存访问计数。
+     * <p>result 为有限枚举（命中/未命中/回源/回填/锁等待/抢锁失败/降级/失效），
+     * 不写 userId，避免 Prometheus 序列爆炸。</p>
+     */
+    public void recordUserCache(String result) {
+        counter(USER_CACHE, "result", result == null ? "unknown" : result).increment();
+    }
+
     // ==================== 多实例共享状态 ====================
 
     /**
@@ -252,6 +282,27 @@ public class RagMetrics {
         counter(CHAT_CANCELLATIONS,
                 "source", source == null ? "unknown" : source,
                 "backend", backend == null ? "unknown" : backend).increment();
+    }
+
+    /**
+     * SSE 事件重放缓冲计数。
+     * <p>只记录条数（append）与状态事件（detached/gap/incomplete/detach_cancel），
+     * 标签取有限枚举，不写 streamId/sessionId。</p>
+     */
+    public void recordStreamReplayEvent(String kind, String result, long count) {
+        if (count <= 0) {
+            return;
+        }
+        counter(STREAM_REPLAY_EVENTS,
+                "kind", kind == null ? "unknown" : kind,
+                "result", result == null ? "unknown" : result).increment(count);
+    }
+
+    /** SSE 事件重放能力降级（reason: disabled=未启用 Redis，error=Redis 故障）。 */
+    public void recordStreamReplayFallback(String kind, String reason) {
+        counter(STREAM_REPLAY_FALLBACKS,
+                "kind", kind == null ? "unknown" : kind,
+                "reason", reason == null ? "unknown" : reason).increment();
     }
 
     // ==================== 长期记忆 ====================

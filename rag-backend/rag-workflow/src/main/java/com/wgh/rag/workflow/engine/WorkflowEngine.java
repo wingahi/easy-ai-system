@@ -536,6 +536,9 @@ public class WorkflowEngine {
         Set<String> submitted = ConcurrentHashMap.newKeySet();
         // 租约丢失/取消等致命信号：由 worker 记录，调度循环停止并最终上抛，不落业务终态
         AtomicReference<RuntimeException> fatal = new AtomicReference<>();
+        // HITL 暂停信号：节点在 worker 线程抛出，必须在调度循环收口后上抛给调用方，
+        // 否则调用方会把「再次暂停」误判为「正常结束」并触发无产出退款。
+        AtomicReference<PauseSignal> pauseSignal = new AtomicReference<>();
 
         // 先落一次游标：实例在第一个节点完成前崩溃也能从 START/当前 frontier 续跑
         snapshotCursor(ctx, frontier, pendingIn, submitted);
@@ -554,7 +557,7 @@ public class WorkflowEngine {
             Runnable dispatcher = () -> {
                 try {
                     while (true) {
-                        if (fatal.get() != null) {
+                        if (fatal.get() != null || pauseSignal.get() != null) {
                             return;
                         }
                         if (System.nanoTime() > deadlineNanos) {
@@ -596,7 +599,7 @@ public class WorkflowEngine {
                         final String dispatchNodeId = nodeId;
                         executor.submit(MdcContext.wrap(() -> executeOneNode(run, graph, nodeMap, outEdges, dispatchNodeId,
                                 ctx, sink, pendingIn, frontier, submitted, guard, executed,
-                                latch, nestingDepth, validation, lifecycle, fatal)));
+                                latch, nestingDepth, validation, lifecycle, fatal, pauseSignal)));
                     }
                 } catch (Throwable t) {
                     log.error("工作流调度线程异常", t);
@@ -611,6 +614,12 @@ public class WorkflowEngine {
         if (stop != null) {
             throw stop;
         }
+        // 暂停不是失败：调度循环收口后把 worker 线程记录的暂停信号交给调用方，
+        // 由调用方按「再次停在 HITL」处理（保留未决扣费，等下一次确认复用）。
+        PauseSignal pause = pauseSignal.get();
+        if (pause != null) {
+            throw pause;
+        }
     }
 
     private void executeOneNode(WorkflowRun run, WorkflowGraph graph,
@@ -621,7 +630,8 @@ public class WorkflowEngine {
                                 Set<String> submitted, AtomicInteger guard, AtomicInteger executed,
                                 CountDownLatch latch, int nestingDepth,
                                 GraphValidator.GraphValidationResult validation,
-                                RunLifecycle lifecycle, AtomicReference<RuntimeException> fatal) {
+                                RunLifecycle lifecycle, AtomicReference<RuntimeException> fatal,
+                                AtomicReference<PauseSignal> pauseSignal) {
         try {
             // 作业续跑：节点边界续租并响应取消；租约丢失时直接退出，不写业务终态
             lifecycle.throwIfCancelled();
@@ -773,9 +783,15 @@ public class WorkflowEngine {
         } catch (LeaseLostException | ExecutionCancelledException stop) {
             fatal.compareAndSet(null, stop);
         } catch (PauseSignal pause) {
-            // HITL：向上抛出给 dispatcher，外层 catch 后完成 emitter
-            throw pause;
+            // HITL：worker 线程不直接上抛（无人接收会被线程池吞掉），
+            // 记录暂停信号由调度循环停止派发并统一上抛。
+            pauseSignal.compareAndSet(null, pause);
         } catch (Throwable t) {
+            // 暂停后其它在途分支被中断属预期收口，不能把已持久化的 PAUSED 覆盖成 FAILED
+            if (pauseSignal.get() != null) {
+                log.debug("HITL 暂停后忽略在途节点异常 nodeId={}: {}", nodeId, t.getMessage());
+                return;
+            }
             log.error("节点执行异常 nodeId={}", nodeId, t);
             failRun(run, nodeId, "节点执行异常：" + t.getMessage(), sink);
         } finally {
