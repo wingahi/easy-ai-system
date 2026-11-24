@@ -498,6 +498,7 @@ CREATE TABLE IF NOT EXISTS wgh_tool (
   executor_config TEXT,
   status SMALLINT DEFAULT 1,
   is_example SMALLINT DEFAULT 0,
+  scope VARCHAR(16) NOT NULL DEFAULT 'tenant',
   visibility VARCHAR(16) NOT NULL DEFAULT 'PRIVATE',
   create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -518,6 +519,7 @@ COMMENT ON COLUMN wgh_tool.definition IS '工具定义 JSON（function schema / 
 COMMENT ON COLUMN wgh_tool.executor_config IS '执行器配置 JSON（endpoint / handler class / timeout 等）';
 COMMENT ON COLUMN wgh_tool.status IS '状态（1 启用 / 0 禁用）';
 COMMENT ON COLUMN wgh_tool.is_example IS '是否示例数据（0 否 / 1 是）';
+COMMENT ON COLUMN wgh_tool.scope IS '范围：platform 平台内置共享 / tenant 租户自建';
 COMMENT ON COLUMN wgh_tool.visibility IS '可见性：PRIVATE 仅自己 / TEAM 团队可读 / PUBLIC 公开可读';
 COMMENT ON COLUMN wgh_tool.create_time IS '创建时间';
 COMMENT ON COLUMN wgh_tool.update_time IS '更新时间';
@@ -916,6 +918,7 @@ COMMENT ON TABLE wgh_m_agent_crew IS '可复用的多 Agent Crew 配置模板';
 CREATE TABLE IF NOT EXISTS wgh_audit_log (
   id BIGSERIAL PRIMARY KEY,
   username VARCHAR(50),
+  tenant_id VARCHAR(64) NOT NULL DEFAULT 'default',
   action VARCHAR(50) NOT NULL,
   resource_type VARCHAR(50),
   resource_id VARCHAR(64),
@@ -929,6 +932,7 @@ CREATE TABLE IF NOT EXISTS wgh_audit_log (
   deleted SMALLINT DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_audit_username_create ON wgh_audit_log(username, create_time);
+CREATE INDEX IF NOT EXISTS idx_audit_tenant_create ON wgh_audit_log(tenant_id, create_time DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_action_create ON wgh_audit_log(action, create_time);
 COMMENT ON TABLE wgh_audit_log IS '审计日志（写操作留痕，异步写入）';
 COMMENT ON COLUMN wgh_audit_log.username IS '操作人用户名（未登录为 anonymous）';
@@ -1111,6 +1115,7 @@ CREATE TABLE IF NOT EXISTS wgh_prompt_template (
   variables VARCHAR(500),
   version INT DEFAULT 1,
   builtin SMALLINT DEFAULT 0,
+  scope VARCHAR(16) NOT NULL DEFAULT 'tenant',
   remark VARCHAR(500),
   visibility VARCHAR(16) NOT NULL DEFAULT 'PRIVATE',
   create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -1127,35 +1132,36 @@ COMMENT ON COLUMN wgh_prompt_template.content IS '模板内容（{{var}} 占位�
 COMMENT ON COLUMN wgh_prompt_template.variables IS '变量名 JSON 数组（保存时从 content 自动提取）';
 COMMENT ON COLUMN wgh_prompt_template.version IS '版本号（内容变更自动 +1）';
 COMMENT ON COLUMN wgh_prompt_template.builtin IS '是否内置模板（1 内置不可删除/改名，0 自定义）';
+COMMENT ON COLUMN wgh_prompt_template.scope IS '范围：platform 平台内置共享 / tenant 租户自建';
 COMMENT ON COLUMN wgh_prompt_template.remark IS '备注';
 COMMENT ON COLUMN wgh_prompt_template.visibility IS '可见性：PRIVATE 仅自己 / TEAM 团队可读 / PUBLIC 公开可读；内置模板固定 PUBLIC';
 
 -- 内置种子模板（幂等）
-INSERT INTO wgh_prompt_template (name, category, content, variables, builtin, remark, visibility)
+INSERT INTO wgh_prompt_template (name, category, content, variables, builtin, scope, remark, visibility)
 SELECT 'RAG问答助手', 'RAG', '你是知识库「{{kbName}}」的智能问答助手。
 要求：
 1. 仅依据检索到的知识库内容回答，不编造信息；
 2. 回答标注来源（知识库名 + 文件名）；
 3. 知识库内容不足时明确告知用户；
-4. 回答结构化、条理清晰，使用中文。', '["kbName"]', 1, '内置模板', 'PUBLIC'
+4. 回答结构化、条理清晰，使用中文。', '["kbName"]', 1, 'platform', '内置模板', 'PUBLIC'
 WHERE NOT EXISTS (SELECT 1 FROM wgh_prompt_template WHERE name = 'RAG问答助手');
 
-INSERT INTO wgh_prompt_template (name, category, content, variables, builtin, remark, visibility)
+INSERT INTO wgh_prompt_template (name, category, content, variables, builtin, scope, remark, visibility)
 SELECT '客服专员', '客服', '你是「{{kbName}}」的客服专员{{userName}}。
 要求：
 1. 语气友好专业，先共情再解决问题；
 2. 严格依据知识库内容作答，不确定的问题引导用户联系人工客服；
 3. 不承诺知识库之外的补偿、退款等事项；
-4. 每次回答控制在 300 字以内。', '["kbName","userName"]', 1, '内置模板', 'PUBLIC'
+4. 每次回答控制在 300 字以内。', '["kbName","userName"]', 1, 'platform', '内置模板', 'PUBLIC'
 WHERE NOT EXISTS (SELECT 1 FROM wgh_prompt_template WHERE name = '客服专员');
 
-INSERT INTO wgh_prompt_template (name, category, content, variables, builtin, remark, visibility)
+INSERT INTO wgh_prompt_template (name, category, content, variables, builtin, scope, remark, visibility)
 SELECT '内容总结专家', '总结', '你是内容总结专家。
 要求：
 1. 将检索到的内容浓缩为要点列表（3-7 条）；
 2. 保留关键数据、结论与来源；
 3. 去除重复与口水内容；
-4. 输出格式：先一句话总述，再分条列出要点。', '[]', 1, '内置模板', 'PUBLIC'
+4. 输出格式：先一句话总述，再分条列出要点。', '[]', 1, 'platform', '内置模板', 'PUBLIC'
 WHERE NOT EXISTS (SELECT 1 FROM wgh_prompt_template WHERE name = '内容总结专家');
 
 -- ============ 知识库标签 / 文档版本 ============
@@ -1232,6 +1238,32 @@ COMMENT ON COLUMN wgh_llm_model.route_priority IS '同组内优先级（升序�
 COMMENT ON COLUMN wgh_chat_window.model_route_group IS '指定模型路由组（优先于 llm_model_id：非空则走 ModelRouter 选链路）';
 
 
+-- ============ 多租户 ============
+
+CREATE TABLE IF NOT EXISTS wgh_tenant (
+    id                  BIGSERIAL PRIMARY KEY,
+    code                VARCHAR(64) NOT NULL,
+    name                VARCHAR(128) NOT NULL,
+    status              SMALLINT NOT NULL DEFAULT 1,
+    plan                VARCHAR(32) NOT NULL DEFAULT 'standard',
+    isolation_mode      VARCHAR(16) NOT NULL DEFAULT 'shared',
+    create_time         TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    update_time         TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    create_by           VARCHAR(64),
+    update_by           VARCHAR(64),
+    deleted             SMALLINT NOT NULL DEFAULT 0,
+    UNIQUE (code)
+);
+COMMENT ON TABLE wgh_tenant IS '租户目录（一个租户=一个企业/组织；业务表 tenant_id 存 code）';
+COMMENT ON COLUMN wgh_tenant.code IS '租户编码（全局唯一；单租户部署为 default）';
+COMMENT ON COLUMN wgh_tenant.status IS '状态：1-启用，0-停用（停用后其令牌与 API Key 一律拒绝）';
+COMMENT ON COLUMN wgh_tenant.isolation_mode IS '隔离模式：shared（默认）/ schema / database（阶段 4 预留）';
+CREATE INDEX IF NOT EXISTS idx_tenant_status ON wgh_tenant(status);
+
+INSERT INTO wgh_tenant (code, name, status, plan, isolation_mode)
+VALUES ('default', '默认租户', 1, 'standard', 'shared')
+ON CONFLICT (code) DO NOTHING;
+
 -- ============ 多用户与权限体系（RBAC） ============
 
 CREATE TABLE IF NOT EXISTS wgh_user (
@@ -1240,7 +1272,7 @@ CREATE TABLE IF NOT EXISTS wgh_user (
     password_hash       VARCHAR(256) NOT NULL,
     name                VARCHAR(64),
     email               VARCHAR(128),
-    tenant_id           VARCHAR(64),
+    tenant_id           VARCHAR(64) NOT NULL DEFAULT 'default',
     status              SMALLINT NOT NULL DEFAULT 1,
     oidc_subject        VARCHAR(256),
     oidc_issuer         VARCHAR(256),
@@ -1263,6 +1295,7 @@ COMMENT ON COLUMN wgh_user.expire_at IS '账号有效期，NULL 表示长期有�
 COMMENT ON COLUMN wgh_user.remark IS '备注';
 COMMENT ON COLUMN wgh_user.password_must_change IS '是否必须先改密：1=是（初始化创建/管理员重置口令），0=否';
 COMMENT ON COLUMN wgh_user.password_version IS '口令版本号：改密/重置/禁用时自增，用于失效已签发的本地会话凭证';
+CREATE INDEX IF NOT EXISTS idx_user_tenant ON wgh_user(tenant_id);
 
 CREATE TABLE IF NOT EXISTS wgh_role (
     id                  BIGSERIAL PRIMARY KEY,
@@ -1343,6 +1376,7 @@ CREATE TABLE IF NOT EXISTS wgh_api_key (
   expires_at     TIMESTAMP,
   revoked        SMALLINT NOT NULL DEFAULT 0,
   created_by     VARCHAR(64),
+  tenant_id      VARCHAR(64) NOT NULL DEFAULT 'default',
   last_used_time TIMESTAMP,
   ip_whitelist   TEXT,
   create_time    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -1361,6 +1395,7 @@ CREATE TABLE IF NOT EXISTS wgh_api_call_log (
   api_key_id    BIGINT,
   api_key_name  VARCHAR(100),
   username      VARCHAR(64),
+  tenant_id     VARCHAR(64) NOT NULL DEFAULT 'default',
   method        VARCHAR(10),
   path          VARCHAR(300),
   status_code   INT,
@@ -1374,6 +1409,8 @@ CREATE TABLE IF NOT EXISTS wgh_api_call_log (
 );
 COMMENT ON TABLE wgh_api_call_log IS '开放 API 调用日志（谁、接口、状态码、耗时）';
 CREATE INDEX IF NOT EXISTS idx_api_call_log_key ON wgh_api_call_log(api_key_id, create_time);
+CREATE INDEX IF NOT EXISTS idx_api_call_log_tenant ON wgh_api_call_log(tenant_id, create_time DESC);
+CREATE INDEX IF NOT EXISTS idx_api_key_tenant ON wgh_api_key(tenant_id);
 
 -- ============ URL / HTTP 数据源连接器（T08） ============
 
@@ -1651,3 +1688,165 @@ CREATE INDEX IF NOT EXISTS idx_exec_job_lease_owner
 CREATE INDEX IF NOT EXISTS idx_exec_job_type_update
   ON wgh_execution_job(job_type, update_time DESC)
   WHERE deleted = 0;
+
+-- ==================== 调度：租户策略与集群运行槽 ====================
+CREATE TABLE IF NOT EXISTS wgh_tenant_schedule_policy (
+  id BIGSERIAL PRIMARY KEY,
+  tenant_id VARCHAR(64) NOT NULL DEFAULT 'default',
+  lane VARCHAR(16) NOT NULL,
+  enabled SMALLINT NOT NULL DEFAULT 1,
+  max_concurrent INT NOT NULL DEFAULT 2,
+  max_queue INT NOT NULL DEFAULT 20,
+  weight INT NOT NULL DEFAULT 10,
+  priority_boost INT NOT NULL DEFAULT 0,
+  reject_policy VARCHAR(16) NOT NULL DEFAULT 'REJECT',
+  queue_timeout_seconds INT NOT NULL DEFAULT 300,
+  daily_job_limit INT NOT NULL DEFAULT 0,
+  rate_per_minute INT NOT NULL DEFAULT 0,
+  time_window_json JSONB,
+  remark VARCHAR(500),
+  version INT NOT NULL DEFAULT 0,
+  create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  create_by VARCHAR(50) DEFAULT 'system',
+  update_by VARCHAR(50) DEFAULT 'system',
+  deleted SMALLINT DEFAULT 0
+);
+COMMENT ON TABLE wgh_tenant_schedule_policy IS '租户车道调度策略（并发/排队/权重/拒绝方式；不追溯已提交作业）';
+COMMENT ON COLUMN wgh_tenant_schedule_policy.tenant_id IS '租户标识（与 wgh_execution_job.tenant_id 同口径）';
+COMMENT ON COLUMN wgh_tenant_schedule_policy.lane IS '执行车道：INTERACTIVE / BACKGROUND / MAINTENANCE';
+COMMENT ON COLUMN wgh_tenant_schedule_policy.version IS '乐观锁版本，管理端更新必须携带';
+CREATE UNIQUE INDEX IF NOT EXISTS uk_tenant_schedule_policy
+  ON wgh_tenant_schedule_policy(tenant_id, lane)
+  WHERE deleted = 0;
+
+CREATE TABLE IF NOT EXISTS wgh_tenant_runtime_slot (
+  tenant_id VARCHAR(64) NOT NULL,
+  lane VARCHAR(16) NOT NULL,
+  running INT NOT NULL DEFAULT 0,
+  update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (tenant_id, lane)
+);
+COMMENT ON TABLE wgh_tenant_runtime_slot IS '租户集群运行槽（多副本租户并发约束；与作业表实际在跑数的偏差即 slot.drift）';
+COMMENT ON COLUMN wgh_tenant_runtime_slot.running IS '当前占用槽位数；进程异常退出造成的泄漏由周期对账校正';
+
+CREATE TABLE IF NOT EXISTS wgh_execution_event (
+  id BIGSERIAL PRIMARY KEY,
+  execution_id VARCHAR(64) NOT NULL,
+  seq BIGINT NOT NULL,
+  event_type VARCHAR(32) NOT NULL,
+  payload_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+COMMENT ON TABLE wgh_execution_event IS '执行事件（跨实例 SSE 重放事实源；只增不改，按保留期清理）';
+COMMENT ON COLUMN wgh_execution_event.seq IS '执行内单调递增序号，从 1 开始；重连时 Last-Event-ID';
+CREATE UNIQUE INDEX IF NOT EXISTS uk_exec_event_execution_seq
+  ON wgh_execution_event(execution_id, seq);
+CREATE INDEX IF NOT EXISTS idx_exec_event_create_time
+  ON wgh_execution_event(create_time);
+
+-- ==================== 检索：chunk 事实层（向量/关键词索引的可重建来源） ====================
+-- 事实层默认不启用（wgh.vector.fact-layer-enabled=false）；开启后入库链路双写本表。
+-- 向量与关键词索引都是派生数据，删除/重建索引不影响原文。
+CREATE TABLE IF NOT EXISTS wgh_kb_chunk (
+  id BIGSERIAL PRIMARY KEY,
+  tenant_id VARCHAR(64) NOT NULL DEFAULT 'default',
+  kb_id BIGINT NOT NULL,
+  file_id BIGINT NOT NULL,
+  chunk_index INT NOT NULL,
+  content TEXT NOT NULL,
+  content_hash VARCHAR(64) NOT NULL,
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  embedding_id VARCHAR(64),
+  embedding_model_id BIGINT,
+  dimension INT,
+  vector_status VARCHAR(16) NOT NULL DEFAULT 'PENDING',
+  version INT NOT NULL DEFAULT 0,
+  create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  create_by VARCHAR(50) DEFAULT 'system',
+  update_by VARCHAR(50) DEFAULT 'system',
+  deleted SMALLINT DEFAULT 0
+);
+COMMENT ON TABLE wgh_kb_chunk IS '知识库 chunk 事实层（原文+元数据唯一副本；向量/关键词索引可重建）';
+COMMENT ON COLUMN wgh_kb_chunk.tenant_id IS '租户标识（单租户为 default，与调度侧 tenant_id 同口径）';
+COMMENT ON COLUMN wgh_kb_chunk.metadata_json IS 'chunk 元数据 JSON（检索过滤与来源定位）';
+COMMENT ON COLUMN wgh_kb_chunk.embedding_id IS '派生索引中的向量 ID；写入成功前为空';
+COMMENT ON COLUMN wgh_kb_chunk.vector_status IS 'PENDING / SYNCED / STALE（双写一致性对账依据）';
+CREATE UNIQUE INDEX IF NOT EXISTS uk_kb_chunk
+  ON wgh_kb_chunk(kb_id, file_id, chunk_index) WHERE deleted = 0;
+CREATE INDEX IF NOT EXISTS idx_kb_chunk_tenant
+  ON wgh_kb_chunk(tenant_id, kb_id) WHERE deleted = 0;
+CREATE INDEX IF NOT EXISTS idx_kb_chunk_status
+  ON wgh_kb_chunk(vector_status) WHERE deleted = 0;
+
+-- ============ 多租户数据面：业务表 tenant_id（新库等价于 migrations/20261124/06_tenant_data_plane.sql） ============
+ALTER TABLE wgh_knowledge_base ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_knowledge_file ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_knowledge_file_version ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_kb_connector ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_kb_connector_run ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_kb_ground_truth ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_upload_session ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_tag ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_kb_tag_rel ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_file_tag_rel ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_chat_window ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_chat_session ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_chat_message ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_semantic_cache ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_eval_dataset ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_eval_case ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_eval_result ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_agent_memory ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_agent_plan ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_agent_step ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_m_agent_crew ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_m_agent_run ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_m_agent_step ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_workflow ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_workflow_version ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_workflow_run ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_workflow_node_run ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_workflow_trigger ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_share_link ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_user_quota_config ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_quota_usage ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_quota_charge ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_prompt_template ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_tool ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+
+CREATE INDEX IF NOT EXISTS idx_knowledge_base_tenant ON wgh_knowledge_base(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_knowledge_file_tenant ON wgh_knowledge_file(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_knowledge_file_version_tenant ON wgh_knowledge_file_version(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_kb_connector_tenant ON wgh_kb_connector(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_kb_connector_run_tenant ON wgh_kb_connector_run(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_kb_ground_truth_tenant ON wgh_kb_ground_truth(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_upload_session_tenant ON wgh_upload_session(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_tag_tenant ON wgh_tag(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_kb_tag_rel_tenant ON wgh_kb_tag_rel(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_file_tag_rel_tenant ON wgh_file_tag_rel(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_chat_window_tenant ON wgh_chat_window(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_chat_session_tenant ON wgh_chat_session(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_chat_message_tenant ON wgh_chat_message(tenant_id, session_id);
+CREATE INDEX IF NOT EXISTS idx_semantic_cache_tenant ON wgh_semantic_cache(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_eval_dataset_tenant ON wgh_eval_dataset(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_eval_case_tenant ON wgh_eval_case(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_eval_result_tenant ON wgh_eval_result(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_agent_memory_tenant ON wgh_agent_memory(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_agent_plan_tenant ON wgh_agent_plan(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_agent_step_tenant ON wgh_agent_step(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_m_agent_crew_tenant ON wgh_m_agent_crew(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_m_agent_run_tenant ON wgh_m_agent_run(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_m_agent_step_tenant ON wgh_m_agent_step(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_workflow_tenant ON wgh_workflow(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_workflow_version_tenant ON wgh_workflow_version(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_workflow_run_tenant ON wgh_workflow_run(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_workflow_node_run_tenant ON wgh_workflow_node_run(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_workflow_trigger_tenant ON wgh_workflow_trigger(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_share_link_tenant ON wgh_share_link(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_user_quota_config_tenant ON wgh_user_quota_config(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_quota_usage_tenant ON wgh_quota_usage(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_quota_charge_tenant ON wgh_quota_charge(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_prompt_template_tenant ON wgh_prompt_template(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_tool_tenant ON wgh_tool(tenant_id);

@@ -5,6 +5,8 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.wgh.rag.common.exception.BusinessException;
 import com.wgh.rag.common.result.PageResult;
 import com.wgh.rag.common.result.ResultCode;
+import com.wgh.rag.data.scope.DataScopeContext;
+import com.wgh.rag.common.security.TenantContext;
 import com.wgh.rag.publicaccess.entity.ApiKey;
 import com.wgh.rag.publicaccess.mapper.ApiKeyMapper;
 import lombok.RequiredArgsConstructor;
@@ -87,6 +89,7 @@ public class ApiKeyService {
         key.setRevoked(false);
         key.setIpWhitelist(normalizedIpWhitelist);
         key.setCreatedBy(creator);
+        key.setTenantId(TenantContext.tenantIdOrDefault());
         apiKeyMapper.insert(key);
         log.info("创建 API Key: id={}, prefix={}, scopes={}, ipWhitelist={}, creator={}",
                 key.getId(), key.getKeyPrefix(), key.getScopes(), key.getIpWhitelist(), creator);
@@ -102,6 +105,7 @@ public class ApiKeyService {
         if (key == null) {
             throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "API Key 不存在");
         }
+        assertOwnedOrAdmin(key);
         key.setIpWhitelist(normalizeIpWhitelist(ipWhitelist));
         apiKeyMapper.updateById(key);
         log.info("更新 API Key IP 白名单: id={}, ipWhitelist={}, operator={}",
@@ -202,13 +206,18 @@ public class ApiKeyService {
         if (key == null) {
             throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "API Key 不存在");
         }
+        assertOwnedOrAdmin(key);
         key.setRevoked(true);
         apiKeyMapper.updateById(key);
         log.info("吊销 API Key: id={}, operator={}", id, operator);
     }
 
     public PageResult<ApiKey> page(Long page, Long size, String keyword) {
+        DataScopeContext.Scope user = DataScopeContext.resolveUser();
         LambdaQueryWrapper<ApiKey> wrapper = new LambdaQueryWrapper<ApiKey>()
+                // 非管理员只看自己创建的 Key，避免管理端跨用户/跨租户枚举
+                .eq(user != null && !user.admin(), ApiKey::getCreatedBy,
+                        user == null ? null : user.username())
                 .and(keyword != null && !keyword.isBlank(), w -> w
                         .like(ApiKey::getName, keyword)
                         .or().like(ApiKey::getKeyPrefix, keyword))
@@ -221,6 +230,15 @@ public class ApiKeyService {
 
     public ApiKey findById(Long id) {
         return apiKeyMapper.selectById(id);
+    }
+
+    /** 非管理员只能操作自己创建的 Key；他人资源按不存在处理，避免暴露存在性。 */
+    private void assertOwnedOrAdmin(ApiKey key) {
+        DataScopeContext.Scope user = DataScopeContext.resolveUser();
+        if (user == null || user.admin() || user.username().equals(key.getCreatedBy())) {
+            return;
+        }
+        throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "API Key 不存在");
     }
 
     public static String sha256(String raw) {

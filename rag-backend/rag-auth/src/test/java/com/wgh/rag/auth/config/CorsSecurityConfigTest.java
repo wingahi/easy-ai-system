@@ -1,6 +1,7 @@
 package com.wgh.rag.auth.config;
 
 import com.wgh.rag.auth.security.OidcAuthenticationFilter;
+import com.wgh.rag.auth.security.TenantContextFilter;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockHttpServletRequest;
@@ -18,7 +19,8 @@ import static org.mockito.Mockito.mock;
 class CorsSecurityConfigTest {
 
     private CorsConfigurationSource buildSource(String origins, boolean credentials) {
-        SecurityConfig securityConfig = new SecurityConfig(mock(OidcAuthenticationFilter.class));
+        SecurityConfig securityConfig = new SecurityConfig(mock(OidcAuthenticationFilter.class),
+                mock(TenantContextFilter.class));
         ReflectionTestUtils.setField(securityConfig, "allowedOrigins", origins);
         ReflectionTestUtils.setField(securityConfig, "allowCredentials", credentials);
         return securityConfig.corsConfigurationSource();

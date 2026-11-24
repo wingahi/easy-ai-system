@@ -36,7 +36,10 @@ public class StorageMaintenanceService {
         return migrationJobService.cancel(taskId);
     }
 
-    public StorageOrphanReport scanOrphans(boolean delete) {
-        return orphanCleanupService.scan(delete);
+    /**
+     * 按租户范围扫描；禁止全局扫描推断。
+     */
+    public StorageOrphanReport scanOrphans(String tenantId, boolean delete) {
+        return orphanCleanupService.scan(tenantId, delete);
     }
 }

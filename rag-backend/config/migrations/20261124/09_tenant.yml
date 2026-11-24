@@ -1,0 +1,17 @@
+# 多租户阶段 1：租户上下文与身份归属
+# 落点：rag-backend/rag-app/src/main/resources/application.yml
+# 绑定类：com.wgh.rag.auth.tenant.TenantProperties、com.wgh.rag.auth.security.OidcProperties
+# 同批 SQL：sql/migrations/20261124/05_tenant.sql
+
+wgh:
+  tenant:
+    # true=严格模式：缺失/未知/停用租户的令牌与 API Key 一律拒绝
+    # false=兼容存量单租户部署，未知租户回落 default（多租户上线前必须显式置为 true）
+    enforcement: ${WGH_TENANT_ENFORCEMENT:false}
+    # true=MyBatis 插件自动为租户表追加 tenant_id 条件，依赖 06_tenant_data_plane.sql
+    sql-isolation-enabled: ${WGH_TENANT_SQL_ISOLATION:true}
+
+  auth:
+    oidc:
+      # 外部 IdP token 中承载租户编码的 claim；缺失时回落 default（严格模式下拒绝）
+      tenant-claim: ${WGH_OIDC_TENANT_CLAIM:tenant}

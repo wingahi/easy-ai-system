@@ -2,21 +2,19 @@ package com.wgh.rag.kb.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wgh.rag.common.metrics.RagMetrics;
+import com.wgh.rag.common.security.TenantContext;
 import com.wgh.rag.config.property.RagProperties;
 import com.wgh.rag.kb.entity.AgentMemory;
 import com.wgh.rag.kb.mapper.AgentMemoryMapper;
 import com.wgh.rag.kb.port.VectorStorePort;
+import com.wgh.rag.kb.port.vector.VectorFilter;
+import com.wgh.rag.kb.port.vector.VectorMatch;
+import com.wgh.rag.kb.port.vector.VectorRecord;
 import com.wgh.rag.llm.entity.EmbeddingModelConfig;
 import com.wgh.rag.llm.factory.ModelCacheManager;
 import com.wgh.rag.llm.mapper.EmbeddingModelMapper;
-import dev.langchain4j.data.document.Metadata;
 import dev.langchain4j.data.embedding.Embedding;
-import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.model.embedding.EmbeddingModel;
-import dev.langchain4j.store.embedding.EmbeddingMatch;
-import dev.langchain4j.store.embedding.EmbeddingSearchRequest;
-import dev.langchain4j.store.embedding.EmbeddingStore;
-import dev.langchain4j.store.embedding.filter.comparison.IsEqualTo;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -27,6 +25,7 @@ import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -89,15 +88,18 @@ public class AgentMemoryService {
             EmbeddingModel embeddingModel = modelCacheManager.getEmbeddingModel(config.getId());
             Embedding embedding = embeddingModel.embed(content).content();
             String scopeKey = scopeKey(scopeType, scopeId);
-            Metadata metadata = new Metadata()
-                    .put("scopeKey", scopeKey)
-                    .put("memoryType", memoryType != null ? memoryType : "SUMMARY");
+            java.util.Map<String, Object> metadata = new java.util.HashMap<>();
+            metadata.put("scopeKey", scopeKey);
+            // 共享向量集合必须显式写入租户，避免不同租户的记忆在同一集合内串读
+            metadata.put("tenantId", TenantContext.tenantIdOrDefault());
+            metadata.put("memoryType", memoryType != null ? memoryType : "SUMMARY");
             if (!isBlank(agentId)) {
                 metadata.put("agentId", agentId);
             }
-            EmbeddingStore<TextSegment> store = vectorStoreService.createEmbeddingStore(
-                    VEC_TABLE, config.getDimension() != null ? config.getDimension() : 1024);
-            String embeddingId = store.add(embedding, TextSegment.from(content, metadata));
+            int dimension = config.getDimension() != null ? config.getDimension() : 1024;
+            java.util.List<String> ids = vectorStoreService.upsert(VEC_TABLE,
+                    java.util.List.of(VectorRecord.of(content, metadata, embedding.vector())), dimension);
+            String embeddingId = ids.isEmpty() ? null : ids.get(0);
 
             AgentMemory memory = new AgentMemory();
             memory.setScopeType(scopeType.name());
@@ -163,15 +165,8 @@ public class AgentMemoryService {
             }
             EmbeddingModel embeddingModel = modelCacheManager.getEmbeddingModel(config.getId());
             Embedding queryEmbedding = embeddingModel.embed(query).content();
-            EmbeddingStore<TextSegment> store = vectorStoreService.createEmbeddingStore(
-                    VEC_TABLE, config.getDimension() != null ? config.getDimension() : 1024);
-            EmbeddingSearchRequest request = EmbeddingSearchRequest.builder()
-                    .queryEmbedding(queryEmbedding)
-                    .maxResults(cfg.getTopK())
-                    .minScore(cfg.getMinScore())
-                    .filter(new IsEqualTo("scopeKey", scopeKey(scopeType, scopeId)))
-                    .build();
-            List<EmbeddingMatch<TextSegment>> matches = store.search(request).matches();
+            List<VectorMatch> matches = vectorStoreService.search(VEC_TABLE, queryEmbedding.vector(),
+                    cfg.getTopK(), cfg.getMinScore(), scopeFilter(scopeType, scopeId));
             if (matches.isEmpty()) {
                 return List.of();
             }
@@ -180,11 +175,11 @@ public class AgentMemoryService {
             int maxChars = cfg.getMaxTokens() * 2;
             List<MemoryHit> hits = new ArrayList<>();
             int used = 0;
-            for (EmbeddingMatch<TextSegment> match : matches) {
-                if (!alive.contains(match.embeddingId())) {
+            for (VectorMatch match : matches) {
+                if (!alive.contains(match.id())) {
                     continue;
                 }
-                String text = match.embedded() != null ? match.embedded().text() : null;
+                String text = match.text();
                 if (isBlank(text)) {
                     continue;
                 }
@@ -193,7 +188,7 @@ public class AgentMemoryService {
                     break;
                 }
                 used += cost;
-                hits.add(new MemoryHit(text, match.score() != null ? match.score() : 0d));
+                hits.add(new MemoryHit(text, match.score()));
             }
             log.debug("✓ 召回记忆: scope={}:{}, hits={}, tokens={}", scopeType, scopeId, hits.size(), used);
             if (metrics != null) metrics.recordMemoryRecallHits(scopeType.name(), hits.size());
@@ -204,8 +199,21 @@ public class AgentMemoryService {
         }
     }
 
-    private Set<String> aliveEmbeddingIds(List<EmbeddingMatch<TextSegment>> matches) {
-        List<String> ids = matches.stream().map(EmbeddingMatch::embeddingId).toList();
+    /**
+     * 作用域过滤条件：scopeKey + 非默认租户断言。
+     * <p>默认租户不加租户条件，兼容改造前未写 tenantId 的存量记忆；非默认租户强制按租户过滤。</p>
+     */
+    private VectorFilter scopeFilter(ScopeType scopeType, String scopeId) {
+        java.util.Map<String, Object> equals = new java.util.HashMap<>();
+        equals.put("scopeKey", scopeKey(scopeType, scopeId));
+        String tenantId = TenantContext.currentTenantId();
+        boolean scoped = tenantId != null && !tenantId.isBlank()
+                && !TenantContext.DEFAULT_TENANT.equals(tenantId);
+        return new VectorFilter(scoped ? tenantId : null, equals, java.util.Map.of());
+    }
+
+    private Set<String> aliveEmbeddingIds(List<VectorMatch> matches) {
+        List<String> ids = matches.stream().map(VectorMatch::id).filter(Objects::nonNull).toList();
         if (ids.isEmpty()) {
             return Set.of();
         }

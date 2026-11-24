@@ -42,6 +42,8 @@ public class LocalTokenService {
     private static final String CLAIM_TOKEN_TYPE = "tokenType";
     /** 口令版本号 claim：与数据库 wgh_user.password_version 比对，不一致则凭证失效 */
     public static final String CLAIM_PASSWORD_VERSION = "pv";
+    /** 租户编码 claim：登录时写入，异步/多副本可据此恢复租户上下文 */
+    public static final String CLAIM_TENANT_ID = "tenantId";
 
     private final LocalAuthProperties properties;
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -87,6 +89,15 @@ public class LocalTokenService {
      * 签发本地会话凭证
      */
     public IssuedToken issue(String username, Long userId, Set<String> roles, Integer passwordVersion) {
+        return issue(username, userId, roles, passwordVersion, null);
+    }
+
+    /**
+     * 签发本地会话凭证（含租户编码）。
+     * <p>租户编码同时写入 token claim 与登录上下文，便于异步/多副本恢复租户。</p>
+     */
+    public IssuedToken issue(String username, Long userId, Set<String> roles, Integer passwordVersion,
+                             String tenantId) {
         Date now = new Date();
         long ttlSeconds = Math.max(60L, properties.getTokenTtlSeconds());
         Date expiration = new Date(now.getTime() + ttlSeconds * 1000L);
@@ -98,6 +109,7 @@ public class LocalTokenService {
                 .claim("userId", userId)
                 .claim("roles", roles == null ? Set.of() : new LinkedHashSet<>(roles))
                 .claim(CLAIM_PASSWORD_VERSION, passwordVersion == null ? 1 : passwordVersion)
+                .claim(CLAIM_TENANT_ID, tenantId)
                 .claim(CLAIM_TOKEN_TYPE, TOKEN_TYPE)
                 .issuedAt(now)
                 .expiration(expiration)

@@ -13,6 +13,7 @@ import com.wgh.rag.common.result.Result;
 import com.wgh.rag.common.result.ResultCode;
 import com.wgh.rag.controller.support.SseExecutionStreamSink;
 import com.wgh.rag.controller.support.SseReplaySupport;
+import com.wgh.rag.kb.service.KnowledgeBaseService;
 import com.wgh.rag.kb.service.RagRetrieveService;
 import com.wgh.rag.kb.service.RetrievalOptions;
 import com.wgh.rag.publicaccess.config.PublicAccessProperties;
@@ -59,6 +60,7 @@ public class OpenApiController {
     private final PublicAccessRateLimiter rateLimiter;
     private final PublicAccessProperties properties;
     private final ChatWindowService windowService;
+    private final KnowledgeBaseService kbService;
     private final ChatSessionMapper sessionMapper;
     private final RagChatService ragChatService;
     /** SSE 事件重放：按 Last-Event-ID 从共享缓冲补齐缺失事件 */
@@ -93,7 +95,7 @@ public class OpenApiController {
         if (windowId == null) {
             throw new BusinessException(ResultCode.PARAM_ERROR, "windowId 不能为空");
         }
-        ChatWindow window = windowService.getById(windowId);
+        ChatWindow window = windowService.getVisible(windowId);
         if (window.getStatus() == null || window.getStatus() == 0) {
             throw new BusinessException(ResultCode.OPERATION_NOT_ALLOWED, "聊天窗口已停用");
         }
@@ -147,6 +149,8 @@ public class OpenApiController {
         if (query == null || query.isBlank()) {
             throw new BusinessException(ResultCode.PARAM_ERROR, "query 不能为空");
         }
+        // Key 只能检索其归属用户可读的知识库；他人 PRIVATE 按不存在处理
+        kbService.getVisible(kbId);
         List<EmbeddingMatch<TextSegment>> matches = retrieveService.searchMultiple(
                 List.of(kbId), query,
                 new RetrievalOptions(null, false, null, null, Math.min(Math.max(topK, 1), 20))).matches();

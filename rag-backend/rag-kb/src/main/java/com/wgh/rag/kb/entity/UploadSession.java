@@ -16,6 +16,9 @@ public class UploadSession extends BaseEntity {
     /** 知识库 ID */
     private Long knowledgeBaseId;
 
+    /** 租户编码（分片存储目录的隔离维度；存量数据为 default） */
+    private String tenantId;
+
     /** 上传会话 UUID，同时作为分片存储目录名 */
     private String uploadUuid;
 

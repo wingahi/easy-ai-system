@@ -1,6 +1,7 @@
 package com.wgh.rag.common.config;
 
 import com.wgh.rag.common.log.MdcContext;
+import com.wgh.rag.common.security.AuthContextPropagation;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.task.TaskDecorator;
@@ -9,7 +10,7 @@ import org.springframework.core.task.support.ContextPropagatingTaskDecorator;
 /**
  * Spring 异步线程池的上下文透传：Boot 3.4 会自动把该 TaskDecorator 应用到
  * applicationTaskExecutor，@Async 与 ThreadPoolTaskExecutor 提交的任务都会沿用
- * 提交时的 requestId / traceId。
+ * 提交时的 requestId / traceId、登录态与租户上下文。
  * <p>
  * 除 MDC 外，同时使用 {@link ContextPropagatingTaskDecorator} 传播 Micrometer
  * Observation / Tracing 上下文，使异步任务中的 span 仍挂在原请求链路下；未启用
@@ -22,6 +23,8 @@ public class MdcAsyncConfig {
     public TaskDecorator mdcTaskDecorator() {
         TaskDecorator mdc = MdcContext::wrap;
         TaskDecorator tracing = new ContextPropagatingTaskDecorator();
-        return task -> mdc.decorate(tracing.decorate(task));
+        // 顺序：先继承登录态/租户（TenantContext 会同步写 MDC），再叠加 MDC 快照与 tracing
+        return task -> mdc.decorate(tracing.decorate(
+                AuthContextPropagation.wrap(task)));
     }
 }

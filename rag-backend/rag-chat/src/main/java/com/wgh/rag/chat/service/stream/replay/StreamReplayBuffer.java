@@ -1,5 +1,6 @@
 package com.wgh.rag.chat.service.stream.replay;
 
+import com.wgh.rag.common.security.TenantContext;
 import com.wgh.rag.config.redis.RedisCommandPort;
 import com.wgh.rag.config.redis.RedisKeyNamespace;
 import lombok.extern.slf4j.Slf4j;
@@ -103,17 +104,22 @@ public class StreamReplayBuffer {
     }
 
     // ==================== key 与编解码 ====================
+    // 租户命名空间：同一 streamId 在不同租户下互不可见，避免跨租户重放缓存泄露
 
-    private static String bufKey(String streamId) {
-        return RedisKeyNamespace.root() + ":stream:buf:" + streamId;
+    private String bufKey(String streamId) {
+        return tenantRoot() + ":stream:buf:" + streamId;
     }
 
-    private static String metaKey(String streamId) {
-        return RedisKeyNamespace.root() + ":stream:meta:" + streamId;
+    private String metaKey(String streamId) {
+        return tenantRoot() + ":stream:meta:" + streamId;
     }
 
-    private static String currentKey(String kind, Long subjectId) {
-        return RedisKeyNamespace.root() + ":stream:cur:" + kind + ":" + subjectId;
+    private String currentKey(String kind, Long subjectId) {
+        return tenantRoot() + ":stream:cur:" + kind + ":" + subjectId;
+    }
+
+    private static String tenantRoot() {
+        return RedisKeyNamespace.root() + ":t:" + TenantContext.tenantIdOrDefault();
     }
 
     private static String encodeMeta(String kind, Long subjectId, String status, long lastSeq) {

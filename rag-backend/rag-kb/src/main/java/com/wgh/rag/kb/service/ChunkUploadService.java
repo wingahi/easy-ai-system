@@ -3,7 +3,9 @@ package com.wgh.rag.kb.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wgh.rag.common.exception.BusinessException;
 import com.wgh.rag.common.result.ResultCode;
+import com.wgh.rag.common.security.TenantContext;
 import com.wgh.rag.data.scope.DataScopeContext;
+import com.wgh.rag.data.scope.DataScopeGuard;
 import com.wgh.rag.kb.entity.KnowledgeFile;
 import com.wgh.rag.kb.entity.UploadSession;
 import com.wgh.rag.kb.mapper.UploadSessionMapper;
@@ -66,7 +68,9 @@ public class ChunkUploadService {
      */
     public InitResult init(Long kbId, String fileName, long fileSize, Integer chunkSize,
                            String splitStrategy, String splitConfig) {
-        kbService.getById(kbId);
+        com.wgh.rag.kb.entity.KnowledgeBase kb = kbService.getById(kbId);
+        // 分片初始化属于写入入口，必须校验父知识库可写
+        DataScopeGuard.assertWritable(kb.getCreateBy(), kb.getVisibility(), "知识库");
         if (fileName == null || fileName.isBlank()) {
             throw new BusinessException(ResultCode.PARAM_ERROR, "文件名不能为空");
         }
@@ -86,6 +90,8 @@ public class ChunkUploadService {
 
         UploadSession session = new UploadSession();
         session.setKnowledgeBaseId(kbId);
+        // 分片存储按租户前缀隔离；写入时冻结，后续续传/合并不再依赖线程上下文
+        session.setTenantId(TenantContext.tenantIdOrDefault());
         session.setUploadUuid(UUID.randomUUID().toString());
         session.setFileName(fileName);
         session.setFileType(extensionOf(fileName));
@@ -119,7 +125,8 @@ public class ChunkUploadService {
             throw new BusinessException(ResultCode.PARAM_ERROR, "分片内容为空");
         }
 
-        String key = StorageKeys.chunkKey(session.getKnowledgeBaseId(), session.getUploadUuid(), index);
+        String key = StorageKeys.chunkKey(session.getTenantId(),
+                session.getKnowledgeBaseId(), session.getUploadUuid(), index);
         try (InputStream in = chunk.getInputStream()) {
             fileStorageService.store(key, in, chunk.getSize(), null);
         } catch (IOException e) {
@@ -224,7 +231,7 @@ public class ChunkUploadService {
 
             @Override
             public InputStream nextElement() {
-                String key = StorageKeys.chunkKey(
+                String key = StorageKeys.chunkKey(session.getTenantId(),
                         session.getKnowledgeBaseId(), session.getUploadUuid(), index++);
                 return fileStorageService.openStream(key);
             }
@@ -233,7 +240,8 @@ public class ChunkUploadService {
 
     private void cleanupChunks(UploadSession session) {
         for (int i = 0; i < session.getTotalChunks(); i++) {
-            String key = StorageKeys.chunkKey(session.getKnowledgeBaseId(), session.getUploadUuid(), i);
+            String key = StorageKeys.chunkKey(session.getTenantId(),
+                    session.getKnowledgeBaseId(), session.getUploadUuid(), i);
             try {
                 fileStorageService.delete(key);
             } catch (RuntimeException e) {

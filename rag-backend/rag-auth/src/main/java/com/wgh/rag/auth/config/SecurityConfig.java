@@ -1,6 +1,7 @@
 package com.wgh.rag.auth.config;
 
 import com.wgh.rag.auth.security.OidcAuthenticationFilter;
+import com.wgh.rag.auth.security.TenantContextFilter;
 import jakarta.servlet.DispatcherType;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -14,6 +15,7 @@ import org.springframework.security.config.annotation.web.configurers.AbstractHt
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.web.cors.CorsConfiguration;
@@ -33,6 +35,7 @@ import java.util.List;
 public class SecurityConfig {
 
     private final OidcAuthenticationFilter oidcAuthenticationFilter;
+    private final TenantContextFilter tenantContextFilter;
 
     /**
      * 允许跨域的来源白名单（逗号分隔）。默认仅本地开发前端；生产通过 WGH_CORS_ALLOWED_ORIGINS 显式配置。
@@ -45,6 +48,18 @@ public class SecurityConfig {
      */
     @Value("${wgh.security.cors.allow-credentials:false}")
     private boolean allowCredentials;
+
+    /**
+     * 禁止容器层自动注册：TenantContextFilter 必须在 Security 过滤链中认证之后执行，
+     * 否则会在 LoginUser 为空时提前执行并被 OncePerRequestFilter 去重，导致租户上下文缺失。
+     */
+    @Bean
+    public FilterRegistrationBean<TenantContextFilter> tenantContextFilterRegistration(
+            TenantContextFilter filter) {
+        FilterRegistrationBean<TenantContextFilter> registration = new FilterRegistrationBean<>(filter);
+        registration.setEnabled(false);
+        return registration;
+    }
 
     /**
      * 兜底过滤链：必须排在最末，否则会遮蔽带 securityMatcher 的专用过滤链
@@ -83,7 +98,9 @@ public class SecurityConfig {
                         .anyRequest().authenticated()
                 )
                 // 外部 OIDC token 资源服务器过滤器（JWKS 公钥验签）
-                .addFilterBefore(oidcAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
+                .addFilterBefore(oidcAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
+                // 租户上下文必须在认证之后写入，认证过滤器不在链上时不会执行
+                .addFilterAfter(tenantContextFilter, OidcAuthenticationFilter.class);
 
         return http.build();
     }

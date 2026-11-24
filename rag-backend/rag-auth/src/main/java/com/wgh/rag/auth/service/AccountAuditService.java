@@ -4,6 +4,7 @@ import com.wgh.rag.common.constant.HttpConstants;
 import com.wgh.rag.log.constant.AuditConstants;
 import com.wgh.rag.log.entity.AuditLog;
 import com.wgh.rag.common.security.SecurityUtils;
+import com.wgh.rag.common.security.TenantContext;
 import com.wgh.rag.log.service.AuditLogService;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
@@ -45,6 +46,16 @@ public class AccountAuditService {
      * @param reason         失败原因摘要（不得包含口令）
      */
     public void record(String action, String targetUsername, String operator, String status, String reason) {
+        record(action, targetUsername, operator, status, reason, TenantContext.currentTenantId());
+    }
+
+    /**
+     * 记录一次账号事件（显式指定租户）。
+     * <p>登录场景发生在认证过滤器写入上下文之前，必须由调用方传入目标账号所属租户，
+     * 否则事件会被默认租户收口。</p>
+     */
+    public void record(String action, String targetUsername, String operator, String status, String reason,
+                       String tenantId) {
         try {
             StringBuilder detail = new StringBuilder()
                     .append("target=").append(targetUsername)
@@ -55,6 +66,8 @@ public class AccountAuditService {
             }
             AuditLog entry = new AuditLog();
             entry.setUsername(operator == null ? SecurityUtils.ANONYMOUS : operator);
+            entry.setTenantId(tenantId != null && !tenantId.isBlank()
+                    ? tenantId.trim() : TenantContext.tenantIdOrDefault());
             entry.setAction(action);
             entry.setResourceType(RESOURCE_TYPE);
             entry.setResourceId(targetUsername);

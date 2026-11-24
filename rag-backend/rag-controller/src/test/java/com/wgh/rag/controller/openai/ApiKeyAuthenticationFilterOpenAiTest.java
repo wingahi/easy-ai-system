@@ -38,8 +38,11 @@ class ApiKeyAuthenticationFilterOpenAiTest {
     @BeforeEach
     void setUp() {
         apiKeyService = mock(ApiKeyService.class);
+        com.wgh.rag.auth.tenant.TenantService tenantService =
+                mock(com.wgh.rag.auth.tenant.TenantService.class);
+        when(tenantService.isActive(org.mockito.ArgumentMatchers.anyString())).thenReturn(true);
         filter = new ApiKeyAuthenticationFilter(apiKeyService, mock(ApiCallLogService.class),
-                mock(ClientIpResolver.class), objectMapper);
+                mock(ClientIpResolver.class), objectMapper, tenantService);
         SecurityContextHolder.clearContext();
     }
 

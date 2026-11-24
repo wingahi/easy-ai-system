@@ -186,7 +186,7 @@ public class OpenAiCompatController {
             windowId = parseLongOrNull(normalized);
         }
 
-        ChatWindow window = windowId == null ? null : windowService.findById(windowId);
+        ChatWindow window = windowId == null ? null : windowService.getVisible(windowId);
         if (window == null) {
             // 退化按窗口名精确匹配（page 的关键字为 LIKE 查询，这里再做一次精确过滤）
             PageResult<ChatWindow> page = windowService.page(1L, MAX_MODEL_LIST_SIZE, normalized);

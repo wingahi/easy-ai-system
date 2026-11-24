@@ -15,6 +15,9 @@ public class LoginUser {
     private Set<String> roles;
     private Set<String> permissions;
 
+    /** 租户编码（来自会话/令牌/用户表，不来自请求参数） */
+    private String tenantId;
+
     /** 是否必须先改密（仅本地账号；外部 OIDC 用户恒为 false） */
     private Boolean passwordMustChange;
 

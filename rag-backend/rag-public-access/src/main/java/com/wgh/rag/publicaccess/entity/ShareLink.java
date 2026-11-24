@@ -64,4 +64,7 @@ public class ShareLink extends BaseEntity {
 
     /** 创建人 */
     private String createdBy;
+
+    /** 租户编码（分享链接归属租户；单租户为 default） */
+    private String tenantId;
 }

@@ -1,5 +1,6 @@
 package com.wgh.rag.sandbox.audit;
 
+import com.wgh.rag.common.security.TenantContext;
 import com.wgh.rag.log.entity.AuditLog;
 import com.wgh.rag.log.service.AuditLogService;
 import org.slf4j.Logger;
@@ -52,6 +53,7 @@ public class SandboxAuditLogger {
         try {
             AuditLog log = new AuditLog();
             log.setUsername(username);
+            log.setTenantId(TenantContext.tenantIdOrDefault());
             log.setAction(ACTION);
             log.setResourceType(RESOURCE_TYPE);
             log.setResourceId(codeDigest);

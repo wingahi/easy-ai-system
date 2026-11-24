@@ -24,25 +24,25 @@ WHERE NOT EXISTS (
 );
 
 -- 示例工具：按 (name, tool_type) 判重，存量库重跑不产生重复行
-INSERT INTO wgh_tool (name, tool_type, description, definition, executor_config, status, is_example, visibility)
-SELECT v.name, v.tool_type, v.description, v.definition, v.executor_config, v.status, v.is_example, v.visibility
+INSERT INTO wgh_tool (name, tool_type, description, definition, executor_config, status, is_example, scope, visibility)
+SELECT v.name, v.tool_type, v.description, v.definition, v.executor_config, v.status, v.is_example, v.scope, v.visibility
 FROM (VALUES
 ('天气查询 Skill', 'SKILL', '查询指定城市当前天气状况',
  '{"type":"function","function":{"name":"get_weather","description":"获取指定城市的当前天气","parameters":{"type":"object","properties":{"city":{"type":"string","description":"城市名称如：北京、上海"},"unit":{"type":"string","enum":["celsius","fahrenheit"],"description":"温度单位"}},"required":["city"]}}}',
- E'{"mode":"inline","promptTemplate":"---SYSTEM---\\n你是天气查询助手，请根据用户提供的城市给出当前天气概况。\\n参数不足时请说明缺少什么。\\n---USER---\\n查询城市：{{city}}","subModelDefault":true}', 1, 1, 'PUBLIC'),
+ E'{"mode":"inline","promptTemplate":"---SYSTEM---\\n你是天气查询助手，请根据用户提供的城市给出当前天气概况。\\n参数不足时请说明缺少什么。\\n---USER---\\n查询城市：{{city}}","subModelDefault":true}', 1, 1, 'platform', 'PUBLIC'),
 
 ('MCP Echo 示例', 'MCP', '通过 MCP 协议调用 echo 工具回显消息',
  '{"type":"function","function":{"name":"echo","description":"通过 MCP 服务器回显一段消息","parameters":{"type":"object","properties":{"message":{"type":"string","description":"要回显的消息内容"}},"required":["message"]}}}',
- '{"transport":"stdio","command":"npx","args":["-y","@modelcontextprotocol/server-everything"],"timeoutMs":60000}', 1, 1, 'PUBLIC'),
+ '{"transport":"stdio","command":"npx","args":["-y","@modelcontextprotocol/server-everything"],"timeoutMs":60000}', 1, 1, 'platform', 'PUBLIC'),
 
 ('后端健康检查 HTTP', 'HTTP', '调用后端健康检查接口获取服务状态',
  '{"type":"function","function":{"name":"get_system_health","description":"查询 RAG 后端服务的健康状态","parameters":{"type":"object","properties":{"verbose":{"type":"string","description":"是否返回详细信息，可留空"}}}}}',
- '{"url":"http://localhost:8080/actuator/health","method":"GET","timeoutMs":5000}', 1, 1, 'PUBLIC'),
+ '{"url":"http://localhost:8080/actuator/health","method":"GET","timeoutMs":5000}', 1, 1, 'platform', 'PUBLIC'),
 
 ('用户订单查询 Function', 'FUNCTION_CALLING', '反射调用本地 handler 查询用户订单',
  '{"type":"function","function":{"name":"query_user_order","description":"查询指定用户的订单列表","parameters":{"type":"object","properties":{"userId":{"type":"string","description":"用户ID，如 U1001"},"status":{"type":"string","enum":["all","pending","paid","completed"],"description":"订单状态筛选，默认 all"}},"required":["userId"]}}}',
- '{"handlerClass":"com.wgh.rag.tool.demo.OrderQueryHandler","method":"query"}', 1, 1, 'PUBLIC')
-) AS v(name, tool_type, description, definition, executor_config, status, is_example, visibility)
+ '{"handlerClass":"com.wgh.rag.tool.demo.OrderQueryHandler","method":"query"}', 1, 1, 'platform', 'PUBLIC')
+) AS v(name, tool_type, description, definition, executor_config, status, is_example, scope, visibility)
 WHERE NOT EXISTS (
     SELECT 1 FROM wgh_tool t
     WHERE t.name = v.name AND t.tool_type = v.tool_type
@@ -76,7 +76,8 @@ INSERT INTO wgh_permission (perm_code, perm_name, resource_type) VALUES
 ('agent:manage',  '管理多Agent编排', 'AGENT'),
 ('apikey:manage', '管理开放APIKey',  'API_KEY'),
 ('share:manage',  '管理分享链接',    'SHARE_LINK'),
-('pricing:manage','管理模型价格',    'MODEL_PRICE')
+('pricing:manage','管理模型价格',    'MODEL_PRICE'),
+('tenant:manage', '管理租户',        'TENANT')
 ON CONFLICT (perm_code) DO NOTHING;
 
 -- admin 角色拥有全部模块权限

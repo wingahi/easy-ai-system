@@ -21,6 +21,12 @@ public interface StorageInventoryService {
     List<StorageObjectInfo> listAll();
 
     /**
+     * 只列举指定逻辑前缀下的对象（多租户清理必须使用本方法，禁止先全量列举再推断）。
+     * <p>前缀为空时等价于 {@link #listAll()}；前缀非法或不存在时返回空列表。</p>
+     */
+    List<StorageObjectInfo> listByPrefix(String keyPrefix);
+
+    /**
      * 查询单个对象元数据，不存在时返回 {@code null}。
      */
     StorageObjectInfo stat(String key);

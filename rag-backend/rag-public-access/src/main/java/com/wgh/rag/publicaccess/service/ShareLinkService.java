@@ -8,6 +8,8 @@ import com.wgh.rag.common.result.PageResult;
 import com.wgh.rag.common.result.ResultCode;
 import com.wgh.rag.common.share.ChatShareTargetPort;
 import com.wgh.rag.common.share.KnowledgeBaseShareTargetPort;
+import com.wgh.rag.common.security.TenantContext;
+import com.wgh.rag.data.scope.DataScopeContext;
 import com.wgh.rag.publicaccess.config.PublicAccessProperties;
 import com.wgh.rag.publicaccess.entity.ShareLink;
 import com.wgh.rag.publicaccess.mapper.ShareLinkMapper;
@@ -115,6 +117,7 @@ public class ShareLinkService {
         link.setEmbedOriginWhitelist(normalizeDomainWhitelist(req.getEmbedOriginWhitelist()));
         link.setEmbedIpWhitelist(normalizeIpWhitelist(req.getEmbedIpWhitelist()));
         link.setCreatedBy(creator);
+        link.setTenantId(TenantContext.tenantIdOrDefault());
         shareLinkMapper.insert(link);
         log.info("创建分享链接: id={}, scope={}, target={}, creator={}", link.getId(), scope, req.getTargetId(), creator);
         return link;
@@ -190,6 +193,7 @@ public class ShareLinkService {
         if (link == null) {
             throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "分享链接不存在");
         }
+        assertOwnedOrAdmin(link);
         link.setEmbedEnabled(Boolean.TRUE.equals(embedEnabled));
         link.setEmbedOriginWhitelist(normalizeDomainWhitelist(embedOriginWhitelist));
         link.setEmbedIpWhitelist(normalizeIpWhitelist(embedIpWhitelist));
@@ -281,6 +285,7 @@ public class ShareLinkService {
         if (link == null) {
             throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "分享链接不存在");
         }
+        assertOwnedOrAdmin(link);
         link.setRevoked(true);
         shareLinkMapper.updateById(link);
         log.info("吊销分享链接: id={}, operator={}", id, operator);
@@ -290,7 +295,11 @@ public class ShareLinkService {
      * 管理端分页列表
      */
     public PageResult<ShareLink> page(Long page, Long size, String keyword, String scope) {
+        DataScopeContext.Scope user = DataScopeContext.resolveUser();
         LambdaQueryWrapper<ShareLink> wrapper = new LambdaQueryWrapper<ShareLink>()
+                // 非管理员只看自己创建的分享链接
+                .eq(user != null && !user.admin(), ShareLink::getCreatedBy,
+                        user == null ? null : user.username())
                 .eq(scope != null && !scope.isBlank(), ShareLink::getScope,
                         scope == null ? null : scope.toUpperCase())
                 .and(keyword != null && !keyword.isBlank(), w -> w
@@ -299,5 +308,14 @@ public class ShareLinkService {
                 .orderByDesc(ShareLink::getId);
         Page<ShareLink> result = shareLinkMapper.selectPage(Page.of(page, size), wrapper);
         return new PageResult<>(result.getTotal(), result.getCurrent(), result.getSize(), result.getRecords());
+    }
+
+    /** 非管理员只能操作自己创建的分享链接；他人资源按不存在处理。 */
+    private void assertOwnedOrAdmin(ShareLink link) {
+        DataScopeContext.Scope user = DataScopeContext.resolveUser();
+        if (user == null || user.admin() || user.username().equals(link.getCreatedBy())) {
+            return;
+        }
+        throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "分享链接不存在");
     }
 }

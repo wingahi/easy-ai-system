@@ -1,6 +1,7 @@
 package com.wgh.rag.chat.service;
 
 import com.wgh.rag.common.metrics.RagMetrics;
+import com.wgh.rag.common.security.TenantContext;
 import com.wgh.rag.config.redis.RedisCommandPort;
 import com.wgh.rag.config.redis.RedisKeyNamespace;
 import lombok.extern.slf4j.Slf4j;
@@ -42,9 +43,10 @@ public class ChatCancellationStore {
         this.metrics = metrics;
     }
 
-    /** 取消标记的 key（会话维度）：{root}:chat:cancel:s:{sessionId} */
+    /** 取消标记的 key（会话维度）：{root}:t:{tenantId}:chat:cancel:s:{sessionId} */
     public static String sessionKey(Long sessionId) {
-        return RedisKeyNamespace.root() + ":chat:cancel:s:" + sessionId;
+        return RedisKeyNamespace.root() + ":t:" + TenantContext.tenantIdOrDefault()
+                + ":chat:cancel:s:" + sessionId;
     }
 
     /**

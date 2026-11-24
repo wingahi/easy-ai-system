@@ -3,6 +3,7 @@ package com.wgh.rag.publicaccess.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wgh.rag.publicaccess.entity.ApiCallLog;
 import com.wgh.rag.publicaccess.entity.ApiKey;
+import com.wgh.rag.common.security.TenantContext;
 import com.wgh.rag.publicaccess.mapper.ApiCallLogMapper;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
@@ -28,6 +29,8 @@ public class ApiCallLogService {
             logRow.setApiKeyId(key.getId());
             logRow.setApiKeyName(key.getName());
             logRow.setUsername("api_" + key.getId());
+            logRow.setTenantId(key.getTenantId() == null || key.getTenantId().isBlank()
+                    ? TenantContext.tenantIdOrDefault() : key.getTenantId());
             logRow.setMethod(request.getMethod());
             logRow.setPath(request.getRequestURI());
             logRow.setStatusCode(statusCode);

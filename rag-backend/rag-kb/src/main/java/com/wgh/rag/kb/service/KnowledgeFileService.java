@@ -5,6 +5,8 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wgh.rag.common.exception.BusinessException;
 import com.wgh.rag.common.result.PageResult;
 import com.wgh.rag.common.result.ResultCode;
+import com.wgh.rag.common.security.TenantContext;
+import com.wgh.rag.data.scope.DataScopeGuard;
 import com.wgh.rag.execution.api.ExecutionFacade;
 import com.wgh.rag.execution.error.ExecutionCancelledException;
 import com.wgh.rag.execution.error.LeaseLostException;
@@ -76,6 +78,20 @@ public class KnowledgeFileService {
     @Autowired(required = false)
     private ObjectProvider<ExecutionFacade> executionFacadeProvider;
 
+    /**
+     * chunk 事实层（wgh_kb_chunk）同步；字段注入避免改变既有构造器签名。
+     * 事实层默认关闭时相关方法为空操作，入库链路行为不变。
+     */
+    @Autowired(required = false)
+    private KbChunkService kbChunkService;
+
+    /**
+     * 关键词索引维护双路路由；字段注入避免改变既有构造器签名。
+     * 未装配时（单测直接 new）只维护向量路，行为与改造前一致。
+     */
+    @Autowired(required = false)
+    private KeywordIndexMaintenanceRouter keywordIndexMaintenance;
+
     /** 调度中心开关：开启时入库/重建走后台作业，关闭时保留原有本地线程池。 */
     @Value("${wgh.scheduler.enabled:true}")
     private boolean schedulerEnabled = true;
@@ -102,7 +118,7 @@ public class KnowledgeFileService {
     @Transactional
     public KnowledgeFile upload(Long kbId, MultipartFile multipartFile, 
                                  String splitStrategy, String splitConfig) {
-        kbService.getById(kbId);
+        requireWritableKb(kbId);
 
         String originalName = multipartFile.getOriginalFilename();
         String fileType = getExtension(originalName);
@@ -130,7 +146,7 @@ public class KnowledgeFileService {
     public IngestOutcome storeAndRegister(Long kbId, String originalName, String fileType, long size,
                                           String contentType, String contentHash, ContentSource content,
                                           String splitStrategy, String splitConfig) {
-        KnowledgeBase kb = kbService.getById(kbId);
+        KnowledgeBase kb = requireWritableKb(kbId);
 
         KnowledgeFile duplicate = findDuplicateFile(kbId, contentHash);
         if (duplicate != null) {
@@ -140,7 +156,8 @@ public class KnowledgeFileService {
         }
 
         // 通过可插拔存储服务写入（本地/OSS 由配置决定），上层不拼接本地路径
-        String storedKey = StorageKeys.kbKey(kbId, UUID.randomUUID().toString(), originalName);
+        String storedKey = StorageKeys.kbKey(TenantContext.tenantIdOrDefault(), kbId,
+                UUID.randomUUID().toString(), originalName);
         try (InputStream in = content.open()) {
             StoredObject stored = fileStorageService.store(storedKey, in, size, contentType);
             storedKey = stored.key();
@@ -191,7 +208,7 @@ public class KnowledgeFileService {
     @Transactional
     public IngestOutcome ingestContent(Long kbId, String fileName, String fileType, byte[] content,
                                        String splitStrategy, String splitConfig) {
-        KnowledgeBase kb = kbService.getById(kbId);
+        KnowledgeBase kb = requireWritableKb(kbId);
         if (content == null || content.length == 0) {
             throw new BusinessException(ResultCode.PARAM_ERROR, "入库内容为空");
         }
@@ -209,7 +226,8 @@ public class KnowledgeFileService {
             return new IngestOutcome(duplicate, true);
         }
 
-        String storedKey = StorageKeys.kbKey(kbId, UUID.randomUUID().toString(), fileName);
+        String storedKey = StorageKeys.kbKey(TenantContext.tenantIdOrDefault(), kbId,
+                UUID.randomUUID().toString(), fileName);
         try (InputStream in = new ByteArrayInputStream(content)) {
             StoredObject stored = fileStorageService.store(
                     storedKey, in, content.length, "text/plain; charset=utf-8");
@@ -265,8 +283,14 @@ public class KnowledgeFileService {
         KnowledgeFile file = getById(fileId);
 
         // 清理该文件的旧向量，避免重复入库
-        KnowledgeBase kb = kbService.getById(file.getKnowledgeBaseId());
+        KnowledgeBase kb = requireWritableKb(file.getKnowledgeBaseId());
         vectorStoreService.deleteByFileId(kb.getCollectionName(), fileId);
+        if (keywordIndexMaintenance != null) {
+            keywordIndexMaintenance.deleteByFileId(kb.getCollectionName(), fileId);
+        }
+        if (kbChunkService != null) {
+            kbChunkService.markFileDeleted(file.getKnowledgeBaseId(), fileId);
+        }
 
         // 知识库内容已变更：清理引用该知识库的窗口语义缓存，避免继续返回旧答案
         semanticCacheService.invalidateByKbId(file.getKnowledgeBaseId());
@@ -298,9 +322,12 @@ public class KnowledgeFileService {
         KnowledgeFile file = getById(fileId);
 
         // 清理 pgvector 中该文件的向量
-        KnowledgeBase kb = kbService.getById(file.getKnowledgeBaseId());
+        KnowledgeBase kb = requireWritableKb(file.getKnowledgeBaseId());
         if (kb != null) {
             vectorStoreService.deleteByFileId(kb.getCollectionName(), fileId);
+        }
+        if (kbChunkService != null) {
+            kbChunkService.markFileDeleted(file.getKnowledgeBaseId(), fileId);
         }
 
         // 知识库内容已变更：清理引用该知识库的窗口语义缓存
@@ -319,6 +346,7 @@ public class KnowledgeFileService {
      */
     public Map<String, Object> previewSplit(Long fileId) {
         KnowledgeFile file = getById(fileId);
+        requireReadableKb(file.getKnowledgeBaseId());
 
         File parsedFile = materializeToTempFile(file.getFilePath(), file.getFileType());
         try {
@@ -363,7 +391,7 @@ public class KnowledgeFileService {
      */
     public List<KnowledgeFile> listByKbId(Long kbId) {
         // kbId 不存在时明确返回业务码 3001，避免前端把空数组误判为“该知识库无文件”
-        kbService.getById(kbId);
+        requireReadableKb(kbId);
         return fileMapper.selectList(new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<KnowledgeFile>()
                 .eq(KnowledgeFile::getKnowledgeBaseId, kbId)
                 .orderByDesc(KnowledgeFile::getCreateTime));
@@ -376,6 +404,7 @@ public class KnowledgeFileService {
      * 目标表是新建的，旧 collection 不动，成功后才切换指针并清理旧表。
      */
     public void rebuildAll(Long kbId) {
+        requireWritableKb(kbId);
         KnowledgeBaseService.RebuildPlan plan = kbService.claimRebuild(kbId);
         submitRebuild(plan);
     }
@@ -486,6 +515,23 @@ public class KnowledgeFileService {
     // ============ 私有方法 ============
 
     /**
+     * 校验父知识库存在且当前用户可写。
+     * <p>文件属于知识库子资源，所有写入口必须先校验父资源归属，避免只凭 kbId 越权写入。</p>
+     */
+    private KnowledgeBase requireWritableKb(Long kbId) {
+        KnowledgeBase kb = kbService.getById(kbId);
+        DataScopeGuard.assertWritable(kb.getCreateBy(), kb.getVisibility(), "知识库");
+        return kb;
+    }
+
+    /** 校验父知识库存在且当前用户可读（他人 PRIVATE 按不存在处理）。 */
+    private KnowledgeBase requireReadableKb(Long kbId) {
+        KnowledgeBase kb = kbService.getById(kbId);
+        DataScopeGuard.assertReadable(kb.getCreateBy(), kb.getVisibility(), "知识库");
+        return kb;
+    }
+
+    /**
      * 同知识库内按内容哈希查重（逻辑删除行自动排除；FAILED 文件没有向量，允许重新上传）。
      */
     private KnowledgeFile findDuplicateFile(Long kbId, String contentHash) {
@@ -580,7 +626,8 @@ public class KnowledgeFileService {
                 log.warn("文件处理提交调度中心失败，回退本地线程池 fileId={} error={}", fileId, e.getMessage());
             }
         }
-        FILE_PROCESSOR.submit(() -> {
+        // 本地兜底线程池不继承请求线程上下文：提交时冻结租户，执行前恢复，避免向量 metadata 租户标记丢失
+        FILE_PROCESSOR.submit(com.wgh.rag.common.security.AuthContextPropagation.wrap(() -> {
             try {
                 KnowledgeFile latest = fileMapper.selectById(fileId);
                 KnowledgeBase kb = latest == null ? null : kbService.getById(kbId);
@@ -592,7 +639,7 @@ public class KnowledgeFileService {
             } catch (Exception e) {
                 log.error("文件处理失败 fileId={}", fileId, e);
             }
-        });
+        }));
     }
 
     /**
@@ -687,9 +734,17 @@ public class KnowledgeFileService {
                 log.info("文件 {} chunk 去重跳过 {} 条（知识库已存在或文件内重复）", file.getFileName(), skipped);
             }
 
+            // 事实层双写：先落原文与元数据（PENDING），再写向量并回填 embedding_id
+            if (!toInsert.isEmpty() && kbChunkService != null) {
+                kbChunkService.replaceFileChunks(kb.getId(), file.getId(), toInsert, embeddingModelId, dimension);
+            }
             // 向量化并存入 pgvector
             if (!toInsert.isEmpty()) {
-                vectorStoreService.insertVectors(collection, toInsert, embeddingModelId, dimension);
+                List<String> embeddingIds = vectorStoreService.insertVectors(
+                        collection, toInsert, embeddingModelId, dimension);
+                if (kbChunkService != null && !embeddingIds.isEmpty()) {
+                    kbChunkService.markSynced(kb.getId(), file.getId(), toInsert, embeddingIds);
+                }
             }
 
             file.setChunkCount(toInsert.size());
@@ -725,6 +780,8 @@ public class KnowledgeFileService {
         meta.put("fileId", file.getId());
         meta.put("fileName", file.getFileName());
         meta.put("kbId", kb.getId());
+        // 租户编码随向量落 metadata：检索编排层据此做租户断言，事实层/重建也据此回填 tenant_id
+        meta.put("tenantId", TenantContext.tenantIdOrDefault());
         meta.put("kbName", kb.getName());
         meta.put("chunkIndex", chunkIndex);
         meta.put("charStart", charStart);

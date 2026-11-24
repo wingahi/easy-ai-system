@@ -5,6 +5,7 @@ import com.wgh.rag.log.annotation.Audit;
 import com.wgh.rag.log.constant.AuditConstants;
 import com.wgh.rag.log.entity.AuditLog;
 import com.wgh.rag.common.security.SecurityUtils;
+import com.wgh.rag.common.security.TenantContext;
 import com.wgh.rag.log.service.AuditLogService;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
@@ -45,6 +46,8 @@ public class AuditAspect {
             try {
                 AuditLog entry = new AuditLog();
                 entry.setUsername(SecurityUtils.currentUsername());
+                // 租户归属以 TenantContext 为准，不再依赖参数猜测
+                entry.setTenantId(TenantContext.tenantIdOrDefault());
                 entry.setAction(audit.action());
                 entry.setResourceType(audit.resourceType());
                 entry.setResourceId(extractResourceId(pjp.getArgs()));

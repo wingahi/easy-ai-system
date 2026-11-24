@@ -205,6 +205,8 @@ public class KnowledgeBaseController {
             @RequestParam(value = "queryTransformMode", required = false) String queryTransformMode,
             @RequestParam(value = "rewriteModelId", required = false) Long rewriteModelId,
             @RequestParam(value = "topK", required = false) Integer topK) {
+        // 检索测试属于知识库读取入口：他人 PRIVATE 知识库按不存在处理
+        kbService.getVisible(kbId);
         int effectiveTopK = topK != null && topK > 0
                 ? topK
                 : (ragProperties.getRetrieve().getTopK() != null ? ragProperties.getRetrieve().getTopK() : 5);

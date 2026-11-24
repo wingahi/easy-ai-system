@@ -19,6 +19,7 @@ import com.wgh.rag.kb.mapper.KnowledgeFileMapper;
 import com.wgh.rag.kb.port.VectorStorePort;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -38,6 +39,13 @@ public class KnowledgeBaseService {
     private final LlmModelService llmModelService;
     private final VectorStorePort vectorStoreService;
     private final SemanticCacheService semanticCacheService;
+
+    /**
+     * 关键词索引维护双路路由；字段注入避免改变既有构造器签名。
+     * 未装配时只维护向量路，行为与改造前一致。
+     */
+    @Autowired(required = false)
+    private KeywordIndexMaintenanceRouter keywordIndexMaintenance;
 
     public PageResult<KnowledgeBase> page(Long page, Long size, String keyword) {
         return DataScopeContext.runWithScope(() -> {
@@ -170,6 +178,9 @@ public class KnowledgeBaseService {
                 .set(KnowledgeBase::getPendingEmbeddingModelId, targetModelId));
         if (claimed == 0) {
             vectorStoreService.dropCollection(targetCollection);
+            if (keywordIndexMaintenance != null) {
+                keywordIndexMaintenance.dropCollection(targetCollection);
+            }
             throw new BusinessException(ResultCode.OPERATION_NOT_ALLOWED,
                     "该知识库已有重建任务在执行，请稍后再试");
         }
@@ -217,6 +228,12 @@ public class KnowledgeBaseService {
             String oldCollection = kb.getCollectionName();
             if (oldCollection != null && !oldCollection.equals(plan.targetCollection())) {
                 vectorStoreService.dropCollection(oldCollection);
+                if (keywordIndexMaintenance != null) {
+                    keywordIndexMaintenance.dropCollection(oldCollection);
+                }
+            }
+            if (keywordIndexMaintenance != null) {
+                keywordIndexMaintenance.ensureIndex(plan.targetCollection());
             }
             log.info("知识库 {} 重建成功: collection {} -> {}，已清理旧表",
                     kb.getId(), oldCollection, plan.targetCollection());
@@ -224,6 +241,9 @@ public class KnowledgeBaseService {
             kbMapper.updateById(patch);
             // 保留 pending_* 便于重试；半成品目标表直接删除，旧 collection 未动
             vectorStoreService.dropCollection(plan.targetCollection());
+            if (keywordIndexMaintenance != null) {
+                keywordIndexMaintenance.dropCollection(plan.targetCollection());
+            }
             log.warn("知识库 {} 重建失败，已清理目标表 {}，旧数据继续可用",
                     kb.getId(), plan.targetCollection());
         }
@@ -252,6 +272,9 @@ public class KnowledgeBaseService {
         // 删除 pgvector 向量表
         try {
             vectorStoreService.dropCollection(kb.getCollectionName());
+            if (keywordIndexMaintenance != null) {
+                keywordIndexMaintenance.dropCollection(kb.getCollectionName());
+            }
         } catch (Exception e) {
             log.warn("删除 pgvector 向量表失败: {}", e.getMessage());
         }

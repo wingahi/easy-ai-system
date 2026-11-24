@@ -56,7 +56,10 @@ class ChunkUploadServiceTest {
         fileStorageService = Mockito.mock(FileStorageService.class);
         service = new ChunkUploadService(sessionMapper, kbService, fileService,
                 fileStorageService, new ObjectMapper());
-        when(kbService.getById(anyLong())).thenReturn(new KnowledgeBase());
+        KnowledgeBase kb = new KnowledgeBase();
+        kb.setCreateBy("alice");
+        kb.setVisibility("PRIVATE");
+        when(kbService.getById(anyLong())).thenReturn(kb);
         loginAs("alice");
     }
 

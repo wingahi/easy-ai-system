@@ -20,6 +20,9 @@ public class ApiCallLog extends BaseEntity {
     /** 记录调用主体（api_{keyId}） */
     private String username;
 
+    /** 租户编码（Key 归属租户；单租户为 default） */
+    private String tenantId;
+
     private String method;
 
     private String path;

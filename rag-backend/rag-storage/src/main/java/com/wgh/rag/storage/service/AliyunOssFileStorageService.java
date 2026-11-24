@@ -179,9 +179,20 @@ public class AliyunOssFileStorageService implements FileStorageService, StorageI
 
     @Override
     public List<StorageObjectInfo> listAll() {
+        return listByPrefix(null);
+    }
+
+    @Override
+    public List<StorageObjectInfo> listByPrefix(String keyPrefix) {
         ensureConfigured();
         StorageProperties.Oss oss = properties.getOss();
-        String prefix = normalizedKeyPrefix(oss.getKeyPrefix());
+        String basePrefix = normalizedKeyPrefix(oss.getKeyPrefix());
+        String logicalPrefix = normalizeLogicalPrefix(keyPrefix);
+        if (logicalPrefix == null) {
+            log.warn("OSS 列举前缀非法，跳过: prefix={}", keyPrefix);
+            return List.of();
+        }
+        String prefix = basePrefix + logicalPrefix;
         return execute("列举对象", () -> {
             List<StorageObjectInfo> objects = new ArrayList<>();
             String marker = null;
@@ -201,7 +212,7 @@ public class AliyunOssFileStorageService implements FileStorageService, StorageI
                     long lastModified = summary.getLastModified() == null
                             ? 0L : summary.getLastModified().getTime();
                     objects.add(new StorageObjectInfo(
-                            stripKeyPrefix(objectKey, prefix), summary.getSize(), lastModified));
+                            stripKeyPrefix(objectKey, basePrefix), summary.getSize(), lastModified));
                 }
                 marker = listing.isTruncated() ? listing.getNextMarker() : null;
             } while (marker != null);
@@ -266,6 +277,18 @@ public class AliyunOssFileStorageService implements FileStorageService, StorageI
             normalized = normalized.substring(1);
         }
         return normalizedKeyPrefix(properties.getOss().getKeyPrefix()) + normalized;
+    }
+
+    /** 规范化逻辑前缀：去前导斜杠、禁止 ..、确保以 / 结尾；空值返回空串，非法返回 null。 */
+    private String normalizeLogicalPrefix(String prefix) {
+        if (prefix == null || prefix.isBlank()) {
+            return "";
+        }
+        String normalized = prefix.replace('\\', '/').replaceAll("^/+", "");
+        if (normalized.contains("..")) {
+            return null;
+        }
+        return normalized.endsWith("/") ? normalized : normalized + "/";
     }
 
     /** 规范化 keyPrefix：去反斜杠、去前导斜杠、确保以 / 结尾；空值返回空串。 */

@@ -128,6 +128,8 @@ public class OidcAuthenticationFilter extends OncePerRequestFilter {
         loginUser.setUsername(username);
         loginUser.setRoles(roles);
         loginUser.setPermissions(permissions);
+        // 租户只从可信 claim 读取；缺失时由 TenantContextFilter 回落默认租户
+        loginUser.setTenantId(claimAsText(claims, properties.getTenantClaim()));
         LoginUser.set(loginUser);
 
         request.setAttribute("userId", userId);
@@ -211,6 +213,8 @@ public class OidcAuthenticationFilter extends OncePerRequestFilter {
         loginUser.setUsername(user.getUsername());
         loginUser.setRoles(roles);
         loginUser.setPermissions(permissions);
+        // 租户以用户表为准，避免旧令牌未携带 claim 时丢失归属
+        loginUser.setTenantId(user.getTenantId());
         loginUser.setPasswordMustChange(user.getPasswordMustChange() != null && user.getPasswordMustChange() == 1);
         LoginUser.set(loginUser);
 

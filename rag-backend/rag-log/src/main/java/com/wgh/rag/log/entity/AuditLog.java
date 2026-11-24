@@ -19,6 +19,11 @@ public class AuditLog extends BaseEntity {
     private String username;
 
     /**
+     * 租户编码（来自 TenantContext；存量/内部任务为 default）
+     */
+    private String tenantId;
+
+    /**
      * 操作标识（如 KB_CREATE / MODEL_DELETE）
      */
     private String action;

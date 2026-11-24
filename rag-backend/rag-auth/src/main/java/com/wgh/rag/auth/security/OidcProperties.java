@@ -34,6 +34,9 @@ public class OidcProperties {
     /** token 中承载用户名的 claim 名（默认 sub） */
     private String usernameClaim = "sub";
 
+    /** token 中承载租户编码的 claim 名（默认 tenant；缺失时回落默认租户） */
+    private String tenantClaim = "tenant";
+
     /** token 未携带角色或角色在数据库不存在时的默认角色编码 */
     private String defaultRole = "viewer";
 

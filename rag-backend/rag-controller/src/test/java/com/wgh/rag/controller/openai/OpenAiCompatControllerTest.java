@@ -67,7 +67,7 @@ class OpenAiCompatControllerTest {
 
     @Test
     void shouldReturnOpenAiCompletionForNonStreamingRequest() throws Exception {
-        when(windowService.findById(1L)).thenReturn(window());
+        when(windowService.getVisible(1L)).thenReturn(window());
         when(windowService.createSession(eq(1L), anyString())).thenReturn(session(99L));
         when(ragChatService.streamChat(eq(1L), eq(99L), eq("你好"), eq(true), any(), any()))
                 .thenAnswer(emitterProducing("你", "好"));
@@ -96,7 +96,7 @@ class OpenAiCompatControllerTest {
 
     @Test
     void shouldStreamOpenAiChunksIncrementally() throws Exception {
-        when(windowService.findById(1L)).thenReturn(window());
+        when(windowService.getVisible(1L)).thenReturn(window());
         when(windowService.createSession(eq(1L), anyString())).thenReturn(session(99L));
         when(ragChatService.streamChat(eq(1L), eq(99L), eq("你好"), eq(true), any(), any()))
                 .thenAnswer(emitterProducing("你", "好"));
@@ -127,7 +127,7 @@ class OpenAiCompatControllerTest {
 
     @Test
     void shouldReturnModelNotFoundError() throws Exception {
-        when(windowService.findById(404L)).thenReturn(null);
+        when(windowService.getVisible(404L)).thenReturn(null);
         when(windowService.page(eq(1L), eq(500L), eq("missing")))
                 .thenReturn(new PageResult<>(0L, 1L, 500L, List.of()));
 
@@ -143,7 +143,7 @@ class OpenAiCompatControllerTest {
 
     @Test
     void shouldRejectEmptyMessages() throws Exception {
-        when(windowService.findById(1L)).thenReturn(window());
+        when(windowService.getVisible(1L)).thenReturn(window());
 
         mockMvc.perform(post("/v1/chat/completions")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -156,7 +156,7 @@ class OpenAiCompatControllerTest {
 
     @Test
     void shouldMapQuotaExceededToRateLimitError() throws Exception {
-        when(windowService.findById(1L)).thenReturn(window());
+        when(windowService.getVisible(1L)).thenReturn(window());
         when(windowService.createSession(eq(1L), anyString())).thenReturn(session(99L));
         when(ragChatService.streamChat(eq(1L), eq(99L), eq("hi"), eq(true), any(), any()))
                 .thenThrow(new BusinessException(ResultCode.QUOTA_EXCEEDED, "配额已用尽"));

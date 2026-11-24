@@ -101,6 +101,15 @@ wgh:
       allowed-origins: ${WGH_CORS_ALLOWED_ORIGINS:http://localhost:5173,http://127.0.0.1:5173}
       allow-credentials: ${WGH_CORS_ALLOW_CREDENTIALS:false}   # Bearer Token 模式无需开启
 
+  # ===== 多租户（阶段 1：上下文与身份归属；租户传入只认凭证，不认请求参数） =====
+  tenant:
+    # true=严格模式：缺失/未知/停用租户的令牌与 API Key 一律拒绝；
+    # false=兼容存量单租户部署，未知租户回落 default。多租户上线前必须置为 true。
+    enforcement: ${WGH_TENANT_ENFORCEMENT:false}
+    # true=MyBatis 插件自动为租户表追加 tenant_id 条件（依赖 06_tenant_data_plane.sql 已执行）；
+    # 仅在租户列迁移未完成、需要紧急回滚时置为 false。
+    sql-isolation-enabled: ${WGH_TENANT_SQL_ISOLATION:true}
+
   # ===== 外部 OIDC 资源服务器（本系统只验签，不签发 token） =====
   # token 由上游 IdP 签发；issuer / audience / jwks-uri 必配（jwks-uri 留空则自动发现）。
   auth:
@@ -116,6 +125,7 @@ wgh:
       jwks-uri: ${WGH_OIDC_JWKS_URI:}
       roles-claim: ${WGH_OIDC_ROLES_CLAIM:roles}
       username-claim: ${WGH_OIDC_USERNAME_CLAIM:sub}
+      tenant-claim: ${WGH_OIDC_TENANT_CLAIM:tenant}
       default-role: viewer
       clock-skew-seconds: 30
       jwks-cache-ttl-seconds: 300
@@ -214,6 +224,7 @@ wgh:
       enabled: ${WGH_CACHE_ENABLED:true}                        # 语义缓存全局开关（窗口级需同时开启）
       similarity-threshold: ${WGH_CACHE_THRESHOLD:0.95}         # 命中阈值（余弦相似度，越高越严格）
       max-per-window: ${WGH_CACHE_MAX_PER_WINDOW:500}           # 每窗口最大缓存条数，超出删最旧
+      cleanup-interval-minutes: ${WGH_CACHE_CLEANUP_INTERVAL_MINUTES:30}   # 过期缓存周期清理间隔（分钟，最小 5）
     quota:
       # 全局默认配额：用户无自定义配置或自定义配置被禁用时生效（<=0 表示不限制）
       chat-daily-limit: ${WGH_QUOTA_CHAT_DAILY_LIMIT:200}       # 每人每天对话条数上限

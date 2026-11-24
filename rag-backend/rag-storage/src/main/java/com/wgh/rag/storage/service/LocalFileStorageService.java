@@ -139,11 +139,29 @@ public class LocalFileStorageService implements FileStorageService, StorageInven
 
     @Override
     public List<StorageObjectInfo> listAll() {
+        return listByPrefix(null);
+    }
+
+    @Override
+    public List<StorageObjectInfo> listByPrefix(String keyPrefix) {
         List<StorageObjectInfo> objects = new ArrayList<>();
         if (!Files.isDirectory(root)) {
             return objects;
         }
-        try (Stream<Path> paths = Files.walk(root)) {
+        Path start = root;
+        if (keyPrefix != null && !keyPrefix.isBlank()) {
+            try {
+                start = resolvePath(keyPrefix);
+            } catch (BusinessException e) {
+                // 非法前缀按“无对象”处理，绝不回退到全量扫描
+                log.warn("本地存储前缀非法，跳过列举: prefix={}, error={}", keyPrefix, e.getMessage());
+                return objects;
+            }
+            if (!Files.isDirectory(start)) {
+                return objects;
+            }
+        }
+        try (Stream<Path> paths = Files.walk(start)) {
             paths.filter(Files::isRegularFile).forEach(path -> {
                 String name = path.getFileName().toString();
                 if (isTempFile(name)) {

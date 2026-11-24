@@ -54,7 +54,7 @@ class StorageOrphanCleanupServiceTest {
     @DisplayName("默认只报告：知识库文件与未完成分片不被当作孤儿，且不调用删除")
     void reportsWithoutDeletingByDefault() {
         long old = System.currentTimeMillis() - 120 * 60_000L;
-        when(inventory.listAll()).thenReturn(List.of(
+        when(inventory.listByPrefix(anyString())).thenReturn(List.of(
                 new StorageObjectInfo("kb/1/u1/keep.txt", 10, old),
                 new StorageObjectInfo("kb/1/u2/orphan.txt", 20, old),
                 new StorageObjectInfo("kb/1/s1/parts/0.part", 5, old),
@@ -77,7 +77,7 @@ class StorageOrphanCleanupServiceTest {
     void deletesOnlyAgedOrphansWhenEnabled() {
         long aged = System.currentTimeMillis() - 120 * 60_000L;
         long fresh = System.currentTimeMillis();
-        when(inventory.listAll()).thenReturn(List.of(
+        when(inventory.listByPrefix(anyString())).thenReturn(List.of(
                 new StorageObjectInfo("kb/1/orphan-old.txt", 10, aged),
                 new StorageObjectInfo("kb/1/orphan-young.txt", 10, fresh)));
         when(fileMapper.selectList(any())).thenReturn(List.of());
@@ -96,7 +96,7 @@ class StorageOrphanCleanupServiceTest {
     @Test
     @DisplayName("知识文件记录存在但存储对象缺失：计数并给出可定位明细")
     void reportsMissingKnowledgeFileObjects() {
-        when(inventory.listAll()).thenReturn(List.of());
+        when(inventory.listByPrefix(anyString())).thenReturn(List.of());
         when(fileMapper.selectList(any()))
                 .thenReturn(List.of(file(9L, "lost.txt", "kb/1/lost.txt")));
         when(sessionMapper.selectList(any())).thenReturn(List.of());

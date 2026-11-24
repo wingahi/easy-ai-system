@@ -4,7 +4,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wgh.rag.auth.constant.AuthConstants;
 import com.wgh.rag.common.exception.BusinessException;
 import com.wgh.rag.common.result.Result;
+import com.wgh.rag.auth.tenant.TenantService;
 import com.wgh.rag.common.result.ResultCode;
+import com.wgh.rag.common.security.LoginUser;
+import com.wgh.rag.common.security.TenantContext;
 import com.wgh.rag.publicaccess.entity.ApiKey;
 import com.wgh.rag.publicaccess.service.ApiCallLogService;
 import com.wgh.rag.publicaccess.service.ApiKeyService;
@@ -23,6 +26,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.Set;
 
 /**
  * 开放 API / OpenAI 兼容 API 独立鉴权过滤器（作用于 /api/open/** 与 /v1/**）
@@ -42,6 +46,7 @@ public class ApiKeyAuthenticationFilter extends OncePerRequestFilter {
     private final ApiCallLogService apiCallLogService;
     private final ClientIpResolver clientIpResolver;
     private final ObjectMapper objectMapper;
+    private final TenantService tenantService;
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
@@ -62,6 +67,12 @@ public class ApiKeyAuthenticationFilter extends OncePerRequestFilter {
                 return;
             }
             key = apiKeyService.verify(rawKey);
+            // 停用/未知租户的 Key 一律拒绝，避免停用租户继续访问默认租户数据
+            String keyTenant = key.getTenantId() == null || key.getTenantId().isBlank()
+                    ? TenantContext.DEFAULT_TENANT : key.getTenantId();
+            if (!tenantService.isActive(keyTenant)) {
+                throw new BusinessException(ResultCode.TOKEN_INVALID, "API Key 所属租户不存在或已停用");
+            }
             apiKeyService.requireIpAllowed(key, clientIpResolver.resolve(request));
             apiKeyService.requireScope(key, requiredScope(request.getRequestURI()));
 
@@ -69,6 +80,17 @@ public class ApiKeyAuthenticationFilter extends OncePerRequestFilter {
                     "api_" + key.getId(), rawKey,
                     List.of(new SimpleGrantedAuthority("ROLE_API_CLIENT")));
             SecurityContextHolder.getContext().setAuthentication(authentication);
+            // Key 继承创建人的资源可见性：以 createdBy 作为归属用户，避免开放 API 成为全局通行证。
+            // 认证主体仍是 api_<id>（调用日志与限流按 Key 维度），归属用户单独放在 LoginUser。
+            LoginUser loginUser = new LoginUser();
+            loginUser.setUsername(key.getCreatedBy() == null || key.getCreatedBy().isBlank()
+                    ? "api_" + key.getId() : key.getCreatedBy());
+            loginUser.setRoles(Set.of());
+            loginUser.setPermissions(Set.of());
+            loginUser.setTenantId(key.getTenantId());
+            LoginUser.set(loginUser);
+            // Key 归属租户即请求租户，避免开放 API 跨租户读写
+            TenantContext.set(key.getTenantId(), null, key.getCreatedBy());
 
             filterChain.doFilter(request, response);
         } catch (BusinessException e) {
@@ -76,6 +98,8 @@ public class ApiKeyAuthenticationFilter extends OncePerRequestFilter {
                 writeError(request, response, e.getCode(), e.getMessage());
             }
         } finally {
+            LoginUser.clear();
+            TenantContext.clear();
             if (key != null) {
                 apiCallLogService.record(key, request, response.getStatus(),
                         System.currentTimeMillis() - start);

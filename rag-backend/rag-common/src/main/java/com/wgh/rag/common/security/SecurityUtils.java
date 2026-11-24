@@ -21,6 +21,11 @@ public final class SecurityUtils {
      * principal 的 toString，因此这里优先取 {@code LoginUser.username}。
      */
     public static String currentUsername() {
+        // 异步/作业线程没有 SecurityContext，但可能已由上下文透传恢复 LoginUser
+        LoginUser contextUser = LoginUser.get();
+        if (contextUser != null && StringUtils.hasText(contextUser.getUsername())) {
+            return contextUser.getUsername();
+        }
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth == null) {
             return ANONYMOUS;

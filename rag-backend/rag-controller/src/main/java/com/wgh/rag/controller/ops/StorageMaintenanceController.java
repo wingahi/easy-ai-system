@@ -66,7 +66,17 @@ public class StorageMaintenanceController {
     @Operation(summary = "孤儿对象扫描（默认仅报告，delete=true 才删除）")
     @PostMapping("/orphans/scan")
     public Result<StorageOrphanReport> scanOrphans(
-            @RequestParam(defaultValue = "false") boolean delete) {
-        return Result.success(maintenanceService.scanOrphans(delete));
+            @RequestParam(defaultValue = "false") boolean delete,
+            @RequestParam(required = false) String tenantId) {
+        // 按租户前缀收敛；未传租户时使用当前登录租户，禁止全库推断。
+        // 非平台管理员只能扫描自己的租户，传入其他租户会被忽略。
+        String scope = tenantId;
+        com.wgh.rag.data.scope.DataScopeContext.Scope user =
+                com.wgh.rag.data.scope.DataScopeContext.resolveUser();
+        String current = com.wgh.rag.common.security.TenantContext.tenantIdOrDefault();
+        if (user == null || !user.admin() || scope == null || scope.isBlank()) {
+            scope = current;
+        }
+        return Result.success(maintenanceService.scanOrphans(scope, delete));
     }
 }

@@ -39,6 +39,9 @@ public class ApiKey extends BaseEntity {
     /** 创建人 */
     private String createdBy;
 
+    /** 租户编码（Key 归属租户；单租户为 default） */
+    private String tenantId;
+
     /** 最近调用时间 */
     private LocalDateTime lastUsedTime;
 

@@ -94,10 +94,12 @@ public class LocalLoginService {
         }
 
         LocalTokenService.IssuedToken issued =
-                localTokenService.issue(user.getUsername(), user.getId(), roles, user.getPasswordVersion());
+                localTokenService.issue(user.getUsername(), user.getId(), roles, user.getPasswordVersion(),
+                        user.getTenantId());
         Set<String> permissions = loadPermissions(user.getId());
         boolean passwordMustChange = user.getPasswordMustChange() != null && user.getPasswordMustChange() == 1;
-        accountAuditService.record(AccountAuditService.ACTION_LOGIN_SUCCESS, name, name, "SUCCESS", null);
+        accountAuditService.record(AccountAuditService.ACTION_LOGIN_SUCCESS, name, name, "SUCCESS", null,
+                user.getTenantId());
         log.info("本地登录成功 username={}, roles={}, trial={}, passwordMustChange={}",
                 name, roles, trial, passwordMustChange);
         return new LocalLoginResult(
