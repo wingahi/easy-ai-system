@@ -2,7 +2,7 @@
 
 > 面向私有化部署的企业知识库问答与 RAG 中台：把文档治理、检索增强、流式问答、Agent / 工作流编排、分享与开放接入收敛到一套可审计、可配额管理的系统。
 >
-> 当前版本：**1.4.0（2026-11-24）**。本版落地「无产出不计费」与死信人工出口、多副本调度与 SSE 事件重放、用户信息 Redis 缓存、优雅停机与探针分组、K8s K1/K2/K3 清单与观测栈；已完成 / 已交付未验证 / 未实现的区分见 §3 与 §8。
+> 当前版本：**1.4.0（2026-11-24）**。本版落地「无产出不计费」与死信人工出口、多副本调度与 SSE 事件重放、用户信息 Redis 缓存、优雅停机与探针分组、K8s K1/K2/K3 清单与观测栈；已完成 / 已交付未验证 / 未实现的区分见 [能力矩阵](docs/reference/capabilities.md) 与 [已知限制](docs/reference/known-limitations.md)。
 
 ---
 
@@ -31,7 +31,7 @@
 ### 1.2 能力边界
 
 - **做**：文档解析与检索增强、流式问答、多轮会话与上下文压缩、Agent 规划执行、多 Agent 协作、工作流编排、分享 / 嵌入 / 开放 API、配额限流、审计与成本统计。
-- **不做**：多租户隔离、独立向量数据库 / 搜索引擎（单库 PostgreSQL + pgvector）、图片 OCR、移动端与国际化；应用内任务调度不迁移到 Kubernetes（`deploy/k8s/` 只做应用与依赖的部署编排，K1/K2/K3 清单已交付但未做真实集群验证，见 §8）。
+- **不做**：多租户隔离、独立向量数据库 / 搜索引擎（单库 PostgreSQL + pgvector）、图片 OCR、移动端与国际化；应用内任务调度不迁移到 Kubernetes（`deploy/k8s/` 只做应用与依赖的部署编排，K1/K2/K3 清单已交付但未做真实集群验证，见 [已知限制](docs/reference/known-limitations.md)）。
 
 ---
 
@@ -52,218 +52,24 @@
 
 ## 3. 能力矩阵
 
-状态口径：**已完成** / **已交付未验证**（代码或清单已合入，缺真实环境或端到端验证）/ **部分完成** / **未实现** / **规划中**（已有成稿规划文档、尚未实施）。状态按代码与文档核对结果判断，详细限制与未验证项见 §8。
+状态口径：**已完成** / **已交付未验证**（代码或清单已合入，缺真实环境或端到端验证）/ **部分完成** / **未实现** / **规划中**（已有成稿规划文档、尚未实施）。状态按代码与文档核对结果判断。
 
-### 3.1 知识库与检索
+| 能力域 | 覆盖范围 | 状态 |
+|--------|----------|------|
+| 知识库与检索 | 12 种格式解析、PDF 版面 / 表格 / OCR、9 种切分、查询变换 + 混合检索 + RRF + Rerank、评测与引用溯源、标签 / 版本、URL 连接器、local / OSS 存储、分片上传 | 已完成（独立图片 OCR 未实现） |
+| 对话与开放接入 | 多会话流式问答、SSE 重放与自动重连、上下文压缩、多模态、反馈、分享 / Widget / 开放 API、OpenAI 兼容入口、Prompt 模板、语义缓存 | 已完成（跨副本 SSE 重连未验证；反馈 A/B 未实现） |
+| Agent 与工作流 | 单 Agent、6 种多 Agent 模式、12 类工作流节点、表达式与单步调试、模型故障转移、任务恢复与长期记忆、代码沙箱 | 已完成（代码沙箱默认关闭） |
+| 平台治理 | OIDC / 本地双认证与 RBAC、资源可见性、配额与「无产出不计费」、死信人工退款 / 核销、Redis 共享状态、审计与成本、可观测性、优雅停机与探针 | 已完成（多副本 / 滚动更新相关项未验证） |
+| 模型与工程 | 多厂商模型管理、路由与故障转移、JWKS L1/L2 缓存、模块拆分与依赖边界、JDK 21、配置分层 | 已完成 |
+| 上下文与工具治理 | 历史 Token 裁剪、检索指标 / 来源 / 上下文同源、工具结果预算、工具重试 / 熔断 / 兜底、工作流 LLM 节点输入预算 | 已完成 |
 
-| 能力 | 状态 | 说明 |
-|------|------|------|
-| 文档解析（12 种格式） | 已完成 | 位于 `rag-document`：PDF / DOC / DOCX / XLS / XLSX / CSV / TXT / MD / PPTX / HTML / JSON / EML；统一由 `DocumentParserDispatcher` 分发并抽取元数据 |
-| PDF 版面分析与表格还原 | 已完成 | `rag-document` 的 `PdfLayoutAnalyzer` 识别双栏阅读顺序，`TableExtractor` 将表格还原为 Markdown；栏检测优先于表格，纯两列表格可能按双栏处理 |
-| 扫描版 PDF OCR | 已完成 | `rag-document` 的 `TessOcrService` 按页兜底，单页文字少于阈值（默认 20 字）触发；依赖本机 `tesseract` 与 `chi_sim+eng` 语言包，缺失或超时降级为文本抽取（`WGH_OCR_*`） |
-| 新增文档格式（PPTX / HTML / JSON / EML） | 已完成 | `rag-document` 的 `PptxParser` / `HtmlParser` / `JsonParser` / `EmlParser` + 统一元数据与大小上限 |
-| 文本切分（9 种策略） | 已完成 | `rag-document` 的 AUTO / RECURSIVE / CHAPTER / PARAGRAPH / FAQ / LENGTH / CUSTOM / STRUCTURED（标题感知）/ SEMANTIC（语义断句） |
-| 查询变换 / 混合检索 / RRF / Rerank | 已完成 | REWRITE / MULTI_QUERY / HYDE；向量余弦 + pg_trgm 关键词召回；RRF(k=60) 融合；可选 Rerank；聊天窗口可单独配置 `hybridEnabled` / `queryTransformMode` / `rewriteModelId`，混合检索按“窗口开启或全局开启”生效，窗口关闭不能覆盖全局开启（2026-11-18，commit `8b52b5f`） |
-| 检索指标与离线评测 | 已完成 | `rag-eval`：覆盖率 / 命中率；ground truth 标注后计算 Recall@K / Precision@K / MRR / NDCG；生成侧多 judge 评估 Faithfulness / Answer Relevancy / Context Precision / Context Recall（缺参考答案时显式标记不可计算）；`eval/eval_recall.py` 复用同一标注 |
-| 评测数据集版本化与 CI 检索门禁 | 已完成 | `rag-eval`：数据集 / 用例 / 结果三表；用例每次变更按“写时复制”生成新版本，旧版本只读；按版本评测并归档指标与逐查询明细，支持跨版本指标差值与逐查询 Recall 差值；CI 用固定 fixture 在无 Key、无网络、无真实模型条件下校验五项阈值（commit `adbdafe`） |
-| 检索来源结构化与 [Sn] 引用溯源 | 已完成 | `sources` 扩展 `kbId` / `kbName` / `fileId` / `fileName` / `chunkIndex` / `pageNo` / `charStart` / `charEnd` / `score` / `snippet`（压缩空白后前 120 字），按文件名去重保留最高分；上下文按文档分配 `[Sn]` 编号（同文档多段共用），system prompt 要求按编号引用；前端 `SourcePanel.vue` 展开原文并高亮对应卡片（commit `96dfc42`） |
-| 知识库标签 | 已完成 | `TagService` / `TagController`；知识库与文件多标签绑定及管理界面 |
-| 文档版本 | 已完成 | `FileVersionService` + 版本列表 / 回滚；回滚生成新版本，不覆盖旧版本 |
-| URL 数据源连接器（单页抓取 + 增量同步） | 已完成 | `ConnectorController` / `ConnectorService` / `UrlConnector`；单个 http/https 页面抓取、Jsoup 正文抽取、SSRF 逐跳校验；按 `content_hash` 判重，内容未变返回 `UNCHANGED` 不重复入库，内容变化生成新文件并逻辑删除旧文件，404/410 清理旧文件；每次同步留运行记录；定时同步默认关闭，需显式 `WGH_CONNECTOR_SCHEDULER_ENABLED=true`（commit `855f61f`） |
-| 可插拔文件存储（local / OSS） | 已完成 | 独立 `rag-storage` 模块，`FileStorageService` + 本地 / 阿里云 OSS 实现 |
-| 多副本共享存储（`mode=shared`） | 已完成（未在容器内验证） | `rag-storage` 新增 `wgh.rag.storage.mode`：`single`（默认，行为不变）/ `shared`。`shared` 启动自检（`StorageDeploymentGuard`，失败即启动失败）：`type=oss` 校验必填项完整；`type=local` 校验 `base-dir` 可写且为独立挂载卷，并执行写-读-删探测。`read-fallback-enabled`（仅 `type=oss`）在主存储未命中时回落 `local.base-dir` 读取旧对象，写 / 删仍以主存储为准，用于 local → oss 滚动切换。独立挂载卷判定只在本机临时进程验证过，未在容器内验证 |
-| 大文件分片上传与断点续传 | 已完成 | 三段式接口：`POST /api/kb/{kbId}/files/chunk/init` → `POST /api/kb/files/chunk/{sessionId}`（按序号上传分片）→ `POST .../complete`；合并后按整文件 `content_hash` 走原有判重与入库链路；页面内断线续传（进度来自会话表）；会话按创建者归属校验，他人会话按不存在处理（`3001`）；24 小时未完成会话自动清理，阈值可配（`WGH_UPLOAD_CLEANUP_*`，commit `140375a`） |
-| `local` ↔ `oss` 历史对象自动迁移 | 已完成 | 提供历史对象迁移服务与管理端异步作业（提交 `e4155c6`）：任务状态与取消标记存 Redis（TTL 24h），跨实例单飞锁；需在管理端显式发起，不做自动触发 |
-| OSS 删除失败后的孤儿对象清理 | 已完成 | 定期扫描对象存储与库内记录比对并输出孤儿报告（提交 `e4155c6`）；默认只报告不删除（`delete=false`），最后修改时间 60 分钟内受保护 |
-| 独立图片 OCR | **未实现** | 扫描版 PDF 已按页 OCR；独立图片文件（PNG / JPG）仍不解析入库 |
-
-### 3.2 对话与开放接入
-
-| 能力 | 状态 | 说明 |
-|------|------|------|
-| 多会话与流式问答 | 已完成 | 多会话管理、首条消息自动生成标题、历史滑动加载；SSE 输出 Markdown、引用来源与检索指标；回答中的 `[Sn]` 可点击定位来源卡片（2026-11-12） |
-| SSE 事件重放与自动重连（2026-11-24） | 已完成（未验证：跨副本重连） | 后端 `StreamReplayService` 为每个事件分配 `<streamId>:<seq>` 并批量写 Redis，重连按 `Last-Event-ID` 回放 `seq > 游标` 的事件；缺口下发 `stream_replay_gap`、未完整收口下发 `stream_replay_incomplete`。客户端断开只停止推送、继续生成，不再等同执行失败；前端 `sseStream.js` 按指数退避自动重连（5 次，1s–15s，带抖动），重连体只带 `sessionId + lastEventId`，不重发消息、不重复确认 HITL。Pod A 生成、Pod B 接管的事件完整性与时延未验证 |
-| 三层上下文压缩 | 已完成 | 超过 `max-history-messages`（默认 20）触发：近期原文 / 中期摘要 / 远期关键事实；模型缺失或超时降级为截断；压缩后再按 `max-history-tokens`（默认 4000）做 Token 级硬裁剪：System 全部保留、当前提问必留、其余从最近往前保留，放不下即丢弃（commit `0ed790c`） |
-| 检索指标 / 来源 / 上下文同源 | 已完成 | `coverageRate` / `hitRate` 改为基于预算裁剪后的同一份列表；`retrieveInfo` 新增 `contextKeptCount` / `contextBudgetTokens` / `contextTrimmed`，`retrievedCount` 保留“检索返回条数”原义；Agent 分支来源改为步骤内实际喂给模型的 chunk，计划不检索时为空（commit `27fce99`、`7a6070f`） |
-| 多模态图片问答 | 已完成 | 视觉模型（`supports_vision`）支持图片 + 文本提问，附件地址落 `wgh_chat_message.attachments` |
-| 反馈闭环 | 已完成 | 消息点赞 / 点踩 + 备注，窗口满意度统计与差评运营列表 |
-| 反馈 A/B 实验 | **未实现** | 评测数据集版本化已交付（写时复制、按版本归档与跨版本对比）；仍无实验分流、对照组与显著性分析 |
-| 免登录分享 / Widget 嵌入 / 开放 API | 已完成 | 分享链接（有效期、访问密码、只读范围、吊销）；`widget.js` iframe 注入；API Key 开放 API 与调用日志 |
-| OpenAI 兼容入口 + Python SDK | 已完成 | `/v1/models`、`/v1/chat/completions`（含 SSE 流式），复用 API Key + scope；附带 `sdk/python/wgh_rag_client.py`；仅支持基础对话参数，`n>1` / `logprobs` / tools 未支持 |
-| Prompt 模板中心与输入框前缀联想 | 已完成 | 模板 CRUD、变量提取、渲染预览；输入框前缀触发候选、模糊过滤、变量逐个填写；`GET /api/prompt-templates/suggest` |
-| 语义缓存 | 已完成 | 窗口级开关，相似度阈值命中后直接返回缓存答案，跳过检索与 LLM |
-
-### 3.3 Agent 与工作流
-
-| 能力 | 状态 | 说明 |
-|------|------|------|
-| 单 Agent | 已完成 | Planner 拆解 → StepExecutor 执行 → Reflection 评分重试 → 汇总答复；计划 / 步骤落库；支持 HITL |
-| 多 Agent 协作 | 已完成 | 6 种模式：CREW_SEQUENTIAL / CREW_HIERARCHICAL / CREW_PARALLEL / GRAPH_ROUTED / GROUP_CHAT_ROUND_ROBIN / GROUP_CHAT_DYNAMIC_ROUTER |
-| 工作流编排 | 已完成 | 12 类节点：START / END / LLM / RETRIEVAL / TOOL / CONDITION / LOOP / HITL / VARIABLE / WORKFLOW / AGENT / EXPRESSION；并行 fan-out/fan-in、版本、触发器、模板市场 |
-| 工作流 AGENT 节点 | 已完成 | `AgentNodeExecutor` 内置轻量 Plan-and-Execute；编辑器支持 `goal` / `maxSteps` / `timeoutMs` / `kbIds` |
-| 工作流表达式节点 | 已完成 | `EXPRESSION` 节点基于 `SimpleEvaluationContext` 的受限 SpEL 沙箱：仅允许字面量、`#input` / `#last` / `#loop` / `#vars` / `#nodes`、算术/比较/逻辑/三元与白名单 `#fn.*`；拒绝 `T()`、`new`、`@bean`、赋值与实例方法；表达式长度上限 2000 字符；保存时做必填与语法校验（commit `e27723f`） |
-| 工作流单步调试 | 已完成 | `POST /api/workflows/{id}/debug/step` 按节点推进并返回输入快照（渲染后配置 + 直接上游输出）与输出；游标（frontier / pendingIn / 已执行数）持久化在运行记录，可带 `runId` 续跑；HITL 节点停在 `PAUSED`；开关 `wgh.workflow.debug.enabled` 默认关闭（commit `e27723f`） |
-| 模型故障转移（Agent / 工作流） | 已完成 | Planner / StepExecutor / ReflectionEngine 与工作流 LLM 节点复用 `rag-llm` 的 `BlockingModelFailover`：首响应前失败切下一个模型，已产出内容后不切链；SSE 下发 `model_switch` |
-| 任务恢复（检查点与继续执行） | 已完成 | 多 Agent 步骤检查点按 `(runId, stepKey)` 跳过已完成步骤，管理端「运行中任务」合并单 Agent / 多 Agent / 工作流，并在调度开启时登记普通对话运行态（`wgh.scheduler.chat-run`）；页面按类型分栏（Agent / 多 Agent / 工作流 / 普通对话），切换时按新类型重查并丢弃过期响应（提交 `9c6b6d9`、`710ff1a`；分栏为 2026-11-24）。限制：恢复为 at-least-once，副作用已发生但检查点未落库时可能重复执行；旧数据缺 `stepKey` 时按未完成重跑 |
-| Agent 长期记忆（任务级） | 已完成 | 新增 `TASK:taskId` 作用域并镜像到 `SESSION`，召回按统一预算组装为 `FAR_FACT`；可选 LLM 摘要默认关闭；按 TTL 30 天与单作用域 200 条自动清理，清理器用咨询锁单飞（提交 `ae3bbda`） |
-| 代码沙箱 | 已完成（默认关闭） | 新增 `rag-sandbox` 模块：Python / JavaScript 执行、超时与输出上限、CPU / 内存限制、审计、默认拒绝网络（提交 `a4071db`）；需显式 `wgh.sandbox.enabled=true` 开启；隔离优先 `sandbox-exec` / `bwrap`，均不可用时 fail-closed；macOS `sandbox-exec` 已被 Apple 标记 deprecated，风险等级为中 |
-
-### 3.4 平台治理
-
-| 能力 | 状态 | 说明 |
-|------|------|------|
-| OIDC 资源服务器形态验签 | 已完成 | `OidcTokenVerifier` / `JwksProvider`；仅接受非对称签名，拒绝 HS256 与 `none`，校验 iss / aud / exp / nbf |
-| 本地 admin / 体验账号登录 + `password_version` | 已完成 | `LocalLoginService` / `LocalTokenService`；仅 `source=local` 的 admin / 体验账号可登录；`password_version` 校验会话失效 |
-| 多用户与权限体系 | 已完成 | OIDC + 本地账号双认证，RBAC（`@RequiresPermission` / `PermissionAspect`）；租户隔离与知识库/文档级全量权限不在范围内 |
-| 资源归属与可见性 | 已完成 | 知识库 / 聊天窗口 / 工作流 / Prompt 模板 / 工具五类资源新增 `visibility`（`PRIVATE` 默认 / `TEAM` / `PUBLIC`），owner 复用 `create_by`；读他人 `PRIVATE` 按不存在处理（业务码 `3001`），写他人 `TEAM`/`PUBLIC` 返回权限不足（业务码 `1004`），均为 HTTP 200 + 业务码；列表/分页由 `DataScopeInterceptor` 显式过滤，内置 Prompt 模板固定 `PUBLIC`（commit `59c5eee`） |
-| 角色与权限管理页面 | 已完成 | `AdminRoleController`（`/api/admin/roles`、`/api/admin/permissions`）+ `RoleManagement.vue`、`UserManagement.vue` |
-| 配额模块与前后端页面 | 已完成 | 独立 `rag-quota` 模块；全局默认 + 按用户日/月配置，超限 429；对话计数为带 limit 条件的原子 UPDATE，多实例并发不超发（提交 `e02981f`）；扣费流水 `wgh_quota_charge` 与退款补偿作业 `QUOTA_REFUND`（2026-11-20）；`QuotaManagement.vue` / `MyQuota.vue` |
-| 计费口径：无产出不计费（2026-11-24） | 已完成 | 新增 `StreamBillingObserver` 与 `ChatTurnContext.markOutput()`：流式首包、语义缓存命中、无检索兜底、工作流 / Agent 最终输出、多 Agent HITL 续跑等产出点显式声明「有效产出」，首个非空内容成功下发才结算；全程无产出立即 `CHARGED → REFUNDED`，已有部分内容后失败 / 停止 / 超时仍计费。对话与 HITL 续跑以 `afterCommit` 提交闸门（10s 超时）保证异步生成不早于事务提交；`usage_epoch` 让退款只回退扣费时的纪元，避免重置用量后误退新计数；HITL 续跑按「本轮已结算不扣 / 未决 `CHARGED` 复用 / 否则新扣」决策，再次停在 HITL 保持 `CHARGED` |
-| 死信流水人工退款与核销（2026-11-24） | 已完成 | 自动补偿耗尽后流水进入 `DEAD`，管理端提供 `GET /api/admin/quota/refunds/{chargeId}`、`POST .../refund` 与 `POST .../write-off`；人工退款允许 `CHARGED / REFUND_FAILED / DEAD`，`SETTLED` 拒绝；核销置 `SETTLED` 且不改计数。两者写审计日志并分别打 `wgh.quota.refund{result=manual}`、`wgh.quota.write_off` 指标 |
-| 计数异常默认拒绝（2026-11-24） | 已完成 | `wgh.rag.quota.fail-open-on-count-error` 默认 `false`：计数写入异常直接拒绝本次对话，返回业务码 `5004`，并打 `[ALERT]` 日志与 `wgh.quota.count.failure{result=reject}`；置 `true` 时仅告警放行且不扣费。事务内计数改为「SAVEPOINT 建行 + 有条件 UPDATE」 |
-| 用户信息 Redis 缓存（2026-11-24） | 已完成 | `rag-auth` 新增 `UserInfoCacheService`：按 `userId` 缓存身份 / 账号状态字段（不含 `password_hash`、OIDC 外部标识、额度与用量），TTL 30 分钟；未命中用 Redis 分布式锁串行化回填，写路径在事务提交后删除缓存；Redis 不可用时直读数据库并降级告警。指标 `wgh.user.cache` |
-| Redis 8.10.1 接入 | 已完成 | 分布式限流、分享密码失败锁定（成功清零）、嵌入授权、API Key IP 白名单；统一到 Redis 命名空间（根 `WGH_REDIS_KEY_PREFIX`），不可用时降级单机内存并计降级次数（提交 `e02981f`） |
-| 多实例共享状态与跨实例取消 | 已完成 | 聊天取消标记、限流与授权统一落 Redis；新增显式停止接口，停止生成在任意实例生效，`CHAT` 会话可在其它副本被取消（提交 `e02981f`）；新增通用 Redis 分布式锁，供存储迁移与任务恢复复用 |
-| 审计与成本统计 | 已完成 | `@Audit` 异步记录写操作；角色 / Agent / 多 Agent / 配额等管理写操作已覆盖（资源标识落 `detail`）；模型价格表 + 消息成本 / 模型名回填；管理端聚合统计 |
-| 安全整改 | 已完成 | 首登强制改密（`password_must_change`）、审计日志敏感信息脱敏、409 映射、`WGH_INIT_ADMIN_PASSWORD` 注入 |
-| 可观测性（Prometheus + 独立 9090） | 已完成 | `RagMetrics` 业务指标 + `/actuator/prometheus`；管理端口默认 `9090`，业务端口不暴露 `/actuator`；指标新增实例维度标签 `wgh.instance`，Prometheus 改为按副本发现（提交 `e02981f`）；2026-11-24 新增 `deploy/prometheus/rules/wgh-rag-alerts.yml`（5 组 12 条告警）与 `deploy/grafana/dashboards/wgh-rag-runtime.json`，抓取与规则验证见 `deploy/observability/README.md` |
-| 优雅停机与探针分组（2026-11-24） | 已完成（未验证：滚动更新） | `server.shutdown=graceful` + `spring.lifecycle.timeout-per-shutdown-phase=45s`；`management.endpoint.health.probes.enabled=true`，`liveness` 仅含 `livenessState`，`readiness` 含 `readinessState,db`；`wgh.resume.stale-minutes` 由 5 调整为 30。真实集群滚动更新与 `maxUnavailable: 0` 零 5xx 未验证 |
-| 多副本调度：实例心跳与失联回收（2026-11-24） | 已完成（未验证：真实双副本） | 新表 `wgh_scheduler_instance` 记录实例启动、心跳、下线标记与车道快照（心跳 10s、存活阈值 45s、扫描 10s）；心跳超时即判定失联，其 `LEASED / RUNNING` 作业提前回收（未超上限回 `PENDING`，超限落 `DEAD`）；启动先接管同 `instance-id` 残留。管理端 `GET /api/admin/scheduler/instances` 查看存活、心跳与车道快照；新增调度指标。真实 PostgreSQL 双副本下的回收与并发领取未验证 |
-| 作业对账（2026-11-24） | 已完成（未验证：真实双副本） | 周期作业 `SCHEDULER_RECONCILE`（维护车道）只对账 `WF_RUN` / `RUN_RESUME`，回看 24h、间隔 10m、单类型单轮 200 条；仅自动取消「`PENDING` 超 5m 且业务已终态或不存在」的排队作业，其余只告警 + 指标；`GET /api/admin/scheduler/reconcile` 返回本实例最近一轮报告（内存态，重启清空） |
-| Kubernetes 清单与观测栈（2026-11-24） | 已交付未验证 | `deploy/k8s/` 提供 `base` + `overlays/k1-single`、`k2-multi`（2 副本、HPA 2–4、PDB、RWX PVC / OSS）、`k3-prod`（NetworkPolicy、ResourceQuota/LimitRange、TLS 等）与迁移 Job；`deploy/observability/` 提供 Prometheus + Grafana + postgres-exporter。清单渲染与 kubeconform 校验通过，未在真实集群部署；HPA 扩缩、PDB 驱逐、双副本探针未验证 |
-| 分布式链路追踪（2026-11-22） | 已完成 | `rag-app` 引入 `micrometer-tracing-bridge-brave`；未配置采集端时只本地生成 `traceId` / `spanId`、不发起网络请求；日志追加 `[trace=%X{traceId:--}]`；`MdcAsyncConfig` 组合 `ContextPropagatingTaskDecorator`，线程池同时透传 MDC 与 Observation；调度作业提交写入 `wgh_execution_job.trace_id`，执行前恢复 |
-| Compose 内置 PostgreSQL(pgvector) | 已完成 | `docker-compose.yml` 内置 `pgvector/pgvector:pg15`，空卷首启执行 `schema/01-schema.sql` / `seed/02-data.sql` |
-
-### 3.5 模型与工程
-
-| 能力 | 状态 | 说明 |
-|------|------|------|
-| 模型管理 | 已完成 | DB 动态模型 + OpenAI / DASHSCOPE / DeepSeek / Azure OpenAI / Ollama / 智谱 GLM / 自建 OpenAI 兼容端点，能力由 `ProviderCatalog` 统一描述；缓存热更新 |
-| 模型路由与故障转移 | 已完成 | `ModelRouter#resolveChain` + `rag-llm/failover` 通用组件：`StreamingModelFailover` 驱动普通 RAG 流式切链（首 token 前 `onError` 切下一候选，独立输出缓冲 + `active`/CAS 防重复切链），`BlockingModelFailover` 驱动 Agent 与工作流 LLM 节点（首响应前失败切链）；全部候选失败返回明确业务错误，已产出内容后失败不切链、不拼接两段输出；三类链路均下发 `model_switch` |
-| 多实例 JWKS 缓存共享（2026-11-22） | 已完成（开关默认开启） | 保留进程内 L1 缓存（TTL 300s、未知 `kid` 限频回源、IdP 失败沿用旧缓存）；新增 Redis L2 `RedisJwksSharedCache`，key 为 `{wgh.rag.redis.key-prefix}:auth:jwks:<sha256(jwksUri)>`，存原始 JWKS JSON；冷启动/过期先读 L2，未知 `kid` 先重读 L2 再回源并回写；Redis 异常全部吞掉降级本地。开关 `wgh.auth.oidc.jwks-shared-cache-enabled`，关闭时行为与改造前一致；无表结构变更 |
-| `rag-public-access` 独立模块 + Enforcer 禁反向依赖 | 已完成 | 分享 / Widget / API Key 实现层独立；Controller 留在 `rag-controller`，依赖方向受 Enforcer 约束；与 chat/kb 通过 `rag-common` 的 `ChatShareTargetPort` / `KnowledgeBaseShareTargetPort` 解耦 |
-| `rag-storage` 独立模块（local / OSS 可插拔） | 已完成 | `FileStorageService` + `LocalFileStorageService` / `AliyunOssFileStorageService` |
-| `rag-agent-multi` Controller 迁入 `rag-controller` | 已完成 | `rag-agent-multi` 已无 Controller，`MultiAgentController` 位于 `rag-controller` |
-| `rag-execution` 契约 + `rag-scheduler` 调度层（P0–P3） | 已完成 | `rag-execution` 零依赖契约（`JobHandler` / `RunAdapter` / 车道 / 事件 / `ExecutionStreamSink`）；`rag-scheduler` 提供三车道、`wgh_execution_job`、租约、Redis 单飞与周期作业提交；`WORKFLOW_RUN`、`QUOTA_REFUND` 两个 handler 已接入 |
-| `rag-document` / `rag-eval` 拆分（P4） | 已完成 | 解析 / 切分从 `rag-kb` 拆到 `rag-document`，评测数据集与召回评测拆到 `rag-eval`；`rag-kb` 收窄为知识库 / 文件生命周期、入库编排、向量化与检索增强；`rag-controller` 仅保留 REST / SSE 适配 |
-| `rag-chat` 传输无关重构 | 已完成 | service 层移除 `SseEmitter`，统一使用 `ExecutionStreamSink`；`ChatEventPublisher` / `ChatStreamHandle` 负责事件与取消；SSE 适配器 `SseExecutionStreamSink` 仅在 `rag-controller` |
-| 常量统一抽取 | 已完成 | 各模块 `constant` 包；权限码、角色码、状态值、SSE 事件名、存储 key 前缀等改引用常量 |
-| JDK 21 统一 | 已完成 | `maven.compiler.release=21` + Enforcer 强制 JDK 21，CI 与本地一致 |
-| 测试用例与设计文档补全 | 已完成 | JUnit 5 + Mockito；`scripts/` 提供 e2e / 冒烟 / 压测；`docs/testing/test-cases.md`、`docs/design/**/*.md` 已补齐 |
-| 配置分层（`application-features.yml`） | 已完成 | 功能开关与运行参数抽离到独立文件，由 `application.yml` 以 `optional:classpath` 引入；所有值等于代码默认值，文件缺失不影响启动；同时落地 Redis 命名空间根与实例指标标签（提交 `ca92e04`） |
-
-### 3.6 上下文与工具治理（2026-11-18）
-
-| 能力 | 状态 | 说明 |
-|------|------|------|
-| 历史消息 Token 级裁剪 | 已完成 | `HistoryContextBudgeter` 在分层压缩结果上再做一次硬裁剪：System 全保留、当前提问必留、其余从最近往前保留，放不下即停止；默认上限 4000 Tokens（commit `0ed790c`） |
-| 检索指标 / 来源 / 上下文同源 | 已完成 | 指标、来源卡片、模型上下文使用同一份裁剪后列表；`retrieveInfo` 追加 `contextKeptCount` / `contextBudgetTokens` / `contextTrimmed`（commit `27fce99`、`7a6070f`） |
-| 工具结果纳入上下文预算 | 已完成 | 单条工具结果上限 1200 Tokens、单任务累计 3000 Tokens，超出从最旧结果开始折叠；预算只作用于送入模型的副本，前端仍展示完整原文（commit `a458197`） |
-| 工具调用兜底链 | 已完成 | `ToolInvoker` 统一包一层：失败分类（网络 / 限流 / 5xx 可重试，SSRF / 401/403 / 400/422 / 404 不重试）、仅幂等调用重试（最多尝试 2 次含首次，300ms 退避 ±30% 抖动）、按 toolId 熔断（连续 5 次失败开 30s，半开只放行 1 个探针）、任务级预算（50 次 / 120s）（commit `3a52ab6`） |
-| 工作流 LLM 节点输入预算 | 已完成 | `WorkflowContextProperties` + `LlmNodeExecutor` 渲染后按模型窗口裁剪并告警（commit `f27704c`） |
-
-### 3.7 平台演进规划（2026-11-19）
-
-状态口径：**已完成** / **已交付未验证** / **部分完成** / **规划中**（已有成稿规划文档、尚未开始实施）。四块互有依赖，阶段编号与验收以规划文档为准。
-
-| 方向 | 状态 | 阶段划分 | 说明 |
-|------|------|----------|------|
-| 任务调度中心 | **部分完成（S1 已落地，多副本基础能力已交付）** | S0 止血 → S1 后台作业化 → S2 租户策略生效 → S3 集群语义 | `rag-execution` 契约、`rag-scheduler` 三车道、`wgh_execution_job` 作业表、租约与 Redis 单飞、`RecurringJob` 周期提交已落地；`WORKFLOW_RUN`、`QUOTA_REFUND` 已作业化，聊天仍走统一异步执行器。2026-11-24 补齐 S3 基础能力：实例注册与心跳、失联回收、作业对账、管理端实例 / 对账接口（真实双副本未验证）。S2 租户策略未完成。详见 [design-execution-scheduler-center.md](docs/design/features/platform/design-execution-scheduler-center.md) |
-| 多租户隔离 | **规划中** | 阶段 0 修越权 → 1 租户模型与上下文 → 2 数据面全量隔离 → 3 企业级加固 → 4 混合分层（按需） | 共享表 + `tenant_id` 主线、RLS 兜底、大客户按需独立 schema/DB；复用 G-01～G-15 薄弱点清单。详见 [design-multi-tenancy-isolation-roadmap.md](docs/design/features/platform/design-multi-tenancy-isolation-roadmap.md) |
-| 独立向量数据库 / 搜索引擎 | **规划中** | V0 可替换性基线 → V1 搜索引擎 → V2 独立向量库（按阈值）→ V3 多后端治理 | 现状为每知识库一张 pgvector 物理表且 chunk 原文只存向量表；V0 先补端口与事实层，V1 先接关键词/过滤，V2 再按阈值替换向量后端。详见 [design-vector-store-and-search-engine.md](docs/design/features/platform/design-vector-store-and-search-engine.md) |
-| Kubernetes 级编排 | **部分完成（K0–K3 清单已交付，未集群验证）** | K0 容器基线 → K1 单副本可编排 → K2 多副本 → K3 生产级 | 只做应用与依赖的部署编排，不把业务调度迁到 K8s；K1/K2/K3 清单与观测栈已落地：优雅停机与探针分组（K0）、单副本基线（K1）、2 副本 + HPA/PDB + OSS 共享存储（K2）、3 副本 + NetworkPolicy/ResourceQuota/TLS（K3）。清单仅做离线渲染与 schema 校验，未在真实集群部署。详见 [design-kubernetes-orchestration.md](docs/design/features/platform/design-kubernetes-orchestration.md) 与 [deploy/k8s/README.md](deploy/k8s/README.md) |
+完整到具体条目（含模块、类名、配置键、提交号）的矩阵见 [能力矩阵](docs/reference/capabilities.md)。各项限制、未验证项与未实现能力见 [已知限制](docs/reference/known-limitations.md)；平台演进四块（调度中心 / 多租户 / 向量库 / K8s）的规划状态见 [路线图](docs/reference/roadmap.md)。
 
 ---
 
 ## 4. 架构与技术栈
 
-### 4.1 模块结构
-
-`rag-backend` 共 24 个 Maven 模块（1 个父 POM + 23 个子模块）。
-
-```text
-wgh-rag-system/
-├── rag-backend/                  # Spring Boot 多模块（Java 21，23 个子模块 + 父 POM）
-│   ├── rag-common/               # 公共契约与基础配置：Result / 异常 / 指标 / 安全契约 / 分享端口 / 执行器配置
-│   ├── rag-execution/            # 零依赖执行契约：JobHandler / RunAdapter / 车道 / 事件 / sink
-│   ├── rag-data/                 # BaseEntity / MyBatis-Plus 配置 / 类型处理器
-│   ├── rag-log/                  # @Audit 切面与审计日志
-│   ├── rag-auth/                 # OIDC 资源服务器 + 本地登录 + 用户/角色/权限 + 用户信息 Redis 缓存
-│   ├── rag-quota/                # 配额、计费口径（无产出不计费）、扣费流水、退款补偿与人工退款/核销
-│   ├── rag-config/               # 配置属性映射
-│   ├── rag-context/              # 上下文预算装配（按类型 + 优先级）
-│   ├── rag-storage/              # 可插拔文件存储：local / 阿里云 OSS
-│   ├── rag-llm/                  # 动态模型、厂商工厂、缓存热更新、模型路由 / 故障转移
-│   ├── rag-document/             # 文档解析（12 格式 / PDF 版面 / OCR / 表格）与 9 种切分
-│   ├── rag-kb/                   # 知识库 / 文件生命周期、入库编排、向量化与检索增强
-│   ├── rag-eval/                 # 评测数据集版本化、召回 / 生成侧评测（依赖 rag-kb）
-│   ├── rag-chat/                 # 窗口/会话、上下文压缩、流式 RAG（传输无关）、SSE 事件重放、分享、反馈
-│   ├── rag-tool/                 # HTTP / MCP / Skill / 函数调用工具
-│   ├── rag-sandbox/              # Python / JavaScript 代码沙箱（默认关闭）
-│   ├── rag-agent/                # 单 Agent：Planner / Executor / Reflection / HITL
-│   ├── rag-workflow/             # 工作流引擎 + WORKFLOW_RUN 后台作业 Handler
-│   ├── rag-agent-multi/          # 多 Agent：Crew / Graph / GroupChat / runtime
-│   ├── rag-scheduler/            # 调度层：三车道、准入、作业表、租约、单飞、周期提交、实例心跳/失联回收/对账
-│   ├── rag-public-access/        # 分享 / Widget / 开放 API 实现层（无 Controller）
-│   ├── rag-controller/           # REST 适配器：Controller + SSE sink（不含业务实现）
-│   ├── rag-app/                  # 启动模块 + application*.yml + 集成测试 + 显式装配
-│   ├── config/                   # 配置增量片段（config/migrations/，非自动加载）
-│   ├── sql/                      # schema/01-schema.sql（47 张表）/ seed/02-data.sql / migrations/
-│   ├── eval/                     # eval_recall.py（Recall@K）、eval_rag.py（含 LLM Judge）
-│   └── scripts/                  # e2e / 冒烟 / 压测脚本
-├── deploy/                       # K8s 清单（base / K1 / K2 / K3）、Prometheus 告警规则、Grafana 面板与观测栈
-├── rag-frontend/                 # Vue 3 前端（含 public/widget.js）
-└── docs/                         # 设计与测试文档（索引见 docs/README.md）
-```
-
-关键依赖约束：
-
-- `rag-common` 不依赖任何内部模块，也不含实体 / Mapper / MyBatis 配置；它同时承载公共契约、跨模块端口（`ChatShareTargetPort` / `KnowledgeBaseShareTargetPort`）与统一异步执行器配置；
-- `rag-execution` 是零依赖契约层，只定义 `JobHandler` / `RunAdapter` / 车道 / 事件 / `ExecutionStreamSink` 等类型，不依赖任何业务模块；
-- `rag-scheduler` 只依赖 `rag-execution`、`rag-data`、`rag-config` 与基础库，不依赖任何执行域实现；执行域模块只依赖 `rag-execution`，不依赖 `rag-scheduler`；
-- 执行域偏序为 `rag-agent → rag-workflow → {rag-chat, rag-agent-multi}`，`rag-chat` 与 `rag-agent-multi` 互不依赖；
-- `rag-public-access` 依赖方向固定为 `rag-controller → rag-public-access`，并与 `rag-chat` / `rag-kb` 通过 `rag-common` 端口解耦，由 Enforcer 禁止反向依赖；
-- `rag-storage` 仅依赖 `rag-common`，上层业务通过 `FileStorageService` 抽象使用；
-- `rag-auth` 持有用户 / 角色 / 权限实体与 Mapper，供 Controller 的 RBAC 管理接口使用；
-- `rag-kb` 已不再承载解析 / 切分与评测：解析 / 切分在 `rag-document`，评测在 `rag-eval`（`rag-eval → rag-kb`）；
-- `rag-controller` 仅做 REST / SSE 适配，不包含业务实现；SSE 适配器 `SseExecutionStreamSink` 只在此层出现。
-
-更完整的模块依赖与边界说明见 [docs/design/design-overview.md](docs/design/design-overview.md) 与 [docs/design/design-detailed.md](docs/design/design-detailed.md)。
-
-### 4.2 关键设计
-
-- **单库承载业务与向量**：PostgreSQL + pgvector 省去独立向量数据库；pgvector 不可用时不阻断应用启动，但向量检索相关能力不可用。
-- **Redis 可选**：限流、分享密码锁定、嵌入授权可集中到 Redis；不可用时自动降级为单机内存，不阻断启动。
-- **SSE 统一协议**：聊天、Agent、工作流、多 Agent 共用事件风格；`content` 事件使用 JSON 包装文本，避免换行丢失，前端状态复位以事件驱动。
-- **传输无关事件出口**：执行域只依赖 `ExecutionStreamSink`；SSE 适配器 `SseExecutionStreamSink` 留在 `rag-controller`，聊天侧用 `ChatEventPublisher` / `ChatStreamHandle` 管理事件与取消，后台作业与交互式链路可复用同一套事件契约。
-- **统一调度中心**：`rag-scheduler` 提供三车道、`wgh_execution_job` 作业表、租约与 Redis 单飞；后台型作业走 `JobHandler`，周期型作业实现 `RecurringJob` 按时间桶提交；`wgh.scheduler.enabled=false` 可整体关闭，交互式聊天不受影响。
-- **无产出不计费**：计费以 `StreamBillingObserver` + `ChatTurnContext.markOutput()` 的「有效产出」信号为准，首个非空内容成功下发才结算，全程无产出立即退款；对话与 HITL 续跑用 `afterCommit` 提交闸门避免异步早于事务提交，`usage_epoch` 保证退款只回退自己那一笔。
-- **多副本调度语义**：`wgh_scheduler_instance` 记录实例心跳，失联实例（心跳超过 45s）持有的作业提前回收而不等租约自然到期；启动先接管同 `instance-id` 残留；`SCHEDULER_RECONCILE` 只对账业务状态，自动修复范围限定为可证明安全的 `PENDING` 排队作业。
-- **SSE 可重放**：事件出口经 `StreamReplayService` 写 Redis 缓冲并分配序号，重连按 `Last-Event-ID` 补齐；客户端断开只停止推送，不再取消执行或把 Agent / 多 Agent 运行标记为失败。
-- **用户信息缓存**：鉴权按 `userId` 读 Redis 缓存（TTL 30 分钟、分布式锁回填、写后删除），Redis 故障降级直读数据库。
-- **优雅停机与探针**：`server.shutdown=graceful` + 45s 停机阶段，`liveness` 只看进程活性、`readiness` 聚合 `db`，与 `deploy/k8s/` 探针路径一致。
-- **跨线程与跨实例追踪上下文**：HTTP 请求由 Brave 生成 `traceId`；线程池通过 `ContextPropagatingTaskDecorator` 同时透传 MDC 与 Observation；调度作业提交时把 `traceId` 写入 `wgh_execution_job.trace_id`，执行实例恢复后，看门狗与交互式车道延续同一上下文。
-- **多实例 JWKS 共享**：保留进程内 L1 缓存；`wgh.auth.oidc.jwks-shared-cache-enabled` 开启时增加 Redis L2（按 `sha256(jwksUri)` 定位、存原始 JWKS JSON），冷启动/过期先读 L2，未知 `kid` 先重读 L2 再回源并回写；Redis 异常全部降级本地，关闭时与改造前一致。
-- **先落库后推送**：Agent / 工作流执行结果先持久化再发送 SSE，刷新页面后仍可恢复。
-- **多环境配置**：dev / test / prod 分离；生产敏感配置通过环境变量注入。
-- **逻辑删除**：所有删除走 `deleted` 字段，便于审计与恢复。
-
-### 4.3 技术栈
-
-| 层次 | 技术 |
-|------|------|
-| 前端 | Vue 3 · Vite · Pinia · Vue Router · Element Plus · SCSS · marked |
-| 后端 | Spring Boot 3.4 · Java 21 · Maven 多模块 · Spring Security |
-| 数据 | PostgreSQL 15+ · pgvector · MyBatis-Plus（逻辑删除 + 分页） |
-| LLM | LangChain4j · OpenAI / DASHSCOPE / DeepSeek / 自建 OpenAI 兼容端点 |
-| 工具 | LangChain4j Tool Calling · MCP（stdio / Streamable HTTP）· HTTP · 本地反射 · Skill |
-| Agent | Planner / StepExecutor / Reflection / HITL；多 Agent 含 Crew / Graph / GroupChat |
-| 工作流 | 自研 DAG 引擎：12 类节点、并行 fan-out/fan-in、版本快照、CRON / Webhook |
-| 调度 | 自研 `rag-scheduler`：交互式 / 后台 / 维护三车道，`wgh_execution_job` 作业表 + 租约，Redis 单飞，周期作业按时间桶提交；多副本实例心跳 / 失联回收 / 作业对账 |
-| 可观测 | Prometheus 指标 + Micrometer Tracing（Brave）：本地生成 `traceId` / `spanId`，线程池与调度作业透传上下文，日志输出 `[trace=...]`；`deploy/prometheus/rules/` 告警规则与 `deploy/grafana/dashboards/` 面板 |
-| 鉴权 | 外部 OIDC token（JWKS 非对称公钥验签；进程内 L1 + 可选 Redis L2 共享）+ 本地会话凭证 + RBAC + API Key（SHA-256） |
-| 评估 | 检索侧 Recall@K / Precision@K / MRR / NDCG；生成侧 LLM-as-Judge |
-| 测试 | JUnit 5 + Mockito；shell e2e / 冒烟 / 压测；离线召回率评测脚本 |
+后端为 24 个 Maven 模块的 Spring Boot 应用，核心依赖方向为 `rag-controller → rag-chat → rag-kb → rag-llm`，业务数据与向量共用 PostgreSQL + pgvector；完整模块树、依赖约束、关键设计与技术栈见 [工程结构与技术栈](docs/reference/engineering-structure.md)。
 
 ---
 
@@ -299,35 +105,7 @@ docker exec -i postgres-with-vector psql -U postgres -d wgh_rag_dev \
   -f /sql/schema/01-schema.sql -f /sql/seed/02-data.sql
 ```
 
-> **已有库升级**：不要重跑 schema / seed。按版本顺序执行 `sql/migrations/` 下的增量脚本（资源可见性、2026-11-20 调度 / 配额流水、2026-11-22 `trace_id`、2026-11-24 多副本与计费纪元）：
->
-> ```bash
-> docker exec -i postgres-with-vector psql -U postgres -d wgh_rag_dev \
->   -f /sql/migrations/20261113/01_resource_visibility.sql
->
-> docker exec -i postgres-with-vector psql -U postgres -d wgh_rag_dev \
->   -f /sql/migrations/20261120/01_execution_job.sql
->
-> # wgh_quota_charge 位于聊天主链路：部署含扣费流水的版本前必须先执行
-> docker exec -i postgres-with-vector psql -U postgres -d wgh_rag_dev \
->   -f /sql/migrations/20261120/02_quota_charge.sql
->
-> # wgh_execution_job.trace_id（2026-11-22）：wgh_rag_dev 已执行两次验证幂等；
-> # 实测 wgh_rag_test 的 trace_id 列已存在，幂等重跑安全
-> docker exec -i postgres-with-vector psql -U postgres -d wgh_rag_dev \
->   -f /sql/migrations/20261122/01_execution_job_trace.sql
->
-> # 2026-11-24 两个脚本不纳入迁移 Job，部署前按库核对 / 补跑：
-> # wgh_rag_dev：usage_epoch 两列实测已存在；wgh_scheduler_instance 此前缺失，由 01 补建；
-> # wgh_rag_test：两处状态未核实，需先核对再决定是否执行
-> docker exec -i postgres-with-vector psql -U postgres -d wgh_rag_dev \
->   -f /sql/migrations/20261124/01_scheduler_instance.sql
-> # 02 的两列在 wgh_rag_dev 已存在（脚本幂等，可不执行）；wgh_rag_test 核对后再决定
-> docker exec -i postgres-with-vector psql -U postgres -d wgh_rag_dev \
->   -f /sql/migrations/20261124/02_quota_usage_epoch.sql
-> ```
->
-> 迁移脚本均为幂等（`IF NOT EXISTS`），只补表 / 列 / 索引与必要回填，不重建表。`wgh_execution_job`（含 `trace_id`）、`wgh_quota_charge`、`wgh_scheduler_instance` 与 `usage_epoch` 两列已登记到 `sql/schema/01-schema.sql`，新库无需重复执行增量脚本。存量库按库核对：`wgh_rag_dev` 的 `usage_epoch` 两列已存在、`wgh_scheduler_instance` 正在补建；`wgh_rag_test` 两处状态未核实，部署前需先核对（见 §8）。
+> **已有库升级**：不要重跑 schema / seed。按版本顺序执行 `sql/migrations/` 下的增量脚本；完整清单、脚本状态与执行顺序见 [数据库迁移](docs/reference/database-migrations.md)。
 
 2）启动后端：
 
@@ -392,344 +170,40 @@ docker compose ps
 
 ## 6. 配置说明
 
-功能开关与运行参数集中在 `application-features.yml`，由 `application.yml` 以 `optional:classpath` 引入；文件内所有值等于代码默认值，缺失不影响启动，敏感项仍由环境变量注入。
+功能开关与运行参数集中在 `application-features.yml`，由 `application.yml` 以 `optional:classpath` 引入；文件内所有值等于代码默认值，缺失不影响启动，敏感项仍由环境变量注入。`config/migrations/` 存放按日期分目录的增量配置片段，不参与自动加载，合并方式与各片段键位见 [config/migrations/README.md](rag-backend/config/migrations/README.md)。
 
-`config/migrations/` 存放按日期分目录的**增量配置片段**（如 `20261120/01_async-executor.yml`、`02_scheduler.yml`、`03_quota-refund.yml`，`20261122/01_auth-jwks-shared-cache.yml`、`02_tracing.yml`，`20261124/01_graceful-shutdown-probes.yml` 至 `07_auth-user-cache.yml`），不参与自动加载；2026-11-24 的 7 个片段内容已合入主配置，片段只作变更记录。合并方式与各片段键位见 [config/migrations/README.md](rag-backend/config/migrations/README.md)。
+启动阶段最常改的注入项：
 
-### 6.1 认证与初始化管理员
+- **认证**：`WGH_INIT_ADMIN_PASSWORD`、`WGH_AUTH_LOCAL_JWT_SECRET`（prod 必填，至少 32 字节）、OIDC 的 `WGH_OIDC_*`。
+- **存储**：`WGH_STORAGE_TYPE`（`local` / `oss`）与多副本 `WGH_STORAGE_MODE`（`single` / `shared`）。
+- **数据库与 Redis**：`WGH_DB_*` / `POSTGRES_*`、`WGH_REDIS_*`。
+- **调度、配额与多副本**：`wgh.scheduler.*`、`wgh.rag.quota.*`、`wgh.rag.stream.replay.*`、`wgh.auth.user-cache.*`，以及优雅停机与探针分组。
 
-| 配置 | 默认 | 说明 |
-|------|------|------|
-| `WGH_INIT_ADMIN_PASSWORD` | 空 | 初始管理员口令；未注入且库中无 admin 时不创建管理员，启动日志输出 ERROR；**禁止使用默认口令** |
-| `wgh.auth.local.jwt-secret` / `WGH_AUTH_LOCAL_JWT_SECRET` | 空 | 本地会话签名密钥；`prod` / `production` 下未配置会启动失败（fail-closed）；开发环境未配置会生成随机密钥，重启后旧会话失效 |
-| `WGH_JWT_SECRET` | 无 | 兼容旧 prod 配置项，建议与 `WGH_AUTH_LOCAL_JWT_SECRET` 同值 |
-| `wgh.auth.init-admin.password` | 空 | `WGH_INIT_ADMIN_PASSWORD` 的 YAML 等价配置项 |
-
-本地账号仅允许 `wgh_user.source=local` 的 admin 或体验账号（`trial=1`）登录；外部 OIDC 用户即使 `password_hash` 为空也不能走本地密码登录。
-
-### 6.2 外部 OIDC（资源服务器）
-
-| 配置 | 说明 |
-|------|------|
-| `WGH_OIDC_ISSUER` / `wgh.auth.oidc.issuer` | IdP issuer，token `iss` 必须一致 |
-| `WGH_OIDC_AUDIENCE` / `wgh.auth.oidc.audience` | 期望 audience，token `aud` 必须包含 |
-| `WGH_OIDC_JWKS_URI` / `wgh.auth.oidc.jwks-uri` | JWKS 端点；留空时按 issuer 自动发现 |
-| `WGH_OIDC_ROLES_CLAIM` / `wgh.auth.oidc.roles-claim` | 承载角色的 claim，默认 `roles`，常用 `groups` |
-| `WGH_OIDC_USERNAME_CLAIM` / `wgh.auth.oidc.username-claim` | 承载用户名的 claim，默认 `sub` |
-| `WGH_OIDC_JWKS_SHARED_CACHE` / `wgh.auth.oidc.jwks-shared-cache-enabled` | 多实例 JWKS Redis L2 共享缓存；代码与增量片段默认 `true`；关闭时与改造前一致 |
-| `wgh.auth.oidc.role-mapping` | claim 值 → `wgh_role.role_code` 映射表 |
-| `wgh.auth.oidc.default-role` | token 无角色或映射不到数据库角色时的默认角色，默认 `viewer` |
-
-验签仅接受 RS / PS / ES 非对称算法，拒绝 HS256 与 `none`；JWKS 保留进程内 L1 缓存（TTL 300s），开启共享缓存后增加 Redis L2，key 为 `{wgh.rag.redis.key-prefix}:auth:jwks:<sha256(jwksUri)>`，存原始 JWKS JSON；Redis 异常自动降级本地（见 §8）。
-
-### 6.3 文件存储（local / OSS）
-
-| 配置 | 默认 | 说明 |
-|------|------|------|
-| `WGH_STORAGE_TYPE` / `wgh.rag.storage.type` | `local` | `local` 本地磁盘 / `oss` 阿里云 OSS |
-| `WGH_STORAGE_MODE` / `wgh.rag.storage.mode` | `single` | 部署模式：`single` 单实例（行为不变）/ `shared` 多实例共享；`shared` 启动自检失败即启动失败 |
-| `WGH_STORAGE_READ_FALLBACK` / `wgh.rag.storage.read-fallback-enabled` | `false` | 迁移期回落读（仅 `type=oss` 生效）：主存储未命中时读 `local.base-dir` 旧对象；写 / 删仍走主存储 |
-| `WGH_UPLOAD_DIR` / `wgh.rag.storage.local.base-dir` | `./uploads` | 本地存储根目录 |
-| `WGH_STORAGE_URL_PREFIX` / `wgh.rag.storage.local.url-prefix` | `/uploads` | 本地 `resolveUrl` 逻辑前缀（需静态服务配合） |
-| `WGH_STORAGE_MAX_FILE_MB` | 50 | 存储层单文件大小上限 |
-| `WGH_OSS_ENDPOINT` / `wgh.rag.storage.oss.endpoint` | - | OSS 公网 endpoint |
-| `WGH_OSS_INTERNAL_ENDPOINT` | - | OSS 内网 endpoint（可选） |
-| `WGH_OSS_BUCKET` / `wgh.rag.storage.oss.bucket` | - | OSS bucket |
-| `WGH_OSS_ACCESS_KEY_ID` / `WGH_OSS_ACCESS_KEY_SECRET` | - | OSS 凭证，生产必须环境变量注入 |
-| `WGH_OSS_KEY_PREFIX` | 空 | 对象 key 前缀 |
-| `WGH_OSS_PUBLIC_READ` | `false` | `true` 返回公网直链；`false` 返回签名 URL |
-| `WGH_OSS_SIGNED_URL_EXPIRE_MINUTES` | 60 | 签名 URL 有效期 |
-| `WGH_OSS_MAX_RETRIES` | 3 | 上传失败重试次数（含首次） |
-
-OSS 配置不完整时不阻断启动，仅在真正调用存储操作时返回明确错误。存储切换、迁移与孤儿对象限制见 §8；完整设计见 [docs/design/features/storage/design-file-storage.md](docs/design/features/storage/design-file-storage.md)。
-
-### 6.4 数据库、Redis 与其他关键配置
-
-| 配置 | 默认 | 说明 |
-|------|------|------|
-| `WGH_PROFILE` | `dev` | Spring Profile：`dev` / `test` / `prod` |
-| `WGH_DB_HOST` / `PORT` / `NAME` / `USERNAME` / `PASSWORD` | localhost / 5432 / wgh_rag_dev / postgres / 123456 | 本地 dev 数据源 |
-| `POSTGRES_*` | - | Compose 内置数据库与 backend 数据源的唯一真相，密码必填 |
-| `PROD_DB_*` | - | 非 Compose（裸机 `prod`）或外部库；优先级低于 `SPRING_DATASOURCE_*` |
-| `WGH_REDIS_ENABLED` / `HOST` / `PORT` / `PASSWORD` | true / localhost / 6379 / 空 | Redis 连接；不可用时降级为单机内存 |
-| `WGH_MANAGEMENT_PORT` | 9090 | 管理端口；业务端口不暴露 actuator |
-| `WGH_MANAGEMENT_ADDRESS` | 0.0.0.0 | 管理端口监听地址，生产建议内网网卡 |
-| `wgh.public-access.share-default-expire-days` | 7 | 分享链接默认有效期（上限 30 天） |
-| `wgh.public-access.share-password.max-failures` | 5 | 密码失败阈值 |
-| `wgh.public-access.share-password.lock-minutes` | 15 | 锁定时长（分钟） |
-| `wgh.rag.cache.similarity-threshold` | 0.95 | 语义缓存命中阈值 |
-| `wgh.file.max-single-file-mb` | 50 | 单文件上传 / 解析大小上限 |
-
-> 限流覆盖、可信代理、配额、Agent 与上下文压缩等完整配置与设计说明见 `docs/design/features/**/*.md`；接口侧的限流与错误码行为见 [docs/api/api.md](docs/api/api.md)。
-> `wgh.public-access.trusted-proxies` 默认空，只信任 TCP 对端；部署在 Nginx / 网关后需显式配置可信 CIDR，**不要配置为 `0.0.0.0/0`**。
-
-### 6.5 检索与评测参数
-
-| 配置 | 默认 | 说明 |
-|------|------|------|
-| `wgh.rag.retrieve.min-score` | 0.55 | 向量召回最低余弦相似度；`0.3` 会引入大量弱相关噪声，dev / test / prod 三套 yml 已统一为 `0.55` |
-| `wgh.rag.retrieve.enable-hybrid` | `false` | 全局混合检索开关；最终是否启用为“窗口 `hybridEnabled=true` **或** 本项为 `true`”，窗口显式关闭不能覆盖全局开启（2026-11-18） |
-| `wgh.rag.retrieve.keyword-top-n` | 10 | 混合检索关键词路召回条数 |
-| `wgh.rag.evaluation.judge-timeout-seconds` | 30 | 单个 LLM judge 调用超时，超时按该 judge 失败处理，不影响主链路 |
-| `wgh.rag.evaluation.judge-concurrency` | 4 | 同时评估的 judge 数量上限 |
-| `wgh.rag.evaluation.repeat-count` | 1 | 每个 judge 的重复评估次数，最终取有效结果均值 |
-| `wgh.rag.evaluation.max-queries-per-evaluation` | 200 | 单次离线检索评测最多处理的标注查询数 |
-
-> OCR 相关配置通过环境变量注入：`WGH_OCR_ENABLED`、`WGH_OCR_LANG`（默认 `chi_sim+eng`）、`WGH_OCR_MIN_TEXT_CHARS`（默认 20）、`WGH_OCR_MAX_PAGES`（默认 50）、`WGH_OCR_TIMEOUT_SECONDS`（默认 60）；引擎缺失或超时时降级为纯文本抽取，不阻断入库。
-
-### 6.6 URL 数据源连接器与工作流调试
-
-| 配置 | 默认 | 说明 |
-|------|------|------|
-| `WGH_CONNECTOR_SCHEDULER_ENABLED` / `wgh.connector.scheduler.enabled` | `false` | 定时同步总开关；默认关闭时启动后不抓取外网，只能手动同步 |
-| `WGH_CONNECTOR_SCHEDULER_INTERVAL_SECONDS` | 60 | 调度轮询间隔（秒，最小 5） |
-| `WGH_CONNECTOR_SCHEDULER_INITIAL_DELAY_SECONDS` | 30 | 启动后首次轮询延迟（秒） |
-| `WGH_CONNECTOR_SCHEDULER_BATCH_SIZE` | 20 | 单轮最多检查的连接器数 |
-| `WGH_CONNECTOR_FETCH_TIMEOUT_MS` | 10000 | 单次抓取连接 / 请求超时（毫秒） |
-| `WGH_CONNECTOR_FETCH_USER_AGENT` | `WGH-RAG-Connector/1.0` | 抓取 User-Agent |
-| `WGH_CONNECTOR_FETCH_MAX_CONTENT_CHARS` | 200000 | 正文最大字符数，超出截断 |
-| `WGH_CONNECTOR_DEFAULT_SYNC_INTERVAL_MINUTES` | 60 | 新建连接器未指定间隔时的默认值 |
-| `WGH_WORKFLOW_DEBUG_ENABLED` / `wgh.workflow.debug.enabled` | `false` | 工作流单步调试开关；关闭时调试接口直接拒绝，普通运行链路不受影响 |
-
-> URL 抓取复用 `SsrfGuard`：仅允许 http/https，拒绝回环 / 内网 / 链路本地 / 云元数据地址，重定向逐跳校验（默认最多 3 跳），响应体默认上限 2MB；`wgh.tool.ssrf.allow-private-network` 默认 `false`。
-
-### 6.7 上下文预算、工具兜底与上传清理
-
-| 配置 | 默认 | 说明 |
-|------|------|------|
-| `wgh.rag.context.max-history-tokens` | 4000 | 历史消息 Token 上限；System 与当前提问必留，其余从最近往前保留 |
-| `wgh.rag.context.context-max-tokens` / `context-window-ratio` | 6000 / 0.6 | 检索上下文硬上限与输入侧窗口占比 |
-| `wgh.rag.context.tool-result-max-tokens` | 1200 | 单条工具结果进入 prompt 的 Token 上限，超出按句界裁剪并标注 |
-| `wgh.rag.context.tool-round-history-max-tokens` | 3000 | 多轮工具结果累计上限，超出从最旧开始折叠 |
-| `wgh.tool.fallback.enabled` | `true` | 工具兜底链总开关；关闭后退化为单次直调 |
-| `wgh.tool.fallback.max-attempts` / `backoff-ms` / `jitter-ratio` | 2 / 300 / 0.3 | 仅幂等调用重试；退避 ±30% 抖动 |
-| `wgh.tool.fallback.idempotent-only` | `true` | 仅 HTTP GET/HEAD 或显式 `idempotent=true` 的工具允许重试 |
-| `wgh.tool.fallback.failure-threshold` / `open-seconds` | 5 / 30 | 按 toolId 连续失败 5 次打开熔断 30s，半开只放行 1 个探针 |
-| `wgh.tool.fallback.task-max-requests` / `task-max-total-ms` | 50 / 120000 | 单任务工具调用次数与总时长预算 |
-| `WGH_UPLOAD_CLEANUP_ENABLED` | `true` | 分片上传会话清理开关 |
-| `WGH_UPLOAD_CLEANUP_STALE_HOURS` | 24 | 只清理超过该时长未更新的 `UPLOADING` 会话 |
-| `WGH_UPLOAD_CLEANUP_INTERVAL_MINUTES` / `BATCH_SIZE` | 60 / 200 | 清理轮询间隔（最小 5 分钟）与单轮上限 |
-
-### 6.8 调度中心与配额退款补偿
-
-| 配置 | 默认 | 说明 |
-|------|------|------|
-| `wgh.scheduler.enabled` | `true` | 调度中心总开关；关闭后不创建车道线程池与作业循环，后台作业与补偿作业不再运行 |
-| `wgh.scheduler.lease-ttl` | 60s | 作业租约 TTL；持有者需在到期前续租，否则可被其它实例回收 |
-| `wgh.scheduler.single-flight.lock-ttl` | 120s | 维护车道单飞锁 TTL；Redis 只做锁，不存待退款数据 |
-| `wgh.scheduler.instance-heartbeat-interval` | 10s | 多副本实例心跳写入间隔 |
-| `wgh.scheduler.instance-liveness-ttl` | 45s | 实例失联阈值（建议不低于 3 倍心跳）；超过即回收其 `LEASED / RUNNING` 作业 |
-| `wgh.scheduler.instance-sweep-interval` / `instance-retention` | 10s / 7d | 失联扫描间隔 / 实例注册行保留时长 |
-| `wgh.scheduler.reconcile.enabled` / `interval` / `lookback` / `pending-grace` / `batch-size` | true / 10m / 24h / 5m / 200 | 作业对账周期、回看窗口、`PENDING` 自动取消宽限期与单轮上限 |
-| `wgh.scheduler.chat-run.enabled` / `lease-ttl` / `terminal-retention` | true / 35m / 24h | 普通对话运行态登记；关闭后「进行中任务」CHAT 页签为空 |
-| `wgh.rag.quota.fail-open-on-count-error` | `false` | 计数写入异常策略：`false` 拒绝本次对话并返回 `5004`；`true` 仅告警放行且不扣费 |
-| `wgh.rag.quota.charge.refund-enabled` | `true` | 是否启用退款补偿作业 |
-| `wgh.rag.quota.charge.refund-protection` | 5m | 已扣未决保护期，超过后才补偿 |
-| `wgh.rag.quota.charge.refund-scan-interval` | 60s | 补偿作业提交间隔（维护车道） |
-| `wgh.rag.quota.charge.refund-max-attempts` | 5 | 单条流水最大退款尝试次数（含首次），耗尽后置 `DEAD` |
-| `wgh.rag.quota.charge.refund-backoff` / `refund-backoff-max` | 60s / 30m | 指数退避基数与上限 |
-| `wgh.rag.quota.charge.refund-batch-size` | 200 | 单次扫描最多处理的流水条数 |
-
-> 调度中心启用前需先执行 `sql/migrations/20261120/01_execution_job.sql`；配额扣费流水位于聊天主链路，部署对应版本前必须先执行 `sql/migrations/20261120/02_quota_charge.sql`。多副本能力需确认 `sql/migrations/20261124/01_scheduler_instance.sql` 已执行（`wgh_rag_dev` 正在补建该表），计费纪元需确认 `sql/migrations/20261124/02_quota_usage_epoch.sql` 的列已存在（`wgh_rag_dev` 实测已存在，`wgh_rag_test` 未核实）；两个脚本均不纳入迁移 Job。增量配置片段见 `config/migrations/20261120/02_scheduler.yml`、`03_quota-refund.yml` 与 `config/migrations/20261124/02_scheduler-cluster.yml`、`05_chat-run-registry.yml`、`06_quota-count-policy.yml`。
-
-### 6.9 分布式链路追踪（2026-11-22）
-
-| 配置 | 默认 | 说明 |
-|------|------|------|
-| `WGH_TRACING_ENABLED` / `management.tracing.enabled` | `true` | 总开关；关闭后不生成 `traceId`，日志 trace 位输出 `--` |
-| `WGH_TRACING_SAMPLING_PROBABILITY` / `management.tracing.sampling.probability` | `1.0` | 采样率；默认全量采样，保证每个请求都有 `traceId` |
-| `logging.pattern.console` / `logging.pattern.file` | 含 `[trace=%X{traceId:--}]` | 在既有 `rid` 之后追加 trace；`logback-spring.xml` 的 `LOG_PATTERN` 同步 |
-
-> 未配置 Zipkin / OTLP 等采集端时只本地生成 `traceId` / `spanId`，不发起网络请求；调度作业提交时把 `traceId` 写入 `wgh_execution_job.trace_id`，执行实例恢复。默认全量采样（`1.0`），高吞吐环境应下调采样率。周期作业（`RecurringJob`）没有提交请求，`trace_id` 为空，可用 `execution_id` 关联。增量片段见 `config/migrations/20261122/02_tracing.yml`。
-
-### 6.10 多副本运行参数：SSE 重放、用户缓存与优雅停机（2026-11-24）
-
-| 配置 | 默认 | 说明 |
-|------|------|------|
-| `WGH_STREAM_REPLAY_ENABLED` / `wgh.rag.stream.replay.enabled` | `true` | SSE 重放总开关；关闭后回到「实时流 + 断连即取消」旧语义 |
-| `wgh.rag.stream.replay.ttl` / `completed-ttl` | 35m / 5m | 活跃流 / 终态流缓冲 TTL |
-| `wgh.rag.stream.replay.max-events-per-stream` | 5000 | 单流最多保留事件条数 |
-| `wgh.rag.stream.replay.flush-interval` / `poll-interval` / `poll-batch-size` | 200ms / 300ms / 200 | 批量刷盘间隔、重连跟随轮询间隔与单次读取条数 |
-| `wgh.rag.stream.replay.idle-timeout` / `follow-timeout` | 120s / 29m | 无新事件空闲判定 / 单次重连最长跟随时间 |
-| `WGH_AUTH_USER_CACHE_ENABLED` / `wgh.auth.user-cache.enabled` | `true` | 用户信息 Redis 缓存开关 |
-| `WGH_AUTH_USER_CACHE_TTL` / `wgh.auth.user-cache.ttl` | 30m | 缓存 TTL；不允许永久键 |
-| `WGH_AUTH_USER_CACHE_LOCK_WAIT` / `wgh.auth.user-cache.lock-wait-timeout` | 200ms | 未命中回填时等待分布式锁的上限，超时直接回源且不写缓存 |
-| `server.shutdown` / `spring.lifecycle.timeout-per-shutdown-phase` | `graceful` / 45s | 优雅停机；45s 需小于 Pod `terminationGracePeriodSeconds` 减 `preStop` |
-| `management.endpoint.health.probes.enabled` + `group.liveness` / `group.readiness` | true；`livenessState` / `readinessState,db` | K8s 探针分组；Redis 可降级、磁盘余量不纳入 readiness |
-| `wgh.resume.stale-minutes` | 30 | 任务中断判定窗口（由 5 调整为 30） |
-
-> SSE 重放依赖共享 Redis；Redis 不可用时无法跨副本重放，重连请求显式失败并上报 `wgh.stream.replay.fallbacks`。配置片段见 `config/migrations/20261124/01_graceful-shutdown-probes.yml`、`03_storage-shared-multi-replica.yml`、`04_stream-replay.yml`、`07_auth-user-cache.yml`。
+按认证、存储、数据库、检索评测、连接器、上下文预算、调度与配额、链路追踪、多副本等主题拆分后的完整配置表见 [配置说明](docs/reference/configuration.md)。限流覆盖、可信代理、配额、Agent 与上下文压缩的完整设计说明另见 `docs/design/features/**/*.md`；接口侧的限流与错误码行为见 [docs/api/api.md](docs/api/api.md)。
 
 ---
 
 ## 7. 接口概览
 
-完整请求体与 SSE 事件协议见 [docs/api/api.md](docs/api/api.md)；这里只列分组。
-
-| 模块 | 前缀 | 说明 |
-|------|------|------|
-| 鉴权 / OIDC | `/api/auth` | 本地登录、当前用户、改密、OIDC 状态 |
-| 知识库 | `/api/kb` | 知识库 / 文件 CRUD、分片上传（`files/chunk/init` → `chunk/{sessionId}` → `complete`）、重切、检索测试、ground truth、召回评测 |
-| 评测数据集 | `/api/kb/{kbId}/eval-datasets` | 数据集 / 用例 CRUD、版本列表、按版本评测归档、历史结果与跨版本对比 |
-| 数据源连接器 | `/api/kb/{kbId}/connectors` | URL 连接器 CRUD、立即同步、运行记录 |
-| 模型 | `/api/models` | Chat / Embedding / Rerank 模型 CRUD |
-| 聊天 | `/api/chat/windows` | 窗口 CRUD、会话、消息、SSE 对话（支持 `Last-Event-ID` 重连）、反馈 |
-| 分享（登录态旧入口） | `/api/chat/share` | 窗口分享开关与 token 管理 |
-| 工具 | `/api/chat/tools` | 工具 CRUD、在线调试、Skill 目录管理 |
-| Agent | `/api/agent` | 计划状态、HITL 确认、取消 / 重试 / 跳过 |
-| 工作流 | `/api/workflows` | CRUD、校验、运行、HITL、版本、触发器、模板；`POST /{id}/debug/step` 单步调试（需开启调试开关） |
-| 多 Agent | `/api/agent-multi` | Crew CRUD / 校验、运行、SSE、state、HITL |
-| Prompt 模板 | `/api/prompt-templates` | CRUD、渲染预览、前缀联想候选（`/suggest`） |
-| 标签 / 版本 | `/api/tags`、`/api/kb/files/{id}/versions` | 标签 CRUD 与绑定、版本列表与回滚 |
-| 管理端 | `/api/admin` | 审计日志、成本 / 配额统计、差评、用户配额、角色权限、分享链接、API Key；调度实例 / 对账（`/scheduler/instances`、`/scheduler/reconcile`）；配额退款异常流水与人工退款 / 核销（`/quota/refunds/{chargeId}`） |
-| 免登录分享 | `/api/public/share/{token}` | 信息 / 解锁 / 会话 / 消息 / SSE 问答 / 知识库检索 |
-| 开放 API | `/api/open/v1` | `/me`、`/chat/stream`、`/kb/search`、`/usage`（`X-API-Key`） |
-| OpenAI 兼容 | `/v1` | `/models`、`/chat/completions`（Bearer API Key，支持 SSE） |
-
-> 流式端点（普通对话、分享对话、聊天窗口 HITL、分享 HITL、开放 API、公开分享）均支持 `Last-Event-ID`（请求头，或请求体 `lastEventId`）重连；重连只补齐事件，不重发消息、不重复确认 HITL。事件协议与信令见 [docs/api/api.md](docs/api/api.md)。
+对外接口分为鉴权、知识库、聊天、Agent、工作流、管理端与公开访问等 17 组，完整分组与前缀见 [接口概览](docs/reference/api-overview.md)，请求体、响应示例与 SSE 事件协议见 [docs/api/api.md](docs/api/api.md)。
 
 ---
 
 ## 8. 已知限制
 
-> 2026-11-24 交付的计费口径、多副本与 Kubernetes 编排能力，凡未在真实多副本 / 真实集群验证的项，均在「限制」列显式标注「未验证」；未执行的迁移脚本单列。
-
-| 类别 | 限制 | 影响 / 建议 |
-|------|------|-------------|
-| 权限体系 | 已提供角色 / 权限管理页面与接口；五类核心资源（知识库 / 聊天窗口 / 工作流 / Prompt 模板 / 工具）已支持 owner + 可见性；无租户隔离，文档级权限仍不在范围内 | 多团队共用与真正的团队边界需后续引入租户 / 成员模型；规划见 [多租户隔离落地规划](docs/design/features/platform/design-multi-tenancy-isolation-roadmap.md) |
-| 可观测性 | 已提供 Prometheus 指标与管理端口（9090）、`X-Request-Id` 日志关联；已接入 Micrometer Tracing（Brave），本地生成 `traceId` / `spanId` 并写入日志与 `wgh_execution_job.trace_id`，未配置采集端时不导出 | 跨进程可视化仍需接入 Zipkin / OTLP 或日志平台；未配置采集端时只能按本地日志排查；周期作业（`RecurringJob`）没有提交请求，`trace_id` 为空，需用 `execution_id` 关联；默认全量采样，高吞吐环境应下调采样率 |
-| 部署编排 | 已提供前后端 Dockerfile、全栈 docker-compose 与 `deploy/k8s/` 的 K1/K2/K3 清单（含迁移 Job）；清单仅做离线渲染与 kubeconform 校验，未在真实集群部署；K3 的 GitOps / 准入策略 / 镜像扫描 / SBOM 不在清单范围 | 上线前需在目标集群验证 StorageClass（RWX）、Ingress 注解、镜像 digest、HPA / PDB 与滚动更新；见 [deploy/k8s/README.md](deploy/k8s/README.md) |
-| 调度中心（2026-11-20；2026-11-24 补多副本） | `wgh_execution_job`、三车道、租约、Redis 单飞与 `RecurringJob` 已落地；2026-11-24 新增实例注册 / 心跳 / 失联回收、作业对账与管理端实例 / 对账接口。**未验证**：失联实例提前回收、启动接管、对账自动修复在真实 PostgreSQL 双副本上的行为；H2 单测覆盖不到 `FOR UPDATE SKIP LOCKED` 与跨副本单飞；`CHAT` 仍走统一异步执行器（仅登记运行态），未作业化；评测、存储迁移类 handler 尚未接入调度 | 生产启用前需在真实双副本环境验证领取 / 回收 / 对账；未接入的链路继续沿用原有执行方式 |
-| 配额与计费口径（2026-11-20；2026-11-24 改口径） | 计费已改为「无产出不计费」，首个有效产出才结算；`wgh_quota_charge` 与 `usage_epoch` 已登记基线，存量库需按库核对：`wgh_rag_dev` 的 `usage_epoch` 两列实测已存在，`wgh_rag_test` 未核实，缺列时再执行 `20261124/02_quota_usage_epoch.sql`。补偿作业依赖 `wgh.scheduler.enabled=true`（关闭时由本地兜底线程运行）；`DEAD` 已提供管理端人工退款 / 核销，但无批量操作 | 上线前准备回滚与人工对账 SQL；`DEAD` 需管理员逐笔处理 |
-| 计费提交闸门（2026-11-24） | 异步生成等待外层事务提交（10s 超时），回滚或超时不生成、不结算；`usage_epoch` 让旧流水退款不误退重置后的新计数。**未验证**：高并发下提交闸门超时路径与分享次数回补的并发边界 | 极端并发下分享入口可能短暂少计一次使用次数（条件 `use_count > 0` 保证不为负） |
-| 计数异常策略（2026-11-24） | 默认 `fail-open-on-count-error=false`：数据库计数异常直接拒绝对话并返回业务码 `5004` | 数据库抖动会造成对话失败，这是有意取舍；临时开启 fail-open 会放出一批无扣费请求，需按 `wgh.quota.count.failure{result=allow}` 事后排查 |
-| SSE 事件重放（2026-11-24） | 后端 Redis 缓冲 + `Last-Event-ID` 重连、前端自动重连与信令提示已交付。**未验证**：跨副本重连（Pod A 生成、Pod B 接管）的事件完整性与时延；Redis 故障注入下的降级路径；刷新页面后对话保持运行 / 完成、多 Agent Run 不再被误标 `FAILED` 的端到端验证。前端收到 `stream_replay_gap` / `stream_replay_incomplete` 只展示提示，不自动补拉历史 | 依赖 Redis 可用；无法补齐时需用户刷新会话。Ingress 去掉 Cookie 亲和后的实际表现依赖该能力，未验证 |
-| 用户信息缓存（2026-11-24） | 按 `userId` 缓存身份 / 账号状态字段，TTL 30 分钟，写后删除缓存；Redis 故障降级直读库。直接改库（绕过应用）不会主动失效缓存 | 绕过应用的账号状态变更最长 30 分钟后才可见 |
-| 优雅停机与探针（2026-11-24） | 45s 优雅停机覆盖在途请求，但超长 SSE 仍会被切断，依赖客户端重连补齐；`readiness` 含 `db`、`liveness` 只看进程活性。**未验证**：真实集群双副本滚动更新、`maxUnavailable: 0` 零 5xx、PDB 驱逐与 HPA 扩缩 | 滚动更新前确认 `terminationGracePeriodSeconds`（建议 60s）大于 45s + `preStop` |
-| `20261124` 迁移脚本（2026-11-24） | 分层状态：`wgh_rag_dev` 的 `wgh_quota_usage.usage_epoch`（bigint default 0）与 `wgh_quota_charge.usage_epoch`（bigint 可空）实测已存在；`wgh_scheduler_instance` 此前缺失，正在按 `20261124/01_scheduler_instance.sql` 补建；`wgh_rag_test` 两处状态未核实。两个脚本均不纳入迁移 Job | 部署前按库核对：`wgh_scheduler_instance` 未建时执行 01（须先于启用多副本的 Pod 启动）；`usage_epoch` 列缺失时执行 02（退款 SQL 直接比较该列）；`wgh_rag_test` 需先核实再补跑 |
-| OSS 真实读写（2026-11-24） | `mode=shared` + `type=oss` 的启动自检、`read-fallback-enabled` 回落读已交付。**未验证**：OSS 真实上传 / 下载 / 删除，以及 local → oss 回落读链路；`shared + local` 的独立挂载卷判定只在本地临时进程验证过 | 生产切换到 OSS 前需在目标环境做读写与回落读演练 |
-| 限流 | Redis Lua 分布式滑动窗口，故障时降级单机内存 | Redis 故障期间多实例计数不共享、重启清零；建议 Redis 高可用 |
-| Widget | 仅 iframe 注入，无 `postMessage` 双向通信；`frame-ancestors` 需网关 / 静态服务配置 | 宿主页无法读取对话事件；手工 iframe 仍可能绕过 `widget.js`，需 CSP 兜底 |
-| 分享密码 | 失败 5 次锁定 15 分钟（可配置），无验证码 | 换 IP 可继续尝试；强防护可叠加网关限流 / 验证码 |
-| API Key | 无自动轮换；已有可选 IP 白名单 | 泄露后需人工吊销；建议始终配置 IP 白名单 |
-| 真实 IP | 默认只信任 TCP 对端，XFF 仅在可信代理下生效 | 代理拓扑变化时需同步 `trusted-proxies`，配置过宽会引入伪造风险 |
-| 反馈与评测 | 评测数据集已支持版本化（写时复制、按版本归档与跨版本对比，2026-11-18），但仍无 A/B 实验对比；生成侧 Context Precision / Recall 依赖参考答案字段，当前标注表只有相关 chunk，缺参考答案时返回不可计算 | A/B 对比需后续补实验分流与显著性分析；需先补参考答案字段才能端到端产出 CP / CR |
-| 多模态 | 视觉模型支持图片输入；扫描版 PDF 按页 OCR；独立图片文件不入库 | OCR 依赖本机 Tesseract 与 `chi_sim+eng` 语言包，纯图片知识库仍需先转 PDF |
-| OpenAI 兼容 | 仅 `/v1/models` 与 `/v1/chat/completions`，`n>1`、`logprobs`、function calling / tools 未支持；`model` 只能映射已启用聊天窗口 | 复杂参数与底层模型直连需走原生 `/api/chat` 接口 |
-| OCR | 依赖本机 `tesseract` 可执行文件与语言包；单页 20 字触发、文档最多 50 页、单页 60s 超时；栏检测优先于表格 | 引擎缺失时静默降级为文本抽取；纯两列表格可能按双栏处理 |
-| 检索 | 单库 PostgreSQL + pgvector（每知识库一张物理表），关键词路为 pg_trgm，无独立向量库 / 搜索引擎 | 超大规模语料需评估性能上限；替换路径见 [独立向量数据库 / 搜索引擎规划](docs/design/features/platform/design-vector-store-and-search-engine.md) |
-| 模型故障转移 | 普通 RAG、Agent（Planner / Step / Reflection）与工作流 LLM 节点统一复用切链组件，覆盖首个 token / 首个响应前的失败切链；**已产生内容后失败不切链、不回滚、不重发、不拼接第二个模型输出**，直接 `error` 结束 | 已产出内容后的续接策略暂不提供；Agent 恢复 / 重试入口按计划绑定的窗口路由组解析链路 |
-| 存储切换 | 已提供历史对象迁移作业（提交 `e4155c6`），但切换本身不自动触发迁移；任务状态与取消标记存 Redis（TTL 24h），跨实例单飞 | 需在管理端显式发起并等待完成；Redis 不可用时无法落任务状态 |
-| OSS 删除 | 删除失败仍只记 WARN，数据库完成逻辑删除，可能残留孤儿对象；已提供孤儿扫描与清理（提交 `e4155c6`） | 默认仅报告（`delete=false`），需显式开启；最后修改时间 60 分钟内的对象受保护 |
-| 大文件上传（2026-11-18） | 已支持分片上传与页面内断线续传；不做跨页面刷新恢复（刷新后需重新选择文件，会话本身仍可复用）；OSS 未使用原生 multipart，分片先落对象存储、合并后仍走单次 `putObject`；单文件存储上限代码默认 200MB，但 `application.yml` 的 `wgh.storage.*.max-file-size-mb` 显式配 50（可用 `WGH_STORAGE_MAX_FILE_MB` 覆盖），单次直传仍受 servlet multipart 50MB 限制，解析侧 `wgh.file.max-single-file-mb` 仍默认 50MB | 传 200MB 文件需走分片并同时调大存储与解析两处上限 |
-| 多实例 JWKS | 已支持进程内 L1 + Redis L2 共享缓存（`wgh.auth.oidc.jwks-shared-cache-enabled`，默认开启）；未知 `kid` 会限频回源，IdP 失败沿用旧缓存，Redis 异常降级本地 | 关闭共享后按单实例缓存工作，多实例需接受轮换后的刷新时间差；开启时需保证 Redis 可用性 |
-| 调度作业 trace_id 迁移（2026-11-22） | `sql/migrations/20261122/01_execution_job_trace.sql` 在 `wgh_rag_dev` 执行过（连跑两次验证幂等）；实测 `wgh_rag_test` 的 `wgh_execution_job.trace_id` 列也已存在 | 其他存量库部署前仍需按库核对 `trace_id` 列；缺失时该库作业提交写入 `trace_id` 会失败，追踪关联缺失 |
-| 移动端 / 国际化 | 仅桌面端布局，无 i18n | — |
-| 数据源连接器（2026-11-18） | 已支持单页 URL 抓取（Jsoup 正文抽取）、按 `content_hash` 判重不重复入库、内容变化生成新文件并逻辑删除旧文件、404/410 清理旧文件、按间隔增量同步与运行记录；仍未实现 robots.txt 校验、整站爬取、非 HTML 数据源（PDF / RSS / Sitemap / 第三方 API） | 仅适合“少量单页 + 定时重抓”；站点治理与批量抓取需另行接入爬虫或第三方数据源 |
-| 数据源定时同步（2026-11-18） | 调度器默认关闭，需显式 `WGH_CONNECTOR_SCHEDULER_ENABLED=true`；单轮按 `batchSize` 限量，间隔为 0 的连接器只支持手动同步；单实例进程内锁，多实例之间不互斥 | 多实例部署需接受重复抓取（`content_hash` 仍可避免重复入库）或改为分布式锁 |
-| 工作流表达式与单步调试（2026-11-18） | 表达式仅支持受限语法子集与固定 `#fn.*` 函数集，不支持自定义函数 / Bean / 类型引用；单步调试默认关闭，只按拓扑串行推进，调试运行使用创建会话时的图快照 | 复杂计算需拆成多节点或改用 TOOL 节点；调试期间修改图不会影响已开始的会话 |
-| 评测门禁（2026-11-18） | CI 门禁使用固定 fixture（预置 `relevant` / `retrieved`），不验证真实检索链路，也不依赖 Key / 网络 / 模型 | fixture 只能防止指标口径与阈值回退；真实检索质量仍需在线评测或人工回归 |
-| 存量库批次 3 迁移（2026-11-18） | 存量库需按序执行 `sql/migrations/20261118/01_eval_dataset_versioning.sql`（3 表 + 3 索引）与 `02_kb_connector.sql`（2 表 + 3 索引），脚本均幂等；新库走 `01-schema.sql`，不要重复执行 | 未执行时评测数据集 / 连接器相关接口会因表不存在报错 |
-| 引用溯源（2026-11-12） | `pageNo` 目前恒为空（解析链路只做段落摊平，无页级映射）；纯 Agent 分支上下文未注入 `[Sn]`；同名文件跨知识库会合并为一张来源卡片 | Agent 回答中的编号可能无对应卡片；需要页码或 Agent 引用时需后续补页级映射与 Agent 上下文编号 |
-| 上下文与工具兜底（2026-11-18） | 工具熔断为单实例内存态，重启即清空，按 toolId 生效且不跨节点、不跨任务；历史 Token 裁剪按估算值而非精确 tokenizer；工具结果预算只作用于送入模型的副本，前端仍显示完整原文；`RagChatService` 的工具循环暂无集成测试覆盖 | 多实例部署各自持有熔断状态；估算误差会用少量真实窗口余量兜底 |
-| 多 Agent 故障转移（2026-11-18） | 单 Agent、工作流 LLM 节点与多 Agent（worker / manager，commit `2afd8ae`）均已接 `BlockingModelFailover`；已产出内容后失败仍不切链 | 已产出内容后的续接策略暂不提供 |
-| 工作流上下文（2026-11-18） | 工作流 LLM 节点输入预算已交付（commit `f27704c`）；节点输出与 `context_json` 已加落库上限并按摘要截断（commit `9be4a10`） | 超长节点输出只保留摘要与受限原文，完整内容需回查节点输出或日志 |
-| 检索式记忆（2026-11-18） | 已接入 `SESSION` 与 `TASK` 作用域，任务结果镜像到会话；可选 LLM 摘要默认关闭（`llm-summary-enabled=false`）；清理默认保留 30 天、单作用域 200 条、每小时执行一次（提交 `ae3bbda`） | 记忆向量表按首次写入的 embedding 维度建立，更换维度需重建；开启 LLM 摘要会为每条记忆增加一次模型调用 |
-| 任务恢复（2026-11-22 移除） | 用户触发的【继续执行】入口与接口已下线（`pending-task` / `resume-task` / `admin/tasks/resume`），停在 RUNNING/PENDING 的任务改由调度中心按异步执行点处置；管理端「运行中任务」页仅保留只读观测 | 需要人工干预中断任务时，以运行记录与调度中心作业状态为准 |
-| 代码沙箱（2026-11-19） | 默认关闭（`wgh.sandbox.enabled=false`）；隔离优先 `sandbox-exec` / `bwrap`，均不可用时 fail-closed，仅显式允许才降级；macOS `sandbox-exec` 已被 Apple 标记 deprecated，属用户态沙箱、风险等级中；CPU / 内存限制为尽力而为 | 生产建议仅在 Linux + bwrap 或容器内开启，并保持默认拒绝网络 |
-| map-reduce 分段摘要（2026-11-18） | 仅在普通聊天链路生效，Agent / 多 Agent / 工作流链路未接；暂无集成测试覆盖 | 长任务链路仍需单独接入与回归 |
-| 多 Agent 黑板（2026-11-18） | 已提供共享黑板读写接口，但 GroupChat 汇总未使用黑板，仍按对话消息汇总 | 需要跨 Agent 共享中间结论时需显式写入黑板 |
-| 模型能力画像（2026-11-18） | 后端有 `LlmModel` 能力画像与切链降级策略；管理端模型表单未暴露能力档位与 function calling 字段 | 需通过接口或数据库配置，页面暂不支持 |
-| 资源可见性（2026-11-12） | 无团队 / 租户模型，`TEAM` 与 `PUBLIC` 在判定上等价（均为"非 owner 可读"）；存量库执行 `sql/migrations/20261113/01_resource_visibility.sql` 补列与索引（幂等）；历史 `create_by='system'` 的资源升级后默认仅管理员可见 | 升级前需备份并执行该迁移脚本；如需真正的团队边界，需后续引入 `tenant_id` / 团队成员模型 |
+已知限制按权限、多副本与集群、配额计费、存储、检索评测、接入交互 6 类汇总、共 45 条逐项说明，详见 [已知限制](docs/reference/known-limitations.md)。
 
 ---
 
 ## 9. 路线图 / 后续计划
 
-状态口径：**已完成** / **部分完成** / **在途**（进行中、未交付）/ **未实现**（未开始）/ **规划中**（已成稿、未开始）。§9.1、§9.2 分别对齐两份来源文档的实际进度，不自行推测；§9.3 收录不属于这两份清单的其他方向；§9.4 为 2026-11-19 新增的平台演进四块规划。
+| 方向 | 状态 | 摘要 |
+|------|------|------|
+| 上下文与工具治理（P0–P2） | 已完成 | 15 项落地清单全部完成：Token 裁剪、指标同源、工具预算 / 兜底、统一 `ContextAssembler`、结构化状态块、检索式记忆、共享黑板、模型能力画像等。 |
+| 缺口开发计划（T01–T13） | 大部分已完成 | T01、T03–T06、T08–T13 已完成；T02 低覆盖自动补偿、T07 资源 ID 审计明细为部分完成。 |
+| 多副本调度与 SSE 重放 | 已完成，未验证 | 实例心跳 / 失联回收、作业对账、SSE 事件重放已交付；真实双副本回收、对账与跨副本重连未验证。 |
+| Kubernetes 编排 | 已交付未验证 | K1/K2/K3 清单与观测栈已交付，仅做离线渲染与 schema 校验，未在真实集群部署。 |
+| 平台演进四块 | 部分完成 / 规划中 | 调度中心 S1 已落地、S3 基础能力未验证；K8s 清单已交付；多租户隔离与独立向量库仍在规划。 |
+| 其他方向 | 未实现 / 部分完成 | 整站爬取与多源接入、反馈 A/B 对比未实现；独立图片 OCR 未接入（扫描版 PDF 已支持）。 |
 
-- 来源一：[长任务上下文管理与工具调用兜底 §5.1 优先级清单](docs/design/features/context-management/design-long-task-context-and-tool-fallback.md)
-- 来源二：[缺口开发计划 2026-11-09 任务总表](docs/review/gap-development-plan-2026-11-09.md)
-
-### 9.1 上下文与工具治理落地清单（P0 / P1 / P2）
-
-**P0 — 当前版本（6 项，全部已完成）**
-
-| 项 | 状态 | 说明 |
-|----|------|------|
-| 历史 Token 上限生效 | 已完成 | `HistoryContextBudgeter` 按 Tokens 而非条数截断历史；默认 4000 Tokens（commit `0ed790c`） |
-| `sources` / 指标口径统一 | 已完成 | 指标、来源卡片、模型上下文使用同一份裁剪后列表；`retrieveInfo` 追加 3 个上下文字段；Agent 分支改用步骤内实际喂给模型的 chunk（commit `27fce99`、`7a6070f`） |
-| 工具结果入上下文预算 | 已完成 | 单条 1200 Tokens、单任务累计 3000 Tokens，超出从最旧结果折叠；前端仍展示完整原文（commit `a458197`） |
-| 工具重试 + 熔断 + 结构化错误 | 已完成 | `ToolInvoker`：失败分类、仅幂等调用重试（最多 2 次含首次，300ms 退避）、按 toolId 熔断（5 次 / 30s / 半开单探针）、任务预算（50 次 / 120s）；SSRF 与 401/403/400/404 不重试（commit `3a52ab6`） |
-| 工作流 LLM 节点输入预算 | 已完成 | `WorkflowContextProperties` + `LlmNodeExecutor` 渲染后按模型窗口裁剪并告警（commit `f27704c`） |
-| 缓存友好布局纪律 | 已完成 | 约定 `system` 前缀稳定、动态内容只进尾部；无代码改动，作为实现纪律遵守 |
-
-**P1 — 下一迭代（5 项，全部已完成）**
-
-| 项 | 状态 | 说明 |
-|----|------|------|
-| 统一 `ContextAssembler` | 已完成 | 新增 `rag-context` 模块，承载「按类型 + 优先级分配预算」（commit `03ccb1c`） |
-| Agent 结构化状态块 | 已完成 | 结构化状态块替换 `StringBuilder` 平铺摘要，整体受 `agentStepContextMaxTokens` 约束（commit `7c8e98b`） |
-| 多 Agent 结果卡片 + 故障转移接入 | 已完成 | 结果卡片、复用 `BlockingModelFailover` 与 Agent 记忆注入（commit `2afd8ae`） |
-| 工具结果结构化信封 / 分页 | 已完成 | `rag-tool` 结构化结果信封 + 分页（commit `c0679f8`；测试构造器适配见 `e7318fa`） |
-| 工作流节点输出上限与摘要落库 | 已完成 | 节点输出与 `context_json` 落库上限、摘要截断（commit `9be4a10`） |
-
-**P2 — 后续版本（4 项，全部已完成）**
-
-| 项 | 状态 | 说明 |
-|----|------|------|
-| 检索式记忆 | 已完成 | 会话级检索式记忆（commit `239c490`）；新增 `TASK` 作用域并镜像到 `SESSION`、可选 LLM 摘要、TTL 30 天与单作用域 200 条清理（提交 `ae3bbda`）；摘要默认关闭，向量表按首次写入的 embedding 维度建立、换维度需重建 |
-| map-reduce 分段摘要 | 已完成 | 单条 chunk 饱和时触发分段摘要（commit `5bf6ce2`）；只在普通聊天链路生效，暂无集成测试 |
-| 多 Agent 共享黑板 | 已完成 | 共享黑板读写接口（commit `a70753d`）；GroupChat 汇总尚未使用黑板 |
-| 模型能力画像 | 已完成 | `LlmModel` 能力画像 + 切链降级策略（commit `d6cdee3`）；管理端模型表单未暴露能力档位与 function calling 字段 |
-
-### 9.2 缺口开发计划任务状态（T01–T13）
-
-| ID | 任务 | 状态 | 说明 |
-|----|------|------|------|
-| T01 | 文档解析增强：OCR + 表格结构 + 清洗 | 已完成 | 扫描版 PDF 按页 OCR、版面分析、表格还原与清洗（commit `6ed9d10`） |
-| T02 | 检索参数治理与自动补偿 | 部分完成 | 参数与 HYDE 已完成（commit `874f43d`）；低覆盖自动补偿（`coverageRate < 0.4` 扩 topK / 放宽阈值）未实现 |
-| T02F | 窗口级检索参数 UI | 已完成 | 聊天窗口可配置 `hybridEnabled` / `queryTransformMode` / `rewriteModelId`（commit `8b52b5f`） |
-| T03 | chunk 级引用与原文定位 | 已完成 | `sources` 扩 10 字段、按文档编号 `[Sn]`、`SourcePanel.vue` 三页接入（commit `96dfc42`）；`pageNo` 恒空、Agent 分支无 `[Sn]` |
-| T04a | 资源归属与可见性（后端） | 已完成 | 五类资源 `visibility` + `DataScopeInterceptor` + 5 个 `PATCH .../visibility`（commit `59c5eee`） |
-| T04b | 资源归属与可见性（前端） | 已完成 | 五个列表页可见性列 + `VisibilityControl.vue`（2026-11-12） |
-| T05 | OpenAI 兼容入口 + Python SDK | 已完成 | `/v1/models`、`/v1/chat/completions`（含 SSE）+ `sdk/python/**`（commit `a2d9046`） |
-| T06a | 生成侧评测指标补齐 | 已完成 | Faithfulness / Answer Relevancy / Context Precision / Context Recall 多 judge（commit `e814bb5`） |
-| T06b | 评测数据集版本化 + CI 门禁 | 已完成 | 写时复制版本、跨版本对比、CI `retrieval-gate` 五项阈值（commit `adbdafe`） |
-| T07 | 审计覆盖补齐 | 部分完成 | AdminUser 走 `AccountAuditService` 显式审计，角色 / 配额 / Agent / 多 Agent 已覆盖（commit `1307d27`）；资源 ID 仍只落 `detail` |
-| T08 | URL/HTTP 数据源增量同步 | 已完成 | 单页抓取、`content_hash` 判重、变更换版本、404/410 清理、SSRF 逐跳校验、可选定时同步（commit `855f61f`）；robots.txt 与整站爬取未做 |
-| T09 | 工作流表达式节点 + 单步调试 | 已完成 | `EXPRESSION` 受限 SpEL 节点 + `POST /api/workflows/{id}/debug/step`（commit `e27723f`）；不支持任意脚本执行 |
-| T10 | 大文件分片上传 / 断点续传 | 已完成 | 三段式接口、顺序分片、`content_hash` 判重、会话归属校验、24h 清理（commit `140375a`） |
-| T11 | 模型提供商扩展（Azure / Bedrock / Ollama） | 已完成 | Azure OpenAI / Ollama 等扩展已交付（commit `028f1bc`）；Bedrock 未做 |
-| T12 | 多实例与可观测 | 已完成（2026-11-19；2026-11-22、2026-11-24 补齐） | Redis 统一命名空间共享状态、跨实例取消、配额原子自增、实例维度指标与部署配置（提交 `e02981f`）；JWKS 缓存共享与分布式链路追踪已于 2026-11-22 落地（见 §9.3）；2026-11-24 补齐调度实例心跳 / 失联回收、作业对账、SSE 事件重放、用户信息缓存与 K8s K1/K2/K3 清单与观测栈（多副本与集群行为未验证，见 §8） |
-| T13 | Agent 长期记忆 / 代码沙箱 | 已完成（2026-11-19） | 任务级长期记忆（`TASK` + `SESSION`、摘要与 TTL/容量清理，提交 `ae3bbda`）；新增 `rag-sandbox` 代码沙箱模块（提交 `a4071db`），默认关闭、需显式开启；macOS 隔离已 deprecated |
-
-### 9.3 其他后续方向
-
-以下方向不属于上述两份清单，**未排期、不代表交付承诺**。
-
-| 优先级 | 方向 | 当前状态 | 说明 |
-|--------|------|----------|------|
-| P0 | 模型故障转移补全 | 已完成（首 token 前切链） | 普通 RAG 首个 token 前的连接失败 / 超时 / 4xx / 5xx 已进入切链；部分输出后失败与全部候选失败均有明确错误收口（commit `e496f71`）；切链逻辑已抽成 `rag-llm` 的 `FailoverAttempt` / `StreamingModelFailover` / `BlockingModelFailover` / `ModelFailoverService`（commit `8e357bb`） |
-| P1 | Agent / 工作流接入故障转移 | 已完成 | Planner / StepExecutor / ReflectionEngine 与工作流 LLM 节点复用 `BlockingModelFailover`；Agent 恢复 / 重试入口回查窗口路由组（commit `8e357bb`） |
-| P1 | 存储迁移与孤儿对象清理 | 已完成（2026-11-19） | `local` ↔ `oss` 迁移服务 + Redis 任务状态 + 管理端接口（提交 `e4155c6`）；孤儿扫描默认只报告，需显式开启删除 |
-| P2 | 多实例 JWKS 缓存共享 | 已完成（2026-11-22） | 保留进程内 L1，新增 Redis L2 `RedisJwksSharedCache`（原始 JWKS JSON、未知 `kid` 先重读 L2 再回源并回写）；开关 `wgh.auth.oidc.jwks-shared-cache-enabled` 默认开启，关闭时与改造前一致，Redis 异常降级本地；无表结构变更 |
-| P2 | 分布式链路追踪 | 已完成（2026-11-22） | `micrometer-tracing-bridge-brave` 本地生成 `traceId` / `spanId`，日志输出 `[trace=...]`；`MdcAsyncConfig` 透传 MDC 与 Observation；调度作业写入 / 恢复 `wgh_execution_job.trace_id`，采集端待接入时才导出 |
-| P1 | 多副本调度与 SSE 事件重放 | 已完成，未验证（2026-11-24） | 实例注册 / 心跳 / 失联回收、作业对账、管理端实例与对账接口；SSE Redis 缓冲 + `Last-Event-ID` 重放与前端自动重连。跨副本重连、真实双副本回收与对账行为未验证 |
-| P2 | Kubernetes 清单与观测栈 | 已交付未验证（2026-11-24） | `deploy/k8s/` 的 K1/K2/K3 清单与迁移 Job、Prometheus 告警规则与 Grafana 面板；仅离线渲染与 schema 校验，未在真实集群部署 |
-| P2 | 整站爬取与多源接入 | 未实现 | robots.txt 校验、站点爬取 / Sitemap、PDF / RSS / 第三方文档源同步；单页 URL 连接器已交付（T08 未做部分） |
-| P3 | 反馈 A/B 对比 | 未实现 | 版本化评测集已交付；仍缺实验分流、对照组与显著性分析 |
-| P3 | 图片 OCR | 部分完成 | 扫描版 PDF 已按页 OCR（`TessOcrService`，commit `6ed9d10`）；独立图片文件（PNG / JPG）未接入 |
-
-### 9.4 平台演进四块规划（2026-11-19）
-
-以下四块已完成规划文档；**任务调度中心已进入实施（S1 后台作业化落地，2026-11-24 补齐多副本基础能力），Kubernetes 编排已交付 K1/K2/K3 清单（未集群验证），多租户与独立向量库尚未开始**。阶段编号与验收以各自文档为准。此前「暂不规划」的表述已废止。
-
-| 块 | 规划文档 | 阶段 | 前置关系 |
-|----|----------|------|----------|
-| 任务调度中心 | [design-execution-scheduler-center.md](docs/design/features/platform/design-execution-scheduler-center.md) | S0 → S1（已落地）→ S2（未开始）→ S3（基础能力已交付，未验证） | 与多租户阶段 0/1 同批；S0 是 K8s 多副本前置 |
-| 多租户隔离 | [design-multi-tenancy-isolation-roadmap.md](docs/design/features/platform/design-multi-tenancy-isolation-roadmap.md) | 阶段 0 → 1 → 2 → 3（阶段 4 按需） | 阶段 0 必须先于任何多副本扩容 |
-| 独立向量数据库 / 搜索引擎 | [design-vector-store-and-search-engine.md](docs/design/features/platform/design-vector-store-and-search-engine.md) | V0 → V1 → V2（按阈值）→ V3 | V0 的事实层（chunk 原文独立化）是替换前置 |
-| Kubernetes 级编排 | [design-kubernetes-orchestration.md](docs/design/features/platform/design-kubernetes-orchestration.md) | K0 → K1 → K2 → K3（清单均已交付，未集群验证） | K2 依赖 S0/A 阶段完成 |
-
-对应的现状口径见 §3.7 与 §8；四块互不替代：调度中心解决「谁来执行」，多租户解决「数据归属」，向量/搜索解决「检索容量与质量」，K8s 解决「部署与弹性」。
+完整清单（P0/P1/P2 逐项、T01–T13 状态、其他方向、平台演进四块阶段与前置关系）见 [路线图与后续计划](docs/reference/roadmap.md)。

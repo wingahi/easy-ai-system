@@ -6,7 +6,7 @@
 | 更新日期 | 2026-11-03 |
 | 代码基线 | `main@212e90c` + 工作区当前代码（本次仅只读核对） |
 | 文档定位 | 系统级总体设计，面向架构评审、需求评审与新成员入门 |
-| 配套文档 | 详细设计见 [design-detailed.md](design-detailed.md)；接口清单见 [api.md](../api/api.md) |
+| 配套文档 | 详细设计见 [design-detailed.md](design-detailed.md)；接口清单见 [api.md](../api/api.md)；**现行工程结构、模块清单与技术栈**见 [engineering-structure.md](../reference/engineering-structure.md) |
 
 > 本文按代码实际状态重写，不描述未实现能力。文中“已实现”均可在对应模块源码中定位；专项能力（Agent、工作流、公开访问、存储、可观测性）的深挖文档见 §1.3。
 
@@ -69,6 +69,8 @@ WGH RAG System 是一套面向企业知识库的 RAG 应用平台，核心能力
 
 ### 2.1 技术栈
 
+> 下表为 2026-11-03 基线；现行模块清单、依赖约束与技术栈以 [engineering-structure.md](../reference/engineering-structure.md) 为准。
+
 | 层次 | 选型 | 版本 / 说明 |
 | --- | --- | --- |
 | 语言与构建 | Java + Maven | JDK 21（`maven.compiler.release=21`，Enforcer 固定 `[21,22)`） |
@@ -105,6 +107,8 @@ flowchart LR
 ## 3. 模块化架构
 
 ### 3.1 模块清单（17 个）
+
+> 本节为 2026-11-03 的 17 模块基线；2026-11-24 现行模块为 24 个（1 个父 POM + 23 个子模块），完整清单与依赖约束见 [engineering-structure.md](../reference/engineering-structure.md)。
 
 | # | 模块 | 职责 | 关键类 / 能力 | 显式依赖 |
 | --- | --- | --- | --- | --- |

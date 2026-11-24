@@ -73,6 +73,18 @@
 |---|---|---|
 | [api.md](api/api.md) | 对外接口清单、请求/响应示例、SSE 事件协议与资源可见性端点 | 2026-11-12 |
 
+## reference/ — 参考手册（README 专题展开）
+
+| 文档 | 一句话定位 | 更新时间 |
+|---|---|---|
+| [engineering-structure.md](reference/engineering-structure.md) | 现行模块结构、依赖约束、关键设计与技术栈 | 2026-11-24 |
+| [api-overview.md](reference/api-overview.md) | 接口分组与前缀概览（详细协议见 api/api.md） | 2026-11-24 |
+| [capabilities.md](reference/capabilities.md) | 能力矩阵：状态、模块、类名、配置键与提交号 | 2026-11-24 |
+| [configuration.md](reference/configuration.md) | 配置说明：认证、存储、数据库、检索、调度、追踪与多副本参数 | 2026-11-24 |
+| [known-limitations.md](reference/known-limitations.md) | 已知限制：6 类摘要 + 45 条逐项说明 | 2026-11-24 |
+| [roadmap.md](reference/roadmap.md) | 路线图：P0–P2 清单、T01–T13 状态、其他方向与平台演进四块 | 2026-11-24 |
+| [database-migrations.md](reference/database-migrations.md) | 已有库升级：增量脚本顺序、状态与服务启用前置 | 2026-11-24 |
+
 ## archive/ — 历史归档（只读，不再更新）
 
 已被现行版本取代的设计与早期一次性报告。新的结论请写到 `design/` 或 `review/`，不要回改本区。

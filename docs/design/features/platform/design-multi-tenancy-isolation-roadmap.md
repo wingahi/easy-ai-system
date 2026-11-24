@@ -252,7 +252,7 @@ CREATE POLICY tenant_isolation ON wgh_knowledge_base
 
 **A'. 平台内置资源（2 张）**：`wgh_prompt_template`、`wgh_tool`。两者同时存在租户自建与平台内置资源。已定（§3.5.1.9 #4）：增加显式 `scope`（`platform` / `tenant`），不靠 `tenant_id='default'` 隐式表达；DDL/策略见 `12_rls_prompt_tool_scope.sql`，应用侧插件放行待随灰度实施。
 
-> 注：配额三表的后台退款/汇总作业会跨租户批处理，必须走调度角色或按租户分片执行，否则 RLS 下读不到其他租户数据。
+> 注：配额三表的后台退款/汇总作业会跨租户批处理，**不能**走 `wgh_scheduler`（该角色对业务表无授权），必须按租户逐个进入 `wgh_app` + 租户 GUC 短事务，方案见 §3.5.3.4。
 
 **B. 需要特殊策略（4 张）**
 
@@ -472,7 +472,17 @@ CREATE POLICY tenant_isolation ON wgh_knowledge_base
 
 > 目标：应用运行连接从 `postgres`（SUPERUSER，RLS 完全不生效）切到 `wgh_app`（NOINHERIT、非 superuser、无 bypassrls）。
 > 硬顺序：**先补代码，再切连接用户**。反向操作会让所有启用 RLS 的表直接返回 0 行。
-> 本节是影响面与分阶段方案，尚未改动代码与连接配置；dev 当前仍由 `postgres` 连接。
+> 本节是影响面与分阶段方案；dev 已完成切换（应用连接用户为 `wgh_app`），prod/test 未执行。
+
+> **待评估（当前未采用）：生产 pgvector 扩展安装口径。**
+> 曾评估「DBA 以超级用户预建扩展 + 应用侧 `WGH_PGVECTOR_SKIP_EXT=true`」的方案，**暂不采用**，
+> 仅作为待评估方案记录在此。
+> 实测事实（PostgreSQL 15 + pgvector 0.8.7）：`trusted = true` 只允许非超级用户执行扩展安装脚本，
+> **不会**把 `extowner` 改成超级用户——以 `wgh_app` 执行 `CREATE EXTENSION vector` 后，实测
+> `pg_extension.extowner = wgh_app`。若要求扩展属主为 `postgres`，仍须由超级用户创建。
+> dev 现状：数据卷内 `vector` 扩展仍为 `postgres` 属主；容器切换到 trusted 派生镜像后**未重装、未降级**，
+> 版本仍为 0.8.7。`skip-create-vector-extension` 在 dev 恢复为 `false`，仅用于扩展缺失时自愈。
+> 生产若改为「应用自建扩展」，需额外评估 `wgh_app` 持有扩展属主带来的 `DROP/ALTER EXTENSION` 权限面。
 
 #### 3.5.2.1 影响面清单
 
@@ -532,7 +542,181 @@ CREATE POLICY tenant_isolation ON wgh_knowledge_base
 2. **`admin` 跨租户业务可见性收窄**：切 `wgh_app` 后 admin 只能看本租户业务数据（审计/调用日志仍走 `wgh_platform`）。是否接受？若不接受，需要单独设计“平台运维代管”通道。
 3. **调度角色的实现形态**：A4 采用“独立事务 + `SET LOCAL ROLE wgh_scheduler`”（改动小、无第二数据源），还是新增独立 `wgh_scheduler` 数据源/`SqlSessionFactory`（隔离更彻底、改造大）。
 4. **Prompt/Tool 平台行放行方式**：租户插件对这两张表整体忽略并由服务层显式拼 `(tenant_id=? OR scope='platform')`，还是引入专用拦截器改写 SQL。前者简单但依赖服务层覆盖，后者集中但需自研拦截器。
-5. **只读事务覆盖面**：是否要求“所有租户表读路径必须有事务”并用测试/静态扫描兜底；遗漏路径在切库后会静默返回 0 行。
+5. **只读事务覆盖面**：是否要求“所有租户表读路径必须有事务”并用测试/静态扫描兜底；遗漏路径在切库后会静默返回 0 行。跨租户读的例外路径见 §3.5.3。
+
+### 3.5.3 平台级跨租户扫描与跨租户指标方案（#2 / #4 / #6，方案稿）
+
+> **状态**：方案稿，2026-11-24。本节只做设计，不改代码、不改配置、不重启实例、不做 git 提交。
+> **前置**：§3.5.2 切 `wgh_app` 之后，「无事务 = 无 GUC = RLS 返回 0 行」；「有事务但租户上下文为空」会被 `TenantTransactionTemplate` 兜底成 `default`。
+> **适用**：`SchedulerReconcileJobHandler`（#2）、`RetrievalMetricsGauge`（#4）、以及所有只在默认租户生效的周期维护作业（#6）。
+
+#### 3.5.3.1 三条链路的共同根因
+
+| 链路 | 要读 | 要写 | 需要的数据库身份 | 现状 |
+|---|---|---|---|---|
+| #2 作业对账 | `wgh_workflow_run` / `wgh_agent_plan` / `wgh_m_agent_run`（A 组 RLS）+ `wgh_execution_job`（D 组） | `wgh_execution_job.cancel_pending` | 业务表要 `wgh_app` + 租户 GUC；调度表要 `wgh_scheduler` | `execute` 无事务，当前靠 `postgres` 超级用户绕过 RLS |
+| #4 向量表数量 Gauge | `wgh_knowledge_base` 聚合计数（A 组） | 无 | 需要跨租户只读 | 无租户上下文，切库后 RLS 静默返回 0 |
+| #6 平台级扫描 | 各租户业务表 | 各租户业务表/调度表 | 每个租户一次 `wgh_app` + GUC | 周期作业按默认租户执行，只覆盖 `default` |
+
+三条链路共享两个硬约束：
+
+1. **一个事务只有一个有效角色、一个 `app.tenant_id`**。`TenantAwareDataSourceTransactionManager#doBegin` 只在事务开始时下发一次 GUC（`rag-data/.../TenantAwareDataSourceTransactionManager.java#L36-L59`）；`TenantTransactionTemplate` 是 `REQUIRED` 传播，嵌套进已有事务时**不会重设 GUC**。因此「逐租户读」必须是最外层事务边界，不能包在一个大事务里循环。
+2. **`SET LOCAL ROLE` 只能在事务内生效，且事务内切换角色不会自动补权限**。`wgh_scheduler` 只对调度 3 表有权限；`wgh_app` 只对业务表有权限。把「读业务表」和「写调度表」放进同一个事务，只能靠中途 `SET LOCAL ROLE` 来回切，代价见 §3.5.3.2 方案 C。
+
+共同结论：**跨租户 + 跨角色必须拆成「每租户一个短事务」，不要试图用一个事务解决。**
+
+#### 3.5.3.2 #2 `SchedulerReconcileJobHandler.execute`
+
+**现状事实**
+
+- `jobMapper.selectReconcileCandidates(jobType, since, batch)` 的 SQL 没有 `tenant_id` 条件（`rag-scheduler/.../ExecutionJobMapper.java#L279-L289`），候选天然跨租户。
+- `businessState(...)` 通过 `selectById` / `selectList` 读 `wgh_workflow_run`、`wgh_agent_plan`、`wgh_m_agent_run`（`SchedulerReconcileJobHandler.java#L270-L320`），三张表都在 RLS A 组。
+- `repair(...)` 调 `jobMapper.cancelPending(...)` 写 `wgh_execution_job`（`#L241-L250`），属于 RLS D 组。
+- 整个 `execute(...)` 没有 `@Transactional`（`#L119-L177`）。
+
+**约束**
+
+- `wgh_scheduler` 对三张业务表**没有授权**：无权限会直接报 `permission denied`，不是返回 0 行。
+- `wgh_app` 对 `wgh_execution_job` **没有授权**：修复写入必须在 `wgh_scheduler` 身份下完成。
+- 业务记录必须按 `job.tenantId` 设 GUC；用默认租户读会读不到非默认租户的业务行（MyBatis 插件加 `tenant_id='default'`，RLS 也只放行 `default`）。
+- 对账的正确性红线：**业务读失败不能当成 `business_missing`**。否则会把「读不到」误判为「业务不存在」，错误取消仍在排队的作业。
+
+**方案对比**
+
+| 方案 | 做法 | 事务/连接代价 | 锁与失败影响 | 结论 |
+|---|---|---|---|---|
+| A 三段式：扫→判→写 | ① `runReadOnlyAs(wgh_scheduler)` 取候选；② 每条作业 `transactions.execute(job.tenantId, true, ...)` 读业务记录并判定；③ 需要修复时 `runAs(wgh_scheduler)` 单独短事务执行 `cancelPending` | 1 次候选扫描 + 每个不同租户 1 次只读事务 + 每次修复 1 次写事务；每条作业之间不持有事务 | 只有 `cancelPending` 的行级短锁；单条业务读失败只跳过该条，不影响本轮其他作业 | **推荐**，与 `JobStore` 已有的「租户路径用 app+GUC、跨租户协调用 scheduler 角色」划分一致 |
+| B 按租户分批（A 的优化） | 先把候选按 `tenant_id` 分组，每租户一个只读事务批量读业务记录，再按租户批量修复 | 1 + 租户数（读）+ 租户数（写）次短事务；`IN` 查询需要限制条数 | 单租户内一条失败会影响该租户整批；租户内 `IN` 列表过长会放大单次查询 | 候选量大、租户多时再上；默认 `batchSize` 较小时收益有限 |
+| C 读写同事务（`readOnly=false`，先读后写） | 一个事务内先 `SET LOCAL ROLE wgh_scheduler` 取候选，再切回 `wgh_app` 逐租户 `set_config` 读业务，最后切回 `wgh_scheduler` 写 | 连接占用 = 整轮对账时长；事务快照长期不释放 | 修复的 `UPDATE` 行锁在整个事务期间持有；任一业务读失败会回滚整轮（除非逐个加 savepoint）；跨租户 `set_config` 只保留最后一个值 | **技术可行但不采用**：长事务、锁窗口、异常隔离都最差 |
+| D 不拆：继续用超级用户 / 只对账默认租户 | 维持现状或接受漏对账 | 0 改造 | 违背 RLS 目标；非默认租户永远不对账 | 不采用 |
+
+**推荐形态（A，候选量大时叠加 B）**
+
+```text
+execute:
+  candidates = roles.runReadOnlyAs("wgh_scheduler",
+      () -> jobMapper.selectReconcileCandidates(jobType, since, batch))
+  for job in candidates:
+      ctx = job.tenantId                       // 必须有值，缺失即跳过并告警
+      business = transactions.execute(ctx, true, () -> readBusiness(job))
+      decision = decide(job, business, now)    // 纯内存判断，不碰数据库
+      if decision.repair:
+          roles.runAs("wgh_scheduler", () -> jobMapper.cancelPending(job.id, reason))
+```
+
+三个实现要求：
+
+1. `readBusiness` 只能依赖 `job.tenantId`，不能读线程上的 `TenantContext`（`JobRunner` 恢复的是默认租户）。
+2. 业务读抛异常 → 该条记 `skipped`（新增计数），**不进入** `repair` 分支；`business_missing` 的判定必须基于「查询成功且返回 null」。
+3. 修复写仍走现有条件 UPDATE（`cancelPending` 带状态条件），并发被领取时返回 0，按现有逻辑跳过。
+
+**指标口径影响**
+
+- `scanned` 口径不变（跨租户候选作业条数）。
+- 新增 `skipped`（租户缺失/停用、业务读失败、未知 runType）与 `tenantFailed`；`mismatches` 只统计「成功读出业务状态后的不一致」，避免读失败污染不一致率。
+- `findings` 仍只输出 `executionId`、业务 id/status，不输出业务内容，跨租户对账不额外泄露数据。
+- 如果 `skipped` 连续多轮大于 0，应告警（说明有租户读不到或租户目录异常）。
+
+#### 3.5.3.3 #4 `RetrievalMetricsGauge`
+
+**现状事实**
+
+- `tableCount()` 在 Prometheus 抓取线程执行，`selectCount(wgh_knowledge_base WHERE collection_name IS NOT NULL)`，无任何租户上下文（`rag-kb/.../RetrievalMetricsGauge.java#L39-L52`）。
+- 有 60 秒 TTL；查询失败沿用上次值，但**查询成功返回 0 不会报错**。
+- 切 `wgh_app` 后：无 GUC → RLS 返回 0 行 → Gauge 变成 0。MyBatis 插件层因无上下文不加条件，RLS 层却是 0 行，**两层口径不一致且静默**。
+- 不能简单套 `transactions.execute(true, ...)`：上下文为空时模板按 `default` 设 GUC，只会统计默认租户，指标从「平台总量」悄悄变成「默认租户量」。
+
+**方案对比**
+
+| 方案 | 做法 | 口径 | 代价 |
+|---|---|---|---|
+| A 平台角色读 | 给 `wgh_platform` 增加 `wgh_knowledge_base` 的 `SELECT` 授权 + `FOR SELECT TO wgh_platform USING (true)` 策略；Gauge 内 `roles.runReadOnlyAs("wgh_platform", ...)` | 全租户真实总量，与当前 `postgres` 口径一致（0 变化） | 扩权：`wgh_platform` 可读 KB 行（不只是计数）；需要新增迁移脚本与安全评审 |
+| B SQL 层聚合 | B1：`SECURITY DEFINER` 函数，owner 为 `postgres`（超级用户绕过 RLS），只返回 `count(*)`，`GRANT EXECUTE TO wgh_app`，函数内固定 `search_path`、无参数；B2：函数 owner 为专用只读角色，配 `USING (true)` 策略 | 同 A，全租户总量 | B1 暴露面最小（应用只能拿到数字，读不到行），但引入超级用户 definer，评审成本最高；B2 等于 A 多一层封装。**注意**：`FORCE RLS` 对表 owner 也生效，所以 B2 的 owner 不能用普通业务角色，必须配策略或 `BYPASSRLS` |
+| C 退化近似指标 | C1：改成租户维度 Gauge（`label=tenantId`），需要遍历租户；C2：无上下文时返回 `NaN`/保持上次值/不注册 | 不再是平台总量；C1 高基数，C2 指标缺失 | 0 迁移，但看板、容量规划与告警全部要改口径；不满足「向量表总量」的原始用途 |
+
+**推荐**：优先 A（与既有角色体系一致、改动最小）；若安全评审不接受 `wgh_platform` 对 KB 表的行级可见，改用 B1（只暴露计数）。C 只作为临时降级，不作为长期方案。
+
+**指标口径与自检**
+
+- A/B 的指标语义 = 「平台全租户中 `collection_name` 非空的 KB 数」，与切库前完全一致，无需改看板。
+- 新增自检：若「租户目录中启用的租户数 > 0」且 Gauge 连续两个刷新周期为 0，打 `vector_table_count_suspicious_zero` 告警，防止再次出现「RLS 静默归零」。
+- Gauge 回调必须保持不抛异常（现有 `try/catch` 保留），刷新仍为 60 秒一次短事务，不参与请求链路。
+
+#### 3.5.3.4 #6 平台级全租户扫描
+
+**现状根因**
+
+- `JobRunner.run(...)` 用 `job.getTenantId()` 设置上下文（`rag-scheduler/.../JobRunner.java#L188-L194`），`finally` 清理。
+- `JobDispatcher.submitRecurring(...)` 构造 `ExecutionRequest` 时**没有设置 tenant**（`JobDispatcher.java#L164-L169`），`JobStore.resolveTenant(...)` 回落到 `TenantContext.tenantIdOrDefault()`（`JobStore.java#L380-L383`），即 `default`。
+- 于是周期作业执行时：MyBatis 插件追加 `tenant_id='default'`，RLS 的 GUC 也是 `default`，两层都只覆盖默认租户。
+
+**需要改的遍历入口**
+
+| # | 入口 | 现状扫描范围 | 改法 |
+|---|---|---|---|
+| 1 | `KbConnectorSyncJobHandler` → `ConnectorScheduler.tick()` | `wgh_kb_connector` 仅默认租户 | 遍历启用租户；每租户一个只读短事务取到期候选；`connectorService.syncScheduled` 在该租户上下文下执行（其自身事务），**单个连接器失败要单独 try/catch**（当前一个失败会中断本轮剩余连接器） |
+| 2 | `SchedulerReconcileJobHandler` | 候选跨租户，业务读仅默认租户 | 按 §3.5.3.2 三段式 |
+| 3 | `RunResumeScanJobHandler` → `RunningTaskService.listStaleCandidates` | `wgh_agent_plan` / `wgh_m_agent_run` / `wgh_workflow_run` 仅默认租户 | 每租户只读事务扫描；投递续跑作业时 `ExecutionRequest` 必须显式带 `tenant(tenantId)`，否则续跑作业又落回默认租户 |
+| 4 | `QuotaRefundJobHandler` → `QuotaChargeLedger.findDueRefunds` | `wgh_quota_charge` 仅默认租户 | 每租户扫描到期流水；退款写路径用该租户的读写事务 |
+| 5 | `KbUploadCleanupJobHandler` → `UploadSessionCleaner.cleanupExpired` | `wgh_upload_session` 仅默认租户 | 每租户扫描/删除 |
+| 6 | `KbAgentMemoryCleanupJobHandler` → `AgentMemoryCleaner.cleanupExpired` | `wgh_agent_memory` + 向量集合仅默认租户 | 每租户清理；向量删除必须带 `tenantId` 过滤 |
+| 7 | `KbSemcacheCleanupJobHandler` → `SemanticCacheService.cleanupExpired` | `wgh_semantic_cache` + 向量仅默认租户 | 每租户清理；同上 |
+| 8 | `KbOrphanCleanupJobHandler` → `StorageOrphanCleanupScheduler.runOnce` | `scan(delete)` 取 `TenantContext.tenantIdOrDefault()`，即默认租户 | 改为逐租户调用 `scan(tenantId, delete)`；仍禁止全库列举推断（§3.1.1 存储红线） |
+| 9 | `RetrievalMetricsGauge` | 无租户上下文 | 见 §3.5.3.3，不属于遍历，但同属平台口径 |
+| 10 | `POST /api/admin/storage/orphans/scan` | 已支持 `tenantId` 参数，按单租户执行 | 保持单租户；若要「全部租户」批量，显式新增编排并默认关闭 |
+
+**不需要改的入口**：`JobDispatcher` 的 claim / reclaim / requeue / expire / purge 已经由 `JobStore` 走 `wgh_scheduler` 角色做跨租户协调（`JobStore.java#L34-L39`），不按租户遍历，避免把这套机制再复制一遍。
+
+**租户枚举从哪里取**
+
+- 数据源：`wgh_tenant`（平台表，不在租户插件白名单、不启 RLS）中 `status = 1` 且未逻辑删除的租户；`default` 必选（默认租户不允许停用，`TenantService#updateStatus`）。
+- 新增一个窄接口（如 `TenantDirectory.listActiveCodes()`），只投影 `code`，不要 `select *`；60 秒本地缓存，租户创建/停用后可主动失效。
+- 枚举失败（数据库异常/结果为空）→ **本轮跳过并告警**，不要回落 `default` 静默执行；否则报表显示「成功」但实际漏掉了所有非默认租户。
+- 设置单轮租户上限与游标（按 `id` 分页），避免租户数增长后一次拉全量。
+
+**单租户失败如何隔离**
+
+- 外层：每个租户独立 `try/catch`，记录 `platform_scan_tenant_failed{job,tenant}` 指标 + WARN 日志，继续下一个租户。
+- 内层：每个业务条目（连接器/run/流水）独立 `try/catch`，同租户内一条失败不影响其余条目。
+- 作业终态：返回统计载荷 `tenantsTotal / tenantsOk / tenantsFailed / itemsScanned / itemsFailed`；仅「枚举失败」或「全部租户失败」让作业失败进入重试，部分失败算成功并告警（待决策，见 §3.5.3.5）。
+- 取消：每租户、每条都检查 `context.cancellation()`，保证长轮次可被租约/取消打断。
+- 幂等：保留现有 `bizKey` 与条件 UPDATE；部分失败重试时必须保证已成功租户不会被重复处理出副作用。
+
+**如何避免和业务写入抢锁或长时间占连接**
+
+1. **禁止一个事务跨租户**：每租户一个毫秒级短事务，事务内只做数据库读写，**不做 HTTP 抓取、对象存储、向量库调用**（连接器同步、孤儿删除必须放在事务外）。
+2. 扫描用普通 `SELECT`（MVCC 不阻塞业务写），不加 `FOR UPDATE`；修复用条件 `UPDATE`（`cancelPending` 已带 `status` 条件），锁只落在单行。
+3. 每租户 `LIMIT batch`，租户之间**默认串行**（并发度 1，可配置到 2–4），避免打满 Hikari（`maximum-pool-size=20`）。
+4. 只读事务设 `statement_timeout`（建议 5s），并保留 `idle_in_transaction_session_timeout`；慢租户只影响自己这一轮。
+5. 维护车道已有 Redis 单飞（`JobRunner` 对 `MAINTENANCE` 车道加锁），多实例同一时刻只有一份平台扫描；租户轮次内部不要再嵌套分布式锁。
+6. 热点表按 `id` 游标分页，不用大 `OFFSET`；对账/退款的候选本身带时间窗与保护期，天然低冲突。
+7. 连接占用估算：串行扫描时同一时刻最多占用 1 条连接；连接器/退款的后续写事务各自独立，不叠加在扫描事务上。
+
+**建议的实施顺序（确认后）**
+
+1. 租户枚举（`TenantDirectory`）+ 平台扫描的公共骨架（逐租户短事务、失败隔离、统计载荷）。
+2. `ConnectorScheduler` 与 `SchedulerReconcileJobHandler`（#2，用户已点名的两条）。
+3. 其余周期作业（续跑扫描、配额退款、上传/记忆/语义缓存清理、孤儿扫描）。
+4. `RetrievalMetricsGauge`（#4），最后做，避免与扫描改造互相干扰。
+
+**验收（实施后执行，本轮不执行）**
+
+- 至少造 2 个启用租户 + 1 个停用租户：平台扫描能覆盖两个启用租户，停用租户按决策处理。
+- 人为让某租户的业务查询抛异常：该租户记失败，其余租户继续完成，作业不整体失败。
+- 观察扫描期间的 `pg_locks` / 连接数：无跨租户长事务、无表级锁、Hikari 活跃连接不超过约定上限。
+- 对账：非默认租户的 `PENDING` 作业在业务终态后能被取消；业务读失败时**不得**被取消（防止误杀）。
+
+#### 3.5.3.5 待决策项（#2 / #4 / #6）
+
+1. **#2 修复写路径**：继续直接调 `jobMapper.cancelPending`，还是收敛到 `JobStore`（复用租约/条件更新/指标）？后者更一致，但需要把取消能力暴露成 `JobStore` 方法。
+2. **#2 业务读失败的处理**：跳过并告警（推荐），还是整轮失败重试？若跳过，是否强制要求「业务读成功」才允许 `business_missing` 自动修复（推荐强制）。
+3. **#2 是否按租户分组批量读**（方案 B）：先按方案 A 逐条实现，候选量上来后再切 B，是否接受？
+4. **#4 指标口径**：保持平台全量（A/B），还是允许降级为租户维度/缺失（C）？若保持全量，选 A（`wgh_platform` 加 SELECT + 只读策略）还是 B1（`SECURITY DEFINER` 超级用户函数，只暴露 count）？
+5. **#4 扩权评审**：是否接受 `wgh_platform` 对 `wgh_knowledge_base` 的全行只读可见？不接受则只能走 B1。
+6. **#6 扫描组织方式**：单个平台作业内部遍历租户（改动小、作业数不变，推荐），还是每租户提交一个周期作业（隔离更好、复用租户并发槽位，但作业数 × 租户数）？
+7. **#6 部分失败的终态**：部分租户失败算成功 + 告警，还是失败重试（需保证已成功租户幂等）？
+8. **#6 停用租户是否扫描**：建议业务扫描跳过，但对账/存储清理保留（避免残留作业与对象永久滞留），需拍板。
+9. **#6 配置项**：平台扫描开关、租户并发度、单轮租户上限、`statement_timeout` 是否本轮一起纳入？本轮约束是不改配置，需确认下一轮范围。
 
 ### 3.6 阶段 4：混合分层（按需）
 
@@ -651,6 +835,7 @@ CREATE POLICY tenant_isolation ON wgh_knowledge_base
 4. **阶段 4 是否需要**：取决于是否有强合规客户，当前无输入。
 5. **性能影响**：租户条件与拦截器对列表查询的影响未压测。
 6. **存量无主资源归属**：`create_by='system'` 的历史资源归属哪个租户，需要业务确认。
+7. **平台级扫描与跨租户指标**：#2 / #4 / #6 的方案见 §3.5.3，待决策项见 §3.5.3.5（含指标口径、扫描组织方式、部分失败终态）。
 
 ---
 
