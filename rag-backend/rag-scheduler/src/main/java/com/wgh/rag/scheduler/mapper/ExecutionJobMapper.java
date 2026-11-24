@@ -305,8 +305,57 @@ public interface ExecutionJobMapper extends BaseMapper<ExecutionJob> {
             """)
     int requeueFailed();
 
-    /** 排队超时 → FAILED(JOB_QUEUE_TIMEOUT)，不进入重试。 */
+    /**
+     * 管理端重试：失败/死信/取消 → PENDING，重置尝试次数与错误信息。
+     *
+     * @return 0 表示状态已变化（已被重试或不符合重试条件）
+     */
     @Update("""
+            UPDATE wgh_execution_job
+            SET status = 'PENDING',
+                attempt = 0,
+                scheduled_at = now(),
+                not_before = NULL,
+                lease_owner = NULL,
+                lease_expire_time = NULL,
+                heartbeat_time = NULL,
+                error_code = NULL,
+                error_message = NULL,
+                cancel_requested = 0,
+                cancel_reason = NULL,
+                finish_time = NULL,
+                version = version + 1,
+                update_time = now()
+            WHERE id = #{id} AND deleted = 0
+              AND status IN ('FAILED', 'DEAD', 'CANCELLED')
+            """)
+    int retryJob(@Param("id") Long id);
+
+    /**
+     * 管理端强制回收：活跃作业（LEASED/RUNNING）回到 PENDING，由调度循环重新领取。
+     *
+     * @return 0 表示作业已不在活跃状态
+     */
+    @Update("""
+            UPDATE wgh_execution_job
+            SET status = 'PENDING',
+                attempt = 0,
+                scheduled_at = now(),
+                not_before = NULL,
+                lease_owner = NULL,
+                lease_expire_time = NULL,
+                heartbeat_time = NULL,
+                error_code = 'MANUAL_RECLAIM',
+                error_message = #{reason,jdbcType=VARCHAR},
+                finish_time = NULL,
+                version = version + 1,
+                update_time = now()
+            WHERE id = #{id} AND deleted = 0
+              AND status IN ('LEASED', 'RUNNING')
+            """)
+    int reclaimJob(@Param("id") Long id, @Param("reason") String reason);
+
+    /** 排队超时 → FAILED(JOB_QUEUE_TIMEOUT)，不进入重试。 */    @Update("""
             UPDATE wgh_execution_job
             SET status = 'FAILED',
                 error_code = 'JOB_QUEUE_TIMEOUT',
@@ -354,6 +403,14 @@ public interface ExecutionJobMapper extends BaseMapper<ExecutionJob> {
               AND status IN ('LEASED', 'RUNNING') AND deleted = 0
             """)
     long countTenantActive(@Param("tenantId") String tenantId, @Param("lane") String lane);
+
+    /** 指定租户车道的排队数（租户策略 max_queue 判定）。 */
+    @Select("""
+            SELECT COUNT(*) FROM wgh_execution_job
+            WHERE tenant_id = #{tenantId} AND lane = #{lane}
+              AND status = 'PENDING' AND deleted = 0
+            """)
+    long countPendingByTenant(@Param("tenantId") String tenantId, @Param("lane") String lane);
 
     // ===== 管理端只读聚合（数据来源统一为作业表） =====
 

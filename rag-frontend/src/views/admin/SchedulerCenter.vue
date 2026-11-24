@@ -13,6 +13,8 @@
       </div>
     </div>
 
+    <el-tabs v-model="activeTab" class="scheduler-tabs">
+      <el-tab-pane label="作业执行" name="jobs">
     <div class="stat-cards">
       <div class="stat-card">
         <div class="label">待执行</div>
@@ -221,6 +223,150 @@
         <el-empty v-else-if="!detailLoading" description="未查询到作业详情" :image-size="80" />
       </div>
     </el-drawer>
+      </el-tab-pane>
+
+      <el-tab-pane label="租户策略" name="policies">
+        <div class="card">
+          <div class="filter-bar">
+            <el-input v-model="policyTenant" placeholder="租户标识" size="small" clearable style="width: 200px" />
+            <el-button size="small" type="primary" :loading="policyLoading" @click="loadPolicies">加载策略</el-button>
+            <el-button size="small" :loading="policySaving" @click="savePolicies">保存</el-button>
+            <el-button size="small" :loading="policyDryRunning" @click="dryRunPolicies">试算</el-button>
+            <span class="policy-hint">未配置的车道按默认策略展示（来源=默认），保存后写入策略表</span>
+          </div>
+          <el-table :data="policies" v-loading="policyLoading" stripe size="small">
+            <el-table-column prop="lane" label="车道" width="120" />
+            <el-table-column label="来源" width="90">
+              <template #default="{ row }">
+                <el-tag size="small" :type="row.custom ? 'success' : 'info'" effect="plain">
+                  {{ row.custom ? '策略表' : '默认' }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="启用" width="80">
+              <template #default="{ row }"><el-switch v-model="row.enabled" /></template>
+            </el-table-column>
+            <el-table-column label="并发上限" width="120">
+              <template #default="{ row }"><el-input-number v-model="row.maxConcurrent" :min="1" :max="1000" size="small" /></template>
+            </el-table-column>
+            <el-table-column label="排队上限" width="120">
+              <template #default="{ row }"><el-input-number v-model="row.maxQueue" :min="0" :max="100000" size="small" /></template>
+            </el-table-column>
+            <el-table-column label="权重" width="110">
+              <template #default="{ row }"><el-input-number v-model="row.weight" :min="1" :max="100" size="small" /></template>
+            </el-table-column>
+            <el-table-column label="优先级加成" width="120">
+              <template #default="{ row }"><el-input-number v-model="row.priorityBoost" :min="0" :max="1000" size="small" /></template>
+            </el-table-column>
+            <el-table-column label="拒绝方式" width="120">
+              <template #default="{ row }">
+                <el-select v-model="row.rejectPolicy" size="small">
+                  <el-option label="REJECT" value="REJECT" />
+                  <el-option label="QUEUE" value="QUEUE" />
+                </el-select>
+              </template>
+            </el-table-column>
+            <el-table-column label="排队超时(秒)" width="130">
+              <template #default="{ row }"><el-input-number v-model="row.queueTimeoutSeconds" :min="0" :max="86400" size="small" /></template>
+            </el-table-column>
+            <el-table-column label="当前运行/排队" width="130">
+              <template #default="{ row }">{{ row.running }} / {{ row.queued }}</template>
+            </el-table-column>
+            <el-table-column prop="version" label="版本" width="80" />
+            <el-table-column label="备注" min-width="160">
+              <template #default="{ row }"><el-input v-model="row.remark" size="small" placeholder="可选" /></template>
+            </el-table-column>
+          </el-table>
+          <el-alert v-if="dryRunResults.length" class="api-alert" type="info" show-icon :closable="false"
+                    title="策略试算结果（不落库）">
+            <div v-for="item in dryRunResults" :key="item.lane" class="dry-run-row">
+              {{ item.lane }} → {{ item.decision }}：{{ item.reason }}
+            </div>
+          </el-alert>
+        </div>
+      </el-tab-pane>
+
+      <el-tab-pane label="失败与死信" name="failures">
+        <div class="card">
+          <div class="filter-bar">
+            <el-input v-model="failureQuery.jobType" placeholder="作业类型" size="small" clearable style="width: 160px" />
+            <el-input v-model="failureQuery.tenantId" placeholder="租户" size="small" clearable style="width: 140px" />
+            <el-button size="small" type="primary" :loading="failureLoading" @click="loadFailures(1)">查询</el-button>
+          </div>
+          <el-table :data="failureRows" v-loading="failureLoading" stripe size="small">
+            <el-table-column label="执行标识" min-width="180">
+              <template #default="{ row }"><span class="mono">{{ shortId(row.executionId) }}</span></template>
+            </el-table-column>
+            <el-table-column label="作业类型" width="150">
+              <template #default="{ row }">{{ jobTypeLabel(row.jobType) }}</template>
+            </el-table-column>
+            <el-table-column label="状态" width="100">
+              <template #default="{ row }">
+                <el-tag size="small" :type="statusTag(row.status)">{{ statusLabel(row.status) }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="尝试" width="90">
+              <template #default="{ row }">{{ row.attempt ?? 0 }} / {{ row.maxAttempts ?? '—' }}</template>
+            </el-table-column>
+            <el-table-column label="错误码" width="180" show-overflow-tooltip>
+              <template #default="{ row }"><span class="error-code">{{ row.errorCode || '—' }}</span></template>
+            </el-table-column>
+            <el-table-column label="租户" width="110">
+              <template #default="{ row }">{{ row.tenantId || '—' }}</template>
+            </el-table-column>
+            <el-table-column label="结束时间" width="165">
+              <template #default="{ row }">{{ formatTime(row.finishTime) }}</template>
+            </el-table-column>
+            <el-table-column label="操作" width="180" fixed="right">
+              <template #default="{ row }">
+                <el-button link type="primary" @click="openDetail(row)">详情</el-button>
+                <el-button link type="success" @click="retryJob(row)">重试</el-button>
+                <el-button link type="warning" @click="reclaimJob(row)">回收</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+          <el-pagination class="pager" v-model:current-page="failurePage" v-model:page-size="failureSize"
+                         :total="failureTotal" :page-sizes="[10, 20, 50]"
+                         layout="total, sizes, prev, pager, next"
+                         @size-change="loadFailures(1)" @current-change="loadFailures" />
+        </div>
+      </el-tab-pane>
+
+      <el-tab-pane label="实例与对账" name="runtime">
+        <div class="card runtime-card">
+          <div class="filter-bar">
+            <el-button size="small" type="primary" :loading="runtimeLoading" @click="loadRuntime">刷新运行时</el-button>
+            <span class="policy-hint">槽位漂移 = 运行槽与作业表实际在跑数之差的绝对值之和</span>
+          </div>
+          <el-descriptions :column="3" border size="small">
+            <el-descriptions-item label="槽位漂移">{{ runtime.slotDrift ?? 0 }}</el-descriptions-item>
+            <el-descriptions-item label="策略缓存条数">{{ runtime.cachedPolicyCount ?? 0 }}</el-descriptions-item>
+            <el-descriptions-item label="本实例车道">
+              <span v-for="lane in runtime.lanes || []" :key="lane.lane" class="lane-chip">
+                {{ laneLabel(lane.lane) }} {{ lane.inFlight }}/{{ lane.maxConcurrent }}
+              </span>
+            </el-descriptions-item>
+          </el-descriptions>
+          <h4 class="section-title">实例</h4>
+          <el-table :data="instances" v-loading="runtimeLoading" stripe size="small">
+            <el-table-column prop="instanceId" label="实例" min-width="220" show-overflow-tooltip />
+            <el-table-column label="存活" width="90">
+              <template #default="{ row }">
+                <el-tag size="small" :type="row.alive ? 'success' : 'info'">{{ row.alive ? '存活' : '失联' }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="最后心跳" width="170">
+              <template #default="{ row }">{{ formatTime(row.lastHeartbeat) }}</template>
+            </el-table-column>
+            <el-table-column label="启动时间" width="170">
+              <template #default="{ row }">{{ formatTime(row.startedAt) }}</template>
+            </el-table-column>
+          </el-table>
+          <h4 class="section-title">最近一次对账</h4>
+          <pre class="json-block">{{ formatJson(reconcileReport) }}</pre>
+        </div>
+      </el-tab-pane>
+    </el-tabs>
   </div>
 </template>
 
@@ -228,7 +374,12 @@
 import { onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
-import { schedulerCancelJob, schedulerJobDetail, schedulerJobs, schedulerOverview } from '../../api'
+import {
+  schedulerCancelJob, schedulerJobDetail, schedulerJobs, schedulerOverview,
+  schedulerFailures, schedulerRetryJob, schedulerReclaimJob,
+  schedulerPolicies, schedulerUpdatePolicies, schedulerDryRunPolicies,
+  schedulerRuntime, schedulerInstances, schedulerReconcile
+} from '../../api'
 
 const STATUS_OPTIONS = [
   { value: 'PENDING', label: '待执行' },
@@ -299,6 +450,157 @@ let timer = null
 const detailVisible = ref(false)
 const detailLoading = ref(false)
 const detail = ref(null)
+
+const activeTab = ref('jobs')
+const policyTenant = ref('default')
+const policies = ref([])
+const policyLoading = ref(false)
+const policySaving = ref(false)
+const policyDryRunning = ref(false)
+const dryRunResults = ref([])
+
+const failureQuery = reactive({ jobType: '', tenantId: '' })
+const failureRows = ref([])
+const failureTotal = ref(0)
+const failurePage = ref(1)
+const failureSize = ref(20)
+const failureLoading = ref(false)
+
+const runtimeLoading = ref(false)
+const runtime = ref({})
+const instances = ref([])
+const reconcileReport = ref(null)
+
+const loadPolicies = async () => {
+  if (!policyTenant.value) { ElMessage.warning('请输入租户标识'); return }
+  policyLoading.value = true
+  dryRunResults.value = []
+  try {
+    const res = await schedulerPolicies(policyTenant.value.trim())
+    policies.value = res?.data || []
+  } catch (e) {
+    policies.value = []
+    ElMessage.error(e?.response?.data?.message || e?.message || '策略加载失败')
+  } finally {
+    policyLoading.value = false
+  }
+}
+
+const policyPayload = () => policies.value.map(p => ({
+  lane: p.lane,
+  enabled: p.enabled,
+  maxConcurrent: p.maxConcurrent,
+  maxQueue: p.maxQueue,
+  weight: p.weight,
+  priorityBoost: p.priorityBoost,
+  rejectPolicy: p.rejectPolicy,
+  queueTimeoutSeconds: p.queueTimeoutSeconds,
+  dailyJobLimit: p.dailyJobLimit,
+  ratePerMinute: p.ratePerMinute,
+  timeWindowJson: p.timeWindowJson,
+  remark: p.remark,
+  version: p.custom ? p.version : null
+}))
+
+const savePolicies = async () => {
+  if (!policyTenant.value || !policies.value.length) { ElMessage.warning('请先加载策略'); return }
+  policySaving.value = true
+  try {
+    const res = await schedulerUpdatePolicies(policyTenant.value.trim(), policyPayload())
+    policies.value = res?.data || []
+    ElMessage.success('策略已保存并热更新')
+  } catch (e) {
+    if (!e?.response?.data?.message && e?.message) ElMessage.error(e.message)
+  } finally {
+    policySaving.value = false
+  }
+}
+
+const dryRunPolicies = async () => {
+  if (!policyTenant.value || !policies.value.length) { ElMessage.warning('请先加载策略'); return }
+  policyDryRunning.value = true
+  try {
+    const res = await schedulerDryRunPolicies(policyTenant.value.trim(), policyPayload())
+    dryRunResults.value = res?.data || []
+  } catch (e) {
+    dryRunResults.value = []
+    ElMessage.error(e?.response?.data?.message || e?.message || '试算失败')
+  } finally {
+    policyDryRunning.value = false
+  }
+}
+
+const loadFailures = async (p = failurePage.value) => {
+  failurePage.value = p
+  failureLoading.value = true
+  try {
+    const params = { page: p, size: failureSize.value }
+    if (failureQuery.jobType) params.jobType = failureQuery.jobType.trim()
+    if (failureQuery.tenantId) params.tenantId = failureQuery.tenantId.trim()
+    const res = await schedulerFailures(params)
+    const data = res?.data || {}
+    failureRows.value = data.records || []
+    failureTotal.value = data.total || 0
+  } catch (e) {
+    failureRows.value = []
+    failureTotal.value = 0
+    ElMessage.error(e?.response?.data?.message || e?.message || '失败列表加载失败')
+  } finally {
+    failureLoading.value = false
+  }
+}
+
+const retryJob = async (row) => {
+  try {
+    await ElMessageBox.confirm(`重试作业「${jobTypeLabel(row.jobType)}」？`, '确认重试', { type: 'warning' })
+  } catch { return }
+  try {
+    await schedulerRetryJob(row.executionId)
+    ElMessage.success('已重新入队')
+    await loadFailures()
+  } catch (e) {
+    if (!e?.response?.data?.message && e?.message) ElMessage.error(e.message)
+  }
+}
+
+const reclaimJob = async (row) => {
+  let reason = '管理端强制回收'
+  try {
+    const result = await ElMessageBox.prompt('输入回收原因（可选）', '强制回收', {
+      inputValue: reason, confirmButtonText: '确认回收', cancelButtonText: '返回', type: 'warning'
+    })
+    reason = (result?.value || '').trim() || reason
+  } catch { return }
+  try {
+    await schedulerReclaimJob(row.executionId, reason)
+    ElMessage.success('已回收并重新入队')
+    await loadFailures()
+  } catch (e) {
+    if (!e?.response?.data?.message && e?.message) ElMessage.error(e.message)
+  }
+}
+
+const loadRuntime = async () => {
+  runtimeLoading.value = true
+  try {
+    const [runtimeRes, instanceRes, reconcileRes] = await Promise.all([
+      schedulerRuntime(), schedulerInstances(), schedulerReconcile()
+    ])
+    runtime.value = runtimeRes?.data || {}
+    instances.value = instanceRes?.data || []
+    reconcileReport.value = reconcileRes?.data || null
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.message || e?.message || '运行时加载失败')
+  } finally {
+    runtimeLoading.value = false
+  }
+}
+
+watch(activeTab, (tab) => {
+  if (tab === 'policies' && !policies.value.length) loadPolicies()
+  if (tab === 'failures' && !failureRows.value.length) loadFailures(1)
+  if (tab === 'runtime') loadRuntime()
+})
 
 const statusLabel = (value) => STATUS_LABELS[value] || value || '未知'
 const laneLabel = (value) => LANE_LABELS[value] || value || '—'
@@ -575,5 +877,20 @@ onBeforeUnmount(stopTimer)
   margin-top: 20px;
   display: flex;
   justify-content: flex-end;
+}
+.scheduler-tabs {
+  margin-top: 4px;
+}
+.policy-hint {
+  font-size: 12px;
+  color: #909399;
+}
+.dry-run-row {
+  font-size: 12px;
+  line-height: 20px;
+}
+.lane-chip {
+  margin-right: 12px;
+  font-size: 12px;
 }
 </style>

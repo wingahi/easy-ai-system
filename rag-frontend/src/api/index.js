@@ -75,6 +75,7 @@ export const kbEvalCaseCreate = (kbId, datasetId, data) => request.post(`/kb/${k
 export const kbEvalCaseUpdate = (kbId, datasetId, caseId, data) => request.put(`/kb/${kbId}/eval-datasets/${datasetId}/cases/${caseId}`, data)
 export const kbEvalCaseDelete = (kbId, datasetId, caseId) => request.delete(`/kb/${kbId}/eval-datasets/${datasetId}/cases/${caseId}`)
 export const kbEvalDatasetEvaluate = (kbId, datasetId, params) => request.post(`/kb/${kbId}/eval-datasets/${datasetId}/evaluate`, null, { params })
+export const kbEvalRunStatus = (kbId, datasetId, executionId) => request.get(`/kb/${kbId}/eval-datasets/${datasetId}/evaluate/runs/${executionId}`)
 export const kbEvalResultList = (kbId, datasetId) => request.get(`/kb/${kbId}/eval-datasets/${datasetId}/results`)
 export const kbEvalResultCompare = (kbId, datasetId, params) => request.get(`/kb/${kbId}/eval-datasets/${datasetId}/results/compare`, { params })
 
@@ -525,6 +526,20 @@ export const schedulerJobDetail = (executionId) =>
   request.get(`/admin/scheduler/jobs/${encodeURIComponent(executionId)}`)
 export const schedulerCancelJob = (executionId, reason) =>
   request.post(`/admin/scheduler/jobs/${encodeURIComponent(executionId)}/cancel`, { reason })
+export const schedulerFailures = (params) => request.get('/admin/scheduler/jobs/failures', { params })
+export const schedulerRetryJob = (executionId) =>
+  request.post(`/admin/scheduler/jobs/${encodeURIComponent(executionId)}/retry`)
+export const schedulerReclaimJob = (executionId, reason) =>
+  request.post(`/admin/scheduler/jobs/${encodeURIComponent(executionId)}/reclaim`, { reason })
+export const schedulerPolicies = (tenantId) =>
+  request.get('/admin/scheduler/policies', { params: tenantId ? { tenantId } : {} })
+export const schedulerUpdatePolicies = (tenantId, updates) =>
+  request.put(`/admin/scheduler/policies/${encodeURIComponent(tenantId)}`, updates)
+export const schedulerDryRunPolicies = (tenantId, updates) =>
+  request.post(`/admin/scheduler/policies/${encodeURIComponent(tenantId)}/dry-run`, updates)
+export const schedulerRuntime = () => request.get('/admin/scheduler/runtime')
+export const schedulerInstances = () => request.get('/admin/scheduler/instances')
+export const schedulerReconcile = () => request.get('/admin/scheduler/reconcile')
 
 // ===== 管理端：体验账号（用户管理） =====
 export const adminUsersPage = (params) => request.get('/admin/users', { params })

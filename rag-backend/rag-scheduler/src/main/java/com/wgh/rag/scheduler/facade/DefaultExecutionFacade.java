@@ -1,10 +1,13 @@
 package com.wgh.rag.scheduler.facade;
 
 import com.wgh.rag.common.log.MdcContext;
+import com.wgh.rag.common.security.AuthContextPropagation;
+import com.wgh.rag.common.security.TenantContext;
 import com.wgh.rag.execution.api.ExecutionFacade;
 import com.wgh.rag.execution.error.ExecutionCancelledException;
 import com.wgh.rag.execution.error.ExecutionErrorCodes;
 import com.wgh.rag.execution.error.ExecutionException;
+import com.wgh.rag.execution.event.ExecutionEvent;
 import com.wgh.rag.execution.event.ExecutionEventSink;
 import com.wgh.rag.execution.event.ExecutionEventTypes;
 import com.wgh.rag.execution.job.JobContext;
@@ -20,6 +23,7 @@ import com.wgh.rag.scheduler.config.SchedulerProperties;
 import com.wgh.rag.scheduler.entity.ExecutionJob;
 import com.wgh.rag.scheduler.event.ExecutionEventBus;
 import com.wgh.rag.scheduler.event.ExecutionEventBusRegistry;
+import com.wgh.rag.scheduler.event.ExecutionEventStore;
 import com.wgh.rag.scheduler.execution.DefaultCancellationToken;
 import com.wgh.rag.scheduler.execution.JobContextImpl;
 import com.wgh.rag.scheduler.job.JobDispatcher;
@@ -27,6 +31,8 @@ import com.wgh.rag.scheduler.job.JobHandlerRegistry;
 import com.wgh.rag.scheduler.job.JobStore;
 import com.wgh.rag.scheduler.lane.LaneExecutors;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
@@ -75,8 +81,11 @@ public class DefaultExecutionFacade implements ExecutionFacade {
 
     private final JobDispatcher jobDispatcher;
 
+    private final ObjectProvider<ExecutionEventStore> eventStoreProvider;
+
     private final Map<String, ExecutionTicket> interactiveTickets = new ConcurrentHashMap<>();
 
+    /** 兼容仅需进程内总线的测试。 */
     public DefaultExecutionFacade(SchedulerProperties properties,
                                   AdmissionController admissionController,
                                   LaneExecutors laneExecutors,
@@ -84,6 +93,19 @@ public class DefaultExecutionFacade implements ExecutionFacade {
                                   JobHandlerRegistry handlerRegistry,
                                   ExecutionEventBusRegistry eventBuses,
                                   JobDispatcher jobDispatcher) {
+        this(properties, admissionController, laneExecutors, jobStore, handlerRegistry, eventBuses,
+                jobDispatcher, null);
+    }
+
+    @Autowired
+    public DefaultExecutionFacade(SchedulerProperties properties,
+                                  AdmissionController admissionController,
+                                  LaneExecutors laneExecutors,
+                                  JobStore jobStore,
+                                  JobHandlerRegistry handlerRegistry,
+                                  ExecutionEventBusRegistry eventBuses,
+                                  JobDispatcher jobDispatcher,
+                                  ObjectProvider<ExecutionEventStore> eventStoreProvider) {
         this.properties = properties;
         this.admissionController = admissionController;
         this.laneExecutors = laneExecutors;
@@ -91,21 +113,24 @@ public class DefaultExecutionFacade implements ExecutionFacade {
         this.handlerRegistry = handlerRegistry;
         this.eventBuses = eventBuses;
         this.jobDispatcher = jobDispatcher;
+        this.eventStoreProvider = eventStoreProvider;
     }
 
     @Override
     public ExecutionHandle submit(ExecutionRequest request) {
-        JobHandler handler = handlerRegistry.find(request.jobType())
+        // 提交时刻冻结租户/属主：调度线程不再回读 ThreadLocal
+        ExecutionRequest effective = enrich(request);
+        JobHandler handler = handlerRegistry.find(effective.jobType())
                 .orElseThrow(() -> new ExecutionException(ExecutionErrorCodes.JOB_TYPE_UNKNOWN,
-                        "作业类型未注册处理器: " + request.jobType()));
-        AdmissionDecision decision = admissionController.decide(request);
+                        "作业类型未注册处理器: " + effective.jobType()));
+        AdmissionDecision decision = admissionController.decide(effective);
         if (!decision.allowed()) {
             throw new ExecutionException(decision.code(), decision.message());
         }
-        if (request.lane() == ExecutionLane.INTERACTIVE) {
-            return submitInteractive(request, handler);
+        if (effective.lane() == ExecutionLane.INTERACTIVE) {
+            return submitInteractive(effective, handler);
         }
-        ExecutionJob job = jobStore.submit(request, properties.getMaxAttempts(), timeoutSeconds(request));
+        ExecutionJob job = jobStore.submit(effective, properties.getMaxAttempts(), timeoutSeconds(effective));
         jobDispatcher.kick();
         return new ExecutionHandle(job.getExecutionId(), job.getJobType(), job.getLane(), job.getStatus(),
                 job.getCreateTime() == null ? Instant.now()
@@ -148,7 +173,19 @@ public class DefaultExecutionFacade implements ExecutionFacade {
         if (bus.isPresent()) {
             return bus.get().attach(fromSeq, sink);
         }
-        log.debug("执行事件总线不存在（作业可能由其它实例执行或已过保留期） executionId={}", executionId);
+        // 本实例无总线（作业在其它副本执行或已过保留期）：从事件表补齐历史，支持 Last-Event-ID 重连
+        ExecutionEventStore store = eventStoreProvider == null ? null : eventStoreProvider.getIfAvailable();
+        if (store != null) {
+            int replayed = 0;
+            for (ExecutionEvent event : store.after(executionId, fromSeq, 1000)) {
+                sink.emit(event);
+                replayed++;
+            }
+            log.debug("执行事件表重放完成 executionId={} fromSeq={} replayed={}",
+                    executionId, fromSeq, replayed);
+        } else {
+            log.debug("执行事件总线与事件表均不可用 executionId={}", executionId);
+        }
         return () -> {
         };
     }
@@ -164,14 +201,15 @@ public class DefaultExecutionFacade implements ExecutionFacade {
                     "交互式车道在途已达上限", executionId);
         }
         try {
-            // 交互式执行沿用提交线程的 MDC（requestId / traceId），执行日志不丢链路
-            laneExecutors.executor(ExecutionLane.INTERACTIVE).execute(MdcContext.wrap(() -> {
+            // 交互式执行沿用提交线程的 MDC、登录态与租户上下文
+            laneExecutors.executor(ExecutionLane.INTERACTIVE)
+                    .execute(MdcContext.wrap(AuthContextPropagation.wrap(() -> {
                 try {
                     runInteractive(ticket, bus);
                 } finally {
                     laneExecutors.release(ExecutionLane.INTERACTIVE);
                 }
-            }));
+            })));
         } catch (RejectedExecutionException e) {
             laneExecutors.release(ExecutionLane.INTERACTIVE);
             cleanupInteractive(executionId);
@@ -237,5 +275,30 @@ public class DefaultExecutionFacade implements ExecutionFacade {
             return null;
         }
         return (int) Math.max(1L, timeout.toSeconds());
+    }
+
+    /**
+     * 用当前请求上下文补齐租户与属主：显式指定的非默认租户优先（系统任务），
+     * 其余从 TenantContext 取，避免后台作业创建的资源归属 system/默认租户。
+     */
+    private ExecutionRequest enrich(ExecutionRequest request) {
+        String contextTenant = TenantContext.currentTenantId();
+        String contextUsername = TenantContext.currentUsername();
+        boolean tenantMissing = request.tenantId() == null
+                || ExecutionRequest.DEFAULT_TENANT.equals(request.tenantId());
+        boolean useContextTenant = tenantMissing && contextTenant != null
+                && !TenantContext.DEFAULT_TENANT.equals(contextTenant);
+        if (!useContextTenant && request.ownerUserId() != null) {
+            return request;
+        }
+        return ExecutionRequest.builder(request.jobType(), request.lane())
+                .tenant(useContextTenant ? contextTenant : request.tenantId())
+                .owner(request.ownerUserId() == null ? contextUsername : request.ownerUserId())
+                .bizKey(request.bizKey())
+                .payload(request.payload())
+                .priority(request.priority())
+                .scheduledAt(request.scheduledAt())
+                .timeout(request.timeout())
+                .build();
     }
 }

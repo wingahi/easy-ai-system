@@ -1,6 +1,8 @@
 package com.wgh.rag.scheduler.job;
 
 import com.wgh.rag.common.log.MdcContext;
+import com.wgh.rag.common.security.LoginUser;
+import com.wgh.rag.common.security.TenantContext;
 import com.wgh.rag.execution.error.ExecutionCancelledException;
 import com.wgh.rag.execution.error.ExecutionErrorCodes;
 import com.wgh.rag.execution.error.ExecutionException;
@@ -19,6 +21,10 @@ import com.wgh.rag.scheduler.event.ExecutionEventBus;
 import com.wgh.rag.scheduler.event.ExecutionEventBusRegistry;
 import com.wgh.rag.scheduler.execution.DefaultCancellationToken;
 import com.wgh.rag.scheduler.execution.JobContextImpl;
+import com.wgh.rag.scheduler.metrics.SchedulerMetrics;
+import com.wgh.rag.scheduler.policy.EffectiveSchedulePolicy;
+import com.wgh.rag.scheduler.policy.PolicyCache;
+import com.wgh.rag.scheduler.policy.TenantSlotManager;
 import com.wgh.rag.scheduler.singleflight.SingleFlightGuard;
 import com.wgh.rag.scheduler.singleflight.SingleFlightUnavailableException;
 import lombok.extern.slf4j.Slf4j;
@@ -27,6 +33,7 @@ import org.springframework.stereotype.Component;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.Executors;
@@ -63,16 +70,28 @@ public class JobRunner {
 
     private final SingleFlightGuard singleFlightGuard;
 
+    private final PolicyCache policyCache;
+
+    private final TenantSlotManager slotManager;
+
+    private final SchedulerMetrics metrics;
+
     public JobRunner(SchedulerProperties properties,
                      JobStore jobStore,
                      JobHandlerRegistry handlerRegistry,
                      ExecutionEventBusRegistry eventBuses,
-                     SingleFlightGuard singleFlightGuard) {
+                     SingleFlightGuard singleFlightGuard,
+                     PolicyCache policyCache,
+                     TenantSlotManager slotManager,
+                     SchedulerMetrics metrics) {
         this.properties = properties;
         this.jobStore = jobStore;
         this.handlerRegistry = handlerRegistry;
         this.eventBuses = eventBuses;
         this.singleFlightGuard = singleFlightGuard;
+        this.policyCache = policyCache;
+        this.slotManager = slotManager;
+        this.metrics = metrics;
     }
 
     /** 在当前车道线程内执行一条已领取作业。 */
@@ -85,6 +104,9 @@ public class JobRunner {
         AtomicBoolean timedOut = new AtomicBoolean();
         AtomicBoolean cancelHookInvoked = new AtomicBoolean();
         AtomicReference<SingleFlightGuard.Handle> singleFlightRef = new AtomicReference<>();
+        boolean slotHeld = false;
+        long startedNanos = System.nanoTime();
+        String outcome = "failed";
         ScheduledExecutorService watchdog = Executors.newSingleThreadScheduledExecutor(runnable -> {
             Thread thread = new Thread(runnable, "sched-watchdog-" + executionId);
             thread.setDaemon(true);
@@ -96,6 +118,7 @@ public class JobRunner {
             if (handler == null) {
                 log.error("作业类型未注册处理器，置死信 jobType={} executionId={}", job.getJobType(), executionId);
                 deadLetter(job, owner, ExecutionErrorCodes.JOB_TYPE_UNKNOWN, "作业类型未注册处理器");
+                outcome = "dead";
                 return;
             }
             JobPayload payload;
@@ -104,11 +127,13 @@ public class JobRunner {
             } catch (IllegalArgumentException e) {
                 log.error("作业负载无法解析，置死信 executionId={}", executionId, e);
                 deadLetter(job, owner, ExecutionErrorCodes.INCOMPATIBLE_PAYLOAD, "作业负载无法解析");
+                outcome = "dead";
                 return;
             }
             if (payload.schemaVersion() != JobPayload.CURRENT_SCHEMA_VERSION) {
                 deadLetter(job, owner, ExecutionErrorCodes.INCOMPATIBLE_PAYLOAD,
                         "负载版本不兼容: " + payload.schemaVersion());
+                outcome = "dead";
                 return;
             }
             if (job.getLane() == ExecutionLane.MAINTENANCE) {
@@ -119,27 +144,55 @@ public class JobRunner {
                     log.error("单飞锁不可用，作业回退排队（失败关闭，不降级为进程内锁） executionId={} error={}",
                             executionId, e.getMessage());
                     releaseForLater(job);
+                    outcome = "deferred";
                     return;
                 }
                 if (singleFlightRef.get() == null) {
                     log.debug("同类维护作业已在其它实例执行，稍后重试 jobType={} executionId={}",
                             job.getJobType(), executionId);
                     releaseForLater(job);
+                    outcome = "deferred";
+                    return;
+                }
+            }
+            // 后台车道先占集群租户槽位（仍在 LEASED 状态，占不到可安全放回队列）
+            if (job.getLane() == ExecutionLane.BACKGROUND) {
+                EffectiveSchedulePolicy policy = policyCache.resolve(job.getTenantId(), job.getLane());
+                slotHeld = slotManager.tryAcquire(job.getTenantId(), job.getLane(), policy.maxConcurrent());
+                if (!slotHeld) {
+                    log.debug("租户后台并发已满，作业放回队列 tenantId={} executionId={}",
+                            job.getTenantId(), executionId);
+                    releaseForLater(job);
+                    outcome = "tenant_slot_full";
                     return;
                 }
             }
             if (!jobStore.markRunning(job.getId(), owner)) {
                 log.warn("作业租约已被接管，跳过执行 executionId={} owner={}", executionId, owner);
+                outcome = "lease_lost";
                 return;
             }
+            metrics.recordWait(job.getLane() == null ? null : job.getLane().name(), job.getJobType(),
+                    waitDuration(job));
             if (jobStore.isCancelRequested(job.getId())) {
                 cancellation.cancel("收到取消请求");
                 jobStore.cancelOwned(job.getId(), owner, cancellation.reason());
                 bus.publish(ExecutionEventTypes.CANCELLED, eventPayload("CANCELLED", null));
+                outcome = "cancelled";
                 return;
             }
 
             ExecutionRequest request = toRequest(job, payload);
+            // 执行期恢复提交时刻冻结的租户/属主，避免异步线程写出的租户与 create_by 错位
+            TenantContext.set(request.tenantId(), null, request.ownerUserId());
+            if (request.ownerUserId() != null) {
+                LoginUser workerUser = new LoginUser();
+                workerUser.setUsername(request.ownerUserId());
+                workerUser.setTenantId(request.tenantId());
+                workerUser.setRoles(java.util.Set.of());
+                workerUser.setPermissions(java.util.Set.of());
+                LoginUser.set(workerUser);
+            }
             JobContext context = new JobContextImpl(executionId, request, sequencedSink(bus), cancellation,
                     () -> renewOrFail(job, owner, singleFlightRef.get(), leaseLost, cancellation),
                     jobStore.resultOf(job),
@@ -171,31 +224,55 @@ public class JobRunner {
 
             if (cancellation.isCancelled()) {
                 finishCancelled(job, owner, bus, cancellation, timedOut, leaseLost);
+                outcome = "cancelled";
             } else {
                 boolean written = jobStore.complete(job.getId(), owner, context.savedResult());
                 if (!written) {
                     log.warn("作业完成但租约已丢失，结果丢弃 executionId={} owner={}", executionId, owner);
                 }
                 bus.publish(ExecutionEventTypes.COMPLETED, eventPayload("SUCCEEDED", null));
+                outcome = "succeeded";
             }
         } catch (ExecutionCancelledException e) {
             finishCancelled(job, owner, bus, cancellation, timedOut, leaseLost);
+            outcome = "cancelled";
         } catch (LeaseLostException e) {
             log.warn("执行期间租约丢失，停止写入 executionId={} reason={}", executionId, e.getMessage());
+            outcome = "lease_lost";
         } catch (Exception e) {
             if (leaseLost.get()) {
                 log.warn("租约已丢失，不落终态 executionId={}", executionId);
+                outcome = "lease_lost";
             } else {
                 handleFailure(job, owner, bus, e);
+                outcome = "failed";
             }
         } finally {
+            TenantContext.clear();
+            LoginUser.clear();
+            if (slotHeld) {
+                slotManager.release(job.getTenantId(), job.getLane());
+            }
             watchdog.shutdownNow();
             SingleFlightGuard.Handle lock = singleFlightRef.get();
             if (lock != null) {
                 lock.close();
             }
             eventBuses.closeLater(executionId);
+            if (handler != null) {
+                metrics.recordJobDuration(job.getJobType(), outcome,
+                        Duration.ofNanos(Math.max(0L, System.nanoTime() - startedNanos)));
+            }
         }
+    }
+
+    /** 排队时长：计划时间到实际开始执行；时钟回拨或未设置计划时间按 0 处理。 */
+    private static Duration waitDuration(ExecutionJob job) {
+        if (job.getScheduledAt() == null) {
+            return Duration.ZERO;
+        }
+        Duration wait = Duration.between(job.getScheduledAt(), LocalDateTime.now());
+        return wait.isNegative() ? Duration.ZERO : wait;
     }
 
     /** 看门狗：续租、单飞续约、取消轮询。 */

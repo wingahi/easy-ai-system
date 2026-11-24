@@ -156,8 +156,15 @@ public class JobStore {
     }
 
     /** 按执行标识查作业。 */
-    public Optional<ExecutionJob> find(String executionId) {
-        if (executionId == null || executionId.isBlank()) {
+    /** 按幂等键查询作业（用于后台化入口在页面刷新/重连时定位同一次执行）。 */
+    public Optional<ExecutionJob> findByBizKey(String jobType, String bizKey) {
+        if (jobType == null || bizKey == null || bizKey.isBlank()) {
+            return Optional.empty();
+        }
+        return Optional.ofNullable(mapper.selectByBizKey(jobType, bizKey));
+    }
+
+    public Optional<ExecutionJob> find(String executionId) {        if (executionId == null || executionId.isBlank()) {
             return Optional.empty();
         }
         return Optional.ofNullable(mapper.selectByExecutionId(executionId));
@@ -263,6 +270,10 @@ public class JobStore {
 
     public long countTenantActive(String tenantId, ExecutionLane lane) {
         return mapper.countTenantActive(tenantId, lane.name());
+    }
+
+    public long countPendingByTenant(String tenantId, ExecutionLane lane) {
+        return mapper.countPendingByTenant(tenantId, lane.name());
     }
 
     public int reclaimExpired() {
