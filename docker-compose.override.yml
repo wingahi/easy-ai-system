@@ -2,5 +2,8 @@
 # 生产环境不要使用本文件（用 docker compose -f docker-compose.yml 启动，或删除本文件）。
 services:
   postgres:
+    # dev 专用：pgvector 0.8.7 trusted 派生镜像（vector.control 追加 trusted = true），
+    # 使 wgh_app 可在缺扩展时自愈执行 CREATE EXTENSION；生产不使用本 override。
+    image: wgh/pgvector:pg15-0.8.7-trusted
     ports:
       - "127.0.0.1:5432:5432"
