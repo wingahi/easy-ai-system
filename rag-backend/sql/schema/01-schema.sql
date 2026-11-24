@@ -1780,7 +1780,7 @@ CREATE INDEX IF NOT EXISTS idx_kb_chunk_tenant
 CREATE INDEX IF NOT EXISTS idx_kb_chunk_status
   ON wgh_kb_chunk(vector_status) WHERE deleted = 0;
 
--- ============ 多租户数据面：业务表 tenant_id（新库等价于 migrations/20261124/06_tenant_data_plane.sql） ============
+-- ============ 多租户数据面：业务表 tenant_id（新库等价于 migrations/20261124-01/06_tenant_data_plane.sql） ============
 ALTER TABLE wgh_knowledge_base ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
 ALTER TABLE wgh_knowledge_file ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
 ALTER TABLE wgh_knowledge_file_version ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';

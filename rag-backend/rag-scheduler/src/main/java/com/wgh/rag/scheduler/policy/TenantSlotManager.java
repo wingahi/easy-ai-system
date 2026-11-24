@@ -128,7 +128,7 @@ public class TenantSlotManager {
 
     private void markUnavailable(String action, String tenantId, ExecutionLane lane, Exception error) {
         if (slotHealthy.compareAndSet(true, false)) {
-            log.warn("租户运行槽{}失败，已失败开放；请确认执行 sql/migrations/20261124/04_tenant_schedule_policy.sql "
+            log.warn("租户运行槽{}失败，已失败开放；请确认执行 sql/migrations/20261124-01/04_tenant_schedule_policy.sql "
                     + "tenantId={} lane={} error={}", action, tenantId, lane, error.getMessage());
         } else {
             log.debug("租户运行槽{}仍在失败 tenantId={} lane={}: {}", action, tenantId, lane, error.getMessage());

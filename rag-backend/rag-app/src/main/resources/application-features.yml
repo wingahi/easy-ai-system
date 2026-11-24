@@ -46,7 +46,7 @@ wgh:
     event-table-retention: ${WGH_SCHEDULER_EVENT_TABLE_RETENTION:7d}   # 事件表保留期（跨实例 Last-Event-ID 重放）
     tenant-max-concurrent: 2                    # 单租户后台并发上限（策略表无覆盖时的兜底值）
 
-    # ===== 租户调度策略（需先执行 sql/migrations/20261124/04_tenant_schedule_policy.sql）=====
+    # ===== 租户调度策略（需先执行 sql/migrations/20261124-01/04_tenant_schedule_policy.sql）=====
     anonymous-tenant-id: ${WGH_SCHEDULER_ANONYMOUS_TENANT:default}      # 空租户统一落该桶
     policy-refresh-interval: ${WGH_SCHEDULER_POLICY_REFRESH_INTERVAL:30s}   # 策略本地缓存刷新间隔
     slot-reconcile-interval: ${WGH_SCHEDULER_SLOT_RECONCILE_INTERVAL:1m}    # 运行槽与作业表对账间隔

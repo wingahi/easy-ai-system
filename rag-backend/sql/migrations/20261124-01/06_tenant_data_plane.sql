@@ -2,7 +2,7 @@
 -- 迁移：多租户阶段 2（数据面租户列）
 -- 适用对象：2026-11-24 之前创建的存量库（dev / test / prod 均适用）
 -- 新库说明：sql/schema/01-schema.sql 末尾已包含等价 ALTER 块，新建库无需执行本脚本
--- 执行顺序：在 20261124/05_tenant.sql 之后、启用 wgh.tenant.sql-isolation-enabled 之前执行
+-- 执行顺序：在 20261124-01/05_tenant.sql 之后、启用 wgh.tenant.sql-isolation-enabled 之前执行
 -- 幂等性：ADD COLUMN IF NOT EXISTS + CREATE INDEX IF NOT EXISTS；回填只处理空值；重复执行安全
 -- 回填说明：存量业务数据全部归入默认租户 default，不删除/不改写既有业务字段
 -- 影响面：34 张业务表新增 tenant_id 列 + 34 个索引；平台共享表（用户/角色/权限/模型/价格/

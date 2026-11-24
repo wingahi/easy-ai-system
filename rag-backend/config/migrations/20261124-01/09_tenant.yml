@@ -1,7 +1,7 @@
 # 多租户阶段 1：租户上下文与身份归属
 # 落点：rag-backend/rag-app/src/main/resources/application.yml
 # 绑定类：com.wgh.rag.auth.tenant.TenantProperties、com.wgh.rag.auth.security.OidcProperties
-# 同批 SQL：sql/migrations/20261124/05_tenant.sql
+# 同批 SQL：sql/migrations/20261124-01/05_tenant.sql
 
 wgh:
   tenant:

@@ -1,6 +1,6 @@
 # 增量配置片段：租户调度策略与运行槽（2026-11-24，第 8 个片段）
 # 目标文件：rag-backend/rag-app/src/main/resources/application-features.yml（wgh.scheduler 段）
-# 依赖：先执行 sql/migrations/20261124/04_tenant_schedule_policy.sql
+# 依赖：先执行 sql/migrations/20261124-01/04_tenant_schedule_policy.sql
 # 说明：策略表不可用时调度器按本片段/代码默认值运行；槽位表不可用时失败开放（只告警）。
 # 键数：9（3 个全局键 + 2 个车道 × 6 个策略字段，其中 tenant-max-concurrent 注释口径调整不计新增）
 

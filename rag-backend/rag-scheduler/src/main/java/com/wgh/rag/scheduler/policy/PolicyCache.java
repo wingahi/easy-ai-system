@@ -134,7 +134,7 @@ public class PolicyCache {
             }
             if (cacheHealthy.compareAndSet(true, false)) {
                 log.warn("租户调度策略加载失败，继续使用上一份快照/默认策略: {}"
-                        + "（请确认已执行 sql/migrations/20261124/04_tenant_schedule_policy.sql）", e.getMessage());
+                        + "（请确认已执行 sql/migrations/20261124-01/04_tenant_schedule_policy.sql）", e.getMessage());
             } else {
                 log.debug("租户调度策略仍在加载失败: {}", e.getMessage());
             }

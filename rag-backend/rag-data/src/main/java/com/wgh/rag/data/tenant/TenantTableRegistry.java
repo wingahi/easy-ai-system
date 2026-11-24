@@ -10,7 +10,7 @@ import java.util.Set;
  * 平台级共享表（用户/角色/权限/模型/价格/租户目录/调度实例）必须留在清单之外，避免把共享数据误隔离。
  * <p>
  * <b>维护约束</b>：新增本清单中的表时，必须同时执行
- * {@code sql/migrations/20261124/06_tenant_data_plane.sql} 与
+ * {@code sql/migrations/20261124-01/06_tenant_data_plane.sql} 与
  * {@code sql/schema/01-schema.sql} 对应的 {@code tenant_id} 建列，否则查询会因缺列失败。
  */
 public final class TenantTableRegistry {

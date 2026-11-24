@@ -121,7 +121,7 @@ record RequestContext(Long tenantId, Long userId, String username, String reques
 | 0 | 已落地，编译已验证 | 子资源父 KB 可读/可写校验；评测「可见+可写」；开放 API 绑定 Key owner 并继承可见性；多 Agent 运行态归属校验；分享/API Key 列表按 owner 过滤 | 历史「全局 Key」调用方会 403/404，需公告兼容期 |
 | 1 | 已落地，编译已验证 | `wgh_tenant` + `05_tenant.sql`；`TenantContext`（ThreadLocal+MDC）+ `AuthContextPropagation` 覆盖 @Async/调度/工作流/Agent 超时线程；本地 token 与 OIDC claim 写租户；认证后过滤器写上下文；提交时冻结、worker 恢复、finally 清理；审计/API Key/调用日志租户列；`/api/admin/tenants` 与 `tenant:manage` | 采用 `VARCHAR` 租户 code（非 BIGINT id）；`wgh.tenant.enforcement` 默认 false；未新增独立 `platform_admin` 角色；`username` 仍全局唯一 |
 | 2 | 已落地（SQL/存储/缓存/向量 metadata） | SQL 隔离插件 + 38 张表白名单 + `06_tenant_data_plane.sql`；存储非默认租户前缀 `t/{tenantId}/kb/`（默认租户沿用 `kb/`，存量零迁移）；孤儿扫描按租户前缀收敛且未知归属一律跳过；SSE 重放/取消标记租户命名空间；`PUBLIC` 收敛为租户内公开；向量/KB chunk metadata 写入 `tenantId`，语义缓存与 Agent 记忆共享集合按租户过滤，检索编排层对非默认租户下发端口级租户断言 | 默认租户与无上下文链路不加租户条件（兼容改造前无 `tenantId` 的存量向量）；Redis 中的平台级缓存（用户信息/JWKS）不做租户化 |
-| 3 | 方案与脚本已备，未执行 | RLS 评审与 9 项决策定稿；`09`～`15` 脚本（角色/授权/A/B/Prompt-Tool/D/回滚/验收）；Prompt/Tool 显式 `scope` 标记（schema 已同步） | 未执行任何 DDL、未建角色、未切 `wgh_app`；应用侧事务级 GUC、登录审计/调用日志写入顺序、Prompt/Tool 插件放行待随灰度实施 |
+| 3 | dev 已启用并验收，prod/test 未执行 | RLS 评审与 9 项决策定稿；`09`～`15` 脚本；Prompt/Tool 显式 `scope` 标记；**`wgh_rag_dev` 已执行前置迁移 + 09→A→B→D→12 并逐组验收通过** | prod/test 未执行任何 DDL/授权；应用仍以 `postgres` 超级用户连接，RLS 对应用当前不可见；事务级 GUC、登录审计/调用日志写入顺序、Prompt/Tool 插件放行待随切换 `wgh_app` 实施 |
 | 4 | 未开始 | — | 按客户立项 |
 
 **阶段 2 说明**
@@ -135,7 +135,7 @@ record RequestContext(Long tenantId, Long userId, String username, String reques
 - 向量层（本批已完成，默认行为不变）：KB chunk 的 `metadata.tenantId` 在入库时写入（取 `TenantContext`，本地兜底线程池按提交时上下文传播），事实层回填缺省时按 `wgh_kb_chunk.tenant_id` 补齐；语义缓存与 Agent 记忆的共享向量集合写入时强制带 `tenantId`，查询时非默认租户追加租户条件；检索编排层（`RagRetrieveService`）对向量与关键词两路统一下发租户断言。端口过滤类型为「租户编码字符串」（`VectorFilter` / `KeywordFilter` 的 `tenantId` 为 `String`），与 `TenantContext`、调度 `tenant_id` 口径一致。默认租户与无上下文链路不加条件，存量无 `tenantId` 的向量仍可读；RLS 策略只做兜底，不承担召回过滤。
 - **存储命名空间安全红线（定稿）**：清理逻辑无法确定归属时一律跳过、不删除；扫描范围按租户前缀收敛，不做全库推断；上线前先只读统计「按新前缀规则会被判为孤儿」的对象数量并与旧口径对比，差异全部可解释后才允许开启删除。`UploadSession.tenantId` 必须与孤儿清理前缀同批交付。
 
-**迁移登记**：SQL 增量 `sql/migrations/20261124/05_tenant.sql`（租户目录/身份归属）、`06_tenant_data_plane.sql`（34 张业务表 tenant_id，幂等、含回填）；配置增量 `config/migrations/20261124/09_tenant.yml`；两者均需部署前手动执行/合并，不纳入迁移 Job。
+**迁移登记**：SQL 增量 `sql/migrations/20261124-01/05_tenant.sql`（租户目录/身份归属）、`06_tenant_data_plane.sql`（34 张业务表 tenant_id，幂等、含回填）；配置增量 `config/migrations/20261124-01/09_tenant.yml`；两者均需部署前手动执行/合并，不纳入迁移 Job。
 
 **已定决策（2026-11-24）**：
 1. 租户标识沿用 `VARCHAR` 租户 code（与调度 `tenant_id` 口径一致），不引入 BIGINT 代理键。
@@ -380,11 +380,27 @@ CREATE POLICY tenant_isolation ON wgh_knowledge_base
 | 8 | PgBouncer | 若后续引入，必须使用 `transaction` 模式，并按 §3.5.1.4 验证事务级 GUC。 |
 | 9 | 灰度范围 | prod 允许按表分组分批开启（`10`～`13`），回滚依赖单表 `DISABLE`。 |
 
-#### 3.5.1.10 实施脚本与验收矩阵（2026-11-24，仅备稿，未执行）
+#### 3.5.1.10 实施脚本与验收矩阵（2026-11-24，dev 已执行并验收；prod/test 未执行）
 
-> 本节脚本均为评审稿：**未执行任何 DDL、未创建角色、未修改连接配置**；也未登记到 `kustomize` / `run-migrations.sh`。
+> 执行状态（2026-11-24）：脚本已在 **`wgh_rag_dev`** 执行并逐组验收通过，未修改应用连接配置（后端仍用 `postgres`）；`wgh_rag_prod` / `wgh_rag_test` 未执行 DDL 与授权，也未登记到 `kustomize` / `run-migrations.sh`。
 
-**脚本清单**（`rag-backend/sql/migrations/20261124/`）
+**dev 执行记录（2026-11-24）**
+- 备份：`/tmp/wgh_rag_dev_pre_rls-20261124-184140.dump`（`pg_dump -Fc -d wgh_rag_dev`，11 MB）。
+- 前置迁移（dev 缺失，按依赖补齐）：`05_tenant.sql`（`wgh_tenant` + 默认租户，用户回填 6 行，审计/API Key/调用日志空值 0）→ `06_tenant_data_plane.sql`（34 表补 `tenant_id`，37 张表空值残留 0）→ `04_tenant_schedule_policy.sql`（策略表/运行槽）→ `08_execution_event.sql`（`13` 的 `COMMENT ON TABLE` 前置）。
+- 策略执行顺序：`09` → `10`（A 32 表）→ 验收 → `11`（B 4 表）→ 验收 → `13`（D 3 表）→ 验收 → `12`（Prompt/Tool 2 表）→ 验收。最终 41 张表 `rowsecurity=t`、`forcerowsecurity=t`，共 52 条策略。
+- 实测证据（专用角色直连，临时开启 LOGIN、验收后已恢复 `NOLOGIN` 并清空口令）：
+  - `wgh_app` 无 GUC：`wgh_knowledge_base` 0 行、`wgh_execution_job` 0 行；GUC=`default`：8 行、`tenant_id<>'default'` 0 行；GUC=`t-other`：0 行。
+  - `wgh_app` 越权写：`UPDATE ... SET tenant_id='t-other'` 被 `new row violates row-level security policy` 拒绝，数据未变。
+  - `wgh_app` + GUC=`t-other` 仅见 3 条 `scope='platform'` Prompt；GUC=`default` 见 5 条（3 平台 + 2 租户）。
+  - `wgh_preauth`：`share_link` 4 / `api_key` 4 可读，业务表 `permission denied`。
+  - `wgh_scheduler`：调度作业 1233 行可读，业务表 `permission denied`。
+  - `wgh_platform`：审计 458 / 调用日志 322 跨租户可读，业务表 `permission denied`。
+  - `EXPLAIN`（`wgh_app` + GUC）：`Bitmap Index Scan on idx_chat_message_tenant`，`Index Cond: tenant_id = current_setting('app.tenant_id', true)`，谓词已下推。
+- 集群级影响：`CREATE ROLE` 对同实例所有库可见；已核对 prod/test 的 `has_table_privilege` / 序列权限均为 0，无对象授权变更（仅存在 PostgreSQL 默认的 PUBLIC CONNECT）。
+- 应用侧事实：后端 PID 40908 以 `postgres`（SUPERUSER）连接 `wgh_rag_dev`，**RLS 当前对应用不可见**；启用状态对现有应用无行为影响。
+- 回滚：按 §3.5.1.10「回滚」执行；本次仅 dev 有变更，prod/test 无需回滚，整库可用上述 dump 恢复。
+
+**脚本清单**（`rag-backend/sql/migrations/20261124-01/`）
 
 | 文件 | 内容 | 是否可重复执行 |
 |---|---|---|
@@ -451,6 +467,72 @@ CREATE POLICY tenant_isolation ON wgh_knowledge_base
 - `wgh_app` 若被误授予 SUPERUSER/BYPASSRLS，RLS 立即失效；依赖启动自检与授权审计。
 - 平台管理员跨租户业务读取在 RLS 下默认不可见；如需开放需二次评审。
 - `wgh_prompt_template.name` 仍全局唯一，平台与租户同名模板会冲突（已知限制）。
+
+### 3.5.2 应用数据库连接用户切换（postgres → wgh_app）
+
+> 目标：应用运行连接从 `postgres`（SUPERUSER，RLS 完全不生效）切到 `wgh_app`（NOINHERIT、非 superuser、无 bypassrls）。
+> 硬顺序：**先补代码，再切连接用户**。反向操作会让所有启用 RLS 的表直接返回 0 行。
+> 本节是影响面与分阶段方案，尚未改动代码与连接配置；dev 当前仍由 `postgres` 连接。
+
+#### 3.5.2.1 影响面清单
+
+| 影响面 | 现状 | 切换后的约束 / 整改点 |
+|---|---|---|
+| 连接池与初始化 SQL | 单 Hikari（`maximum-pool-size=20`、`connection-test-query=SELECT 1`、`initialization-fail-timeout=-1`） | 保持连接池参数不变，**不启用** Hikari 全局 `auto-commit=false`，不用 `connection-init-sql` 设置租户（会话级 GUC 会随连接复用串租户）。GUC 只允许事务级 `set_config('app.tenant_id', ?, true)` |
+| 事务边界 | 大量读路径无 `@Transactional`，依赖自动提交；租户插件在 SQL 层追加条件 | 切 `wgh_app` 后，**没有事务就没有 GUC**：未加 GUC 的租户表查询返回 0 行。需提供事务管理器级 GUC 注入，并给只读入口补 `@Transactional(readOnly=true)` |
+| 连接复用 | 由 Hikari 复用连接；当前无会话级租户状态 | 只用 `SET LOCAL`，事务结束自动失效；禁止任何“取出连接时 SET、归还前 RESET”的方案（异常路径会串租户） |
+| 免登录链路 | `ApiKeyAuthenticationFilter` 在认证前以当前连接读 `wgh_api_key`；分享链接同理 | 这两张表受 B 组 RLS 保护。需在**独立短事务**内 `SET LOCAL ROLE wgh_preauth` 完成校验，结束后回到 `wgh_app`；再按 Key/链接租户设置 GUC 访问业务表。`wgh_preauth` 只有 SELECT，不得承载业务查询 |
+| 调度事务 | `ExecutionJobMapper` 的 claim/心跳/回收、`SchedulerInstanceRegistry`、`TenantSlotManager` 全部是跨租户 SQL，且多数不在业务事务内 | D 组 RLS 只放行 `wgh_scheduler`。领取/续租/回收/实例注册/策略加载需在独立事务内 `SET LOCAL ROLE wgh_scheduler`；**作业入队与业务读写仍用 `wgh_app` + GUC**，不能整段事务切调度角色（业务表未授权给 `wgh_scheduler`） |
+| 审计写入顺序 | `AuditAspect` 在请求线程 `saveAsync`（`@Async`）；`AccountAuditService` 登录场景已支持显式租户；`ApiCallLogService.record` 在 `TenantContext.clear()` 之后执行 | `wgh_audit_log`/`wgh_api_call_log` 属 B 组 RLS。异步/延后写入必须在**自己的事务**里显式设目标租户 GUC（不能依赖线程上下文），或在清理上下文前落库 |
+| Prompt/Tool | 实体与服务没有 `scope` 字段；租户插件对所有租户表统一追加 `tenant_id` | 12 号脚本已加 `scope` 列与 RLS 策略。代码需补 `scope` 写入与查询语义（平台行可见），并让插件对 `scope='platform'` 放行；否则切库后内置 Prompt/Tool 不可见 |
+| 管理员跨租户 | `TenantLineHandlerImpl` 对 `admin` 角色忽略租户条件 | RLS 下 `wgh_app` 无管理员例外，`admin` 只能看到本租户业务数据。跨租户运维视图会收窄（审计/调用日志仍由 `wgh_platform` 提供），需产品确认 |
+| 异步/线程池 | `AuthContextPropagation` 已传播 `TenantContext`（@Async、调度、工作流、Agent 超时） | 只解决“租户值”，不解决“GUC”。所有异步写路径必须在事务开始时注入 GUC，否则 RLS 拒绝/0 行 |
+| 原生 SQL 与 Mapper | 租户插件只覆盖白名单表；部分 Mapper 手写 SQL | 手写 SQL 同样受 RLS 约束；需逐条确认在事务内且有 GUC（检索、配额、语义缓存、评审、调度） |
+| 迁移脚本执行用户 | `deploy/k8s/base/migrate/run-migrations.sh` 默认 `PGUSER=postgres` | **保持 postgres**：DDL、角色、策略需要 owner/超级用户；`wgh_app` 只承载运行时 DML，不授 DDL |
+| 健康检查与监控 | readiness 聚合 `db`（`SELECT 1`）；liveness 只看进程 | `SELECT 1` 不需要 GUC，切 `wgh_app` 后仍可用；新增启动自检（角色属性）与“GUC 未下发”告警指标；Actuator 端口/探针不变 |
+| 备份恢复 | `pg_dump/pg_restore` 由运维以 `postgres` 执行 | 保持超级用户执行；`wgh_app` 不作为备份账号，避免权限不足与越权面 |
+| K8s Secret / 配置 | `configmap-backend.yaml` 写死 `SPRING_DATASOURCE_USERNAME: "postgres"`；口令走既有 Secret | 改为 `wgh_app`；口令放 `wgh-db-app` Secret 的 `WGH_DB_PASSWORD`；配置文件只保留 `${WGH_DB_USERNAME:wgh_app}` / `${WGH_DB_PASSWORD:}` 占位，不写明文；迁移 Job 的 Secret 不变 |
+| 连接初始化失败策略 | `initialization-fail-timeout=-1`（启动时连不上不阻断） | 切库后保留该策略，但启动自检失败要显式告警；readiness 的 `db` 会暴露真实不可用 |
+
+#### 3.5.2.2 分阶段整改方案
+
+**阶段 A：代码整改（不切用户，可独立验证）**
+
+| 编号 | 内容 | 落点 |
+|---|---|---|
+| A1 | 事务级 GUC 注入：自定义 `PlatformTransactionManager`（继承 `DataSourceTransactionManager`），在 `doBegin` 成功后对绑定连接执行 `SET LOCAL app.tenant_id`；无租户上下文时不设置并在入口显式拒绝 | `rag-data` 数据源配置 |
+| A2 | 只读事务补齐：为租户表的只读入口补 `@Transactional(readOnly=true)`（知识库/文件/检索、对话与消息、评测、Agent 记忆、配额、Prompt/Tool 列表等），禁止无事务访问租户表 | `rag-kb`/`rag-chat`/`rag-agent*`/`rag-quota`/`rag-tool` |
+| A3 | 免登录链路：新增 `wgh_preauth` 短事务模板（`REQUIRES_NEW` + `SET LOCAL ROLE wgh_preauth` + 只读），仅用于 `share_link`/`api_key` 校验；校验完回到 `wgh_app` 并设目标租户 GUC | `rag-public-access` |
+| A4 | 调度事务：为 claim/心跳/回收/实例注册/策略加载增加独立事务模板，事务内 `SET LOCAL ROLE wgh_scheduler`；入队与业务写保持 `wgh_app` + GUC；对 `wgh_execution_event` 不做角色切换 | `rag-scheduler` |
+| A5 | Prompt/Tool：实体/Mapper 补 `scope`；创建时按“平台内置/租户自建”写值；查询语义为“平台行 + 本租户行”；租户插件对这两张表放行平台行（方式见待决策项） | `rag-chat`/`rag-tool` |
+| A6 | 审计与调用日志：`AuditLogService` 异步写入改为显式租户 + 独立事务 + GUC；`ApiCallLogService.record` 改为 `REQUIRES_NEW` 并显式传 Key 租户（不依赖已清理的上下文）；登录审计保持显式租户并纳入事务 | `rag-log`/`rag-public-access`/`rag-auth` |
+| A7 | 启动自检：新增 `ApplicationRunner`，校验 `current_user`、`rolsuper=false`、`rolbypassrls=false`、`rolinherit=false`；不满足时记录 ERROR 并按配置决定是否阻止启动（dev 先告警） | `rag-app` 或 `rag-data` |
+| A8 | 配置与占位符：`application*.yml` 用户名默认值改 `${WGH_DB_USERNAME:wgh_app}`、口令 `${WGH_DB_PASSWORD:}`；dev 通过环境变量注入；K8s ConfigMap 改用户名、Secret 增 `WGH_DB_PASSWORD`；迁移 Job 与备份脚本保持 `postgres` | `application*.yml`、`deploy/k8s/base` |
+| A9 | 验证：单测覆盖 GUC 注入、preauth/scheduler 角色事务、审计显式租户、Prompt/Tool 平台行、自检；全量编译；不改运行中服务 | Maven（构建锁） |
+
+**阶段 B：dev 切连接用户（需一次重启，见待决策项）**
+1. 为 `wgh_app` 配置 LOGIN 与强口令（Secret/环境变量，不落库外明文）；
+2. dev 以 `WGH_DB_USERNAME=wgh_app`、`WGH_DB_PASSWORD` 注入启动；
+3. 迁移 Job/备份仍用 `postgres`；
+4. 回滚：改回 `WGH_DB_USERNAME=postgres` 重启即可（RLS 对超级用户不生效）。
+
+**阶段 C：dev 切库后验证清单**
+- 跨租户读：租户 A 会话读不到租户 B 的知识库/文件/对话/评测/Agent 记忆；`wgh_app` 无 GUC 时租户表为 0 行。
+- 缺少租户上下文：登录前/公开链路/维护线程的行为符合预期；未设 GUC 的写操作被 RLS 拒绝并可观测。
+- 免登录：分享链接与 API Key 校验可用，`wgh_preauth` 不能读业务表；API 调用日志归属正确。
+- 调度：作业可领取/续租/回收；多实例不重复领取；作业执行期的业务写归属正确。
+- 平台资源：内置 Prompt/Tool 可见；租户自建不可跨租户。
+- 审计：登录成功/失败、管理操作、开放 API 调用日志的 `tenant_id` 正确。
+- 冒烟：登录、知识库上传/检索、对话流式、评测、多 Agent、工作流、配额扣减。
+- 监控：readiness `db` 正常；自检日志为 `wgh_app / non-superuser / no-bypassrls / NOINHERIT`。
+
+#### 3.5.2.3 待决策项
+
+1. **dev 切库需要一次后端重启**，与“不重启任何正在运行的服务”约束冲突：由谁在什么窗口重启？本线只准备配置与代码，不主动重启。
+2. **`admin` 跨租户业务可见性收窄**：切 `wgh_app` 后 admin 只能看本租户业务数据（审计/调用日志仍走 `wgh_platform`）。是否接受？若不接受，需要单独设计“平台运维代管”通道。
+3. **调度角色的实现形态**：A4 采用“独立事务 + `SET LOCAL ROLE wgh_scheduler`”（改动小、无第二数据源），还是新增独立 `wgh_scheduler` 数据源/`SqlSessionFactory`（隔离更彻底、改造大）。
+4. **Prompt/Tool 平台行放行方式**：租户插件对这两张表整体忽略并由服务层显式拼 `(tenant_id=? OR scope='platform')`，还是引入专用拦截器改写 SQL。前者简单但依赖服务层覆盖，后者集中但需自研拦截器。
+5. **只读事务覆盖面**：是否要求“所有租户表读路径必须有事务”并用测试/静态扫描兜底；遗漏路径在切库后会静默返回 0 行。
 
 ### 3.6 阶段 4：混合分层（按需）
 

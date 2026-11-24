@@ -3,7 +3,7 @@
 -- 适用对象：2026-11-24 之前创建的存量库（wgh_rag_dev / wgh_rag_test 均适用）
 -- 新库说明：sql/schema/01-schema.sql 已包含两张表与全部索引，新建库无需再执行本脚本
 -- 执行顺序：在 20261124/01_scheduler_instance.sql 之后单独执行
---   存量库：psql -f sql/migrations/20261124/04_tenant_schedule_policy.sql
+--   存量库：psql -f sql/migrations/20261124-01/04_tenant_schedule_policy.sql
 -- 幂等性：建表/建索引均使用 IF NOT EXISTS；COMMENT 覆盖同名注释，可重复执行；
 --         不包含回填语句，重复执行不会产生或修改任何业务数据。
 -- 影响面：只新增两张调度表与一个唯一约束，不改动既有表结构与数据。

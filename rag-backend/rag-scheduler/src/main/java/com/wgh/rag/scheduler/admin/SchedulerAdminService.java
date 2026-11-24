@@ -461,7 +461,7 @@ public class SchedulerAdminService {
             result.put("tenantSlots", slotMapper.selectAllSlots());
         } catch (RuntimeException e) {
             result.put("tenantSlots", List.of());
-            log.debug("租户槽位读取失败（可能未执行 20261124/04 迁移）: {}", e.getMessage());
+            log.debug("租户槽位读取失败（可能未执行 20261124-01/04 迁移）: {}", e.getMessage());
         }
         return result;
     }

@@ -2,8 +2,8 @@
 -- 迁移：多租户阶段 1（租户目录、用户/审计/API Key 租户维度）
 -- 适用对象：2026-11-24 之前创建的存量库（wgh_rag_dev / wgh_rag_test / wgh_rag_prod 均适用）
 -- 新库说明：sql/schema/01-schema.sql 已包含本表与列，新建库无需再执行本脚本
--- 执行顺序：在 20261124/04_tenant_schedule_policy.sql 之后单独执行
---   存量库：psql -f sql/migrations/20261124/05_tenant.sql
+-- 执行顺序：在 20261124-01/04_tenant_schedule_policy.sql 之后单独执行
+--   存量库：psql -f sql/migrations/20261124-01/05_tenant.sql
 -- 幂等性：建表/建列/建索引均使用 IF NOT EXISTS；回填 UPDATE 只处理 tenant_id 为空的行；
 --         SET NOT NULL 在已回填后重复执行不会失败；权限/授权均使用 ON CONFLICT DO NOTHING。
 -- 回填说明：存量用户、审计日志、API Key 全部归入默认租户 default（code='default'）；
