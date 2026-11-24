@@ -4,10 +4,14 @@ import com.wgh.rag.common.log.MdcContext;
 import com.wgh.rag.execution.job.RecurringJob;
 import com.wgh.rag.execution.model.ExecutionLane;
 import com.wgh.rag.execution.model.ExecutionRequest;
+import com.wgh.rag.scheduler.config.ChatRunProperties;
 import com.wgh.rag.scheduler.config.SchedulerProperties;
 import com.wgh.rag.scheduler.entity.ExecutionJob;
+import com.wgh.rag.scheduler.entity.SchedulerInstance;
 import com.wgh.rag.scheduler.lane.LaneExecutors;
+import com.wgh.rag.scheduler.metrics.SchedulerMetrics;
 import com.wgh.rag.scheduler.support.SchedulerIdentity;
+import com.wgh.rag.scheduler.support.SchedulerInstanceRegistry;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
@@ -49,6 +53,12 @@ public class JobDispatcher {
 
     private final SchedulerIdentity identity;
 
+    private final SchedulerInstanceRegistry instanceRegistry;
+
+    private final SchedulerMetrics metrics;
+
+    private final ChatRunProperties chatRunProperties;
+
     /** 周期维护作业声明（无声明时为空列表，调度层不额外提交）。 */
     private final List<RecurringJob> recurringJobs;
 
@@ -70,24 +80,40 @@ public class JobDispatcher {
                          JobRunner jobRunner,
                          LaneExecutors laneExecutors,
                          SchedulerIdentity identity,
+                         SchedulerInstanceRegistry instanceRegistry,
+                         SchedulerMetrics metrics,
+                         ChatRunProperties chatRunProperties,
                          List<RecurringJob> recurringJobs) {
         this.properties = properties;
         this.jobStore = jobStore;
         this.jobRunner = jobRunner;
         this.laneExecutors = laneExecutors;
         this.identity = identity;
+        this.instanceRegistry = instanceRegistry;
+        this.metrics = metrics;
+        this.chatRunProperties = chatRunProperties;
         this.recurringJobs = recurringJobs == null ? List.of() : List.copyOf(recurringJobs);
     }
 
     @PostConstruct
     public void start() {
+        // 同 instance-id 重启时，上一代进程可能已异常退出但租约尚未到期；启动即接管其残留作业。
+        reclaimOwnStale();
         long claimMillis = Math.max(200L, properties.getClaimInterval().toMillis());
         long reclaimMillis = Math.max(1000L, properties.getReclaimInterval().toMillis());
         long queueMillis = Math.max(1000L, properties.getQueueSweepInterval().toMillis());
+        long instanceMillis = Math.max(1000L, properties.getInstanceSweepInterval().toMillis());
         loop.scheduleWithFixedDelay(this::dispatchSafely, 0, claimMillis, TimeUnit.MILLISECONDS);
         loop.scheduleWithFixedDelay(this::reclaimSafely, reclaimMillis, reclaimMillis, TimeUnit.MILLISECONDS);
         loop.scheduleWithFixedDelay(this::requeueSafely, claimMillis, claimMillis, TimeUnit.MILLISECONDS);
         loop.scheduleWithFixedDelay(this::expireQueuedSafely, queueMillis, queueMillis, TimeUnit.MILLISECONDS);
+        loop.scheduleWithFixedDelay(this::reclaimDeadInstancesSafely, 5_000L, instanceMillis,
+                TimeUnit.MILLISECONDS);
+        long purgeMillis = Math.max(3_600_000L, properties.getInstanceRetention().toMillis() / 4);
+        loop.scheduleWithFixedDelay(this::purgeInstancesSafely, purgeMillis, purgeMillis,
+                TimeUnit.MILLISECONDS);
+        loop.scheduleWithFixedDelay(this::purgeChatRunsSafely, purgeMillis, purgeMillis,
+                TimeUnit.MILLISECONDS);
         if (!recurringJobs.isEmpty()) {
             long recurringMillis = recurringCheckMillis();
             loop.scheduleWithFixedDelay(this::submitRecurringSafely, 2_000L, recurringMillis,
@@ -162,7 +188,7 @@ public class JobDispatcher {
             dispatch(ExecutionLane.MAINTENANCE);
             markDatabaseHealthy();
         } catch (Exception e) {
-            markDatabaseUnavailable("领取作业失败", e);
+            markDatabaseUnavailable("claim", "领取作业失败", e);
         } finally {
             dispatching.set(false);
         }
@@ -206,12 +232,86 @@ public class JobDispatcher {
         try {
             int reclaimed = jobStore.reclaimExpired();
             if (reclaimed > 0) {
+                metrics.recordLeaseExpired(reclaimed);
                 log.warn("回收租约过期作业 {} 条（可能为进程异常退出）", reclaimed);
                 kick();
             }
             markDatabaseHealthy();
         } catch (Exception e) {
-            markDatabaseUnavailable("回收租约过期作业失败", e);
+            markDatabaseUnavailable("reclaim", "回收租约过期作业失败", e);
+        }
+    }
+
+    /**
+     * 启动时接管同 instance-id 的残留作业。
+     *
+     * <p>实例标识缺省为 {@code HOSTNAME-pid}；容器重启后 pid 仍为 1、HOSTNAME 不变时，
+     * 新一代进程必须接管上一代未完成的作业，否则要等租约自然到期。
+     */
+    private void reclaimOwnStale() {
+        try {
+            int reclaimed = jobStore.reclaimDeadOwner(identity.instanceId());
+            if (reclaimed > 0) {
+                metrics.recordInstanceReclaimed(reclaimed);
+                log.warn("启动接管同实例标识的历史作业 {} 条 instanceId={}", reclaimed, identity.instanceId());
+            }
+        } catch (Exception e) {
+            markDatabaseUnavailable("dead-instance", "启动接管历史作业失败", e);
+        }
+    }
+
+    /**
+     * 失联实例提前回收：实例心跳过期或已主动下线时，立即回收其 {@code LEASED/RUNNING} 作业。
+     *
+     * <p>不再等待 {@code lease_expire_time}，把「实例已死但租约未到期」的悬空窗口从最长一个租约周期
+     * 缩短到存活阈值 + 扫描间隔。旧实例即便仍在运行，其续租与终态写入都会因 {@code lease_owner}
+     * 已清空而失败，不会覆盖接管者。
+     */
+    private void reclaimDeadInstancesSafely() {
+        try {
+            List<SchedulerInstance> deadInstances = instanceRegistry.deadInstances();
+            for (SchedulerInstance instance : deadInstances) {
+                int reclaimed = jobStore.reclaimDeadOwner(instance.getInstanceId());
+                if (reclaimed > 0) {
+                    metrics.recordInstanceReclaimed(reclaimed);
+                    log.warn("失联实例作业已提前回收 instanceId={} count={}", instance.getInstanceId(), reclaimed);
+                }
+                if (instance.getStoppedAt() == null) {
+                    metrics.recordDeadDetected(instance.getInstanceId());
+                    instanceRegistry.markStopped(instance.getInstanceId());
+                    log.warn("检测到失联实例并标记下线 instanceId={} lastHeartbeat={}",
+                            instance.getInstanceId(), instance.getLastHeartbeat());
+                }
+                if (reclaimed > 0) {
+                    kick();
+                }
+            }
+            markDatabaseHealthy();
+        } catch (Exception e) {
+            markDatabaseUnavailable("dead-instance", "失联实例作业回收失败", e);
+        }
+    }
+
+    private void purgeInstancesSafely() {
+        try {
+            int purged = instanceRegistry.purgeStaleInstances();
+            if (purged > 0) {
+                log.info("清理过期调度实例行 {} 条", purged);
+            }
+        } catch (Exception e) {
+            markDatabaseUnavailable("purge-instance", "清理过期调度实例行失败", e);
+        }
+    }
+
+    /** 清理崩溃残留的终态对话运行态记录（正常运行结束的记录在注销时已物理删除）。 */
+    private void purgeChatRunsSafely() {
+        try {
+            int purged = jobStore.purgeTerminalInteractiveRuns(chatRunProperties.getTerminalRetention());
+            if (purged > 0) {
+                log.info("清理终态对话运行态记录 {} 条", purged);
+            }
+        } catch (Exception e) {
+            markDatabaseUnavailable("purge-chat-run", "清理终态对话运行态记录失败", e);
         }
     }
 
@@ -223,7 +323,7 @@ public class JobDispatcher {
             }
             markDatabaseHealthy();
         } catch (Exception e) {
-            markDatabaseUnavailable("重试作业入队失败", e);
+            markDatabaseUnavailable("requeue", "重试作业入队失败", e);
         }
     }
 
@@ -235,7 +335,7 @@ public class JobDispatcher {
             }
             markDatabaseHealthy();
         } catch (Exception e) {
-            markDatabaseUnavailable("排队超时扫描失败", e);
+            markDatabaseUnavailable("expire", "排队超时扫描失败", e);
         }
     }
 
@@ -245,8 +345,9 @@ public class JobDispatcher {
         }
     }
 
-    /** 数据库不可用时只记录一次，避免调度循环每 2 秒刷屏。 */
-    private void markDatabaseUnavailable(String action, Exception error) {
+    /** 数据库不可用时只记录一次日志，但每次失败都计指标，避免调度循环每 2 秒刷屏。 */
+    private void markDatabaseUnavailable(String op, String action, Exception error) {
+        metrics.recordDispatchError(op);
         if (databaseHealthy.compareAndSet(true, false)) {
             log.error("{}；调度循环将在下个周期重试（作业保持 PENDING）: {}",
                     action, error.getMessage(), error);

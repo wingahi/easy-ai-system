@@ -94,6 +94,67 @@ public class JobStore {
         }
     }
 
+    /**
+     * 登记一条已在进程内处于 RUNNING 的交互式运行态。
+     *
+     * <p>与 {@link #submit} 的区别：不进入 PENDING、不等待领取；{@code attempt=maxAttempts=1} 使既有
+     * 租约过期/实例失联回收直接落 {@code DEAD} 终态，避免 INTERACTIVE 车道出现无人领取的 PENDING。
+     *
+     * @param request    执行请求（车道固定为 INTERACTIVE）
+     * @param leaseOwner 持有者实例标识
+     * @param leaseTtl   租约 TTL；对话无周期心跳，需覆盖单次执行上限
+     * @return 已持久化的运行态记录
+     */
+    public ExecutionJob registerRunning(ExecutionRequest request, String leaseOwner, Duration leaseTtl) {
+        LocalDateTime now = LocalDateTime.now();
+        ExecutionJob job = new ExecutionJob();
+        job.setExecutionId(UUID.randomUUID().toString());
+        job.setTraceId(MdcContext.currentTraceId());
+        job.setJobType(request.jobType());
+        job.setLane(ExecutionLane.INTERACTIVE);
+        job.setTenantId(request.tenantId());
+        job.setOwnerUserId(request.ownerUserId());
+        job.setBizKey(request.bizKey());
+        JobPayload payload = request.payload();
+        job.setPayloadJson(codec.toJson(payload.data()));
+        job.setPayloadSchemaVersion(payload.schemaVersion());
+        job.setPriority(request.priority());
+        job.setStatus(ExecutionStatus.RUNNING);
+        job.setScheduledAt(now);
+        job.setStartTime(now);
+        job.setHeartbeatTime(now);
+        job.setLeaseOwner(leaseOwner);
+        job.setLeaseExpireTime(now.plus(leaseTtl == null ? Duration.ofMinutes(35) : leaseTtl));
+        job.setAttempt(1);
+        job.setMaxAttempts(1);
+        job.setCancelRequested(0);
+        job.setVersion(0);
+        mapper.insert(job);
+        return job;
+    }
+
+    /**
+     * 注销交互式运行态（正常结束/停止/异常均走这里）。
+     *
+     * <p>物理删除，不保留终态历史：该行只服务于「进行中」查询，保留会随对话量线性膨胀。
+     * 删除条件带实例归属，已被回收/接管的行不受影响。
+     *
+     * @return {@code true} 表示本次删除生效
+     */
+    public boolean finishInteractive(Long id, String leaseOwner) {
+        if (id == null) {
+            return false;
+        }
+        return mapper.deleteRunningInteractive(id, leaseOwner) > 0;
+    }
+
+    /** 清理崩溃残留的终态交互式运行态记录。 */
+    public int purgeTerminalInteractiveRuns(Duration retention) {
+        long seconds = retention == null || retention.isNegative() || retention.isZero()
+                ? Duration.ofHours(24).toSeconds() : Math.max(60L, retention.toSeconds());
+        return mapper.purgeTerminalInteractiveRuns(seconds);
+    }
+
     /** 按执行标识查作业。 */
     public Optional<ExecutionJob> find(String executionId) {
         if (executionId == null || executionId.isBlank()) {
@@ -206,6 +267,19 @@ public class JobStore {
 
     public int reclaimExpired() {
         return mapper.reclaimExpired();
+    }
+
+    /**
+     * 回收指定实例持有的活跃作业（实例失联/已下线）。
+     *
+     * <p>不检查 {@code lease_expire_time}：实例心跳已过期即可判定失联，
+     * 避免「实例已死但租约未到期」造成长时间悬空。
+     */
+    public int reclaimDeadOwner(String owner) {
+        if (owner == null || owner.isBlank()) {
+            return 0;
+        }
+        return mapper.reclaimByOwner(owner);
     }
 
     public int requeueFailed() {

@@ -13,7 +13,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
 
@@ -55,7 +55,7 @@ public class ShareLinkAdminController {
         req.setEmbedIpWhitelist(rawList(body.get("embedIpWhitelist")));
         if (body.get("expiresDays") != null) {
             int days = Integer.parseInt(String.valueOf(body.get("expiresDays")));
-            if (days > 0) req.setExpiresAt(LocalDateTime.now().plusDays(days));
+            if (days > 0) req.setExpiresAt(OffsetDateTime.now().plusDays(days));
         }
         return Result.success(shareLinkService.create(req, SecurityUtils.currentUsername()));
     }

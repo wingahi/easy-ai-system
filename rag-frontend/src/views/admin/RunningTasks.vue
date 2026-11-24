@@ -3,10 +3,6 @@
     <div class="page-header">
       <h2>运行中任务</h2>
       <div class="header-actions">
-        <el-select v-model="query.type" placeholder="任务类型" size="small" clearable
-                   style="width: 150px" @change="load(1)">
-          <el-option v-for="o in TASK_TYPES" :key="o.value" :label="o.label" :value="o.value" />
-        </el-select>
         <el-select v-model="query.status" placeholder="状态" size="small" clearable
                    style="width: 140px" @change="load(1)">
           <el-option v-for="o in STATUS_OPTIONS" :key="o.value" :label="o.label" :value="o.value" />
@@ -21,6 +17,10 @@
               :title="'运行中任务接口暂不可用：' + loadError" />
 
     <div class="card">
+      <el-tabs v-model="activeType" class="type-tabs" @tab-change="onTypeChange">
+        <el-tab-pane v-for="o in TASK_TYPES" :key="o.value" :label="o.label" :name="o.value" />
+      </el-tabs>
+
       <div class="list-meta">
         <span>共 {{ total }} 个任务</span>
         <span v-if="lastRefreshAt">最近刷新：{{ formatTime(lastRefreshAt) }}</span>
@@ -70,7 +70,7 @@
         </el-table-column>
 
         <template #empty>
-          <el-empty :description="loadError ? '任务接口暂不可用' : '暂无运行中任务'" :image-size="80" />
+          <el-empty :description="emptyText" :image-size="80" />
         </template>
       </el-table>
 
@@ -83,17 +83,17 @@
 </template>
 
 <script setup>
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { Refresh } from '@element-plus/icons-vue'
 import { adminRunningTasks } from '../../api'
 
 const STALE_MINUTES = 60
 
 const TASK_TYPES = [
-  { value: 'AGENT', label: 'Agent 自动执行' },
-  { value: 'MULTI_AGENT', label: '多 Agent 协作' },
-  { value: 'WORKFLOW', label: '工作流' },
-  { value: 'CHAT', label: '普通对话' }
+  { value: 'AGENT', label: 'Agent 自动执行', emptyText: '暂无进行中的 Agent 计划' },
+  { value: 'MULTI_AGENT', label: '多 Agent 协作', emptyText: '暂无进行中的多 Agent 运行' },
+  { value: 'WORKFLOW', label: '工作流', emptyText: '暂无进行中的工作流运行' },
+  { value: 'CHAT', label: '普通对话', emptyText: '暂无进行中的普通对话' }
 ]
 
 const STATUS_OPTIONS = [
@@ -124,8 +124,16 @@ const size = ref(20)
 const loading = ref(false)
 const loadError = ref('')
 const lastRefreshAt = ref(null)
+const activeType = ref(TASK_TYPES[0].value)
+let requestSeq = 0
 
-const query = reactive({ type: '', status: '' })
+const query = reactive({ status: '' })
+
+const emptyText = computed(() => {
+  if (loadError.value) return '任务接口暂不可用'
+  const current = TASK_TYPES.find(o => o.value === activeType.value)
+  return current ? current.emptyText : '暂无运行中任务'
+})
 
 const taskTypeLabel = (type) => TASK_TYPE_LABELS[type] || type || '未知'
 const statusLabel = (status) => STATUS_LABELS[status] || status || '未知'
@@ -173,25 +181,37 @@ const formatStay = (minutes) => {
 
 const load = async (p = page.value) => {
   page.value = p
+  const seq = ++requestSeq
   loading.value = true
   loadError.value = ''
   try {
-    const params = { page: p, size: size.value }
-    if (query.type) params.type = query.type
+    const params = { type: activeType.value, page: p, size: size.value }
     if (query.status) params.status = query.status
     const res = await adminRunningTasks(params)
+    if (seq !== requestSeq) return
     const data = res?.data || {}
     rows.value = data.items || []
     total.value = data.total || 0
   } catch (e) {
+    if (seq !== requestSeq) return
     // 接口未就绪 / 网络异常时降级为空列表 + 页内提示，不弹全局错误
     rows.value = []
     total.value = 0
     loadError.value = e?.response?.data?.message || e?.message || '请求失败'
   } finally {
-    loading.value = false
-    lastRefreshAt.value = new Date()
+    if (seq === requestSeq) {
+      loading.value = false
+      lastRefreshAt.value = new Date()
+    }
   }
+}
+
+// 切换类型：清空上一类型的残留行，按新类型重新查询第 1 页
+const onTypeChange = () => {
+  rows.value = []
+  total.value = 0
+  loadError.value = ''
+  load(1)
 }
 
 onMounted(() => load(1))

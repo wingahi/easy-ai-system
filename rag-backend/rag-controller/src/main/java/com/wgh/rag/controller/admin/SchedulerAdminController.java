@@ -9,7 +9,9 @@ import com.wgh.rag.scheduler.admin.SchedulerAdminService;
 import com.wgh.rag.scheduler.admin.SchedulerCancelResult;
 import com.wgh.rag.scheduler.admin.SchedulerJobDetail;
 import com.wgh.rag.scheduler.admin.SchedulerJobSummary;
+import com.wgh.rag.scheduler.admin.SchedulerInstanceView;
 import com.wgh.rag.scheduler.admin.SchedulerOverview;
+import com.wgh.rag.scheduler.reconcile.ReconcileReport;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
@@ -23,6 +25,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -43,6 +46,18 @@ public class SchedulerAdminController {
     @GetMapping("/overview")
     public Result<SchedulerOverview> overview() {
         return Result.success(schedulerAdminService.overview());
+    }
+
+    @Operation(summary = "实例视图（存活/心跳/车道快照；失联实例标灰依据）")
+    @GetMapping("/instances")
+    public Result<List<SchedulerInstanceView>> instances() {
+        return Result.success(schedulerAdminService.instances());
+    }
+
+    @Operation(summary = "最近一次作业/业务对账报告（本实例）")
+    @GetMapping("/reconcile")
+    public Result<ReconcileReport> reconcile() {
+        return Result.success(schedulerAdminService.reconcileReport());
     }
 
     @Operation(summary = "分页查询后台作业")

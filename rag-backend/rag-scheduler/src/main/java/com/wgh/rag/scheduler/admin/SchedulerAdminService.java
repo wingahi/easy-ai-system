@@ -8,15 +8,22 @@ import com.wgh.rag.common.result.ResultCode;
 import com.wgh.rag.execution.api.ExecutionFacade;
 import com.wgh.rag.execution.model.ExecutionLane;
 import com.wgh.rag.execution.model.ExecutionStatus;
+import com.wgh.rag.scheduler.config.SchedulerProperties;
 import com.wgh.rag.scheduler.entity.ExecutionJob;
+import com.wgh.rag.scheduler.entity.SchedulerInstance;
 import com.wgh.rag.scheduler.job.JobPayloadCodec;
 import com.wgh.rag.scheduler.mapper.ExecutionJobMapper;
+import com.wgh.rag.scheduler.mapper.SchedulerInstanceMapper;
+import com.wgh.rag.scheduler.reconcile.ReconcileReport;
+import com.wgh.rag.scheduler.reconcile.ReconcileReportRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -38,14 +45,26 @@ public class SchedulerAdminService {
 
     private final ExecutionJobMapper mapper;
 
+    private final SchedulerInstanceMapper instanceMapper;
+
+    private final SchedulerProperties properties;
+
+    private final ReconcileReportRegistry reconcileReports;
+
     private final JobPayloadCodec codec;
 
     private final ObjectProvider<ExecutionFacade> executionFacadeProvider;
 
     public SchedulerAdminService(ExecutionJobMapper mapper,
+                                 SchedulerInstanceMapper instanceMapper,
+                                 SchedulerProperties properties,
+                                 ReconcileReportRegistry reconcileReports,
                                  JobPayloadCodec codec,
                                  ObjectProvider<ExecutionFacade> executionFacadeProvider) {
         this.mapper = mapper;
+        this.instanceMapper = instanceMapper;
+        this.properties = properties;
+        this.reconcileReports = reconcileReports;
         this.codec = codec;
         this.executionFacadeProvider = executionFacadeProvider;
     }
@@ -174,6 +193,42 @@ public class SchedulerAdminService {
     }
 
     /**
+     * 实例视图（集群视角）。
+     *
+     * <p>存活判定：未主动下线且心跳距今不超过 {@code wgh.scheduler.instance-liveness-ttl}。
+     * 失联实例会显示为 {@code alive=false}，其作业由调度循环提前回收。
+     */
+    public List<SchedulerInstanceView> instances() {
+        List<SchedulerInstance> rows = instanceMapper.selectAllInstances();
+        LocalDateTime now = instanceMapper.now();
+        if (now == null) {
+            now = LocalDateTime.now();
+        }
+        long livenessSeconds = Math.max(1L, properties.getInstanceLivenessTtl().toSeconds());
+        List<SchedulerInstanceView> views = new ArrayList<>(rows.size());
+        for (SchedulerInstance row : rows) {
+            long ageSeconds = row.getLastHeartbeat() == null
+                    ? -1L
+                    : Math.max(0L, Duration.between(row.getLastHeartbeat(), now).getSeconds());
+            boolean alive = row.getStoppedAt() == null && ageSeconds <= livenessSeconds;
+            views.add(new SchedulerInstanceView(
+                    row.getInstanceId(),
+                    row.getStartedAt(),
+                    row.getLastHeartbeat(),
+                    row.getStoppedAt(),
+                    alive,
+                    ageSeconds,
+                    parseLanes(row.getLanesJson())));
+        }
+        return views;
+    }
+
+    /** 最近一次作业/业务对账报告；本实例尚未执行过时返回空报告。 */
+    public ReconcileReport reconcileReport() {
+        return reconcileReports.last().orElseGet(ReconcileReport::notRun);
+    }
+
+    /**
      * 取消作业。
      *
      * <p>不可取消的状态返回明确业务错误，而不是落入 500。
@@ -252,9 +307,21 @@ public class SchedulerAdminService {
                 job.getCreateTime());
     }
 
-    /** JSON 对象解析：负载脏数据回退为原文，结果为空返回空对象。 */
-    private Map<String, Object> parseJsonObject(String json, boolean required) {
+    /** 车道快照解析；脏数据返回空对象，不影响实例视图。 */
+    private Map<String, Object> parseLanes(String json) {
         if (!StringUtils.hasText(json)) {
+            return Map.of();
+        }
+        try {
+            return codec.fromJson(json);
+        } catch (IllegalArgumentException e) {
+            log.debug("实例车道快照无法解析，返回空对象: {}", e.getMessage());
+            return Map.of();
+        }
+    }
+
+    /** JSON 对象解析：负载脏数据回退为原文，结果为空返回空对象。 */
+    private Map<String, Object> parseJsonObject(String json, boolean required) {        if (!StringUtils.hasText(json)) {
             return Map.of();
         }
         try {

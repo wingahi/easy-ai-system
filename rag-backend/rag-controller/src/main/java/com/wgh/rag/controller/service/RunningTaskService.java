@@ -10,6 +10,11 @@ import com.wgh.rag.agentmulti.entity.MultiAgentRun;
 import com.wgh.rag.agentmulti.entity.MultiAgentStep;
 import com.wgh.rag.agentmulti.mapper.MultiAgentRunMapper;
 import com.wgh.rag.agentmulti.mapper.MultiAgentStepMapper;
+import com.wgh.rag.execution.api.InteractiveRunRegistry;
+import com.wgh.rag.execution.model.ExecutionLane;
+import com.wgh.rag.scheduler.entity.ExecutionJob;
+import com.wgh.rag.scheduler.job.JobStore;
+import com.wgh.rag.scheduler.mapper.ExecutionJobMapper;
 import com.wgh.rag.workflow.constant.WorkflowConstants;
 import com.wgh.rag.workflow.entity.Workflow;
 import com.wgh.rag.workflow.entity.WorkflowNodeRun;
@@ -35,8 +40,9 @@ import java.util.stream.Collectors;
  * 运行中任务查询（只读）。
  * <p>
  * 覆盖单 Agent（wgh_agent_plan/step）、多 Agent（wgh_m_agent_run/step）、工作流（wgh_workflow_run/node_run），
- * 按最后活动时间倒序合并分页，供管理端运维观测。不再提供任何用户触发的继续执行入口，
- * 中断任务的处置交由调度中心的异步执行点负责。
+ * 以及普通对话（wgh_execution_job 中 lane=INTERACTIVE 的 CHAT 登记行），
+ * 按最后活动时间倒序合并分页，供管理端运维观测。未传 type 时仍只合并前三类，CHAT 仅在显式指定时查询。
+ * 不再提供任何用户触发的继续执行入口，中断任务的处置交由调度中心的异步执行点负责。
  */
 @Service
 @RequiredArgsConstructor
@@ -60,6 +66,10 @@ public class RunningTaskService {
     private final MultiAgentRunMapper multiAgentRunMapper;
     private final MultiAgentStepMapper multiAgentStepMapper;
 
+    /** 普通对话运行态：调度中心作业表中的 INTERACTIVE 登记行。 */
+    private final ExecutionJobMapper executionJobMapper;
+    private final JobStore jobStore;
+
     public Map<String, Object> listRunningTasks(String type, String status, Long page, Long size) {
         String normalizedType = normalizeType(type);
         if (type != null && !type.isBlank() && normalizedType == null) {
@@ -80,6 +90,10 @@ public class RunningTaskService {
         }
         if (normalizedType == null || TYPE_WORKFLOW.equals(normalizedType)) {
             views.addAll(workflowViews(statuses));
+        }
+        // CHAT 只在显式指定类型时查询：未传 type 时保持原有三源合并口径
+        if (TYPE_CHAT.equals(normalizedType)) {
+            views.addAll(chatViews(statuses));
         }
 
         views.sort(Comparator.comparingLong(TaskView::stayMinutes).reversed()
@@ -257,6 +271,51 @@ public class RunningTaskService {
     private String lastMultiStepStatus(List<MultiAgentStep> steps) {
         if (steps == null || steps.isEmpty()) return null;
         return steps.get(steps.size() - 1).getStatus();
+    }
+
+    // ==================== 普通对话 ====================
+
+    /**
+     * 普通对话运行态：来自调度中心的交互式作业登记行。
+     *
+     * <p>对话仍在请求线程/统一执行器内生成，登记行只服务「进行中」查询，结束即删除；
+     * 崩溃残留由租约/实例失联回收为终态，并按保留期清理。</p>
+     */
+    private List<TaskView> chatViews(Set<String> statuses) {
+        List<ExecutionJob> jobs = executionJobMapper.selectList(new LambdaQueryWrapper<ExecutionJob>()
+                .eq(ExecutionJob::getLane, ExecutionLane.INTERACTIVE)
+                .eq(ExecutionJob::getJobType, InteractiveRunRegistry.RUN_TYPE_CHAT)
+                .in(ExecutionJob::getStatus, statuses));
+        if (jobs.isEmpty()) return List.of();
+
+        LocalDateTime now = LocalDateTime.now();
+        List<TaskView> views = new ArrayList<>(jobs.size());
+        for (ExecutionJob job : jobs) {
+            Map<String, Object> payload = chatPayload(job);
+            Object sessionId = payload.get("sessionId");
+            Object title = payload.get("title");
+            LocalDateTime startTime = job.getStartTime() != null ? job.getStartTime() : job.getCreateTime();
+            LocalDateTime lastActivity = latestActivity(job.getHeartbeatTime(), job.getUpdateTime(), startTime);
+            views.add(new TaskView(TYPE_CHAT,
+                    sessionId != null ? sessionId : job.getExecutionId(),
+                    title instanceof String text ? text : null,
+                    job.getOwnerUserId(),
+                    job.getStatus() == null ? null : job.getStatus().name(),
+                    "对话生成中",
+                    startTime,
+                    lastActivity,
+                    minutesBetween(lastActivity, now),
+                    null));
+        }
+        return views;
+    }
+
+    private Map<String, Object> chatPayload(ExecutionJob job) {
+        try {
+            return jobStore.payloadOf(job).data();
+        } catch (RuntimeException e) {
+            return Map.of();
+        }
     }
 
     // ==================== 公共：类型归一 / 时间 ====================

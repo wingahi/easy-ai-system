@@ -19,6 +19,9 @@ public final class ExecutionErrorCodes {
     /** 租约丢失：续租失败或已被其它实例接管。 */
     public static final String LEASE_LOST = "LEASE_LOST";
 
+    /** 所属实例失联：租约未到期也被其它实例提前回收。 */
+    public static final String INSTANCE_LOST = "INSTANCE_LOST";
+
     /** 负载结构不兼容：旧版本 payload 无法被当前代码执行。 */
     public static final String INCOMPATIBLE_PAYLOAD = "INCOMPATIBLE_PAYLOAD";
 

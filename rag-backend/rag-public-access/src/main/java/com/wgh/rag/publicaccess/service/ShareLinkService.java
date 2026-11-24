@@ -17,7 +17,9 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
@@ -79,9 +81,10 @@ public class ShareLinkService {
             windowId = req.getTargetId();
         }
 
-        LocalDateTime now = LocalDateTime.now();
-        LocalDateTime expiresAt = req.getExpiresAt();
-        LocalDateTime maxExpire = now.plusDays(Math.max(1, properties.getShareMaxExpireDays()));
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        OffsetDateTime expiresAt = req.getExpiresAt() == null
+                ? null : req.getExpiresAt().withOffsetSameInstant(ZoneOffset.UTC);
+        OffsetDateTime maxExpire = now.plusDays(Math.max(1, properties.getShareMaxExpireDays()));
         if (expiresAt == null) {
             expiresAt = now.plusDays(Math.max(1, properties.getShareDefaultExpireDays()));
         }
@@ -133,7 +136,7 @@ public class ShareLinkService {
         if (Boolean.TRUE.equals(link.getRevoked())) {
             throw new BusinessException(ResultCode.OPERATION_NOT_ALLOWED, "分享链接已被吊销");
         }
-        if (link.getExpiresAt() != null && !link.getExpiresAt().isAfter(LocalDateTime.now())) {
+        if (link.getExpiresAt() != null && !link.getExpiresAt().toInstant().isAfter(Instant.now())) {
             throw new BusinessException(ResultCode.OPERATION_NOT_ALLOWED, "分享链接已过期");
         }
         if (link.getMaxUses() != null && link.getMaxUses() > 0
@@ -252,6 +255,21 @@ public class ShareLinkService {
         if (rows == 0) {
             throw new BusinessException(ResultCode.QUOTA_EXCEEDED, "分享链接访问次数已用尽");
         }
+    }
+
+    /**
+     * 回补一次使用次数：本次对话未产出任何有效内容时释放准入时占用的次数。
+     * <p>仅当 use_count &gt; 0 时减一，避免把计数减成负数；并发回补由条件 UPDATE 保证幂等。</p>
+     */
+    @Transactional
+    public void releaseUse(ShareLink link) {
+        if (link == null || link.getId() == null) {
+            return;
+        }
+        shareLinkMapper.update(null, new LambdaUpdateWrapper<ShareLink>()
+                .eq(ShareLink::getId, link.getId())
+                .gt(ShareLink::getUseCount, 0)
+                .setSql("use_count = use_count - 1"));
     }
 
     /**

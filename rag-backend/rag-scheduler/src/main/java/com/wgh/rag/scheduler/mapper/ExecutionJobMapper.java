@@ -2,6 +2,7 @@ package com.wgh.rag.scheduler.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.wgh.rag.scheduler.entity.ExecutionJob;
+import org.apache.ibatis.annotations.Delete;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
@@ -151,6 +152,27 @@ public interface ExecutionJobMapper extends BaseMapper<ExecutionJob> {
             """)
     int cancelOwned(@Param("id") Long id, @Param("owner") String owner, @Param("reason") String reason);
 
+    /**
+     * 注销交互式运行态：物理删除仍在运行且仍由本实例持有的记录。
+     *
+     * <p>用于「进行中」登记，不保留终态历史；已被回收（{@code lease_owner} 清空）的记录不会误删。
+     */
+    @Delete("""
+            DELETE FROM wgh_execution_job
+            WHERE id = #{id} AND lease_owner = #{owner}
+              AND status IN ('LEASED', 'RUNNING')
+            """)
+    int deleteRunningInteractive(@Param("id") Long id, @Param("owner") String owner);
+
+    /** 物理清理崩溃残留的终态交互式运行态记录；只作用于 INTERACTIVE 车道。 */
+    @Delete("""
+            DELETE FROM wgh_execution_job
+            WHERE lane = 'INTERACTIVE'
+              AND status IN ('SUCCEEDED', 'FAILED', 'DEAD', 'CANCELLED')
+              AND update_time < now() - make_interval(secs => #{retentionSeconds})
+            """)
+    int purgeTerminalInteractiveRuns(@Param("retentionSeconds") long retentionSeconds);
+
     /** 排队中取消：PENDING → CANCELLED。 */
     @Update("""
             UPDATE wgh_execution_job
@@ -175,11 +197,17 @@ public interface ExecutionJobMapper extends BaseMapper<ExecutionJob> {
             """)
     int requestCancel(@Param("id") Long id, @Param("reason") String reason);
 
-    /** 单飞锁未抢到或 Redis 不可用：放弃本次领取（回滚 attempt），稍后再试。 */
+    /**
+     * 单飞锁未抢到或 Redis 不可用：放弃本次领取（回滚 attempt），稍后再试。
+     *
+     * <p>放回队列时刷新 {@code scheduled_at}：排队超时从本次重排起算，
+     * 避免被 {@code expireQueued} 按旧入队时刻立即判成排队超时。
+     */
     @Update("""
             UPDATE wgh_execution_job
             SET status = 'PENDING',
                 attempt = CASE WHEN attempt > 0 THEN attempt - 1 ELSE 0 END,
+                scheduled_at = now(),
                 lease_owner = NULL,
                 lease_expire_time = NULL,
                 not_before = #{notBefore,jdbcType=TIMESTAMP},
@@ -197,6 +225,7 @@ public interface ExecutionJobMapper extends BaseMapper<ExecutionJob> {
             SET status = CASE WHEN attempt >= max_attempts THEN 'DEAD' ELSE 'PENDING' END,
                 error_code = 'LEASE_LOST',
                 error_message = '租约过期，由回收器回收',
+                scheduled_at = CASE WHEN attempt >= max_attempts THEN scheduled_at ELSE now() END,
                 lease_owner = NULL,
                 lease_expire_time = NULL,
                 finish_time = CASE WHEN attempt >= max_attempts THEN now() ELSE NULL END,
@@ -209,10 +238,61 @@ public interface ExecutionJobMapper extends BaseMapper<ExecutionJob> {
             """)
     int reclaimExpired();
 
-    /** 可重试失败 → PENDING。 */
+    /**
+     * 失联实例提前回收：不等租约自然到期，回收指定实例持有的活跃作业。
+     *
+     * <p>仍复用与租约过期回收相同的终态口径：未超上限回 PENDING 重试，超上限置 DEAD。
+     * 旧实例此后的终态/进度写入因 {@code lease_owner} 已清空而失败，不会覆盖接管者。
+     *
+     * <p>回到 PENDING 时同时刷新 {@code scheduled_at}：重排的是「此刻」的队列，否则
+     * {@code expireQueued} 会按旧的入队时刻立即把它判成排队超时，{@code LEASE_LOST}
+     * 重试分支实际不可达。
+     *
+     * @return 被回收的作业数
+     */
+    @Update("""
+            UPDATE wgh_execution_job
+            SET status = CASE WHEN attempt >= max_attempts THEN 'DEAD' ELSE 'PENDING' END,
+                error_code = CASE WHEN attempt >= max_attempts THEN 'INSTANCE_LOST' ELSE 'LEASE_LOST' END,
+                error_message = '所属实例失联，提前回收',
+                scheduled_at = CASE WHEN attempt >= max_attempts THEN scheduled_at ELSE now() END,
+                lease_owner = NULL,
+                lease_expire_time = NULL,
+                finish_time = CASE WHEN attempt >= max_attempts THEN now() ELSE NULL END,
+                version = version + 1,
+                update_time = now()
+            WHERE status IN ('LEASED', 'RUNNING')
+              AND lease_owner = #{owner}
+              AND deleted = 0
+            """)
+    int reclaimByOwner(@Param("owner") String owner);
+
+    /**
+     * 对账候选：指定类型、最近窗口内更新过的作业（含全部状态，由对账侧判定一致性）。
+     */
+    @Select("""
+            SELECT * FROM wgh_execution_job
+            WHERE deleted = 0
+              AND job_type = #{jobType}
+              AND update_time >= #{since}
+              AND status IN ('PENDING', 'LEASED', 'RUNNING', 'SUCCEEDED', 'FAILED', 'DEAD', 'CANCELLED')
+            ORDER BY id DESC
+            LIMIT #{limit}
+            """)
+    java.util.List<ExecutionJob> selectReconcileCandidates(@Param("jobType") String jobType,
+                                                           @Param("since") java.time.LocalDateTime since,
+                                                           @Param("limit") int limit);
+
+    /**
+     * 可重试失败 → PENDING。
+     *
+     * <p>重排时刷新 {@code scheduled_at}：排队超时从本次重排起算，否则
+     * {@code expireQueued} 会按旧的入队时刻把刚放回队列的作业立即判成排队超时。
+     */
     @Update("""
             UPDATE wgh_execution_job
             SET status = 'PENDING',
+                scheduled_at = now(),
                 not_before = NULL,
                 lease_owner = NULL,
                 lease_expire_time = NULL,

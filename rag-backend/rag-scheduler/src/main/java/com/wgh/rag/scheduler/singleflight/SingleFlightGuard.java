@@ -2,7 +2,9 @@ package com.wgh.rag.scheduler.singleflight;
 
 import com.wgh.rag.config.redis.RedisDistributedLock;
 import com.wgh.rag.config.redis.RedisUnavailableException;
+import com.wgh.rag.scheduler.metrics.SchedulerMetrics;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
@@ -28,8 +30,18 @@ public class SingleFlightGuard {
 
     private final RedisDistributedLock redisLock;
 
+    /** 指标可为空（单元测试直接构造时不需要 Micrometer）。 */
+    private final SchedulerMetrics metrics;
+
+    /** 兼容仅需锁语义的调用方/测试。 */
     public SingleFlightGuard(RedisDistributedLock redisLock) {
+        this(redisLock, null);
+    }
+
+    @Autowired
+    public SingleFlightGuard(RedisDistributedLock redisLock, SchedulerMetrics metrics) {
         this.redisLock = redisLock;
+        this.metrics = metrics;
     }
 
     /**
@@ -42,12 +54,19 @@ public class SingleFlightGuard {
      */
     public Handle tryAcquire(String name, Duration ttl) {
         if (!redisLock.enabled()) {
+            record("unavailable");
             throw new SingleFlightUnavailableException("Redis 未启用，拒绝降级为进程内单飞: " + name);
         }
         try {
             RedisDistributedLock.LockHandle handle = redisLock.tryAcquire(KEY_PREFIX + name, ttl);
-            return handle == null ? null : new Handle(handle, ttl);
+            if (handle == null) {
+                record("busy");
+                return null;
+            }
+            record("acquired");
+            return new Handle(handle, ttl);
         } catch (RedisUnavailableException e) {
+            record("unavailable");
             throw new SingleFlightUnavailableException("Redis 不可用，无法获取单飞锁: " + name, e);
         }
     }
@@ -67,8 +86,14 @@ public class SingleFlightGuard {
         /** 续约；返回 {@code false} 表示锁已丢失（过期或被接管）。 */
         public boolean renew() {
             try {
-                return redisLock.renew(handle, ttl);
+                boolean renewed = redisLock.renew(handle, ttl);
+                if (!renewed) {
+                    record("renew_failed");
+                    log.error("单飞锁续约失败（已过期或被接管）: {}", handle.name());
+                }
+                return renewed;
             } catch (RedisUnavailableException e) {
+                record("renew_failed");
                 log.error("单飞锁续约失败，按锁丢失处理: {}", handle.name(), e);
                 return false;
             }
@@ -79,8 +104,15 @@ public class SingleFlightGuard {
             try {
                 redisLock.unlock(handle);
             } catch (RedisUnavailableException e) {
+                record("release_failed");
                 log.warn("释放单飞锁失败（TTL 到期后自动释放）: {}", handle.name(), e);
             }
+        }
+    }
+
+    private void record(String result) {
+        if (metrics != null) {
+            metrics.recordSingleFlight(result);
         }
     }
 }

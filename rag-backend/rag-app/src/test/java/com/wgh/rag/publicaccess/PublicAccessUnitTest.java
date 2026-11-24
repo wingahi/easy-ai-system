@@ -21,6 +21,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -50,7 +52,7 @@ class PublicAccessUnitTest {
             new com.wgh.rag.common.metrics.RagMetrics(
                     new io.micrometer.core.instrument.simple.SimpleMeterRegistry()));
 
-    private ShareLink link(String token, boolean revoked, LocalDateTime expiresAt, boolean withPassword) {
+    private ShareLink link(String token, boolean revoked, OffsetDateTime expiresAt, boolean withPassword) {
         ShareLink link = new ShareLink();
         link.setId(1L);
         link.setToken(token);
@@ -88,10 +90,18 @@ class PublicAccessUnitTest {
     @DisplayName("SHARE-UNIT-03 过期链接返回明确错误")
     void expiredLink() {
         when(shareLinkMapper.selectOne(any(Wrapper.class)))
-                .thenReturn(link("t2", false, LocalDateTime.now().minusMinutes(1), false));
+                .thenReturn(link("t2", false, OffsetDateTime.now(ZoneOffset.UTC).minusMinutes(1), false));
         BusinessException e = assertThrows(BusinessException.class,
                 () -> shareLinkService.resolveActive("t2"));
         assertEquals("分享链接已过期", e.getMessage());
+    }
+
+    @Test
+    @DisplayName("SHARE-UNIT-03b now()+2h（UTC）不被误判为已过期")
+    void notExpiredWithinTwoHours() {
+        ShareLink valid = link("t2b", false, OffsetDateTime.now(ZoneOffset.UTC).plusHours(2), false);
+        when(shareLinkMapper.selectOne(any(Wrapper.class))).thenReturn(valid);
+        assertSame(valid, shareLinkService.resolveActive("t2b"));
     }
 
     @Test
@@ -151,7 +161,7 @@ class PublicAccessUnitTest {
         ShareLink req = new ShareLink();
         req.setScope("WINDOW");
         req.setTargetId(10L);
-        req.setExpiresAt(LocalDateTime.now().plusDays(properties.getShareMaxExpireDays() + 1));
+        req.setExpiresAt(OffsetDateTime.now().plusDays(properties.getShareMaxExpireDays() + 1));
         when(chatTargets.windowExists(10L)).thenReturn(true);
         BusinessException e = assertThrows(BusinessException.class,
                 () -> shareLinkService.create(req, "tester"));
@@ -172,7 +182,7 @@ class PublicAccessUnitTest {
         assertEquals(0, created.getUseCount());
         assertFalse(created.getRevoked());
         assertTrue(created.getExpiresAt().isAfter(
-                LocalDateTime.now().plusDays(properties.getShareDefaultExpireDays() - 1)));
+                OffsetDateTime.now(ZoneOffset.UTC).plusDays(properties.getShareDefaultExpireDays() - 1)));
     }
 
     @Test

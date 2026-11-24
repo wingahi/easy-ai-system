@@ -4,10 +4,11 @@ import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableName;
 import com.wgh.rag.data.entity.BaseEntity;
 import com.wgh.rag.data.handler.BooleanToSmallintTypeHandler;
+import com.wgh.rag.publicaccess.handler.UtcOffsetDateTimeTypeHandler;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 
 /**
  * 免登录分享链接
@@ -19,7 +20,7 @@ import java.time.LocalDateTime;
  */
 @Data
 @EqualsAndHashCode(callSuper = true)
-@TableName("wgh_share_link")
+@TableName(value = "wgh_share_link", autoResultMap = true)
 public class ShareLink extends BaseEntity {
 
     /** 链接 token（对外暴露，随机生成） */
@@ -34,8 +35,9 @@ public class ShareLink extends BaseEntity {
     /** 范围目标 ID：WINDOW/SESSION 对应 chat_window_id 或 session_id，KB 对应 knowledge_base_id */
     private Long targetId;
 
-    /** 有效期截止时间（为空表示永久有效，但仍受最大有效天数约束） */
-    private LocalDateTime expiresAt;
+    /** 有效期截止时间（UTC；为空表示永久有效，但仍受最大有效天数约束） */
+    @TableField(value = "expires_at", typeHandler = UtcOffsetDateTimeTypeHandler.class)
+    private OffsetDateTime expiresAt;
 
     /** 访问密码 BCrypt 哈希（为空表示免密） */
     private String passwordHash;

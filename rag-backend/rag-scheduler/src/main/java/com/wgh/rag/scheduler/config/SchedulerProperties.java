@@ -35,6 +35,18 @@ public class SchedulerProperties {
     /** 租约过期回收扫描间隔。 */
     private Duration reclaimInterval = Duration.ofSeconds(30);
 
+    /** 实例心跳写入间隔；多副本存活判定依赖该心跳。 */
+    private Duration instanceHeartbeatInterval = Duration.ofSeconds(10);
+
+    /** 实例存活阈值：心跳超过该时长判定失联，其持有作业被提前回收（不等租约自然到期）。 */
+    private Duration instanceLivenessTtl = Duration.ofSeconds(45);
+
+    /** 失联实例扫描间隔；建议不大于存活阈值的一半。 */
+    private Duration instanceSweepInterval = Duration.ofSeconds(10);
+
+    /** 实例注册行保留时长（超过后清理历史行，只影响管理端历史展示）。 */
+    private Duration instanceRetention = Duration.ofDays(7);
+
     /** 排队超时扫描间隔。 */
     private Duration queueSweepInterval = Duration.ofSeconds(15);
 
@@ -67,6 +79,29 @@ public class SchedulerProperties {
 
     /** 单飞（Redis 分布式锁）参数。 */
     private SingleFlight singleFlight = new SingleFlight();
+
+    /** 作业状态与业务状态对账参数。 */
+    private Reconcile reconcile = new Reconcile();
+
+    /** 对账参数。 */
+    @Data
+    public static class Reconcile {
+
+        /** 是否启用周期对账。 */
+        private boolean enabled = true;
+
+        /** 对账间隔。 */
+        private Duration interval = Duration.ofMinutes(10);
+
+        /** 只对账最近该时长内创建/更新的作业，避免全表扫描。 */
+        private Duration lookback = Duration.ofHours(24);
+
+        /** PENDING 作业超过该时长仍与业务终态不一致时才自动取消，避免与刚提交的作业竞争。 */
+        private Duration pendingGrace = Duration.ofMinutes(5);
+
+        /** 单类型单轮最多检查条数。 */
+        private int batchSize = 200;
+    }
 
     /** 车道参数。 */
     @Data
