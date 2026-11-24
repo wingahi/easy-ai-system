@@ -12,6 +12,7 @@
 | 新增文档格式（PPTX / HTML / JSON / EML） | 已完成 | `rag-document` 的 `PptxParser` / `HtmlParser` / `JsonParser` / `EmlParser` + 统一元数据与大小上限 |
 | 文本切分（9 种策略） | 已完成 | `rag-document` 的 AUTO / RECURSIVE / CHAPTER / PARAGRAPH / FAQ / LENGTH / CUSTOM / STRUCTURED（标题感知）/ SEMANTIC（语义断句） |
 | 查询变换 / 混合检索 / RRF / Rerank | 已完成 | REWRITE / MULTI_QUERY / HYDE；向量余弦 + pg_trgm 关键词召回；RRF(k=60) 融合；可选 Rerank；聊天窗口可单独配置 `hybridEnabled` / `queryTransformMode` / `rewriteModelId`，混合检索按“窗口开启或全局开启”生效，窗口关闭不能覆盖全局开启（2026-11-18，commit `8b52b5f`） |
+| 检索后端端口化与 chunk 事实层（2026-11-24） | 已完成（灰度能力默认关闭） | `VectorStorePort` / `KeywordSearchPort` + 路由（默认 `pgvector` / `pgtrgm`，另有 `memory`）；`wgh_kb_chunk` 事实层（双写、回填、对账，`fact-layer-enabled=false` 默认关闭）；双读对比（只记指标）、按 KB 白名单灰度、RRF 权重可配、文件删除双路清理；`wgh.retrieval.*` 分后端指标。平台级 `vector.table_count` 由 `17_vector_table_count_fn.sql` 提供（dev 已执行并核对，prod/test 未执行） |
 | 检索指标与离线评测 | 已完成 | `rag-eval`：覆盖率 / 命中率；ground truth 标注后计算 Recall@K / Precision@K / MRR / NDCG；生成侧多 judge 评估 Faithfulness / Answer Relevancy / Context Precision / Context Recall（缺参考答案时显式标记不可计算）；`eval/eval_recall.py` 复用同一标注 |
 | 评测数据集版本化与 CI 检索门禁 | 已完成 | `rag-eval`：数据集 / 用例 / 结果三表；用例每次变更按“写时复制”生成新版本，旧版本只读；按版本评测并归档指标与逐查询明细，支持跨版本指标差值与逐查询 Recall 差值；CI 用固定 fixture 在无 Key、无网络、无真实模型条件下校验五项阈值（commit `adbdafe`） |
 | 检索来源结构化与 [Sn] 引用溯源 | 已完成 | `sources` 扩展 `kbId` / `kbName` / `fileId` / `fileName` / `chunkIndex` / `pageNo` / `charStart` / `charEnd` / `score` / `snippet`（压缩空白后前 120 字），按文件名去重保留最高分；上下文按文档分配 `[Sn]` 编号（同文档多段共用），system prompt 要求按编号引用；前端 `SourcePanel.vue` 展开原文并高亮对应卡片（commit `96dfc42`） |
@@ -62,7 +63,11 @@
 |------|------|------|
 | OIDC 资源服务器形态验签 | 已完成 | `OidcTokenVerifier` / `JwksProvider`；仅接受非对称签名，拒绝 HS256 与 `none`，校验 iss / aud / exp / nbf |
 | 本地 admin / 体验账号登录 + `password_version` | 已完成 | `LocalLoginService` / `LocalTokenService`；仅 `source=local` 的 admin / 体验账号可登录；`password_version` 校验会话失效 |
-| 多用户与权限体系 | 已完成 | OIDC + 本地账号双认证，RBAC（`@RequiresPermission` / `PermissionAspect`）；租户隔离与知识库/文档级全量权限不在范围内 |
+| 多用户与权限体系 | 已完成 | OIDC + 本地账号双认证，RBAC（`@RequiresPermission` / `PermissionAspect`）；知识库/文档级全量权限仍未覆盖 |
+| 多租户隔离（2026-11-24） | 部分完成（dev 已生效；prod/test 未切换） | `wgh_tenant` + `TenantContext` 上下文传播；MyBatis 租户插件覆盖 38 张表白名单（34 张本批补 `tenant_id`）；RLS 41 表 / 52 策略，dev 以 `wgh_app` + 事务级 GUC 生效，`prod` / `wgh_rag_test` 仍为 `postgres` 连接、未切换；存储与向量 metadata 带租户前缀/字段 |
+| 租户管理端（2026-11-24） | 已完成（dev） | 9 个端点：列表/创建/更新/启停/逻辑下线/配额/调度策略；权限码 `tenant:manage/update/disable/quota/schedule`，写操作落审计；`TenantManagement.vue`（`/admin/tenants`），用户管理支持分配租户；租户配额表 `wgh_tenant_quota_config` 与 4 个租户权限码已并入 `01-schema.sql`；dev 已执行并可用 |
+| 租户调度策略与运行槽（2026-11-24） | 已完成（dev 运行时已验证） | `wgh_tenant_schedule_policy` + `PolicyCache`、准入并发/排队/拒绝、`wgh_tenant_runtime_slot` + `slot.drift`、管理端策略读写/试算、失败重试与强制回收；`daily_job_limit` / `rate_per_minute` / `time_window_json` 未强制执行 |
+| 平台级跨租户扫描（2026-11-24） | 已完成 | `TenantDirectory` + `PlatformScanTemplate` + `wgh.platform-scan.*`；对账三段式（调度角色扫候选 → 按归属租户只读事务 → 条件修复），连接器、续跑、配额退款、上传/记忆/语义缓存/存储孤儿共 7 个入口按租户遍历；默认串行、单轮 200 租户，单租户失败只告警 |
 | 资源归属与可见性 | 已完成 | 知识库 / 聊天窗口 / 工作流 / Prompt 模板 / 工具五类资源新增 `visibility`（`PRIVATE` 默认 / `TEAM` / `PUBLIC`），owner 复用 `create_by`；读他人 `PRIVATE` 按不存在处理（业务码 `3001`），写他人 `TEAM`/`PUBLIC` 返回权限不足（业务码 `1004`），均为 HTTP 200 + 业务码；列表/分页由 `DataScopeInterceptor` 显式过滤，内置 Prompt 模板固定 `PUBLIC`（commit `59c5eee`） |
 | 角色与权限管理页面 | 已完成 | `AdminRoleController`（`/api/admin/roles`、`/api/admin/permissions`）+ `RoleManagement.vue`、`UserManagement.vue` |
 | 配额模块与前后端页面 | 已完成 | 独立 `rag-quota` 模块；全局默认 + 按用户日/月配置，超限 429；对话计数为带 limit 条件的原子 UPDATE，多实例并发不超发（提交 `e02981f`）；扣费流水 `wgh_quota_charge` 与退款补偿作业 `QUOTA_REFUND`（2026-11-20）；`QuotaManagement.vue` / `MyQuota.vue` |
@@ -76,11 +81,11 @@
 | 安全整改 | 已完成 | 首登强制改密（`password_must_change`）、审计日志敏感信息脱敏、409 映射、`WGH_INIT_ADMIN_PASSWORD` 注入 |
 | 可观测性（Prometheus + 独立 9090） | 已完成 | `RagMetrics` 业务指标 + `/actuator/prometheus`；管理端口默认 `9090`，业务端口不暴露 `/actuator`；指标新增实例维度标签 `wgh.instance`，Prometheus 改为按副本发现（提交 `e02981f`）；2026-11-24 新增 `deploy/prometheus/rules/wgh-rag-alerts.yml`（5 组 12 条告警）与 `deploy/grafana/dashboards/wgh-rag-runtime.json`，抓取与规则验证见 `deploy/observability/README.md` |
 | 优雅停机与探针分组（2026-11-24） | 已完成（未验证：滚动更新） | `server.shutdown=graceful` + `spring.lifecycle.timeout-per-shutdown-phase=45s`；`management.endpoint.health.probes.enabled=true`，`liveness` 仅含 `livenessState`，`readiness` 含 `readinessState,db`；`wgh.resume.stale-minutes` 由 5 调整为 30。真实集群滚动更新与 `maxUnavailable: 0` 零 5xx 未验证 |
-| 多副本调度：实例心跳与失联回收（2026-11-24） | 已完成（未验证：真实双副本） | 新表 `wgh_scheduler_instance` 记录实例启动、心跳、下线标记与车道快照（心跳 10s、存活阈值 45s、扫描 10s）；心跳超时即判定失联，其 `LEASED / RUNNING` 作业提前回收（未超上限回 `PENDING`，超限落 `DEAD`）；启动先接管同 `instance-id` 残留。管理端 `GET /api/admin/scheduler/instances` 查看存活、心跳与车道快照；新增调度指标。真实 PostgreSQL 双副本下的回收与并发领取未验证 |
+| 多副本调度：实例心跳与失联回收（2026-11-24） | 已完成（dev 运行时端到端已验证；真实双副本未验证） | 新表 `wgh_scheduler_instance` 记录实例启动、心跳、下线标记与车道快照（心跳 10s、存活阈值 45s、扫描 10s）；心跳超时即判定失联，其 `LEASED / RUNNING` 作业提前回收（未超上限回 `PENDING`，超限落 `DEAD`）；启动先接管同 `instance-id` 残留。管理端 `GET /api/admin/scheduler/instances` 查看存活、心跳与车道快照；新增调度指标。调度页签、SSE attach / 重放、后台作业与计费结算已在 dev 端到端通过（含 attach 兜底轮询、`fromSeq=0` 全量重放等 5 条修复）；真实 PostgreSQL 双副本下的回收与并发领取未验证 |
 | 作业对账（2026-11-24） | 已完成（未验证：真实双副本） | 周期作业 `SCHEDULER_RECONCILE`（维护车道）只对账 `WF_RUN` / `RUN_RESUME`，回看 24h、间隔 10m、单类型单轮 200 条；仅自动取消「`PENDING` 超 5m 且业务已终态或不存在」的排队作业，其余只告警 + 指标；`GET /api/admin/scheduler/reconcile` 返回本实例最近一轮报告（内存态，重启清空） |
 | Kubernetes 清单与观测栈（2026-11-24） | 已交付未验证 | `deploy/k8s/` 提供 `base` + `overlays/k1-single`、`k2-multi`（2 副本、HPA 2–4、PDB、RWX PVC / OSS）、`k3-prod`（NetworkPolicy、ResourceQuota/LimitRange、TLS 等）与迁移 Job；`deploy/observability/` 提供 Prometheus + Grafana + postgres-exporter。清单渲染与 kubeconform 校验通过，未在真实集群部署；HPA 扩缩、PDB 驱逐、双副本探针未验证 |
 | 分布式链路追踪（2026-11-22） | 已完成 | `rag-app` 引入 `micrometer-tracing-bridge-brave`；未配置采集端时只本地生成 `traceId` / `spanId`、不发起网络请求；日志追加 `[trace=%X{traceId:--}]`；`MdcAsyncConfig` 组合 `ContextPropagatingTaskDecorator`，线程池同时透传 MDC 与 Observation；调度作业提交写入 `wgh_execution_job.trace_id`，执行前恢复 |
-| Compose 内置 PostgreSQL(pgvector) | 已完成 | `docker-compose.yml` 内置 `pgvector/pgvector:pg15`，空卷首启执行 `schema/01-schema.sql` / `seed/02-data.sql` |
+| Compose 内置 PostgreSQL(pgvector) | 已完成 | `docker-compose.yml` 内置 `pgvector/pgvector:pg15`，空卷首启执行 `schema/01-schema.sql` / `seed/02-data.sql`；dev override 改用 trusted 派生镜像 `wgh/pgvector:pg15-0.8.7-trusted`（仅本地开发，生产未采用） |
 
 ## 模型与工程
 

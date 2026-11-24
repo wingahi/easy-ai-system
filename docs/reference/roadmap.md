@@ -69,7 +69,7 @@
 | P1 | 存储迁移与孤儿对象清理 | 已完成（2026-11-19） | `local` ↔ `oss` 迁移服务 + Redis 任务状态 + 管理端接口（提交 `e4155c6`）；孤儿扫描默认只报告，需显式开启删除 |
 | P2 | 多实例 JWKS 缓存共享 | 已完成（2026-11-22） | 保留进程内 L1，新增 Redis L2 `RedisJwksSharedCache`（原始 JWKS JSON、未知 `kid` 先重读 L2 再回源并回写）；开关 `wgh.auth.oidc.jwks-shared-cache-enabled` 默认开启，关闭时与改造前一致，Redis 异常降级本地；无表结构变更 |
 | P2 | 分布式链路追踪 | 已完成（2026-11-22） | `micrometer-tracing-bridge-brave` 本地生成 `traceId` / `spanId`，日志输出 `[trace=...]`；`MdcAsyncConfig` 透传 MDC 与 Observation；调度作业写入 / 恢复 `wgh_execution_job.trace_id`，采集端待接入时才导出 |
-| P1 | 多副本调度与 SSE 事件重放 | 已完成，未验证（2026-11-24） | 实例注册 / 心跳 / 失联回收、作业对账、管理端实例与对账接口；SSE Redis 缓冲 + `Last-Event-ID` 重放与前端自动重连。跨副本重连、真实双副本回收与对账行为未验证 |
+| P1 | 多副本调度与 SSE 事件重放 | 已完成（dev 运行时已验证；真实双副本与跨副本重连未验证）（2026-11-24） | 实例注册 / 心跳 / 失联回收、作业对账、管理端实例与对账接口、租户调度策略与运行槽；SSE Redis 缓冲 + `Last-Event-ID` 重放与前端自动重连。运行时端到端已在 dev 通过（含 attach 兜底轮询、`fromSeq=0` 全量重放、作业线程恢复属主角色、payload 过滤 `null`、续跑事务边界 5 条修复）；真实双副本回收 / 对账与跨副本实时 tail 未验证 |
 | P2 | Kubernetes 清单与观测栈 | 已交付未验证（2026-11-24） | `deploy/k8s/` 的 K1/K2/K3 清单与迁移 Job、Prometheus 告警规则与 Grafana 面板；仅离线渲染与 schema 校验，未在真实集群部署 |
 | P2 | 整站爬取与多源接入 | 未实现 | robots.txt 校验、站点爬取 / Sitemap、PDF / RSS / 第三方文档源同步；单页 URL 连接器已交付（T08 未做部分） |
 | P3 | 反馈 A/B 对比 | 未实现 | 版本化评测集已交付；仍缺实验分流、对照组与显著性分析 |
@@ -83,20 +83,20 @@
 
 | 方向 | 状态 | 阶段划分 | 说明 |
 |------|------|----------|------|
-| 任务调度中心 | **部分完成（S1 已落地，多副本基础能力已交付）** | S0 止血 → S1 后台作业化 → S2 租户策略生效 → S3 集群语义 | `rag-execution` 契约、`rag-scheduler` 三车道、`wgh_execution_job` 作业表、租约与 Redis 单飞、`RecurringJob` 周期提交已落地；`WORKFLOW_RUN`、`QUOTA_REFUND` 已作业化，聊天仍走统一异步执行器。2026-11-24 补齐 S3 基础能力：实例注册与心跳、失联回收、作业对账、管理端实例 / 对账接口（真实双副本未验证）。S2 租户策略未完成。详见 [design-execution-scheduler-center.md](../design/features/platform/design-execution-scheduler-center.md) |
-| 多租户隔离 | **规划中** | 阶段 0 修越权 → 1 租户模型与上下文 → 2 数据面全量隔离 → 3 企业级加固 → 4 混合分层（按需） | 共享表 + `tenant_id` 主线、RLS 兜底、大客户按需独立 schema/DB；复用 G-01～G-15 薄弱点清单。详见 [design-multi-tenancy-isolation-roadmap.md](../design/features/platform/design-multi-tenancy-isolation-roadmap.md) |
-| 独立向量数据库 / 搜索引擎 | **规划中** | V0 可替换性基线 → V1 搜索引擎 → V2 独立向量库（按阈值）→ V3 多后端治理 | 现状为每知识库一张 pgvector 物理表且 chunk 原文只存向量表；V0 先补端口与事实层，V1 先接关键词/过滤，V2 再按阈值替换向量后端。详见 [design-vector-store-and-search-engine.md](../design/features/platform/design-vector-store-and-search-engine.md) |
+| 任务调度中心 | **部分完成（S0–S3 已落地，dev 运行时端到端已通过）** | S0 止血 → S1 后台作业化 → S2 租户策略生效 → S3 集群语义 | `rag-execution` 契约、`rag-scheduler` 三车道、`wgh_execution_job` 作业表、租约与 Redis 单飞、`RecurringJob` 周期提交已落地；`WORKFLOW_RUN`、`QUOTA_REFUND`、`EVAL_RUN`、`AGENT_PLAN`、多 Agent 与聊天工作流已作业化。2026-11-24 补齐：实例注册与心跳、失联回收、作业对账、管理端实例 / 对账接口、租户调度策略与运行槽、`wgh_execution_event` 与 `Last-Event-ID` 重放；运行时端到端已在 dev 通过（含 5 条修复）。真实 PostgreSQL 双副本下的回收 / 对账未验证。详见 [design-execution-scheduler-center.md](../design/features/platform/design-execution-scheduler-center.md) |
+| 多租户隔离 | **部分完成（阶段 0–3 在 dev 生效；prod/test 未切换）** | 阶段 0 修越权 → 1 租户模型与上下文 → 2 数据面全量隔离 → 3 企业级加固 → 4 混合分层（按需） | 阶段 0–2 已落地（越权收口、`wgh_tenant` 与上下文传播、MyBatis 插件 + 34 表 `tenant_id`、存储/向量租户前缀）；阶段 3 在 `wgh_rag_dev` 启用：41 表 / 52 策略，应用已以 `wgh_app` + 事务级 GUC 连接并通过阶段 B/C，`prod` / `wgh_rag_test` 未切换。租户管理端 9 端点、配额与 `/admin/tenants` 页面已上线；平台级跨租户扫描已落地。详见 [design-multi-tenancy-isolation-roadmap.md](../design/features/platform/design-multi-tenancy-isolation-roadmap.md) |
+| 独立向量数据库 / 搜索引擎 | **部分完成（V0 已落地，V1 起步）** | V0 可替换性基线 → V1 搜索引擎 → V2 独立向量库（按阈值）→ V3 多后端治理 | V0 已完成：`VectorStorePort` / `KeywordSearchPort` 与路由、`wgh_kb_chunk` 事实层（默认关闭，双写 / 回填 / 对账）；V1 起步：双读对比（只记指标）、按 KB 白名单灰度、RRF 权重可配、双路删除与分后端指标，默认行为不变；独立向量库仍未接入。详见 [design-vector-store-and-search-engine.md](../design/features/platform/design-vector-store-and-search-engine.md) |
 | Kubernetes 级编排 | **部分完成（K0–K3 清单已交付，未集群验证）** | K0 容器基线 → K1 单副本可编排 → K2 多副本 → K3 生产级 | 只做应用与依赖的部署编排，不把业务调度迁到 K8s；K1/K2/K3 清单与观测栈已落地：优雅停机与探针分组（K0）、单副本基线（K1）、2 副本 + HPA/PDB + OSS 共享存储（K2）、3 副本 + NetworkPolicy/ResourceQuota/TLS（K3）。清单仅做离线渲染与 schema 校验，未在真实集群部署。详见 [design-kubernetes-orchestration.md](../design/features/platform/design-kubernetes-orchestration.md) 与 [deploy/k8s/README.md](../../deploy/k8s/README.md) |
 
 ### 4.2 阶段与前置关系
 
-以下四块已完成规划文档；**任务调度中心已进入实施（S1 后台作业化落地，2026-11-24 补齐多副本基础能力），Kubernetes 编排已交付 K1/K2/K3 清单（未集群验证），多租户与独立向量库尚未开始**。阶段编号与验收以各自文档为准。此前「暂不规划」的表述已废止。
+以下四块均已有规划文档：**任务调度中心 S0–S3 已落地，dev 运行时端到端已通过（真实双副本未验证）；多租户阶段 0–3 在 dev 生效（prod/test 未切换）；向量/搜索 V0 已落地、V1 起步；Kubernetes 编排已交付 K1/K2/K3 清单（未集群验证）**。阶段编号与验收以各自文档为准。此前「暂不规划」的表述已废止。
 
 | 块 | 规划文档 | 阶段 | 前置关系 |
 |----|----------|------|----------|
-| 任务调度中心 | [design-execution-scheduler-center.md](../design/features/platform/design-execution-scheduler-center.md) | S0 → S1（已落地）→ S2（未开始）→ S3（基础能力已交付，未验证） | 与多租户阶段 0/1 同批；S0 是 K8s 多副本前置 |
-| 多租户隔离 | [design-multi-tenancy-isolation-roadmap.md](../design/features/platform/design-multi-tenancy-isolation-roadmap.md) | 阶段 0 → 1 → 2 → 3（阶段 4 按需） | 阶段 0 必须先于任何多副本扩容 |
-| 独立向量数据库 / 搜索引擎 | [design-vector-store-and-search-engine.md](../design/features/platform/design-vector-store-and-search-engine.md) | V0 → V1 → V2（按阈值）→ V3 | V0 的事实层（chunk 原文独立化）是替换前置 |
+| 任务调度中心 | [design-execution-scheduler-center.md](../design/features/platform/design-execution-scheduler-center.md) | S0 → S1 → S2（已落地，dev 已验证）→ S3（已交付，真实双副本未验证） | 与多租户阶段 0/1 同批；S0 是 K8s 多副本前置 |
+| 多租户隔离 | [design-multi-tenancy-isolation-roadmap.md](../design/features/platform/design-multi-tenancy-isolation-roadmap.md) | 阶段 0 → 1 → 2（已落地）→ 3（dev 生效，prod/test 未切换）→ 4（按需） | 阶段 0 必须先于任何多副本扩容；阶段 3 切换需先完成连接用户与 RLS 核对 |
+| 独立向量数据库 / 搜索引擎 | [design-vector-store-and-search-engine.md](../design/features/platform/design-vector-store-and-search-engine.md) | V0（已落地）→ V1（起步）→ V2（按阈值）→ V3 | V0 的事实层（chunk 原文独立化）是替换前置；V1 灰度能力默认关闭 |
 | Kubernetes 级编排 | [design-kubernetes-orchestration.md](../design/features/platform/design-kubernetes-orchestration.md) | K0 → K1 → K2 → K3（清单均已交付，未集群验证） | K2 依赖 S0/A 阶段完成 |
 
 对应的现状口径见本文 §4.1 与 [已知限制](known-limitations.md)；四块互不替代：调度中心解决「谁来执行」，多租户解决「数据归属」，向量/搜索解决「检索容量与质量」，K8s 解决「部署与弹性」。

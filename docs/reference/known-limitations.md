@@ -2,14 +2,14 @@
 
 > 本文是 [README](../../README.md) 已知限制章节的完整版。2026-11-24 交付的计费口径、多副本与 Kubernetes 编排能力，凡未在真实多副本 / 真实集群验证的项，均在「限制」列显式标注「未验证」；未执行的迁移脚本单列。
 >
-> 下文先给 6 类摘要，再按 45 条逐项展开。
+> 下文先给 6 类摘要，再按 48 条逐项展开。
 
 ## 摘要
 
 | 类别 | 关键限制 | 影响 / 建议 |
 |------|----------|-------------|
-| 权限体系 | 无租户隔离，文档级权限未全量覆盖；五类核心资源已支持 owner + 可见性 | 多团队共用与真正的团队边界需后续引入租户 / 成员模型 |
-| 多副本与集群 | 调度实例失联回收、启动接管、作业对账、跨副本 SSE 重连、滚动更新与 HPA / PDB 均未在真实多副本或集群验证 | 生产启用前需在目标环境做双副本与集群演练 |
+| 权限体系 | 租户隔离已落地（dev 以 `wgh_app` + RLS 生效，prod/test 未切换）；文档级权限未全量覆盖；五类核心资源已支持 owner + 可见性 | 切 prod/test 前需完成连接用户与 RLS 核对；默认租户不做向量过滤，历史缓存/记忆向量无 `tenantId` |
+| 多副本与集群 | 调度中心运行时端到端已在 dev 通过；真实双副本下的失联回收、跨副本 SSE 重连，以及滚动更新与 HPA / PDB 均未在真实多副本或集群验证 | 生产启用前需在目标环境做双副本与集群演练 |
 | 配额与计费 | 「无产出不计费」与死信人工退款 / 核销已交付；计数异常默认拒绝（业务码 `5004`）；`20261124` 两个迁移脚本状态按库分层 | 上线前准备回滚与人工对账 SQL；迁移脚本按库核对后再启用对应能力 |
 | 存储与 OSS | `mode=shared` 启动自检与 local → oss 回落读已交付；真实 OSS 读写、容器内独立挂载卷判定未验证 | 生产切换到 OSS 前需做读写与回落读演练 |
 | 检索与评测 | 单库 PostgreSQL + pgvector，无独立向量库 / 搜索引擎；无反馈 A/B 实验；生成侧 CP / CR 依赖参考答案 | 超大规模语料需评估性能上限；A/B 与 CP / CR 需后续补能力与字段 |
@@ -19,10 +19,10 @@
 
 | 类别 | 限制 | 影响 / 建议 |
 |------|------|-------------|
-| 权限体系 | 已提供角色 / 权限管理页面与接口；五类核心资源（知识库 / 聊天窗口 / 工作流 / Prompt 模板 / 工具）已支持 owner + 可见性；无租户隔离，文档级权限仍不在范围内 | 多团队共用与真正的团队边界需后续引入租户 / 成员模型；规划见 [多租户隔离落地规划](../design/features/platform/design-multi-tenancy-isolation-roadmap.md) |
+| 权限体系 | 已提供角色 / 权限管理页面与接口；五类核心资源（知识库 / 聊天窗口 / 工作流 / Prompt 模板 / 工具）已支持 owner + 可见性；租户隔离已落地：应用层 + MyBatis 插件 + RLS，dev 以 `wgh_app` + 事务级 GUC 生效，**`prod` / `wgh_rag_test` 未切换**；文档级权限仍不在范围内 | 切换 prod/test 前先完成 `wgh_app` 连接与 RLS 核对；文档级权限规划见 [多租户隔离落地规划](../design/features/platform/design-multi-tenancy-isolation-roadmap.md) |
 | 可观测性 | 已提供 Prometheus 指标与管理端口（9090）、`X-Request-Id` 日志关联；已接入 Micrometer Tracing（Brave），本地生成 `traceId` / `spanId` 并写入日志与 `wgh_execution_job.trace_id`，未配置采集端时不导出 | 跨进程可视化仍需接入 Zipkin / OTLP 或日志平台；未配置采集端时只能按本地日志排查；周期作业（`RecurringJob`）没有提交请求，`trace_id` 为空，需用 `execution_id` 关联；默认全量采样，高吞吐环境应下调采样率 |
 | 部署编排 | 已提供前后端 Dockerfile、全栈 docker-compose 与 `deploy/k8s/` 的 K1/K2/K3 清单（含迁移 Job）；清单仅做离线渲染与 kubeconform 校验，未在真实集群部署；K3 的 GitOps / 准入策略 / 镜像扫描 / SBOM 不在清单范围 | 上线前需在目标集群验证 StorageClass（RWX）、Ingress 注解、镜像 digest、HPA / PDB 与滚动更新；见 [deploy/k8s/README.md](../../deploy/k8s/README.md) |
-| 调度中心（2026-11-20；2026-11-24 补多副本） | `wgh_execution_job`、三车道、租约、Redis 单飞与 `RecurringJob` 已落地；2026-11-24 新增实例注册 / 心跳 / 失联回收、作业对账与管理端实例 / 对账接口。**未验证**：失联实例提前回收、启动接管、对账自动修复在真实 PostgreSQL 双副本上的行为；H2 单测覆盖不到 `FOR UPDATE SKIP LOCKED` 与跨副本单飞；`CHAT` 仍走统一异步执行器（仅登记运行态），未作业化；评测、存储迁移类 handler 尚未接入调度 | 生产启用前需在真实双副本环境验证领取 / 回收 / 对账；未接入的链路继续沿用原有执行方式 |
+| 调度中心（2026-11-20；2026-11-24 补多副本） | `wgh_execution_job`、三车道、租约、Redis 单飞与 `RecurringJob` 已落地；2026-11-24 新增实例注册 / 心跳 / 失联回收、作业对账、管理端实例 / 对账接口、租户调度策略与运行槽，运行时端到端已在 dev 通过（含 attach 兜底轮询、`fromSeq=0` 全量重放、作业线程恢复属主角色、payload 过滤 `null`、续跑事务边界 5 条修复）。**未验证**：失联实例提前回收、启动接管、对账自动修复在真实 PostgreSQL 双副本上的行为；H2 单测覆盖不到 `FOR UPDATE SKIP LOCKED` 与跨副本单飞；`CHAT` 仍走统一异步执行器（仅登记运行态），未作业化；存储迁移类 handler 尚未接入调度；`daily_job_limit` / `rate_per_minute` / `time_window_json` 未强制执行 | 生产启用前需在真实双副本环境验证领取 / 回收 / 对账；未接入的链路继续沿用原有执行方式 |
 | 配额与计费口径（2026-11-20；2026-11-24 改口径） | 计费已改为「无产出不计费」，首个有效产出才结算；`wgh_quota_charge` 与 `usage_epoch` 已登记基线，存量库需按库核对：`wgh_rag_dev` 的 `usage_epoch` 两列实测已存在，`wgh_rag_test` 未核实，缺列时再执行 `20261124/02_quota_usage_epoch.sql`。补偿作业依赖 `wgh.scheduler.enabled=true`（关闭时由本地兜底线程运行）；`DEAD` 已提供管理端人工退款 / 核销，但无批量操作 | 上线前准备回滚与人工对账 SQL；`DEAD` 需管理员逐笔处理 |
 | 计费提交闸门（2026-11-24） | 异步生成等待外层事务提交（10s 超时），回滚或超时不生成、不结算；`usage_epoch` 让旧流水退款不误退重置后的新计数。**未验证**：高并发下提交闸门超时路径与分享次数回补的并发边界 | 极端并发下分享入口可能短暂少计一次使用次数（条件 `use_count > 0` 保证不为负） |
 | 计数异常策略（2026-11-24） | 默认 `fail-open-on-count-error=false`：数据库计数异常直接拒绝对话并返回业务码 `5004` | 数据库抖动会造成对话失败，这是有意取舍；临时开启 fail-open 会放出一批无扣费请求，需按 `wgh.quota.count.failure{result=allow}` 事后排查 |
@@ -63,8 +63,8 @@
 | map-reduce 分段摘要（2026-11-18） | 仅在普通聊天链路生效，Agent / 多 Agent / 工作流链路未接；暂无集成测试覆盖 | 长任务链路仍需单独接入与回归 |
 | 多 Agent 黑板（2026-11-18） | 已提供共享黑板读写接口，但 GroupChat 汇总未使用黑板，仍按对话消息汇总 | 需要跨 Agent 共享中间结论时需显式写入黑板 |
 | 模型能力画像（2026-11-18） | 后端有 `LlmModel` 能力画像与切链降级策略；管理端模型表单未暴露能力档位与 function calling 字段 | 需通过接口或数据库配置，页面暂不支持 |
-| 资源可见性（2026-11-12） | 无团队 / 租户模型，`TEAM` 与 `PUBLIC` 在判定上等价（均为"非 owner 可读"）；存量库执行 `sql/migrations/20261113/01_resource_visibility.sql` 补列与索引（幂等）；历史 `create_by='system'` 的资源升级后默认仅管理员可见 | 升级前需备份并执行该迁移脚本；如需真正的团队边界，需后续引入 `tenant_id` / 团队成员模型 |
-
----
-
-[返回 README](../../README.md)
+| 资源可见性（2026-11-12；2026-11-24 补租户） | 五类资源支持 owner + 可见性，`TEAM` 与 `PUBLIC` 判定等价（均为「非 owner 可读」）；`PUBLIC` 已收敛为租户内公开；租户隔离已落地（dev 生效，prod/test 未切换）；存量库执行 `sql/migrations/20261113/01_resource_visibility.sql` 补列与索引（幂等）；历史 `create_by='system'` 的资源升级后默认仅管理员可见 | 升级前需备份并执行该迁移脚本；跨租户共享需平台标记（未实现），文档级成员模型仍未引入 |
+| 权限体系：多租户与 RLS（2026-11-24） | 租户隔离已在应用层 + MyBatis 插件 + RLS 落地，dev 以 `wgh_app` + 事务级 GUC 生效；**`prod` / `wgh_rag_test` 未切换**（仍 `postgres`，RLS 不生效）；默认租户不做向量过滤，改造前写入的语义缓存 / Agent 记忆向量无 `tenantId`；`admin` 即平台管理员，`username` 仍全局唯一；平台角色 `wgh_platform` 只能读审计 / 调用日志，业务表不可见 | 切 prod/test 前配置 `WGH_DB_USERNAME=wgh_app` 与口令 Secret，按 `09`→`10`→`11`→`13`→`12` 执行并用 `15` 核对；跨租户运维需按租户切换上下文 |
+| 权限体系：租户管理端与配额（2026-11-24） | 9 个端点与 `/admin/tenants` 页面已交付（含逻辑下线、租户配额、调度策略）；`wgh_tenant_quota_config` 与 4 个租户权限码已并入 `01-schema.sql`，dev 已执行；**test / prod 存量库尚未执行**（新库建库即包含） | test / prod 存量库上线租户管理端前执行 `16_tenant_admin.sql` 并核对 4 个权限码 |
+| 检索与评测：pgvector trusted 与平台计数（2026-11-24） | dev override 使用 `wgh/pgvector:pg15-0.8.7-trusted`；trusted 只放开非超级用户的扩展安装权限，不把 `extowner` 改写为超级用户；**生产未采用该镜像**，扩展仍由 DBA 预建。`17_vector_table_count_fn.sql` **dev 已执行并核对**（`prosecdef=t`、属主 `postgres`、ACL 仅属主与 `wgh_app`、PUBLIC 已撤销；postgres 直查与 `wgh_app` 登录调用均为 8，与 `wgh_knowledge_base` 直查一致）；**prod/test 未执行** | 生产沿用超级用户预建扩展；prod/test 执行 `17` 后再依赖 `wgh.retrieval.vector.table_count`，否则会被 RLS 过滤为 0 |
+| 调度中心：平台级全租户扫描（2026-11-24） | `TenantDirectory` / `PlatformScanTemplate` / `wgh.platform-scan.*` 已落地，对账走三段式，连接器、续跑、配额退款、上传 / 记忆 / 语义缓存 / 存储孤儿共 7 个入口按租户遍历；默认串行、单轮最多 200 租户，超出截断到下一轮；单租户失败只告警并计入失败数，不中断整轮 | 租户增长后按指标调整并发与单轮上限；跨租户报表需结合 `tenantsTotal / tenantsFailed` 判断完整性 |

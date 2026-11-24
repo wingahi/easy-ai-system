@@ -350,11 +350,12 @@ PENDING ──claim──▶ LEASED ──start──▶ RUNNING ──▶ SUCCE
 | 管理端策略查询/更新/试算 | 已完成 | `GET/PUT /api/admin/scheduler/policies/{tenantId}`、`POST .../dry-run`（乐观锁 `version`） |
 | 作业重试 / 强制回收 | 已完成 | `POST /jobs/{id}/retry`、`POST /jobs/{id}/reclaim`（`@Audit`） |
 | 指标补齐 | 已完成 | `rejected`、`wait.seconds`、`job.duration`、`policy.load.failures`、`slot.drift` |
-| 管理端前端页面 | 代码已交付，编译/构建通过 | `SchedulerCenter.vue` 页签：作业执行 / 租户策略 / 失败与死信 / 实例与对账；失败列表 `GET /jobs/failures`；`vite build` 通过，运行时待端到端 |
+| 管理端前端页面 | 已完成，运行时端到端已验证 | `SchedulerCenter.vue` 页签：作业执行 / 租户策略 / 失败与死信 / 实例与对账；失败列表 `GET /jobs/failures`；`vite build` 通过，dev 运行时验证通过 |
 | `wgh_execution_event` + `Last-Event-ID` | 已完成 | 事件总线订阅落库、`ExecutionEventStore` 重放、`GET /api/executions/{id}/events` SSE、7 天保留清理 |
-| 多 Agent `BACKGROUND` + attach | 代码已交付，编译通过 | 抽出传输无关 `AgentEventStream`（`SseAgentEventStream` / `JobAgentEventStream`）；新增 `AGENT_MULTI_RUN`、`AGENT_MULTI_HITL` 作业与事件桥接 |
-| 聊天工作流 `BACKGROUND` + attach | 代码已交付，编译通过 | `WorkflowService#runForChatBlocking` / `#resumeForChatBlocking`（确认与扣费独立事务提交后再续跑）+ `WF_CHAT_RUN` / `WF_CHAT_HITL` 作业；`ChatWorkflowService` 提交作业并 attach 到聊天 SSE |
-| 行级安全（RLS） | **未实现** | 不在本轮范围；租户隔离仍由应用层 `tenant_id` 过滤承担 |
+| 多 Agent `BACKGROUND` + attach | 已完成，运行时端到端已验证 | 抽出传输无关 `AgentEventStream`（`SseAgentEventStream` / `JobAgentEventStream`）；新增 `AGENT_MULTI_RUN`、`AGENT_MULTI_HITL` 作业与事件桥接；attach 失败时按兜底轮询收敛状态 |
+| 聊天工作流 `BACKGROUND` + attach | 已完成，运行时端到端已验证 | `WorkflowService#runForChatBlocking` / `#resumeForChatBlocking`（确认与扣费独立事务提交后再续跑）+ `WF_CHAT_RUN` / `WF_CHAT_HITL` 作业；`ChatWorkflowService` 提交作业并 attach 到聊天 SSE |
+| 运行时端到端（2026-11-24） | **已通过（dev）** | 调度页签、SSE attach / 重放、后台作业与计费结算全链路通过，含 5 条修复：attach 兜底轮询、`fromSeq=0` 全量重放、作业线程恢复属主角色、payload 过滤 `null`、续跑事务边界。真实 PostgreSQL 双副本下的回收 / 对账与跨副本实时 tail 仍未验证 |
+| 行级安全（RLS） | **已完成（dev 生效；prod/test 未切换）** | 41 表 / 52 策略已在 `wgh_rag_dev` 启用，应用以 `wgh_app` + 事务级 GUC 连接；`prod` / `wgh_rag_test` 仍为 `postgres`。详见 [多租户隔离路线图 §3.5](design-multi-tenancy-isolation-roadmap.md) |
 
 ### 9.4 与初稿的偏差（需后续确认）
 
@@ -362,7 +363,7 @@ PENDING ──claim──▶ LEASED ──start──▶ RUNNING ──▶ SUCCE
 2. **策略字段生效范围**：`daily_job_limit`、`rate_per_minute`、`time_window_json` 已落表与透出，但准入暂未强制执行（只执行并发/排队/拒绝方式）。
 3. **跨副本实时订阅**：事件表支持断线/跨副本**重放**；跨副本**实时 tail** 仍依赖执行实例内存总线，未做集群广播。
 4. **多 Agent / 聊天工作流**：均已抽传输无关事件出口并提交后台作业 + attach；多 Agent 与聊天工作流的 HITL 续跑均已后台化（聊天 HITL 的确认/扣费先独立事务提交，再同步续跑）。
-5. **验证记录（2026-11-24）**：`rag-controller -am` 编译 EXIT=0；`rag-scheduler` 单元测试 EXIT=0（40 个用例，含 `AdmissionControllerTest` 调整后的后台排队语义）；`rag-frontend` `vite build` EXIT=0。运行时链路（SSE attach、跨副本重放、计费结算）待端到端验证。
+5. **验证记录（2026-11-24）**：`rag-controller -am` 编译 EXIT=0；`rag-scheduler` 单元测试 EXIT=0（40 个用例，含 `AdmissionControllerTest` 调整后的后台排队语义）；`rag-frontend` `vite build` EXIT=0；**运行时端到端已在 dev 通过**（调度页签、SSE attach / 重放、多 Agent 与聊天工作流后台化、HITL 扣费与结算），期间修复 attach 兜底轮询、`fromSeq=0` 全量重放、作业线程恢复属主角色、payload 过滤 `null`、续跑事务边界 5 项。仓库内暂无独立 E2E 报告，以上以本轮实施记录为准；真实双副本与跨副本实时 tail 仍未验证。
 
 ### 9.5 静态自检不一致点（2026-11-24）
 
@@ -380,12 +381,13 @@ PENDING ──claim──▶ LEASED ──start──▶ RUNNING ──▶ SUCCE
 ---
 
 ## 10. 未验证与推断声明
-1. **未做运行压测**：线程数、排队时长、连接池耗尽均为公式估算。
-2. **单 Agent 请求线程时长**：结论来自 `AgentController` 同步调用路径，未实测长计划耗时分布。
-3. **生产副本数未知**：仓库只有单实例 compose；「多副本重复触发」是代码层面成立。
-4. **E15 审计线程池参数**：仓库无自定义 `TaskExecutor`，按 Spring Boot 默认推断。
-5. **前端 429 处理成本**：未核对全部请求封装，仅确认现有页面无统一 429 组件。
-6. **计划任务执行记录**：当前无表可查，本文的「执行记录」依赖 S1 作业表，不是现状。
+1. **运行时功能验证已通过（2026-11-24，dev）**：调度页签、SSE attach / 重放、后台作业与计费结算已端到端跑通（含 §9.4 的 5 条修复）；以下为仍未验证或推断项。
+2. **未做运行压测**：线程数、排队时长、连接池耗尽均为公式估算。
+3. **单 Agent 请求线程时长**：结论来自 `AgentController` 同步调用路径，未实测长计划耗时分布。
+4. **生产副本数未知**：仓库只有单实例 compose；「多副本重复触发」是代码层面成立。
+5. **E15 审计线程池参数**：仓库无自定义 `TaskExecutor`，按 Spring Boot 默认推断。
+6. **前端 429 处理成本**：未核对全部请求封装，仅确认现有页面无统一 429 组件。
+7. **计划任务执行记录**：当前无表可查，本文的「执行记录」依赖 S1 作业表，不是现状。
 
 ---
 
