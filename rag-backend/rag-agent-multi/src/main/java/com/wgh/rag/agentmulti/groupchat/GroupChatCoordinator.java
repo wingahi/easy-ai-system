@@ -15,12 +15,12 @@ import com.wgh.rag.agentmulti.service.AgentStepCheckpointService.CheckpointSessi
 import com.wgh.rag.execution.run.RunLifecycle;
 import com.wgh.rag.agentmulti.service.AgentStepCheckpointService.StepDecision;
 import com.wgh.rag.agentmulti.service.MultiAgentService;
+import com.wgh.rag.agentmulti.support.AgentEventStream;
 import com.wgh.rag.agentmulti.support.AgentInstanceExecutor;
 import com.wgh.rag.agentmulti.support.SseEventSender;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
-import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.time.LocalDateTime;
 import java.util.*;
@@ -44,17 +44,17 @@ public class GroupChatCoordinator {
     private final ObjectMapper objectMapper;
 
     public void execute(MultiAgentRun run, List<AgentInstance> agents,
-                        MultiAgentContext ctx, SseEmitter emitter) {
+                        MultiAgentContext ctx, AgentEventStream emitter) {
         execute(run, agents, ctx, emitter, checkpointService.open(run.getRunId()));
     }
 
     public void execute(MultiAgentRun run, List<AgentInstance> agents,
-                        MultiAgentContext ctx, SseEmitter emitter, CheckpointSession session) {
+                        MultiAgentContext ctx, AgentEventStream emitter, CheckpointSession session) {
         execute(run, agents, ctx, emitter, session, RunLifecycle.NOOP);
     }
 
     public void execute(MultiAgentRun run, List<AgentInstance> agents,
-                        MultiAgentContext ctx, SseEmitter emitter, CheckpointSession session,
+                        MultiAgentContext ctx, AgentEventStream emitter, CheckpointSession session,
                         RunLifecycle lifecycle) {
         lifecycle.throwIfCancelled();
         lifecycle.heartbeat();
@@ -212,7 +212,7 @@ public class GroupChatCoordinator {
 
     /** GroupChat 的 HITL 恢复 —— 把 userInput 广播成一条用户消息再继续 */
     public void resume(MultiAgentRun run, List<AgentInstance> agents,
-                       MultiAgentContext ctx, String userInput, SseEmitter emitter) {
+                       MultiAgentContext ctx, String userInput, AgentEventStream emitter) {
         // 找到上一次暂停的 speaker 并放行一次，同时把待确认 step 置为 SUCCESS
         MultiAgentStep pausedStep = null;
         for (MultiAgentStep s : service.listSteps(run.getRunId())) {

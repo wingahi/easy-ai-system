@@ -1,6 +1,8 @@
 package com.wgh.rag.scheduler.event;
 
 import com.wgh.rag.scheduler.config.SchedulerProperties;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
@@ -25,14 +27,34 @@ public class ExecutionEventBusRegistry {
 
     private final SchedulerProperties properties;
 
+    private final ObjectProvider<ExecutionEventStore> eventStoreProvider;
+
+    /** 兼容仅需进程内总线的测试。 */
     public ExecutionEventBusRegistry(SchedulerProperties properties) {
+        this(properties, null);
+    }
+
+    @Autowired
+    public ExecutionEventBusRegistry(SchedulerProperties properties,
+                                     ObjectProvider<ExecutionEventStore> eventStoreProvider) {
         this.properties = properties;
+        this.eventStoreProvider = eventStoreProvider;
     }
 
     /** 创建（或复用）执行事件总线；同一执行被重试时替换已关闭的旧总线。 */
     public ExecutionEventBus create(String executionId) {
-        return buses.compute(executionId, (id, existing) ->
-                existing == null || existing.isClosed() ? new ExecutionEventBus(id) : existing);
+        return buses.compute(executionId, (id, existing) -> {
+            if (existing != null && !existing.isClosed()) {
+                return existing;
+            }
+            ExecutionEventBus created = new ExecutionEventBus(id);
+            ExecutionEventStore store = eventStoreProvider == null ? null : eventStoreProvider.getIfAvailable();
+            if (store != null) {
+                // 订阅者方式落库：所有生命周期与执行体事件都自动进入事件表
+                created.attach(0, store.sink());
+            }
+            return created;
+        });
     }
 
     public Optional<ExecutionEventBus> find(String executionId) {

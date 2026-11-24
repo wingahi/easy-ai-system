@@ -2,9 +2,9 @@ package com.wgh.rag.agentmulti.groupchat;
 
 import com.wgh.rag.agentmulti.constant.MultiAgentEvents;
 import com.wgh.rag.agentmulti.dto.AgentInstance;
+import com.wgh.rag.agentmulti.support.AgentEventStream;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
-import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.time.LocalDateTime;
 import java.util.*;
@@ -36,7 +36,7 @@ public class MessageBus {
     /** Agent 消息处理器（执行时触发） */
     private final Map<String, MessageHandler> subscribers = new ConcurrentHashMap<>();
 
-    private SseEmitter emitter;
+    private AgentEventStream emitter;
 
     public MessageBus() {}
 
@@ -50,7 +50,7 @@ public class MessageBus {
         }
     }
 
-    public MessageBus(List<AgentInstance> agentList, SseEmitter emitter) {
+    public MessageBus(List<AgentInstance> agentList, AgentEventStream emitter) {
         this(agentList);
         this.emitter = emitter;
     }
@@ -74,7 +74,7 @@ public class MessageBus {
         return new ArrayList<>(agents.keySet());
     }
 
-    public void setEmitter(SseEmitter emitter) {
+    public void setEmitter(AgentEventStream emitter) {
         this.emitter = emitter;
     }
 
@@ -122,16 +122,17 @@ public class MessageBus {
             }
         }
 
-        // SSE
+        // 事件出口
         if (emitter != null) {
             try {
-                emitter.send(SseEmitter.event().name(MultiAgentEvents.AGENT_MESSAGE)
-                        .data(new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(Map.of(
-                                "fromAgentId", fromAgentId,
-                                "role", msg.role,
-                                "content", msg.content,
-                                "timestamp", msg.timestamp))));
-            } catch (Exception ignore) {}
+                emitter.sendEvent(MultiAgentEvents.AGENT_MESSAGE, Map.of(
+                        "fromAgentId", fromAgentId,
+                        "role", msg.role,
+                        "content", msg.content,
+                        "timestamp", msg.timestamp));
+            } catch (Exception ignore) {
+                // 下游断开不影响执行
+            }
         }
     }
 

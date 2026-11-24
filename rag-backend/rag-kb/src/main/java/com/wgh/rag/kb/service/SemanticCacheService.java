@@ -1,21 +1,19 @@
 package com.wgh.rag.kb.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.wgh.rag.common.security.TenantContext;
 import com.wgh.rag.config.property.RagProperties;
 import com.wgh.rag.kb.entity.KnowledgeBase;
 import com.wgh.rag.kb.entity.SemanticCache;
 import com.wgh.rag.kb.mapper.KnowledgeBaseMapper;
 import com.wgh.rag.kb.mapper.SemanticCacheMapper;
 import com.wgh.rag.kb.port.VectorStorePort;
+import com.wgh.rag.kb.port.vector.VectorFilter;
+import com.wgh.rag.kb.port.vector.VectorMatch;
+import com.wgh.rag.kb.port.vector.VectorRecord;
 import com.wgh.rag.llm.factory.ModelCacheManager;
 import dev.langchain4j.data.embedding.Embedding;
-import dev.langchain4j.data.document.Metadata;
-import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.model.embedding.EmbeddingModel;
-import dev.langchain4j.store.embedding.EmbeddingMatch;
-import dev.langchain4j.store.embedding.EmbeddingSearchRequest;
-import dev.langchain4j.store.embedding.EmbeddingStore;
-import dev.langchain4j.store.embedding.filter.comparison.IsEqualTo;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -72,24 +70,19 @@ public class SemanticCacheService {
             int dimension = resolveDimension(kbIds);
 
             Embedding queryEmbedding = embeddingModel.embed(query).content();
-            EmbeddingStore<TextSegment> store = vectorStoreService.createEmbeddingStore(VEC_TABLE, dimension);
-            EmbeddingSearchRequest request = EmbeddingSearchRequest.builder()
-                    .queryEmbedding(queryEmbedding)
-                    .maxResults(1)
-                    .filter(new IsEqualTo("windowId", String.valueOf(windowId)))
-                    .build();
-            List<EmbeddingMatch<TextSegment>> matches = store.search(request).matches();
+            List<VectorMatch> matches = vectorStoreService.search(VEC_TABLE, queryEmbedding.vector(), 1, 0.0,
+                    windowFilter(windowId));
             if (matches.isEmpty()) return null;
 
-            EmbeddingMatch<TextSegment> top = matches.get(0);
+            VectorMatch top = matches.get(0);
             double threshold = ragProperties.getCache().getSimilarityThreshold() != null
                     ? ragProperties.getCache().getSimilarityThreshold() : 0.95;
-            if (top.score() == null || top.score() < threshold) return null;
+            if (top.score() < threshold) return null;
 
             LocalDateTime cutoff = ttlCutoff();
             LambdaQueryWrapper<SemanticCache> rowQuery = new LambdaQueryWrapper<SemanticCache>()
                     .eq(SemanticCache::getWindowId, windowId)
-                    .eq(SemanticCache::getEmbeddingId, top.embeddingId());
+                    .eq(SemanticCache::getEmbeddingId, top.id());
             if (cutoff != null) {
                 rowQuery.ge(SemanticCache::getCreateTime, cutoff);
             }
@@ -133,10 +126,13 @@ public class SemanticCacheService {
             int dimension = resolveDimension(kbIds);
 
             Embedding embedding = embeddingModel.embed(query).content();
-            TextSegment segment = TextSegment.from(query,
-                    Metadata.from(Map.of("windowId", String.valueOf(windowId))));
-            EmbeddingStore<TextSegment> store = vectorStoreService.createEmbeddingStore(VEC_TABLE, dimension);
-            String embeddingId = store.add(embedding, segment);
+            // 共享向量集合必须显式写入租户，避免不同租户的窗口/问答在同一集合内串读
+            Map<String, Object> metadata = new java.util.HashMap<>();
+            metadata.put("windowId", String.valueOf(windowId));
+            metadata.put("tenantId", TenantContext.tenantIdOrDefault());
+            List<String> ids = vectorStoreService.upsert(VEC_TABLE, List.of(VectorRecord.of(query,
+                    metadata, embedding.vector())), dimension);
+            String embeddingId = ids.isEmpty() ? null : ids.get(0);
 
             SemanticCache row = new SemanticCache();
             row.setWindowId(windowId);
@@ -244,6 +240,19 @@ public class SemanticCacheService {
         vectorStoreService.deleteByEmbeddingIds(VEC_TABLE, vecIds);
         log.info("✓ 语义缓存清理: rows={}, vectors={}", rows.size(), vecIds.size());
         return rows.size();
+    }
+
+    /**
+     * 窗口过滤条件：窗口 ID + 非默认租户断言。
+     * <p>默认租户不加租户条件，兼容改造前未写 tenantId 的存量向量；非默认租户强制按租户过滤。</p>
+     */
+    private VectorFilter windowFilter(Long windowId) {
+        Map<String, Object> equals = new java.util.HashMap<>();
+        equals.put("windowId", String.valueOf(windowId));
+        String tenantId = TenantContext.currentTenantId();
+        boolean scoped = tenantId != null && !tenantId.isBlank()
+                && !TenantContext.DEFAULT_TENANT.equals(tenantId);
+        return new VectorFilter(scoped ? tenantId : null, equals, Map.of());
     }
 
     /** TTL 截止时间；ttlMinutes <= 0 表示不过期 */

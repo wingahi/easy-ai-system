@@ -19,6 +19,7 @@ import com.wgh.rag.agentmulti.service.AgentStepCheckpointService.CheckpointSessi
 import com.wgh.rag.execution.run.RunLifecycle;
 import com.wgh.rag.agentmulti.service.AgentStepCheckpointService.StepDecision;
 import com.wgh.rag.agentmulti.service.MultiAgentService;
+import com.wgh.rag.agentmulti.support.AgentEventStream;
 import com.wgh.rag.agentmulti.support.AgentInstanceExecutor;
 import com.wgh.rag.agentmulti.support.SseEventSender;
 import com.wgh.rag.workflow.engine.ConditionEvaluator;
@@ -26,7 +27,6 @@ import com.wgh.rag.workflow.engine.VariableResolver;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
-import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.time.LocalDateTime;
 import java.util.*;
@@ -53,18 +53,18 @@ public class GraphCoordinator {
     private final VariableResolver variableResolver;
 
     public void execute(MultiAgentRun run, List<AgentInstance> agents,
-                        DAGGraph graph, MultiAgentContext ctx, SseEmitter emitter) {
+                        DAGGraph graph, MultiAgentContext ctx, AgentEventStream emitter) {
         execute(run, agents, graph, ctx, emitter, checkpointService.open(run.getRunId()));
     }
 
     public void execute(MultiAgentRun run, List<AgentInstance> agents,
-                        DAGGraph graph, MultiAgentContext ctx, SseEmitter emitter,
+                        DAGGraph graph, MultiAgentContext ctx, AgentEventStream emitter,
                         CheckpointSession session) {
         execute(run, agents, graph, ctx, emitter, session, RunLifecycle.NOOP);
     }
 
     public void execute(MultiAgentRun run, List<AgentInstance> agents,
-                        DAGGraph graph, MultiAgentContext ctx, SseEmitter emitter,
+                        DAGGraph graph, MultiAgentContext ctx, AgentEventStream emitter,
                         CheckpointSession session, RunLifecycle lifecycle) {
         lifecycle.throwIfCancelled();
         lifecycle.heartbeat();
@@ -257,7 +257,7 @@ public class GraphCoordinator {
     /** HITL 恢复执行 —— 从 ctx.pendingAgents 取后继继续跑 */
     public void resume(MultiAgentRun run, List<AgentInstance> agents,
                         DAGGraph graph, MultiAgentContext ctx, String userInput,
-                        SseEmitter emitter) {
+                        AgentEventStream emitter) {
         if (graph == null || graph.getNodes() == null || graph.getNodes().isEmpty()) return;
         if (userInput != null && !userInput.isBlank()) {
             ctx.setVars("hitlInput", userInput);
@@ -298,7 +298,7 @@ public class GraphCoordinator {
 
     private void executeFromFrontier(MultiAgentRun run, List<AgentInstance> agents,
                                       DAGGraph graph, MultiAgentContext ctx,
-                                      SseEmitter emitter, List<String> initialFrontier,
+                                      AgentEventStream emitter, List<String> initialFrontier,
                                       RunLifecycle lifecycle) {
         lifecycle.throwIfCancelled();
         lifecycle.heartbeat();

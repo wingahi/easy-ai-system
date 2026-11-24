@@ -8,12 +8,10 @@ import com.wgh.rag.kb.mapper.KnowledgeBaseMapper;
 import com.wgh.rag.kb.mapper.SemanticCacheMapper;
 import com.wgh.rag.llm.factory.ModelCacheManager;
 import dev.langchain4j.data.embedding.Embedding;
-import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.model.embedding.EmbeddingModel;
 import dev.langchain4j.model.output.Response;
-import dev.langchain4j.store.embedding.EmbeddingMatch;
-import dev.langchain4j.store.embedding.EmbeddingSearchResult;
-import dev.langchain4j.store.embedding.pgvector.PgVectorEmbeddingStore;
+import com.wgh.rag.kb.port.vector.VectorMatch;
+import com.wgh.rag.kb.port.vector.VectorScoreType;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -36,7 +34,6 @@ class SemanticCacheServiceTest {
     private final VectorStoreService vectorStoreService = Mockito.mock(VectorStoreService.class);
     private final ModelCacheManager modelCacheManager = Mockito.mock(ModelCacheManager.class);
     private final EmbeddingModel embeddingModel = Mockito.mock(EmbeddingModel.class);
-    private final PgVectorEmbeddingStore store = Mockito.mock(PgVectorEmbeddingStore.class);
 
     private RagProperties props;
     private SemanticCacheService service;
@@ -53,42 +50,41 @@ class SemanticCacheServiceTest {
         when(kbMapper.selectById(1L)).thenReturn(kb);
         when(modelCacheManager.getEmbeddingModel(7L)).thenReturn(embeddingModel);
         when(embeddingModel.embed(anyString())).thenReturn(Response.from(new Embedding(new float[]{0.1f})));
-        Mockito.doReturn(store).when(vectorStoreService)
-                .createEmbeddingStore(eq(SemanticCacheService.VEC_TABLE), anyInt());
     }
 
     @Test
     void lookup_returns_null_when_globally_disabled() {
         props.getCache().setEnabled(false);
         assertThat(service.lookup(1L, List.of(1L), "问题")).isNull();
-        verifyNoInteractions(store);
+        verifyNoInteractions(vectorStoreService);
     }
 
     @Test
     void lookup_returns_null_when_no_kb() {
         assertThat(service.lookup(1L, List.of(), "问题")).isNull();
         assertThat(service.lookup(1L, null, "问题")).isNull();
-        verifyNoInteractions(store);
+        verifyNoInteractions(vectorStoreService);
     }
 
     @Test
     void lookup_returns_null_when_below_threshold() {
-        when(store.search(any())).thenReturn(new EmbeddingSearchResult<>(List.of(
-                new EmbeddingMatch<>(0.80, "vec-1", null, TextSegment.from("q")))));
+        when(vectorStoreService.search(eq(SemanticCacheService.VEC_TABLE), any(), anyInt(), anyDouble(), any()))
+                .thenReturn(List.of(new VectorMatch("vec-1", 0.80, VectorScoreType.COSINE, "q", Map.of())));
         assertThat(service.lookup(1L, List.of(1L), "问题")).isNull();
         verify(cacheMapper, never()).updateById(any(SemanticCache.class));
     }
 
     @Test
     void lookup_returns_null_when_no_match() {
-        when(store.search(any())).thenReturn(new EmbeddingSearchResult<>(List.of()));
+        when(vectorStoreService.search(eq(SemanticCacheService.VEC_TABLE), any(), anyInt(), anyDouble(), any()))
+                .thenReturn(List.of());
         assertThat(service.lookup(1L, List.of(1L), "问题")).isNull();
     }
 
     @Test
     void lookup_hit_returns_answer_and_increments_hit_count() {
-        when(store.search(any())).thenReturn(new EmbeddingSearchResult<>(List.of(
-                new EmbeddingMatch<>(0.97, "vec-1", null, TextSegment.from("q")))));
+        when(vectorStoreService.search(eq(SemanticCacheService.VEC_TABLE), any(), anyInt(), anyDouble(), any()))
+                .thenReturn(List.of(new VectorMatch("vec-1", 0.97, VectorScoreType.COSINE, "q", Map.of())));
         SemanticCache row = new SemanticCache();
         row.setId(11L);
         row.setWindowId(1L);
@@ -110,7 +106,8 @@ class SemanticCacheServiceTest {
 
     @Test
     void lookup_degrades_to_null_on_store_exception() {
-        when(store.search(any())).thenThrow(new RuntimeException("dimension mismatch"));
+        when(vectorStoreService.search(eq(SemanticCacheService.VEC_TABLE), any(), anyInt(), anyDouble(), any()))
+                .thenThrow(new RuntimeException("dimension mismatch"));
         assertThat(service.lookup(1L, List.of(1L), "问题")).isNull();
     }
 
@@ -123,12 +120,13 @@ class SemanticCacheServiceTest {
 
     @Test
     void save_persists_row_and_vector() {
-        when(store.add(any(Embedding.class), any(TextSegment.class))).thenReturn("vec-9");
+        when(vectorStoreService.upsert(eq(SemanticCacheService.VEC_TABLE), anyList(), anyInt()))
+                .thenReturn(List.of("vec-9"));
         when(cacheMapper.selectCount(any(LambdaQueryWrapper.class))).thenReturn(1L);
 
         service.save(1L, List.of(1L), "问题", "答案");
 
-        verify(store).add(any(Embedding.class), any(TextSegment.class));
+        verify(vectorStoreService).upsert(eq(SemanticCacheService.VEC_TABLE), anyList(), anyInt());
         var captor = org.mockito.ArgumentCaptor.forClass(SemanticCache.class);
         verify(cacheMapper).insert(captor.capture());
         SemanticCache saved = captor.getValue();
@@ -140,7 +138,8 @@ class SemanticCacheServiceTest {
     @Test
     void save_evicts_oldest_when_over_max() {
         props.getCache().setMaxPerWindow(2);
-        when(store.add(any(Embedding.class), any(TextSegment.class))).thenReturn("vec-new");
+        when(vectorStoreService.upsert(eq(SemanticCacheService.VEC_TABLE), anyList(), anyInt()))
+                .thenReturn(List.of("vec-new"));
         when(cacheMapper.selectCount(any(LambdaQueryWrapper.class))).thenReturn(4L);
         SemanticCache old1 = new SemanticCache();
         old1.setId(1L);
@@ -161,8 +160,8 @@ class SemanticCacheServiceTest {
     @Test
     void lookup_skips_expired_row() {
         props.getCache().setTtlMinutes(60);
-        when(store.search(any())).thenReturn(new EmbeddingSearchResult<>(List.of(
-                new EmbeddingMatch<>(0.98, "vec-old", null, TextSegment.from("q")))));
+        when(vectorStoreService.search(eq(SemanticCacheService.VEC_TABLE), any(), anyInt(), anyDouble(), any()))
+                .thenReturn(List.of(new VectorMatch("vec-old", 0.98, VectorScoreType.COSINE, "q", Map.of())));
         SemanticCache row = new SemanticCache();
         row.setId(12L);
         row.setWindowId(1L);
@@ -230,13 +229,14 @@ class SemanticCacheServiceTest {
         verify(cacheMapper).physicalDeleteById(41L);
         verify(vectorStoreService).deleteByEmbeddingIds(SemanticCacheService.VEC_TABLE, List.of("vec-w1"));
         // 变更后缓存向量已清理，再次查询不应命中旧答案
-        when(store.search(any())).thenReturn(new EmbeddingSearchResult<>(List.of()));
+        when(vectorStoreService.search(eq(SemanticCacheService.VEC_TABLE), any(), anyInt(), anyDouble(), any()))
+                .thenReturn(List.of());
         assertThat(service.lookup(1L, List.of(1L), "问题")).isNull();
     }
 
     @Test
     void save_failure_does_not_propagate() {
-        when(store.add(any(Embedding.class), any(TextSegment.class)))
+        when(vectorStoreService.upsert(eq(SemanticCacheService.VEC_TABLE), anyList(), anyInt()))
                 .thenThrow(new RuntimeException("pg error"));
         assertThatCode(() -> service.save(1L, List.of(1L), "问题", "答案")).doesNotThrowAnyException();
     }

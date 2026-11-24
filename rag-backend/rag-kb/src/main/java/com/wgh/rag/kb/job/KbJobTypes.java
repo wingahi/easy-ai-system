@@ -26,6 +26,12 @@ public final class KbJobTypes {
     /** URL 连接器定时同步（MAINTENANCE）。 */
     public static final String CONNECTOR_SYNC = "KB_CONNECTOR_SYNC";
 
+    /** 语义缓存过期清理（MAINTENANCE）。 */
+    public static final String SEMCACHE_CLEANUP = "KB_SEMCACHE_CLEANUP";
+
+    /** 事实层向量回填/对账（BACKGROUND）。 */
+    public static final String VECTOR_BACKFILL = "KB_VECTOR_BACKFILL";
+
     /** 负载字段：知识库 ID。 */
     public static final String PAYLOAD_KB_ID = "kbId";
 
@@ -40,6 +46,9 @@ public final class KbJobTypes {
 
     /** 负载字段：重建目标向量维度。 */
     public static final String PAYLOAD_TARGET_DIMENSION = "targetDimension";
+
+    /** 负载字段：回填单批处理条数（为空用配置默认值）。 */
+    public static final String PAYLOAD_BATCH_SIZE = "batchSize";
 
     private KbJobTypes() {
     }

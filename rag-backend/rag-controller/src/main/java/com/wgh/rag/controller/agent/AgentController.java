@@ -8,7 +8,6 @@ import com.wgh.rag.agent.entity.AgentStep;
 import com.wgh.rag.agent.mapper.AgentPlanMapper;
 import com.wgh.rag.agent.mapper.AgentStepMapper;
 import com.wgh.rag.agent.service.AgentOrchestrator;
-import com.wgh.rag.agent.service.AgentHitlConfirmService;
 import com.wgh.rag.auth.constant.AuthConstants;
 import com.wgh.rag.chat.entity.ChatWindow;
 import com.wgh.rag.chat.service.ChatWindowService;
@@ -21,9 +20,16 @@ import com.wgh.rag.common.result.ResultCode;
 import com.wgh.rag.common.security.LoginUser;
 import com.wgh.rag.common.security.RequiresPermission;
 import com.wgh.rag.common.security.SecurityUtils;
+import com.wgh.rag.common.security.TenantContext;
+import com.wgh.rag.execution.api.ExecutionFacade;
+import com.wgh.rag.execution.model.ExecutionHandle;
+import com.wgh.rag.execution.model.ExecutionLane;
+import com.wgh.rag.execution.model.ExecutionRequest;
 import com.wgh.rag.log.annotation.Audit;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.*;
@@ -42,13 +48,13 @@ import java.util.stream.Collectors;
 public class AgentController {
 
     private final AgentOrchestrator agentOrchestrator;
-    private final AgentHitlConfirmService agentHitlConfirmService;
+    private final AgentHitlResumeService agentHitlResumeService;
     private final AgentPlanMapper planMapper;
     private final AgentStepMapper stepMapper;
     private final AgentProperties agentProperties;
-    private final com.wgh.rag.chat.service.RagChatService ragChatService;
     private final ChatWindowService chatWindowService;
     private final ModelRouter modelRouter;
+    private final ObjectProvider<ExecutionFacade> executionFacadeProvider;
 
     /** 查询 plan 当前状态（刷新页面恢复面板用）。 */
     @GetMapping("/plans/{planId}/state")
@@ -94,61 +100,45 @@ public class AgentController {
         return Result.success(state);
     }
 
-    /** HITL 步骤用户确认后继续执行（确认状态推进与扣费同一事务）。 */
+    /** HITL 步骤用户确认后继续执行（调度中心启用时后台化，返回 executionId）。 */
     @PostMapping("/steps/{stepId}/hitl-confirm")
     @Audit(action = "AGENT_STEP_HITL_CONFIRM", resourceType = "AGENT_STEP")
-    public Result<Map<String, Object>> hitlConfirm(
+    public ResponseEntity<Result<Map<String, Object>>> hitlConfirm(
             @PathVariable Long stepId,
             @RequestBody(required = false) Map<String, String> body) {
         AgentStep step = stepMapper.selectById(stepId);
-        if (step == null) return Result.fail("Step 不存在");
-        if (!"HITL_PENDING".equals(step.getStatus())) return Result.fail("Step 非 HITL_PENDING 状态");
+        if (step == null) return ResponseEntity.ok(Result.fail("Step 不存在"));
+        if (!"HITL_PENDING".equals(step.getStatus())) return ResponseEntity.ok(Result.fail("Step 非 HITL_PENDING 状态"));
 
         AgentPlan plan = planMapper.selectById(step.getPlanId());
-        if (plan == null) return Result.fail("Plan 不存在");
+        if (plan == null) return ResponseEntity.ok(Result.fail("Plan 不存在"));
         assertPlanAccessible(plan);
 
         String userInput = body != null ? body.getOrDefault("userInput", "") : "";
-        double threshold = agentProperties.getDefaultReflectionThreshold();
-
-        // 恢复入口没有实时窗口上下文，按 plan.chatWindowId 回查窗口路由组，保持与首轮一致的切链口径
-        WindowChains chains = resolveWindowChains(plan);
-
-        // 原子确认 + 扣费一次（重复确认/并发确认由条件更新闸门拦截）
-        AgentHitlConfirmService.Claim claim = agentHitlConfirmService.prepare(stepId, userInput);
-
-        AgentStepResult result;
-        try {
-            // 用 no-op sink（REST 不走 SSE）
-            result = agentOrchestrator.resumeConfirmed(
-                    claim.plan(), claim.step(), userInput,
-                    threshold, agentProperties.getDefaultReflectionRetries(),
-                    null, chains.executor(), chains.planner());
-        } catch (RuntimeException e) {
-            // 执行失败且未产出：立即退款，补偿作业兜底
-            claim.billing().finish();
-            throw e;
+        if (userInput == null) {
+            userInput = "";
+        }
+        ExecutionFacade facade = executionFacadeProvider.getIfAvailable();
+        if (facade != null) {
+            ExecutionHandle handle = facade.submit(ExecutionRequest
+                    .builder(AgentPlanJobHandler.JOB_TYPE, ExecutionLane.BACKGROUND)
+                    .tenant(TenantContext.tenantIdOrDefault())
+                    .owner(SecurityUtils.currentUsername())
+                    .bizKey("agent-hitl:" + stepId)
+                    .payload(Map.of(AgentPlanJobHandler.KEY_STEP_ID, stepId,
+                            AgentPlanJobHandler.KEY_USER_INPUT, userInput))
+                    .build());
+            Map<String, Object> resp = new HashMap<>();
+            resp.put("async", true);
+            resp.put("executionId", handle.executionId());
+            resp.put("planId", plan.getId());
+            resp.put("stepId", stepId);
+            resp.put("resultStatus", "RUNNING");
+            return ResponseEntity.accepted().body(Result.success(resp));
         }
 
-        Map<String, Object> resp = new HashMap<>();
-        resp.put("planId", claim.plan().getId());
-        resp.put("stepId", stepId);
-        resp.put("resultStatus", result != null ? result.getStatus() : "PAUSED");
-        String finalText = result != null && result.getFinalText() != null ? result.getFinalText() : "";
-        resp.put("finalText", finalText);
-        if (!finalText.isBlank()) {
-            // 最终答复即有效产出：结算本次续跑计费
-            claim.billing().markOutput();
-            // REST 通道没有 SSE，需把恢复执行后的最终答复补写回聊天会话
-            ragChatService.appendAssistantMessage(plan.getSessionId(), finalText);
-        }
-        if (result == null) {
-            // 再次停在 HITL：不算失败，保持未结算，等下一次续跑复用
-            claim.billing().finishOnPause();
-        } else {
-            claim.billing().finish();
-        }
-        return Result.success(resp);
+        Map<String, Object> resp = agentHitlResumeService.resume(stepId, userInput);
+        return ResponseEntity.ok(Result.success(resp));
     }
 
     /** 取消整个计划。 */

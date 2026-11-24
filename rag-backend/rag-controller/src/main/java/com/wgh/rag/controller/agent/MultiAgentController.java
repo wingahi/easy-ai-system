@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wgh.rag.agentmulti.constant.MultiAgentConstants;
+import com.wgh.rag.agentmulti.constant.MultiAgentEvents;
 import com.wgh.rag.agentmulti.dto.AgentInstance;
 import com.wgh.rag.agentmulti.dto.RunCreateRequest;
 import com.wgh.rag.agentmulti.entity.MultiAgentCrew;
@@ -13,18 +14,35 @@ import com.wgh.rag.agentmulti.mapper.MultiAgentCrewMapper;
 import com.wgh.rag.agentmulti.mapper.MultiAgentStepMapper;
 import com.wgh.rag.agentmulti.runtime.MultiAgentRuntime;
 import com.wgh.rag.agentmulti.service.MultiAgentService;
+import com.wgh.rag.agentmulti.support.AgentEventStream;
+import com.wgh.rag.agentmulti.support.SseAgentEventStream;
 import com.wgh.rag.auth.constant.AuthConstants;
+import com.wgh.rag.common.exception.BusinessException;
 import com.wgh.rag.common.result.Result;
+import com.wgh.rag.common.result.ResultCode;
 import com.wgh.rag.common.security.RequiresPermission;
+import com.wgh.rag.common.security.SecurityUtils;
+import com.wgh.rag.common.security.TenantContext;
+import com.wgh.rag.data.scope.DataScopeContext;
+import com.wgh.rag.execution.api.ExecutionFacade;
+import com.wgh.rag.execution.event.ExecutionEventTypes;
+import com.wgh.rag.execution.model.ExecutionHandle;
+import com.wgh.rag.execution.model.ExecutionLane;
+import com.wgh.rag.execution.model.ExecutionRequest;
 import com.wgh.rag.log.annotation.Audit;
+import com.wgh.rag.scheduler.entity.ExecutionJob;
+import com.wgh.rag.scheduler.job.JobStore;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.core.task.AsyncTaskExecutor;
 import org.springframework.core.task.TaskRejectedException;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.*;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * 多 Agent 协作 REST API —— 运行控制（创建/查询/恢复/取消） + Crew CRUD。
@@ -42,6 +60,9 @@ public class MultiAgentController {
     private final ObjectMapper objectMapper;
     /** 统一受管执行器（MDC/异常/有界队列由 Bean 统一处理） */
     private final AsyncTaskExecutor ragAsyncExecutor;
+    /** 调度中心（启用时改为后台作业 + 事件 attach） */
+    private final ObjectProvider<ExecutionFacade> executionFacadeProvider;
+    private final ObjectProvider<JobStore> jobStoreProvider;
 
     // ==================== Run API ====================
 
@@ -84,10 +105,35 @@ public class MultiAgentController {
         return Result.success(resp);
     }
 
-    /** 启动执行（SSE） —— 返回 SseEmitter，后端线程异步执行 run */
+    /** 启动执行（SSE）—— 调度中心启用时提交后台作业并 attach 事件；否则沿用请求线程异步执行。 */
     @GetMapping("/runs/{runId}/stream")
     @RequiresPermission(AuthConstants.PERM_AGENT_USE)
     public SseEmitter streamRun(@PathVariable String runId) {
+        assertRunAccessible(runId);
+        ExecutionFacade facade = executionFacadeProvider.getIfAvailable();
+        JobStore jobStore = jobStoreProvider.getIfAvailable();
+        if (facade == null || jobStore == null) {
+            return streamRunLegacy(runId);
+        }
+        String bizKey = MultiAgentRunJobHandler.BIZ_KEY_PREFIX + runId;
+        ExecutionJob existing = jobStore.findByBizKey(MultiAgentRunJobHandler.JOB_TYPE, bizKey).orElse(null);
+        String executionId;
+        if (existing != null) {
+            executionId = existing.getExecutionId();
+        } else {
+            ExecutionHandle handle = facade.submit(ExecutionRequest
+                    .builder(MultiAgentRunJobHandler.JOB_TYPE, ExecutionLane.BACKGROUND)
+                    .tenant(TenantContext.tenantIdOrDefault())
+                    .owner(SecurityUtils.currentUsername())
+                    .bizKey(bizKey)
+                    .payload(Map.of(MultiAgentRunJobHandler.KEY_RUN_ID, runId))
+                    .build());
+            executionId = handle.executionId();
+        }
+        return attachRunEvents(runId, executionId);
+    }
+
+    private SseEmitter streamRunLegacy(String runId) {
         SseEmitter emitter = new SseEmitter(10 * 60 * 1000L); // 10 min
         emitter.onCompletion(() -> log.info("SSE runId={} completed", runId));
         emitter.onTimeout(() -> log.warn("SSE runId={} timeout", runId));
@@ -95,7 +141,7 @@ public class MultiAgentController {
 
         ragAsyncExecutor.execute(() -> {
             try {
-                runtime.execute(runId, emitter);
+                runtime.execute(runId, new SseAgentEventStream(emitter, objectMapper));
                 emitter.complete();
             } catch (Exception e) {
                 log.error("runId={} 执行异常", runId, e);
@@ -110,6 +156,7 @@ public class MultiAgentController {
     @GetMapping("/runs/{runId}/state")
     @RequiresPermission(AuthConstants.PERM_AGENT_USE)
     public Result<Map<String, Object>> getRunState(@PathVariable String runId) {
+        assertRunAccessible(runId);
         return Result.success(runtime.getRunState(runId));
     }
 
@@ -128,29 +175,43 @@ public class MultiAgentController {
         // 保留既有「非暂停态」SSE 错误协议；额度/计费异常直接上抛，沿用普通对话错误码
         MultiAgentRun run = runtime.loadRun(runId);
         if (run == null) {
-            runtime.sendSseError(emitter, runId, "Run 不存在");
+            runtime.sendSseError(new SseAgentEventStream(emitter, objectMapper), runId, "Run 不存在");
             emitter.complete();
             return emitter;
         }
+        assertRunOwned(run);
         if (!MultiAgentConstants.STATUS_PAUSED.equals(run.getStatus())) {
-            runtime.sendSseError(emitter, runId, "Run 非 PAUSED 状态");
+            runtime.sendSseError(new SseAgentEventStream(emitter, objectMapper), runId, "Run 非 PAUSED 状态");
             emitter.complete();
             return emitter;
         }
 
+        ExecutionFacade facade = executionFacadeProvider.getIfAvailable();
+        if (facade != null) {
+            ExecutionHandle handle = facade.submit(ExecutionRequest
+                    .builder(MultiAgentHitlJobHandler.JOB_TYPE, ExecutionLane.BACKGROUND)
+                    .tenant(TenantContext.tenantIdOrDefault())
+                    .owner(SecurityUtils.currentUsername())
+                    .payload(Map.of(MultiAgentHitlJobHandler.KEY_RUN_ID, runId,
+                            MultiAgentHitlJobHandler.KEY_USER_INPUT, userInput))
+                    .build());
+            return attachRunEvents(runId, handle.executionId());
+        }
+
+        AgentEventStream legacyStream = new SseAgentEventStream(emitter, objectMapper);
         MultiAgentRuntime.HitlResumeClaim claim = runtime.prepareHitlResume(runId);
-        runtime.bindOutputObserver(emitter, claim.billing()::markOutput);
+        runtime.bindOutputObserver(legacyStream, claim.billing()::markOutput);
 
         try {
             ragAsyncExecutor.execute(() -> {
                 try {
-                    runtime.resumeFromHitl(runId, userInput, emitter, claim);
+                    runtime.resumeFromHitl(runId, userInput, legacyStream, claim);
                     emitter.complete();
                 } catch (Exception e) {
                     log.error("runId={} resume 异常", runId, e);
                     emitter.completeWithError(e);
                 } finally {
-                    runtime.unbindOutputObserver(emitter);
+                    runtime.unbindOutputObserver(legacyStream);
                     MultiAgentRun latest = runtime.loadRun(runId);
                     if (latest != null && MultiAgentConstants.STATUS_PAUSED.equals(latest.getStatus())) {
                         // 再次停在 HITL 不算失败：保持未结算，等下一次续跑复用
@@ -161,7 +222,7 @@ public class MultiAgentController {
                 }
             });
         } catch (TaskRejectedException e) {
-            runtime.unbindOutputObserver(emitter);
+            runtime.unbindOutputObserver(legacyStream);
             // 任务未提交成功，续跑不会发生：立即退款
             claim.billing().finish();
             throw e;
@@ -175,6 +236,7 @@ public class MultiAgentController {
     @RequiresPermission(AuthConstants.PERM_AGENT_USE)
     @Audit(action = "MULTI_AGENT_RUN_CANCEL", resourceType = "MULTI_AGENT_RUN")
     public Result<Void> cancelRun(@PathVariable String runId) {
+        assertRunAccessible(runId);
         runtime.cancelRun(runId);
         return Result.success(null);
     }
@@ -183,6 +245,7 @@ public class MultiAgentController {
     @GetMapping("/runs/{runId}/steps")
     @RequiresPermission(AuthConstants.PERM_AGENT_USE)
     public Result<List<MultiAgentStep>> listSteps(@PathVariable String runId) {
+        assertRunAccessible(runId);
         List<MultiAgentStep> steps = stepMapper.selectList(
                 new LambdaQueryWrapper<MultiAgentStep>()
                         .eq(MultiAgentStep::getRunId, runId)
@@ -279,6 +342,92 @@ public class MultiAgentController {
     }
 
     // ==================== 工具方法 ====================
+
+    /**
+     * 运行态归属校验：Run 不存在或不属于当前用户时按不存在处理（404），避免枚举 runId。
+     * <p>存量 create_by 为空/为 system 的运行仅管理员可访问。</p>
+     */
+    /**
+     * 把后台执行事件桥接为原有多 Agent SSE 协议。
+     *
+     * <p>事件来自 {@code wgh_execution_event}（跨副本/断线重放）；收到终态生命周期事件后关闭连接。
+     */
+    private SseEmitter attachRunEvents(String runId, String executionId) {
+        ExecutionFacade facade = executionFacadeProvider.getIfAvailable();
+        if (facade == null) {
+            throw new BusinessException(ResultCode.FAIL, "调度中心未启用");
+        }
+        SseEmitter emitter = new SseEmitter(10 * 60 * 1000L);
+        SseAgentEventStream stream = new SseAgentEventStream(emitter, objectMapper);
+        AtomicReference<AutoCloseable> handle = new AtomicReference<>();
+        AtomicBoolean closed = new AtomicBoolean();
+        Runnable cleanup = () -> {
+            if (closed.compareAndSet(false, true)) {
+                AutoCloseable attached = handle.get();
+                if (attached != null) {
+                    try {
+                        attached.close();
+                    } catch (Exception ignored) {
+                        // 已关闭
+                    }
+                }
+            }
+        };
+        emitter.onCompletion(cleanup);
+        emitter.onTimeout(cleanup);
+        emitter.onError(error -> cleanup.run());
+
+        handle.set(facade.attach(executionId, 0, event -> {
+            if (closed.get()) {
+                return;
+            }
+            String type = event.type();
+            if (ExecutionEventTypes.FAILED.equals(type)) {
+                Object message = event.payload() == null ? null : event.payload().get("errorMessage");
+                stream.sendEvent(MultiAgentEvents.MULTI_AGENT_ERROR, Map.of(
+                        "runId", runId,
+                        "error", message == null ? "执行失败" : String.valueOf(message)));
+                cleanup.run();
+                stream.complete();
+                return;
+            }
+            if (ExecutionEventTypes.COMPLETED.equals(type) || ExecutionEventTypes.CANCELLED.equals(type)) {
+                cleanup.run();
+                stream.complete();
+                return;
+            }
+            if (ExecutionEventTypes.STARTED.equals(type) || ExecutionEventTypes.HEARTBEAT.equals(type)) {
+                return;
+            }
+            if (type != null && type.startsWith("execution.")) {
+                return;
+            }
+            stream.sendEvent(type, event.payload() == null ? Map.of() : event.payload());
+        }));
+
+        JobStore jobStore = jobStoreProvider.getIfAvailable();
+        ExecutionJob job = jobStore == null ? null : jobStore.find(executionId).orElse(null);
+        if (job != null && job.getStatus() != null && job.getStatus().isTerminal()) {
+            emitter.complete();
+        }
+        return emitter;
+    }
+
+    private void assertRunAccessible(String runId) {
+        MultiAgentRun run = runtime.loadRun(runId);
+        if (run == null) {
+            throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "Run 不存在");
+        }
+        assertRunOwned(run);
+    }
+
+    private void assertRunOwned(MultiAgentRun run) {
+        DataScopeContext.Scope user = DataScopeContext.resolveUser();
+        if (user == null || user.admin() || user.username().equals(run.getCreateBy())) {
+            return;
+        }
+        throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "Run 不存在");
+    }
 
     private Long parseLong(String s) {
         if (s == null || s.isBlank()) return null;

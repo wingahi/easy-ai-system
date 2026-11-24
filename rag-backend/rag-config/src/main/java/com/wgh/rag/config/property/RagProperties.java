@@ -171,5 +171,7 @@ public class RagProperties {
         private Integer ttlMinutes = 1440;
         /** 过期缓存单次清理条数（避免一次删除过多） */
         private Integer cleanupBatchSize = 200;
+        /** 过期缓存周期清理间隔（分钟，最小 5）；调度中心启用时由 SEMCACHE_CLEANUP 作业按该间隔提交 */
+        private Integer cleanupIntervalMinutes = 30;
     }
 }

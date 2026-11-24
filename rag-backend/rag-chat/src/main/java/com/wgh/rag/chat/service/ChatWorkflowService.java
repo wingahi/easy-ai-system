@@ -7,15 +7,24 @@ import com.wgh.rag.chat.service.session.ChatMessageStore;
 import com.wgh.rag.chat.service.session.ChatSessionStore;
 import com.wgh.rag.chat.service.stream.ChatEventPublisher;
 import com.wgh.rag.common.exception.BusinessException;
+import com.wgh.rag.common.security.SecurityUtils;
+import com.wgh.rag.common.security.TenantContext;
+import com.wgh.rag.execution.api.ExecutionFacade;
+import com.wgh.rag.execution.event.ExecutionEventTypes;
 import com.wgh.rag.execution.event.ExecutionStreamSink;
+import com.wgh.rag.execution.model.ExecutionHandle;
+import com.wgh.rag.execution.model.ExecutionLane;
+import com.wgh.rag.execution.model.ExecutionRequest;
 import com.wgh.rag.workflow.constant.WorkflowEvents;
 import com.wgh.rag.workflow.entity.WorkflowRun;
 import com.wgh.rag.workflow.service.WorkflowService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -29,9 +38,16 @@ import java.util.concurrent.atomic.AtomicBoolean;
 @RequiredArgsConstructor
 public class ChatWorkflowService {
 
+    /** 聊天工作流后台作业类型（与 rag-controller 的 WorkflowChatRunJobHandler 保持一致）。 */
+    private static final String JOB_TYPE = "WF_CHAT_RUN";
+
+    /** 聊天工作流 HITL 续跑后台作业类型。 */
+    private static final String HITL_JOB_TYPE = "WF_CHAT_HITL";
+
     private final WorkflowService workflowService;
     private final ChatMessageStore messageStore;
     private final ChatSessionStore sessionStore;
+    private final ObjectProvider<ExecutionFacade> executionFacadeProvider;
 
     /**
      * 聊天窗口触发工作流：复用当前请求的 SSE 通道，每条用户消息运行一次完整工作流。
@@ -43,13 +59,46 @@ public class ChatWorkflowService {
      * @param onOutput   有效最终文本下发后的计费回调，可为 {@code null}
      * @param onFinished 运行终态回调，可为 {@code null}
      */
-    public WorkflowRun stream(ChatWindow window, ChatSession session, String userMessage,
-                              ChatEventPublisher events, boolean safeMode, Runnable onOutput,
-                              Runnable onFinished) {
+    public void stream(ChatWindow window, ChatSession session, String userMessage,
+                       ChatEventPublisher events, boolean safeMode, Runnable onOutput,
+                       Runnable onFinished) {
         StreamContext ctx = new StreamContext(events, session, new AtomicBoolean(false),
                 new AtomicBoolean(false), onOutput, onFinished);
-        return workflowService.runForChat(window.getWorkflowId(), userMessage, session.getId(), safeMode,
-                (event, payload) -> handleEvent(ctx, event, payload));
+        ExecutionFacade facade = executionFacadeProvider == null
+                ? null : executionFacadeProvider.getIfAvailable();
+        if (facade == null) {
+            workflowService.runForChat(window.getWorkflowId(), userMessage, session.getId(), safeMode,
+                    (event, payload) -> handleEvent(ctx, event, payload));
+            return;
+        }
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("workflowId", window.getWorkflowId());
+        payload.put("input", userMessage);
+        payload.put("sessionId", session.getId());
+        payload.put("safeMode", safeMode);
+        ExecutionHandle handle = facade.submit(ExecutionRequest
+                .builder(JOB_TYPE, ExecutionLane.BACKGROUND)
+                .tenant(TenantContext.tenantIdOrDefault())
+                .owner(SecurityUtils.currentUsername())
+                .payload(payload)
+                .build());
+        facade.attach(handle.executionId(), 0, event -> {
+            String type = event.type();
+            if (ExecutionEventTypes.FAILED.equals(type)) {
+                Object message = event.payload() == null ? null : event.payload().get("errorMessage");
+                handleEvent(ctx, WorkflowEvents.WORKFLOW_FAILED, Map.of(
+                        "error", message == null ? "工作流执行失败" : String.valueOf(message)));
+                return;
+            }
+            if (ExecutionEventTypes.COMPLETED.equals(type) || ExecutionEventTypes.CANCELLED.equals(type)
+                    || ExecutionEventTypes.STARTED.equals(type) || ExecutionEventTypes.HEARTBEAT.equals(type)) {
+                return;
+            }
+            if (type != null && type.startsWith("execution.")) {
+                return;
+            }
+            handleEvent(ctx, type, event.payload());
+        });
     }
 
     /**
@@ -67,7 +116,38 @@ public class ChatWorkflowService {
         StreamContext ctx = new StreamContext(events, session, new AtomicBoolean(false),
                 new AtomicBoolean(false), null, null);
         events.sendQuietly(ChatEvents.START, Map.of("sessionId", sessionId == null ? "" : sessionId));
-        workflowService.resumeForChat(runId, userInput, (event, payload) -> handleEvent(ctx, event, payload));
+        ExecutionFacade facade = executionFacadeProvider == null
+                ? null : executionFacadeProvider.getIfAvailable();
+        if (facade == null) {
+            workflowService.resumeForChat(runId, userInput, (event, payload) -> handleEvent(ctx, event, payload));
+            return;
+        }
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("runId", runId);
+        payload.put("userInput", userInput == null ? "" : userInput);
+        ExecutionHandle handle = facade.submit(ExecutionRequest
+                .builder(HITL_JOB_TYPE, ExecutionLane.BACKGROUND)
+                .tenant(TenantContext.tenantIdOrDefault())
+                .owner(SecurityUtils.currentUsername())
+                .payload(payload)
+                .build());
+        facade.attach(handle.executionId(), 0, event -> {
+            String type = event.type();
+            if (ExecutionEventTypes.FAILED.equals(type)) {
+                Object message = event.payload() == null ? null : event.payload().get("errorMessage");
+                handleEvent(ctx, WorkflowEvents.WORKFLOW_FAILED, Map.of(
+                        "error", message == null ? "工作流续跑失败" : String.valueOf(message)));
+                return;
+            }
+            if (ExecutionEventTypes.COMPLETED.equals(type) || ExecutionEventTypes.CANCELLED.equals(type)
+                    || ExecutionEventTypes.STARTED.equals(type) || ExecutionEventTypes.HEARTBEAT.equals(type)) {
+                return;
+            }
+            if (type != null && type.startsWith("execution.")) {
+                return;
+            }
+            handleEvent(ctx, type, event.payload());
+        });
     }
 
     /** 按会话查询最近一次工作流运行状态（页面刷新恢复用）。 */

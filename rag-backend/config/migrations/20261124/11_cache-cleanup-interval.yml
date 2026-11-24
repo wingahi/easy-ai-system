@@ -1,0 +1,11 @@
+# 增量配置片段：语义缓存周期清理间隔（2026-11-24，调度线第 11 个片段）
+# 目标文件：rag-backend/rag-app/src/main/resources/application.yml（wgh.rag.cache 段）
+# 背景：语义缓存清理从「写入节奏触发」改为 KB_SEMCACHE_CLEANUP 维护周期作业，
+#       本键控制作业提交间隔；查询侧仍按 TTL 过滤，清理只影响存储占用。
+# 键数：1
+
+wgh:
+  rag:
+    cache:
+      # 过期缓存周期清理间隔（分钟，最小 5）
+      cleanup-interval-minutes: ${WGH_CACHE_CLEANUP_INTERVAL_MINUTES:30}

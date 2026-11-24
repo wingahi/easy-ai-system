@@ -18,6 +18,7 @@ import com.wgh.rag.agentmulti.service.MultiAgentService;
 import com.wgh.rag.execution.error.ExecutionCancelledException;
 import com.wgh.rag.execution.error.LeaseLostException;
 import com.wgh.rag.execution.run.RunLifecycle;
+import com.wgh.rag.agentmulti.support.AgentEventStream;
 import com.wgh.rag.agentmulti.support.SseEventSender;
 import com.wgh.rag.agentmulti.crew.CrewCoordinator;
 import com.wgh.rag.agentmulti.graph.GraphCoordinator;
@@ -30,7 +31,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.time.LocalDateTime;
 import java.util.*;
@@ -69,7 +69,7 @@ public class MultiAgentRuntime {
     /**
      * 执行一次多 Agent 运行。返回 runId。
      */
-    public String execute(String runId, SseEmitter emitter) {
+    public String execute(String runId, AgentEventStream emitter) {
         MultiAgentRun run = loadRun(runId);
         if (run == null) {
             sse.send(emitter, MultiAgentEvents.MULTI_AGENT_ERROR, Map.of("runId", runId, "error", "Run 不存在"));
@@ -81,14 +81,14 @@ public class MultiAgentRuntime {
     /**
      * 崩溃恢复：从 (runId, stepKey) 检查点继续。已完成步骤只回填上下文，不重新执行、不重发卡片。
      */
-    public String resumeFromCheckpoint(String runId, SseEmitter emitter) {
+    public String resumeFromCheckpoint(String runId, AgentEventStream emitter) {
         return resumeFromCheckpoint(runId, emitter, RunLifecycle.NOOP);
     }
 
     /**
      * 后台作业续跑：事件出口可为 {@code null}（静默），并在步骤边界续租/响应取消。
      */
-    public String resumeFromCheckpoint(String runId, SseEmitter emitter, RunLifecycle lifecycle) {
+    public String resumeFromCheckpoint(String runId, AgentEventStream emitter, RunLifecycle lifecycle) {
         MultiAgentRun run = loadRun(runId);
         if (run == null) {
             sse.send(emitter, MultiAgentEvents.MULTI_AGENT_ERROR, Map.of("runId", runId, "error", "Run 不存在"));
@@ -104,7 +104,7 @@ public class MultiAgentRuntime {
                 lifecycle == null ? RunLifecycle.NOOP : lifecycle);
     }
 
-    private String runInternal(MultiAgentRun run, SseEmitter emitter,
+    private String runInternal(MultiAgentRun run, AgentEventStream emitter,
                                CheckpointSession session, boolean resume, RunLifecycle lifecycle) {
         lifecycle.throwIfCancelled();
         String runId = run.getRunId();
@@ -205,17 +205,17 @@ public class MultiAgentRuntime {
     }
 
     /** 绑定产出观察者：输出类事件成功下发后结算扣费。 */
-    public void bindOutputObserver(SseEmitter emitter, Runnable observer) {
+    public void bindOutputObserver(AgentEventStream emitter, Runnable observer) {
         sse.bindOutputObserver(emitter, observer);
     }
 
     /** 解绑产出观察者。 */
-    public void unbindOutputObserver(SseEmitter emitter) {
+    public void unbindOutputObserver(AgentEventStream emitter) {
         sse.unbindOutputObserver(emitter);
     }
 
     /** 发送 SSE 错误事件（保持既有非 PAUSED 场景的协议语义）。 */
-    public void sendSseError(SseEmitter emitter, String runId, String error) {
+    public void sendSseError(AgentEventStream emitter, String runId, String error) {
         sse.send(emitter, MultiAgentEvents.MULTI_AGENT_ERROR, Map.of("runId", runId, "error", error));
     }
 
@@ -225,7 +225,7 @@ public class MultiAgentRuntime {
      * @param claim 已由 {@link #prepareHitlResume(String)} 完成状态推进与扣费的凭据；
      *              为 {@code null} 时沿用旧语义（校验并推进 PAUSED）。
      */
-    public String resumeFromHitl(String runId, String userInput, SseEmitter emitter, HitlResumeClaim claim) {
+    public String resumeFromHitl(String runId, String userInput, AgentEventStream emitter, HitlResumeClaim claim) {
         MultiAgentRun run = loadRun(runId);
         if (run == null) {
             sse.send(emitter, MultiAgentEvents.MULTI_AGENT_ERROR, Map.of("runId", runId, "error", "Run 不存在"));
@@ -279,7 +279,7 @@ public class MultiAgentRuntime {
     }
 
     /** 兼容旧调用：未预扣费的恢复入口。 */
-    public String resumeFromHitl(String runId, String userInput, SseEmitter emitter) {
+    public String resumeFromHitl(String runId, String userInput, AgentEventStream emitter) {
         return resumeFromHitl(runId, userInput, emitter, null);
     }
 

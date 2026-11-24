@@ -33,7 +33,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
-import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.*;
 
@@ -69,7 +68,7 @@ public class AgentInstanceExecutor {
     public AgentInstanceResult execute(AgentInstance agent,
                                        String input,
                                        MultiAgentContext ctx,
-                                       SseEmitter emitter) {
+                                       AgentEventStream emitter) {
         long t0 = System.currentTimeMillis();
         String runId = ctx != null ? String.valueOf(ctx.getOrDefault("runId", "")) : "";
         String agentId = agent != null ? agent.getAgentId() : "";

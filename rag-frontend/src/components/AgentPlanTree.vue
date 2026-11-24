@@ -178,8 +178,9 @@ const confirmHitl = async () => {
   if (!hitlDialog.step) return
   hitlDialog.submitting = true
   try {
-    await agentHitlConfirm(hitlDialog.step.id, hitlDialog.input)
-    ElMessage.success('已确认，Agent 继续执行')
+    const res = await agentHitlConfirm(hitlDialog.step.id, hitlDialog.input)
+    // 调度中心启用时后台执行，返回 executionId；父组件会继续轮询计划状态
+    ElMessage.success(res.data?.executionId ? '已提交，Agent 后台执行中' : '已确认，Agent 继续执行')
     hitlDialog.visible = false
     emit('hitl-confirm', hitlDialog.step, hitlDialog.input)
   } catch (e) {

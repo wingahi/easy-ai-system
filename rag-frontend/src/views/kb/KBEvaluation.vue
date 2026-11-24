@@ -275,7 +275,7 @@ import {
   kbGet, kbGroundTruthList, kbGroundTruthCreate, kbGroundTruthDelete, kbListChunks, kbEvaluate,
   kbEvalDatasetList, kbEvalDatasetCreate, kbEvalDatasetDelete, kbEvalDatasetVersions,
   kbEvalCaseList, kbEvalCaseCreate, kbEvalCaseUpdate, kbEvalCaseDelete,
-  kbEvalDatasetEvaluate, kbEvalResultList, kbEvalResultCompare
+  kbEvalDatasetEvaluate, kbEvalRunStatus, kbEvalResultList, kbEvalResultCompare
 } from '../../api'
 
 const route = useRoute()
@@ -556,6 +556,20 @@ const removeCase = async (row) => {
   } catch (e) { /* ignore */ }
 }
 
+const pollEvalRun = async (executionId) => {
+  const deadline = Date.now() + 15 * 60 * 1000
+  while (Date.now() < deadline) {
+    const res = await kbEvalRunStatus(kbId, selectedDatasetId.value, executionId)
+    const data = res.data || {}
+    if (data.status === 'SUCCEEDED') return data.result || {}
+    if (['FAILED', 'DEAD', 'CANCELLED'].includes(data.status)) {
+      throw new Error(data.errorMessage || `评测任务${data.status}`)
+    }
+    await new Promise(resolve => setTimeout(resolve, 2000))
+  }
+  throw new Error('评测任务超时，请稍后在历史结果中查看')
+}
+
 const runDatasetEvaluate = async () => {
   if (selectedVersion.value == null) { ElMessage.warning('请选择版本'); return }
   dsEvalLoading.value = true
@@ -563,10 +577,15 @@ const runDatasetEvaluate = async () => {
     const res = await kbEvalDatasetEvaluate(kbId, selectedDatasetId.value, {
       version: selectedVersion.value, topK: dsTopK.value, hybrid: dsHybrid.value
     })
-    datasetResult.value = res.data
+    const body = res.data || {}
+    // 调度中心启用时返回 202 + executionId，轮询到终态再展示；未启用时保持同步返回
+    datasetResult.value = body.executionId ? await pollEvalRun(body.executionId) : body
     await loadHistory()
     ElMessage.success('评测完成，结果已归档')
-  } catch (e) { datasetResult.value = null } finally { dsEvalLoading.value = false }
+  } catch (e) {
+    datasetResult.value = null
+    if (e?.message) ElMessage.error(e.message)
+  } finally { dsEvalLoading.value = false }
 }
 
 const onHistorySelect = (rows) => {

@@ -21,6 +21,7 @@ import com.wgh.rag.agentmulti.service.AgentStepCheckpointService.CheckpointSessi
 import com.wgh.rag.execution.run.RunLifecycle;
 import com.wgh.rag.agentmulti.service.AgentStepCheckpointService.StepDecision;
 import com.wgh.rag.agentmulti.service.MultiAgentService;
+import com.wgh.rag.agentmulti.support.AgentEventStream;
 import com.wgh.rag.agentmulti.support.AgentInstanceExecutor;
 import com.wgh.rag.agentmulti.support.AgentResultCardBuilder;
 import com.wgh.rag.agentmulti.support.SseEventSender;
@@ -29,7 +30,6 @@ import com.wgh.rag.workflow.engine.VariableResolver;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
-import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.time.LocalDateTime;
 import java.util.*;
@@ -63,17 +63,17 @@ public class CrewCoordinator {
     private final MultiAgentContextProperties contextProperties;
 
     public void execute(MultiAgentRun run, List<AgentInstance> agents,
-                        MultiAgentContext ctx, SseEmitter emitter) {
+                        MultiAgentContext ctx, AgentEventStream emitter) {
         execute(run, agents, ctx, emitter, checkpointService.open(run.getRunId()));
     }
 
     public void execute(MultiAgentRun run, List<AgentInstance> agents,
-                        MultiAgentContext ctx, SseEmitter emitter, CheckpointSession session) {
+                        MultiAgentContext ctx, AgentEventStream emitter, CheckpointSession session) {
         execute(run, agents, ctx, emitter, session, RunLifecycle.NOOP);
     }
 
     public void execute(MultiAgentRun run, List<AgentInstance> agents,
-                        MultiAgentContext ctx, SseEmitter emitter, CheckpointSession session,
+                        MultiAgentContext ctx, AgentEventStream emitter, CheckpointSession session,
                         RunLifecycle lifecycle) {
         lifecycle.throwIfCancelled();
         lifecycle.heartbeat();
@@ -102,7 +102,7 @@ public class CrewCoordinator {
 
     /** HITL 恢复 —— Crew 模式暂不支持 HITL 节点，但保留接口 */
     public void resume(MultiAgentRun run, List<AgentInstance> agents,
-                       MultiAgentContext ctx, String userInput, SseEmitter emitter) {
+                       MultiAgentContext ctx, String userInput, AgentEventStream emitter) {
         // 简单处理：重新执行（实际可根据 step 状态跳过已完成的）
         execute(run, agents, ctx, emitter);
     }
@@ -110,7 +110,7 @@ public class CrewCoordinator {
     // ==================== SEQUENTIAL ====================
 
     private void runSequential(MultiAgentRun run, List<AgentInstance> agents,
-                                DAGGraph graph, MultiAgentContext ctx, SseEmitter emitter,
+                                DAGGraph graph, MultiAgentContext ctx, AgentEventStream emitter,
                                 CheckpointSession session) {
         if (graph == null || graph.getNodes() == null || graph.getNodes().isEmpty()) return;
         Map<String, AgentInstance> agentMap = indexAgents(agents);
@@ -183,7 +183,7 @@ public class CrewCoordinator {
     // ==================== HIERARCHICAL ====================
 
     private void runHierarchical(MultiAgentRun run, List<AgentInstance> agents,
-                                 CrewConfig crewCfg, MultiAgentContext ctx, SseEmitter emitter,
+                                 CrewConfig crewCfg, MultiAgentContext ctx, AgentEventStream emitter,
                                  CheckpointSession session) {
         Map<String, AgentInstance> agentMap = indexAgents(agents);
         String managerId = crewCfg.managerAgentId != null
@@ -307,7 +307,7 @@ public class CrewCoordinator {
     }
 
     private void runParallel(MultiAgentRun run, List<AgentInstance> agents,
-                              DAGGraph graph, MultiAgentContext ctx, SseEmitter emitter,
+                              DAGGraph graph, MultiAgentContext ctx, AgentEventStream emitter,
                               CheckpointSession session) {
         if (graph == null || graph.getNodes() == null || graph.getNodes().isEmpty()) return;
 
@@ -388,7 +388,7 @@ public class CrewCoordinator {
     }
 
     private void executeParallelNode(MultiAgentRun run, List<AgentInstance> agents,
-                                      MultiAgentContext ctx, SseEmitter emitter,
+                                      MultiAgentContext ctx, AgentEventStream emitter,
                                       Map<String, AgentInstance> agentMap,
                                       Map<String, GraphNode> nodeMap,
                                       Map<String, List<GraphEdge>> outEdges,
@@ -448,7 +448,7 @@ public class CrewCoordinator {
     // ==================== 收尾 ====================
 
     private void collectAndFinish(MultiAgentRun run, DAGGraph graph,
-                                   MultiAgentContext ctx, SseEmitter emitter) {
+                                   MultiAgentContext ctx, AgentEventStream emitter) {
         String output = run.getOutputText();
         if (output == null || output.isBlank()) {
             // 收集所有 agent 的 text 作为简单汇总

@@ -1203,11 +1203,12 @@ const onRefreshPlan = async (planId) => {
 }
 
 const onHitlConfirmFromTree = async () => {
-  // AgentPlanTree 内部已调 agentHitlConfirm API（同步等待 resume 执行完）
-  // 这里刷新面板 + 补拉聊天消息（HITL 后续步骤的最终答复会落库）
-  if (agentPlan.value.planId) await onRefreshPlan(agentPlan.value.planId)
+  // AgentPlanTree 内部已调 agentHitlConfirm；调度中心启用时后台执行，这里持续轮询到终态
+  if (agentPlan.value.planId) {
+    await onRefreshPlan(agentPlan.value.planId)
+    startPlanPolling()
+  }
   await loadHistory()
-  if (isPlanActive(agentPlan.value.status)) startPlanPolling()
 }
 
 // ============ 工作流运行状态 ============

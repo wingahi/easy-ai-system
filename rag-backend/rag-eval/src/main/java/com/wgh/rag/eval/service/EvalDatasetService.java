@@ -5,6 +5,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wgh.rag.common.exception.BusinessException;
 import com.wgh.rag.common.result.ResultCode;
+import com.wgh.rag.data.scope.DataScopeGuard;
 import com.wgh.rag.eval.entity.EvalCase;
 import com.wgh.rag.eval.entity.EvalDataset;
 import com.wgh.rag.eval.entity.EvalResult;
@@ -64,14 +65,14 @@ public class EvalDatasetService {
     // ============ 数据集 CRUD ============
 
     public List<EvalDataset> list(Long kbId) {
-        requireKb(kbId);
+        requireReadableKb(kbId);
         return datasetMapper.selectList(new LambdaQueryWrapper<EvalDataset>()
                 .eq(EvalDataset::getKnowledgeBaseId, kbId)
                 .orderByDesc(EvalDataset::getId));
     }
 
     public EvalDataset create(Long kbId, DatasetPayload payload) {
-        requireKb(kbId);
+        requireWritableKb(kbId);
         EvalDataset dataset = new EvalDataset();
         dataset.setKnowledgeBaseId(kbId);
         applyDataset(dataset, payload);
@@ -81,6 +82,7 @@ public class EvalDatasetService {
     }
 
     public EvalDataset update(Long kbId, Long id, DatasetPayload payload) {
+        requireWritableKb(kbId);
         EvalDataset dataset = requireOwned(kbId, id);
         applyDataset(dataset, payload);
         datasetMapper.updateById(dataset);
@@ -88,6 +90,7 @@ public class EvalDatasetService {
     }
 
     public void delete(Long kbId, Long id) {
+        requireWritableKb(kbId);
         requireOwned(kbId, id);
         datasetMapper.deleteById(id);
     }
@@ -98,6 +101,7 @@ public class EvalDatasetService {
      * 数据集已有版本号（升序）；空数据集返回 [0]，便于前端始终有可选版本
      */
     public List<Integer> listVersions(Long kbId, Long datasetId) {
+        requireReadableKb(kbId);
         EvalDataset dataset = requireOwned(kbId, datasetId);
         List<Integer> versions = caseMapper.selectVersions(datasetId);
         if (versions == null) {
@@ -117,6 +121,7 @@ public class EvalDatasetService {
      * 列出版本用例：version 为空时取当前版本
      */
     public List<EvalCase> listCases(Long kbId, Long datasetId, Integer version) {
+        requireReadableKb(kbId);
         EvalDataset dataset = requireOwned(kbId, datasetId);
         int v = version != null ? version : currentVersion(dataset);
         requireVersionExists(dataset, v);
@@ -126,6 +131,7 @@ public class EvalDatasetService {
     /** 新增用例：生成新版本 */
     @Transactional(rollbackFor = Exception.class)
     public EvalCase addCase(Long kbId, Long datasetId, CasePayload payload) {
+        requireWritableKb(kbId);
         EvalDataset dataset = requireOwned(kbId, datasetId);
         String query = requireQuery(payload);
         String relevant = serializeRelevant(payload);
@@ -140,6 +146,7 @@ public class EvalDatasetService {
     /** 修改用例：生成新版本，旧版本内容保持不变 */
     @Transactional(rollbackFor = Exception.class)
     public EvalCase updateCase(Long kbId, Long datasetId, Long caseId, CasePayload payload) {
+        requireWritableKb(kbId);
         EvalDataset dataset = requireOwned(kbId, datasetId);
         String query = requireQuery(payload);
         String relevant = serializeRelevant(payload);
@@ -163,6 +170,7 @@ public class EvalDatasetService {
     /** 删除用例：生成新版本（仅新版本缺少该用例，旧版本仍完整保留） */
     @Transactional(rollbackFor = Exception.class)
     public void deleteCase(Long kbId, Long datasetId, Long caseId) {
+        requireWritableKb(kbId);
         EvalDataset dataset = requireOwned(kbId, datasetId);
         int current = currentVersion(dataset);
         List<EvalCase> sources = caseMapper.selectByVersion(datasetId, current);
@@ -181,6 +189,7 @@ public class EvalDatasetService {
      */
     @Transactional(rollbackFor = Exception.class)
     public Map<String, Object> evaluate(Long kbId, Long datasetId, Integer version, RetrievalOptions options) {
+        requireWritableKb(kbId);
         EvalDataset dataset = requireOwned(kbId, datasetId);
         int v = version != null ? version : currentVersion(dataset);
         if (v <= 0) {
@@ -209,6 +218,7 @@ public class EvalDatasetService {
      * 数据集的历史评测结果（新版本在前）
      */
     public List<EvalResult> listResults(Long kbId, Long datasetId) {
+        requireReadableKb(kbId);
         requireOwned(kbId, datasetId);
         return resultMapper.selectList(new LambdaQueryWrapper<EvalResult>()
                 .eq(EvalResult::getDatasetId, datasetId)
@@ -220,6 +230,7 @@ public class EvalDatasetService {
      * 对比两次归档结果：指标差值 + 逐查询 recall 差值
      */
     public Map<String, Object> compareResults(Long kbId, Long datasetId, Long baseId, Long targetId) {
+        requireReadableKb(kbId);
         requireOwned(kbId, datasetId);
         EvalResult base = requireResult(datasetId, baseId);
         EvalResult target = requireResult(datasetId, targetId);
@@ -376,11 +387,20 @@ public class EvalDatasetService {
         return result;
     }
 
-    private void requireKb(Long kbId) {
+    private void requireReadableKb(Long kbId) {
         KnowledgeBase kb = kbId == null ? null : knowledgeBaseMapper.selectById(kbId);
         if (kb == null) {
             throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "知识库不存在");
         }
+        DataScopeGuard.assertReadable(kb.getCreateBy(), kb.getVisibility(), "知识库");
+    }
+
+    private void requireWritableKb(Long kbId) {
+        KnowledgeBase kb = kbId == null ? null : knowledgeBaseMapper.selectById(kbId);
+        if (kb == null) {
+            throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "知识库不存在");
+        }
+        DataScopeGuard.assertWritable(kb.getCreateBy(), kb.getVisibility(), "知识库");
     }
 
     private EvalDataset requireOwned(Long kbId, Long id) {
