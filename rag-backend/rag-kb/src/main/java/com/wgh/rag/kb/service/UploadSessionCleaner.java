@@ -12,6 +12,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -73,6 +74,7 @@ public class UploadSessionCleaner {
     /**
      * 清理超时未完成的会话，返回清理数量。任何单个会话失败都不影响其他会话。
      */
+    @Transactional
     public int cleanupExpired() {
         LocalDateTime cutoff = LocalDateTime.now().minusHours(Math.max(1, properties.getStaleHours()));
         List<UploadSession> stale = sessionMapper.selectList(new LambdaQueryWrapper<UploadSession>()

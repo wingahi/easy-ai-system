@@ -1,6 +1,7 @@
 package com.wgh.rag.kb.storage;
 
 import com.wgh.rag.common.metrics.RagMetrics;
+import com.wgh.rag.data.tenant.TenantTransactionTemplate;
 import com.wgh.rag.kb.entity.KnowledgeFile;
 import com.wgh.rag.kb.entity.UploadSession;
 import com.wgh.rag.kb.mapper.KnowledgeFileMapper;
@@ -14,10 +15,12 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.function.Supplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -34,6 +37,7 @@ class StorageOrphanCleanupServiceTest {
     private UploadSessionMapper sessionMapper;
     private RagMetrics metrics;
     private StorageOrphanCleanupProperties properties;
+    private TenantTransactionTemplate transactions;
     private StorageOrphanCleanupService service;
 
     @BeforeEach
@@ -44,8 +48,11 @@ class StorageOrphanCleanupServiceTest {
         sessionMapper = mock(UploadSessionMapper.class);
         metrics = mock(RagMetrics.class);
         properties = new StorageOrphanCleanupProperties();
+        transactions = mock(TenantTransactionTemplate.class);
+        when(transactions.execute(anyString(), eq(true), any()))
+                .thenAnswer(invocation -> ((Supplier<?>) invocation.getArgument(2)).get());
         service = new StorageOrphanCleanupService(storage, inventory, fileMapper, sessionMapper,
-                metrics, new StorageProperties(), properties);
+                metrics, new StorageProperties(), properties, transactions);
 
         when(inventory.canonicalKey(anyString())).thenAnswer(invocation -> invocation.getArgument(0));
     }

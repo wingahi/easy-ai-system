@@ -1,5 +1,6 @@
 package com.wgh.rag.kb.job;
 
+import com.wgh.rag.data.tenant.PlatformScanTemplate;
 import com.wgh.rag.execution.job.JobContext;
 import com.wgh.rag.execution.job.JobHandler;
 import com.wgh.rag.execution.job.RecurringJob;
@@ -10,6 +11,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * 过期分片上传会话清理（{@code KB_UPLOAD_CLEANUP}，维护车道 + 周期作业）。
@@ -24,6 +26,7 @@ public class KbUploadCleanupJobHandler implements JobHandler, RecurringJob {
 
     private final UploadSessionCleaner uploadSessionCleaner;
     private final UploadCleanupProperties properties;
+    private final PlatformScanTemplate platformScan;
 
     @Override
     public String jobType() {
@@ -42,7 +45,12 @@ public class KbUploadCleanupJobHandler implements JobHandler, RecurringJob {
             return;
         }
         context.cancellation().throwIfCancellationRequested();
-        int cleaned = uploadSessionCleaner.cleanupExpired();
-        log.debug("分片上传会话清理完成 executionId={} cleaned={}", context.executionId(), cleaned);
+        AtomicLong cleaned = new AtomicLong();
+        platformScan.scan(false, () -> context.cancellation().isCancelled(), tenantId -> {
+            int count = uploadSessionCleaner.cleanupExpired();
+            cleaned.addAndGet(count);
+            return new PlatformScanTemplate.TenantCounters(count, 0);
+        });
+        log.debug("分片上传会话清理完成 executionId={} cleaned={}", context.executionId(), cleaned.get());
     }
 }

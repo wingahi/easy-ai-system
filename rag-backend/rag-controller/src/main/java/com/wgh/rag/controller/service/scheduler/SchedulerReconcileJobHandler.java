@@ -7,6 +7,7 @@ import com.wgh.rag.agent.mapper.AgentPlanMapper;
 import com.wgh.rag.agentmulti.constant.MultiAgentConstants;
 import com.wgh.rag.agentmulti.entity.MultiAgentRun;
 import com.wgh.rag.agentmulti.mapper.MultiAgentRunMapper;
+import com.wgh.rag.data.tenant.TenantTransactionTemplate;
 import com.wgh.rag.execution.job.JobContext;
 import com.wgh.rag.execution.job.JobHandler;
 import com.wgh.rag.execution.job.RecurringJob;
@@ -15,7 +16,7 @@ import com.wgh.rag.execution.run.RunTypes;
 import com.wgh.rag.scheduler.config.SchedulerProperties;
 import com.wgh.rag.scheduler.entity.ExecutionJob;
 import com.wgh.rag.scheduler.job.JobPayloadCodec;
-import com.wgh.rag.scheduler.mapper.ExecutionJobMapper;
+import com.wgh.rag.scheduler.job.JobStore;
 import com.wgh.rag.scheduler.metrics.SchedulerMetrics;
 import com.wgh.rag.scheduler.reconcile.ReconcileReport;
 import com.wgh.rag.scheduler.reconcile.ReconcileReportRegistry;
@@ -89,7 +90,11 @@ public class SchedulerReconcileJobHandler implements JobHandler, RecurringJob {
 
     private final SchedulerProperties properties;
 
-    private final ExecutionJobMapper jobMapper;
+    /** 候选扫描与修复写入都收敛到 JobStore（调度角色短事务），处理器不直接碰作业表。 */
+    private final JobStore jobStore;
+
+    /** 业务读取按作业归属租户开只读短事务，不依赖线程当前租户。 */
+    private final TenantTransactionTemplate transactions;
 
     private final JobPayloadCodec codec;
 
@@ -132,17 +137,43 @@ public class SchedulerReconcileJobHandler implements JobHandler, RecurringJob {
         int mismatches = 0;
         int repaired = 0;
         int alertOnly = 0;
+        int skipped = 0;
         Map<String, Integer> byType = new LinkedHashMap<>();
         List<ReconcileReport.Finding> findings = new ArrayList<>();
         SchedulerMetrics schedulerMetrics = metrics.getIfAvailable();
 
+        // 三段式：① 调度角色短事务跨租户扫候选 → ② 按作业归属租户逐条只读事务读业务
+        // → ③ 调度角色短事务修复。② 与 ③ 分开，读写事务不混用。
         for (String jobType : List.of(WorkflowRunJobHandler.JOB_TYPE, ResumeJobTypes.RUN_RESUME)) {
             context.cancellation().throwIfCancellationRequested();
-            List<ExecutionJob> candidates = jobMapper.selectReconcileCandidates(jobType, since, batch);
+            List<ExecutionJob> candidates = jobStore.reconcileCandidates(jobType, since, batch);
             for (ExecutionJob job : candidates) {
                 context.cancellation().throwIfCancellationRequested();
                 scanned++;
-                ReconcileReport.Finding finding = inspect(job, now);
+                String tenantId = job.getTenantId();
+                if (tenantId == null || tenantId.isBlank()) {
+                    skipped++;
+                    if (schedulerMetrics != null) {
+                        schedulerMetrics.recordReconcileSkipped("tenant_missing");
+                    }
+                    log.warn("对账跳过：作业缺少租户归属 executionId={} jobType={}",
+                            job.getExecutionId(), jobType);
+                    continue;
+                }
+                BusinessState business;
+                try {
+                    business = transactions.execute(tenantId, true, () -> businessState(job));
+                } catch (RuntimeException e) {
+                    // 业务读失败不判定：既不修复也不报不一致，避免把读失败误判成 business_missing
+                    skipped++;
+                    if (schedulerMetrics != null) {
+                        schedulerMetrics.recordReconcileSkipped("business_read_failed");
+                    }
+                    log.warn("对账跳过：业务读取失败 tenant={} executionId={} jobType={}",
+                            tenantId, job.getExecutionId(), jobType, e);
+                    continue;
+                }
+                ReconcileReport.Finding finding = inspect(job, business, now);
                 if (finding == null) {
                     continue;
                 }
@@ -169,22 +200,21 @@ public class SchedulerReconcileJobHandler implements JobHandler, RecurringJob {
             }
         }
 
-        ReconcileReport report = new ReconcileReport(now, scanned, mismatches, repaired, alertOnly,
+        ReconcileReport report = new ReconcileReport(now, scanned, mismatches, repaired, alertOnly, skipped,
                 Map.copyOf(byType), List.copyOf(findings));
         reportRegistry.record(report);
-        log.info("作业对账完成 scanned={} mismatches={} repaired={} alertOnly={} byType={}",
-                scanned, mismatches, repaired, alertOnly, byType);
+        log.info("作业对账完成 scanned={} mismatches={} repaired={} alertOnly={} skipped={} byType={}",
+                scanned, mismatches, repaired, alertOnly, skipped, byType);
     }
 
     /**
      * 检查单条作业；返回 {@code null} 表示无法对账或状态一致。
      */
-    private ReconcileReport.Finding inspect(ExecutionJob job, LocalDateTime now) {
+    private ReconcileReport.Finding inspect(ExecutionJob job, BusinessState business, LocalDateTime now) {
         ExecutionStatus jobStatus = job.getStatus();
         if (jobStatus == null) {
             return null;
         }
-        BusinessState business = businessState(job);
         if (business == null) {
             // 尚无业务归属（如 WF_RUN 首次执行前还没写入 runId）或未知 runType，无法对账
             return null;
@@ -241,8 +271,8 @@ public class SchedulerReconcileJobHandler implements JobHandler, RecurringJob {
     private ReconcileReport.Finding repair(ExecutionJob job, BusinessState business,
                                            String mismatchType, String detail) {
         String reason = "对账：" + detail;
-        int updated = jobMapper.cancelPending(job.getId(), reason);
-        if (updated <= 0) {
+        boolean updated = jobStore.cancelPendingForReconcile(job.getId(), reason);
+        if (!updated) {
             log.debug("对账修复竞争失败（作业已被领取或已终态） executionId={}", job.getExecutionId());
             return null;
         }

@@ -1,6 +1,7 @@
 package com.wgh.rag.kb.job;
 
 import com.wgh.rag.config.property.RagProperties;
+import com.wgh.rag.data.tenant.PlatformScanTemplate;
 import com.wgh.rag.execution.job.JobContext;
 import com.wgh.rag.execution.job.JobHandler;
 import com.wgh.rag.execution.job.RecurringJob;
@@ -10,6 +11,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * 长期记忆清理（{@code KB_AGENT_MEMORY_CLEANUP}，维护车道 + 周期作业）。
@@ -24,6 +26,7 @@ public class KbAgentMemoryCleanupJobHandler implements JobHandler, RecurringJob 
 
     private final AgentMemoryCleaner agentMemoryCleaner;
     private final RagProperties ragProperties;
+    private final PlatformScanTemplate platformScan;
 
     @Override
     public String jobType() {
@@ -47,7 +50,12 @@ public class KbAgentMemoryCleanupJobHandler implements JobHandler, RecurringJob 
             return;
         }
         context.cancellation().throwIfCancellationRequested();
-        int deleted = agentMemoryCleaner.cleanupExpired();
-        log.debug("长期记忆清理完成 executionId={} deleted={}", context.executionId(), deleted);
+        AtomicLong deleted = new AtomicLong();
+        platformScan.scan(false, () -> context.cancellation().isCancelled(), tenantId -> {
+            int count = agentMemoryCleaner.cleanupExpired();
+            deleted.addAndGet(count);
+            return new PlatformScanTemplate.TenantCounters(count, 0);
+        });
+        log.debug("长期记忆清理完成 executionId={} deleted={}", context.executionId(), deleted.get());
     }
 }

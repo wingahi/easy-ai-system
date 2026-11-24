@@ -15,6 +15,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.interceptor.TransactionAspectSupport;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
@@ -106,6 +107,7 @@ public class QuotaService {
     /**
      * 解析某用户的生效配额：自定义（启用）&gt; 全局默认
      */
+    @Transactional(readOnly = true)
     public EffectiveQuota resolve(String username) {
         UserQuotaConfig cfg = findUserConfig(username);
         if (cfg != null && Boolean.TRUE.equals(cfg.getEnabled())) {
@@ -114,6 +116,7 @@ public class QuotaService {
         return EffectiveQuota.ofDefault(quotaProperties.getChatDailyLimit(), quotaProperties.getTokenDailyLimit());
     }
 
+    @Transactional(readOnly = true)
     public UserQuotaConfig findUserConfig(String username) {
         return userQuotaConfigMapper.selectOne(new LambdaQueryWrapper<UserQuotaConfig>()
                 .eq(UserQuotaConfig::getUsername, username)
@@ -549,6 +552,7 @@ public class QuotaService {
 
     // ============ 用量查询 ============
 
+    @Transactional(readOnly = true)
     public QuotaUsage usageOf(String username, String periodKey) {
         return quotaUsageMapper.selectOne(new LambdaQueryWrapper<QuotaUsage>()
                 .eq(QuotaUsage::getUsername, username)

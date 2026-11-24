@@ -1,6 +1,7 @@
 package com.wgh.rag.controller.service.resume;
 
 import com.wgh.rag.controller.service.RunningTaskService;
+import com.wgh.rag.data.tenant.PlatformScanTemplate;
 import com.wgh.rag.execution.api.ExecutionFacade;
 import com.wgh.rag.execution.api.ExecutionJobLookup;
 import com.wgh.rag.execution.job.ExecutionCancellationToken;
@@ -20,8 +21,11 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -44,6 +48,8 @@ class RunResumeScanJobHandlerTest {
     private JobContext context;
     @Mock
     private ExecutionCancellationToken cancellationToken;
+    @Mock
+    private PlatformScanTemplate platformScan;
 
     private ResumeProperties properties;
 
@@ -52,6 +58,11 @@ class RunResumeScanJobHandlerTest {
         properties = new ResumeProperties();
         properties.setStaleMinutes(30);
         properties.setBatchSize(20);
+        lenient().when(platformScan.scan(anyBoolean(), any(), any())).thenAnswer(invocation -> {
+            PlatformScanTemplate.TenantTask task = invocation.getArgument(2);
+            task.run("default");
+            return new PlatformScanTemplate.Result(1, 1, 0, 0, 0, false);
+        });
     }
 
     @Test
@@ -60,7 +71,7 @@ class RunResumeScanJobHandlerTest {
         when(facadeProvider.getIfAvailable()).thenReturn(executionFacade);
         when(lookupProvider.getIfAvailable()).thenReturn(jobLookup);
         LocalDateTime last = LocalDateTime.of(2026, 11, 23, 10, 0);
-        when(runningTaskService.listStaleCandidates(30, 20)).thenReturn(List.of(
+        when(runningTaskService.listStaleCandidates("default", 30, 20)).thenReturn(List.of(
                 new RunningTaskService.StaleCandidate(RunningTaskService.TYPE_AGENT, "11", "RUNNING", last),
                 new RunningTaskService.StaleCandidate(RunningTaskService.TYPE_MULTI_AGENT, "22", "RUNNING", last),
                 new RunningTaskService.StaleCandidate(RunningTaskService.TYPE_WORKFLOW, "33", "RUNNING", last)));
@@ -89,11 +100,12 @@ class RunResumeScanJobHandlerTest {
 
         handler().execute(context);
 
-        verify(runningTaskService, never()).listStaleCandidates(anyLong(), anyInt());
+        verify(runningTaskService, never()).listStaleCandidates(anyString(), anyLong(), anyInt());
         verify(executionFacade, never()).submit(any());
     }
 
     private RunResumeScanJobHandler handler() {
-        return new RunResumeScanJobHandler(properties, runningTaskService, facadeProvider, lookupProvider);
+        return new RunResumeScanJobHandler(properties, runningTaskService, facadeProvider, lookupProvider,
+                platformScan);
     }
 }

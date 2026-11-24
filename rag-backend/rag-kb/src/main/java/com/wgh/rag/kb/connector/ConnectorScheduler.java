@@ -1,6 +1,7 @@
 package com.wgh.rag.kb.connector;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.wgh.rag.data.tenant.PlatformScanTemplate;
 import com.wgh.rag.kb.entity.KbConnector;
 import com.wgh.rag.kb.mapper.KbConnectorMapper;
 import jakarta.annotation.PostConstruct;
@@ -14,6 +15,8 @@ import org.springframework.stereotype.Component;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.BooleanSupplier;
 
 /**
  * URL 数据源定时同步调度器。
@@ -29,6 +32,7 @@ public class ConnectorScheduler {
     private final KbConnectorMapper connectorMapper;
     private final ConnectorService connectorService;
     private final ConnectorProperties properties;
+    private final PlatformScanTemplate platformScan;
 
     /** 调度中心开启时由 {@code KB_CONNECTOR_SYNC} 周期作业接管，本地定时器不启动。 */
     @Value("${wgh.scheduler.enabled:true}")
@@ -64,28 +68,54 @@ public class ConnectorScheduler {
         }
     }
 
-    /** 单轮轮询：只挑到期的启用连接器，单个失败不影响本轮其他连接器。 */
+    /** 本地定时器入口：不感知作业取消。 */
     public void tick() {
-        try {
-            LocalDateTime now = LocalDateTime.now();
-            int batchSize = Math.max(1, properties.getBatchSize());
-            List<KbConnector> candidates = connectorMapper.selectList(new LambdaQueryWrapper<KbConnector>()
-                    .eq(KbConnector::getEnabled, 1)
-                    .orderByAsc(KbConnector::getLastSyncTime)
-                    .last("LIMIT " + batchSize));
+        tick(() -> false);
+    }
 
-            int triggered = 0;
-            for (KbConnector connector : candidates) {
-                if (!isDue(connector, now, properties.getDefaultSyncIntervalMinutes())) {
-                    continue;
+    /**
+     * 单轮轮询：按租户枚举到期的启用连接器，单个连接器失败不影响本轮其他连接器。
+     *
+     * <p>原来只按作业的默认租户扫描，多租户下其他租户的连接器永远不会被同步；
+     * 现在由 {@link PlatformScanTemplate} 逐租户下发租户上下文后再查询与同步。
+     *
+     * @param cancelled 取消探测
+     */
+    public void tick(BooleanSupplier cancelled) {
+        try {
+            AtomicInteger triggered = new AtomicInteger();
+            platformScan.scan(false, cancelled, tenantId -> {
+                LocalDateTime now = LocalDateTime.now();
+                int batchSize = Math.max(1, properties.getBatchSize());
+                // 读连接器表必须在租户事务内下发 app.tenant_id，否则切换 wgh_app 后 RLS 会静默返回 0 行
+                List<KbConnector> candidates = platformScan.read(tenantId,
+                        () -> connectorMapper.selectList(new LambdaQueryWrapper<KbConnector>()
+                                .eq(KbConnector::getEnabled, 1)
+                                .orderByAsc(KbConnector::getLastSyncTime)
+                                .last("LIMIT " + batchSize)));
+
+                long due = 0;
+                long failed = 0;
+                for (KbConnector connector : candidates) {
+                    if (!isDue(connector, now, properties.getDefaultSyncIntervalMinutes())) {
+                        continue;
+                    }
+                    due++;
+                    try {
+                        connectorService.syncScheduled(connector.getId());
+                        triggered.incrementAndGet();
+                    } catch (RuntimeException e) {
+                        failed++;
+                        log.warn("[ALERT] 连接器定时同步失败，已跳过 tenant={} connectorId={}",
+                                tenantId, connector.getId(), e);
+                    }
                 }
-                connectorService.syncScheduled(connector.getId());
-                triggered++;
+                return new PlatformScanTemplate.TenantCounters(due, failed);
+            });
+            if (triggered.get() > 0) {
+                log.info("URL 连接器定时同步本轮触发 {} 个", triggered.get());
             }
-            if (triggered > 0) {
-                log.info("URL 连接器定时同步本轮触发 {} 个（候选 {} 个）", triggered, candidates.size());
-            }
-        } catch (Exception e) {
+        } catch (RuntimeException e) {
             log.error("URL 连接器定时同步轮询失败", e);
         }
     }

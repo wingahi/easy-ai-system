@@ -1,6 +1,7 @@
 package com.wgh.rag.controller.service.resume;
 
 import com.wgh.rag.controller.service.RunningTaskService;
+import com.wgh.rag.data.tenant.PlatformScanTemplate;
 import com.wgh.rag.execution.api.ExecutionFacade;
 import com.wgh.rag.execution.api.ExecutionJobLookup;
 import com.wgh.rag.execution.job.JobContext;
@@ -18,6 +19,7 @@ import java.time.Duration;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * 中断任务扫描（{@code RUN_RESUME_SCAN}，维护车道 + 周期作业）。
@@ -35,6 +37,7 @@ public class RunResumeScanJobHandler implements JobHandler, RecurringJob {
     private final RunningTaskService runningTaskService;
     private final ObjectProvider<ExecutionFacade> executionFacade;
     private final ObjectProvider<ExecutionJobLookup> jobLookup;
+    private final PlatformScanTemplate platformScan;
 
     @Override
     public String jobType() {
@@ -60,41 +63,54 @@ public class RunResumeScanJobHandler implements JobHandler, RecurringJob {
             return;
         }
 
-        List<RunningTaskService.StaleCandidate> candidates =
-                runningTaskService.listStaleCandidates(properties.getStaleMinutes(), properties.getBatchSize());
-        int submitted = 0;
-        for (RunningTaskService.StaleCandidate candidate : candidates) {
-            context.cancellation().throwIfCancellationRequested();
-            String runType = mapType(candidate.taskType());
-            if (runType == null) {
-                continue;
-            }
-            // 工作流可能正由 WF_RUN 作业执行，避免扫描与正常执行/重试双跑
-            if (RunTypes.WORKFLOW.equals(runType)) {
-                ExecutionJobLookup lookup = jobLookup.getIfAvailable();
-                if (lookup != null && lookup.hasActiveJobForRun("WF_RUN", candidate.runId())) {
-                    continue;
-                }
-            }
-            long epoch = candidate.lastActivity() == null ? 0L
-                    : candidate.lastActivity().toEpochSecond(ZoneOffset.UTC);
-            String bizKey = "run-resume:" + runType + ":" + candidate.runId() + ":" + epoch;
-            try {
-                facade.submit(ExecutionRequest.builder(ResumeJobTypes.RUN_RESUME, ExecutionLane.BACKGROUND)
-                        .bizKey(bizKey)
-                        .payload(Map.of(
-                                RunResumeJobHandler.PAYLOAD_RUN_TYPE, runType,
-                                RunResumeJobHandler.PAYLOAD_RUN_ID, candidate.runId(),
-                                "reason", "stale",
-                                "detectedAt", epoch))
-                        .build());
-                submitted++;
-            } catch (Exception e) {
-                log.warn("投递续跑作业失败 runType={} runId={}", runType, candidate.runId(), e);
-            }
-        }
-        if (submitted > 0) {
-            log.info("中断扫描提交续跑作业 {} 条（候选 {} 条）", submitted, candidates.size());
+        AtomicInteger submitted = new AtomicInteger();
+        AtomicInteger scanned = new AtomicInteger();
+        // 逐租户扫候选：候选查询与投递都必须带上租户，否则只会命中默认租户
+        PlatformScanTemplate.Result result = platformScan.scan(false,
+                () -> context.cancellation().isCancelled(), tenantId -> {
+                    List<RunningTaskService.StaleCandidate> candidates = runningTaskService
+                            .listStaleCandidates(tenantId, properties.getStaleMinutes(), properties.getBatchSize());
+                    long failed = 0;
+                    for (RunningTaskService.StaleCandidate candidate : candidates) {
+                        context.cancellation().throwIfCancellationRequested();
+                        scanned.incrementAndGet();
+                        String runType = mapType(candidate.taskType());
+                        if (runType == null) {
+                            continue;
+                        }
+                        // 工作流可能正由 WF_RUN 作业执行，避免扫描与正常执行/重试双跑
+                        if (RunTypes.WORKFLOW.equals(runType)) {
+                            ExecutionJobLookup lookup = jobLookup.getIfAvailable();
+                            if (lookup != null && lookup.hasActiveJobForRun("WF_RUN", candidate.runId())) {
+                                continue;
+                            }
+                        }
+                        long epoch = candidate.lastActivity() == null ? 0L
+                                : candidate.lastActivity().toEpochSecond(ZoneOffset.UTC);
+                        String bizKey = "run-resume:" + runType + ":" + candidate.runId() + ":" + epoch;
+                        try {
+                            facade.submit(ExecutionRequest
+                                    .builder(ResumeJobTypes.RUN_RESUME, ExecutionLane.BACKGROUND)
+                                    .tenant(tenantId)
+                                    .bizKey(bizKey)
+                                    .payload(Map.of(
+                                            RunResumeJobHandler.PAYLOAD_RUN_TYPE, runType,
+                                            RunResumeJobHandler.PAYLOAD_RUN_ID, candidate.runId(),
+                                            "reason", "stale",
+                                            "detectedAt", epoch))
+                                    .build());
+                            submitted.incrementAndGet();
+                        } catch (RuntimeException e) {
+                            failed++;
+                            log.warn("[ALERT] 投递续跑作业失败 tenant={} runType={} runId={}",
+                                    tenantId, runType, candidate.runId(), e);
+                        }
+                    }
+                    return new PlatformScanTemplate.TenantCounters(candidates.size(), failed);
+                });
+        if (submitted.get() > 0 || result.tenantsFailed() > 0) {
+            log.info("中断扫描提交续跑作业 {} 条（候选 {} 条，租户 {} 个，失败租户 {} 个）",
+                    submitted.get(), scanned.get(), result.tenantsOk(), result.tenantsFailed());
         }
     }
 

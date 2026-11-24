@@ -62,6 +62,7 @@ public class ConnectorService {
 
     // ==================== CRUD ====================
 
+    @Transactional(readOnly = true)
     public List<KbConnector> list(Long kbId) {
         kbService.getVisible(kbId);
         LambdaQueryWrapper<KbConnector> wrapper = new LambdaQueryWrapper<KbConnector>()
@@ -102,6 +103,7 @@ public class ConnectorService {
         connectorMapper.deleteById(id);
     }
 
+    @Transactional(readOnly = true)
     public List<KbConnectorRun> listRuns(Long kbId, Long id, Integer limit) {
         kbService.getVisible(kbId);
         getOwnedForRead(kbId, id);
@@ -117,6 +119,7 @@ public class ConnectorService {
     /**
      * 手动触发一次同步。
      */
+    @Transactional
     public KbConnectorRun sync(Long kbId, Long id) {
         requireWritableKb(kbId);
         KbConnector connector = getOwnedForWrite(kbId, id);
@@ -126,6 +129,7 @@ public class ConnectorService {
     /**
      * 按连接器 ID 同步（手动与定时任务共用），同一连接器同一时刻只允许一个同步。
      */
+    @Transactional
     public KbConnectorRun sync(Long connectorId) {
         KbConnector connector = connectorMapper.selectById(connectorId);
         if (connector == null) {
@@ -142,6 +146,7 @@ public class ConnectorService {
     }
 
     /** 定时任务入口：并发中直接跳过，不抛异常打断整轮调度。 */
+    @Transactional
     public void syncScheduled(Long connectorId) {
         if (!syncing.add(connectorId)) {
             log.debug("连接器 {} 正在同步，跳过本轮定时任务", connectorId);

@@ -1,6 +1,7 @@
 package com.wgh.rag.quota.job;
 
 import com.wgh.rag.common.metrics.RagMetrics;
+import com.wgh.rag.data.tenant.PlatformScanTemplate;
 import com.wgh.rag.execution.job.ExecutionCancellationToken;
 import com.wgh.rag.execution.job.JobContext;
 import com.wgh.rag.quota.constant.QuotaConstants;
@@ -8,6 +9,7 @@ import com.wgh.rag.quota.entity.QuotaChargeEntity;
 import com.wgh.rag.quota.properties.QuotaProperties;
 import com.wgh.rag.quota.service.QuotaChargeLedger;
 import com.wgh.rag.quota.service.QuotaService;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -18,12 +20,15 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.function.Supplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -45,8 +50,25 @@ class QuotaRefundJobHandlerTest {
     @Mock
     private RagMetrics metrics;
 
+    @Mock
+    private PlatformScanTemplate platformScan;
+
     @InjectMocks
     private QuotaRefundJobHandler handler;
+
+    @BeforeEach
+    void setUp() {
+        // 平台级扫描在本测试中退化为单租户执行
+        lenient().when(platformScan.scan(anyBoolean(), any(), any())).thenAnswer(invocation -> {
+            PlatformScanTemplate.TenantTask task = invocation.getArgument(2);
+            task.run("default");
+            return new PlatformScanTemplate.Result(1, 1, 0, 0, 0, false);
+        });
+        lenient().when(platformScan.read(anyString(), any())).thenAnswer(invocation -> {
+            Supplier<?> supplier = invocation.getArgument(1);
+            return supplier.get();
+        });
+    }
 
     private JobContext readyContext() {
         JobContext context = mock(JobContext.class);

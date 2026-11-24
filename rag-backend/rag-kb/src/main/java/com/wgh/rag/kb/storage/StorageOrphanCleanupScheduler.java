@@ -1,5 +1,7 @@
 package com.wgh.rag.kb.storage;
 
+import com.wgh.rag.common.exception.BusinessException;
+import com.wgh.rag.data.tenant.PlatformScanTemplate;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
@@ -10,6 +12,7 @@ import org.springframework.stereotype.Component;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.function.BooleanSupplier;
 
 /**
  * 孤儿对象定期扫描调度器。
@@ -27,6 +30,7 @@ public class StorageOrphanCleanupScheduler {
     private final StorageOrphanCleanupService cleanupService;
     private final StorageOrphanCleanupProperties properties;
     private final StorageMaintenanceLock maintenanceLock;
+    private final PlatformScanTemplate platformScan;
 
     /** 调度中心开启时由 {@code KB_ORPHAN_CLEANUP} 周期作业接管，本地定时器不启动。 */
     @Value("${wgh.scheduler.enabled:true}")
@@ -63,16 +67,32 @@ public class StorageOrphanCleanupScheduler {
         }
     }
 
-    /** 执行一轮扫描；调度中心周期作业与本地定时器共用同一入口。 */
+    /** 执行一轮扫描；调度中心周期作业与本地定时器共用同一入口（不感知取消）。 */
     public void runOnce() {
-        try (StorageMaintenanceLock.Handle handle = maintenanceLock.tryAcquire(LOCK_NAME)) {
-            if (handle == null) {
-                log.info("孤儿对象扫描跳过：其他实例正在执行");
-                return;
+        runOnce(() -> false);
+    }
+
+    /**
+     * 按租户扫描孤儿对象。
+     *
+     * <p>孤儿对象只按租户前缀列举，因此必须逐租户执行；<b>包含停用租户</b>——
+     * 停用租户的历史对象仍需回收。锁名带上租户后，多实例可以并行处理不同租户。
+     */
+    public void runOnce(BooleanSupplier cancelled) {
+        platformScan.scan(true, cancelled, tenantId -> {
+            try (StorageMaintenanceLock.Handle handle =
+                         maintenanceLock.tryAcquire(LOCK_NAME + ":" + tenantId)) {
+                if (handle == null) {
+                    log.info("孤儿对象扫描跳过：其他实例正在执行 tenant={}", tenantId);
+                    return PlatformScanTemplate.TenantCounters.EMPTY;
+                }
+                cleanupService.scan(tenantId, properties.isDelete());
+                return new PlatformScanTemplate.TenantCounters(1, 0);
+            } catch (BusinessException e) {
+                // 同一实例内已有扫描在跑（进程内互斥），本轮跳过该租户即可
+                log.debug("孤儿对象扫描跳过 tenant={}: {}", tenantId, e.getMessage());
+                return PlatformScanTemplate.TenantCounters.EMPTY;
             }
-            cleanupService.scan(properties.isDelete());
-        } catch (RuntimeException e) {
-            log.warn("孤儿对象定期扫描任务异常: {}", e.getMessage(), e);
-        }
+        });
     }
 }

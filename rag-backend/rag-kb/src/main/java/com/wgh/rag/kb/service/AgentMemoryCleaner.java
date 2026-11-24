@@ -15,6 +15,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Duration;
@@ -99,6 +100,7 @@ public class AgentMemoryCleaner {
     /**
      * 执行一轮清理，返回删除条数。任何异常只记日志并返回 0。
      */
+    @Transactional
     public int cleanupExpired() {
         RagProperties.Memory cfg = memoryConfig();
         if (!Boolean.TRUE.equals(cfg.getEnabled()) || !Boolean.TRUE.equals(cfg.getCleanupEnabled())) {

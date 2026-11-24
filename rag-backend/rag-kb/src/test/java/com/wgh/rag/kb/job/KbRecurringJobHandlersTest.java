@@ -1,6 +1,7 @@
 package com.wgh.rag.kb.job;
 
 import com.wgh.rag.config.property.RagProperties;
+import com.wgh.rag.data.tenant.PlatformScanTemplate;
 import com.wgh.rag.execution.job.ExecutionCancellationToken;
 import com.wgh.rag.execution.job.JobContext;
 import com.wgh.rag.kb.connector.ConnectorProperties;
@@ -17,6 +18,9 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -45,20 +49,28 @@ class KbRecurringJobHandlersTest {
     private JobContext context;
     @Mock
     private ExecutionCancellationToken cancellation;
+    @Mock
+    private PlatformScanTemplate platformScan;
 
     private final RagProperties ragProperties = new RagProperties();
 
     @BeforeEach
     void setUp() {
-        org.mockito.Mockito.lenient().when(context.cancellation()).thenReturn(cancellation);
-        org.mockito.Mockito.lenient().when(context.executionId()).thenReturn("exec-1");
+        lenient().when(context.cancellation()).thenReturn(cancellation);
+        lenient().when(context.executionId()).thenReturn("exec-1");
+        // 平台级扫描在本测试中退化为单租户执行
+        lenient().when(platformScan.scan(anyBoolean(), any(), any())).thenAnswer(invocation -> {
+            PlatformScanTemplate.TenantTask task = invocation.getArgument(2);
+            task.run("default");
+            return new PlatformScanTemplate.Result(1, 1, 0, 1, 0, false);
+        });
     }
 
     @Test
     void orphanCleanupSkipsWhenDisabled() {
         when(orphanProperties.isEnabled()).thenReturn(false);
         new KbOrphanCleanupJobHandler(orphanScheduler, orphanProperties).execute(context);
-        verify(orphanScheduler, never()).runOnce();
+        verify(orphanScheduler, never()).runOnce(any());
     }
 
     @Test
@@ -69,14 +81,14 @@ class KbRecurringJobHandlersTest {
 
         handler.execute(context);
 
-        verify(orphanScheduler).runOnce();
+        verify(orphanScheduler).runOnce(any());
         assertThat(handler.interval().toMinutes()).isEqualTo(60);
     }
 
     @Test
     void uploadCleanupSkipsWhenDisabled() {
         when(uploadProperties.isEnabled()).thenReturn(false);
-        new KbUploadCleanupJobHandler(uploadCleaner, uploadProperties).execute(context);
+        new KbUploadCleanupJobHandler(uploadCleaner, uploadProperties, platformScan).execute(context);
         verify(uploadCleaner, never()).cleanupExpired();
     }
 
@@ -84,7 +96,7 @@ class KbRecurringJobHandlersTest {
     void uploadCleanupRunsWhenEnabled() {
         when(uploadProperties.isEnabled()).thenReturn(true);
         when(uploadProperties.getIntervalMinutes()).thenReturn(30);
-        KbUploadCleanupJobHandler handler = new KbUploadCleanupJobHandler(uploadCleaner, uploadProperties);
+        KbUploadCleanupJobHandler handler = new KbUploadCleanupJobHandler(uploadCleaner, uploadProperties, platformScan);
 
         handler.execute(context);
 
@@ -95,7 +107,7 @@ class KbRecurringJobHandlersTest {
     @Test
     void agentMemoryCleanupSkipsWhenCleanupDisabled() {
         ragProperties.getMemory().setCleanupEnabled(false);
-        new KbAgentMemoryCleanupJobHandler(memoryCleaner, ragProperties).execute(context);
+        new KbAgentMemoryCleanupJobHandler(memoryCleaner, ragProperties, platformScan).execute(context);
         verify(memoryCleaner, never()).cleanupExpired();
     }
 
@@ -103,7 +115,7 @@ class KbRecurringJobHandlersTest {
     void agentMemoryCleanupRunsWhenEnabled() {
         ragProperties.getMemory().setCleanupEnabled(true);
         ragProperties.getMemory().setCleanupIntervalMinutes(90);
-        KbAgentMemoryCleanupJobHandler handler = new KbAgentMemoryCleanupJobHandler(memoryCleaner, ragProperties);
+        KbAgentMemoryCleanupJobHandler handler = new KbAgentMemoryCleanupJobHandler(memoryCleaner, ragProperties, platformScan);
 
         handler.execute(context);
 
@@ -115,7 +127,7 @@ class KbRecurringJobHandlersTest {
     void connectorSyncSkipsWhenFeatureDisabled() {
         when(connectorProperties.isSchedulerEnabled()).thenReturn(false);
         new KbConnectorSyncJobHandler(connectorScheduler, connectorProperties).execute(context);
-        verify(connectorScheduler, never()).tick();
+        verify(connectorScheduler, never()).tick(any());
     }
 
     @Test
@@ -126,7 +138,7 @@ class KbRecurringJobHandlersTest {
 
         handler.execute(context);
 
-        verify(connectorScheduler).tick();
+        verify(connectorScheduler).tick(any());
         assertThat(handler.interval().toSeconds()).isEqualTo(120);
     }
 }

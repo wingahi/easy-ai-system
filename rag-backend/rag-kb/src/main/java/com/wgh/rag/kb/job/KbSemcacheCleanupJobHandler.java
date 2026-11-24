@@ -1,6 +1,7 @@
 package com.wgh.rag.kb.job;
 
 import com.wgh.rag.config.property.RagProperties;
+import com.wgh.rag.data.tenant.PlatformScanTemplate;
 import com.wgh.rag.execution.job.JobContext;
 import com.wgh.rag.execution.job.JobHandler;
 import com.wgh.rag.execution.job.RecurringJob;
@@ -10,6 +11,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * 语义缓存过期清理（{@code KB_SEMCACHE_CLEANUP}，维护车道 + 周期作业）。
@@ -31,6 +33,8 @@ public class KbSemcacheCleanupJobHandler implements JobHandler, RecurringJob {
 
     private final RagProperties ragProperties;
 
+    private final PlatformScanTemplate platformScan;
+
     @Override
     public String jobType() {
         return KbJobTypes.SEMCACHE_CLEANUP;
@@ -50,15 +54,18 @@ public class KbSemcacheCleanupJobHandler implements JobHandler, RecurringJob {
         }
         int batchSize = ragProperties.getCache().getCleanupBatchSize() == null
                 ? 200 : Math.max(1, ragProperties.getCache().getCleanupBatchSize());
-        int total = 0;
-        for (int round = 0; round < MAX_BATCHES_PER_RUN; round++) {
-            context.cancellation().throwIfCancellationRequested();
-            int cleaned = semanticCacheService.cleanupExpired();
-            total += cleaned;
-            if (cleaned < batchSize) {
-                break;
+        AtomicLong total = new AtomicLong();
+        platformScan.scan(false, () -> context.cancellation().isCancelled(), tenantId -> {
+            for (int round = 0; round < MAX_BATCHES_PER_RUN; round++) {
+                context.cancellation().throwIfCancellationRequested();
+                int cleaned = semanticCacheService.cleanupExpired();
+                total.addAndGet(cleaned);
+                if (cleaned < batchSize) {
+                    break;
+                }
             }
-        }
-        log.debug("语义缓存过期清理完成 executionId={} cleaned={}", context.executionId(), total);
+            return new PlatformScanTemplate.TenantCounters(1, 0);
+        });
+        log.debug("语义缓存过期清理完成 executionId={} cleaned={}", context.executionId(), total.get());
     }
 }

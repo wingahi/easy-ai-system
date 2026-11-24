@@ -1,6 +1,7 @@
 package com.wgh.rag.quota.job;
 
 import com.wgh.rag.common.metrics.RagMetrics;
+import com.wgh.rag.data.tenant.PlatformScanTemplate;
 import com.wgh.rag.execution.event.ExecutionEvent;
 import com.wgh.rag.execution.event.ExecutionEventTypes;
 import com.wgh.rag.execution.job.JobContext;
@@ -26,6 +27,7 @@ import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * 配额退款补偿作业（{@code QUOTA_REFUND}，维护车道）。
@@ -56,6 +58,8 @@ public class QuotaRefundJobHandler implements JobHandler, RecurringJob {
     private final QuotaProperties properties;
 
     private final RagMetrics metrics;
+
+    private final PlatformScanTemplate platformScan;
 
     /** 调度中心是否启用；关闭时改由本地定时兜底。 */
     @Value("${wgh.scheduler.enabled:true}")
@@ -127,70 +131,84 @@ public class QuotaRefundJobHandler implements JobHandler, RecurringJob {
             log.debug("配额退款补偿已关闭（wgh.rag.quota.charge.refund-enabled=false）");
             return null;
         }
-        LocalDateTime now = LocalDateTime.now();
         Duration protection = config.getRefundProtection() == null
                 ? Duration.ofMinutes(5) : config.getRefundProtection();
-        List<QuotaChargeEntity> due = chargeLedger.findDueRefunds(
-                now.minus(protection), now, config.getRefundBatchSize());
-        if (due.isEmpty()) {
-            log.debug("配额退款补偿：无到期流水");
-            return null;
-        }
+        AtomicInteger scanned = new AtomicInteger();
+        AtomicInteger refunded = new AtomicInteger();
+        AtomicInteger retrying = new AtomicInteger();
+        AtomicInteger dead = new AtomicInteger();
+        AtomicInteger skipped = new AtomicInteger();
 
-        int refunded = 0;
-        int retrying = 0;
-        int dead = 0;
-        int skipped = 0;
-        for (int i = 0; i < due.size(); i++) {
-            if (context != null) {
-                context.cancellation().throwIfCancellationRequested();
-                if (i > 0 && i % HEARTBEAT_EVERY == 0) {
-                    context.heartbeat();
-                }
-            }
-            QuotaChargeEntity row = due.get(i);
-            QuotaService.QuotaCharge charge = new QuotaService.QuotaCharge(
-                    row.getUsername(), row.getPeriodKey(), row.getChargeId(), row.getUsageEpoch());
-            try {
-                QuotaService.RefundResult result = chargeLedger.refund(charge);
-                switch (result) {
-                    case REFUNDED -> {
-                        refunded++;
-                        metrics.recordQuotaRefund("refunded");
+        // 逐租户扫流水：查询与退款写回都在该租户上下文内，RLS 不会把其他租户的流水挡掉
+        PlatformScanTemplate.Result result = platformScan.scan(false,
+                () -> context != null && context.cancellation().isCancelled(), tenantId -> {
+                    LocalDateTime now = LocalDateTime.now();
+                    List<QuotaChargeEntity> due = platformScan.read(tenantId,
+                            () -> chargeLedger.findDueRefunds(
+                                    now.minus(protection), now, config.getRefundBatchSize()));
+                    long failed = 0;
+                    for (int i = 0; i < due.size(); i++) {
+                        if (context != null) {
+                            context.cancellation().throwIfCancellationRequested();
+                            if (i > 0 && i % HEARTBEAT_EVERY == 0) {
+                                context.heartbeat();
+                            }
+                        }
+                        QuotaChargeEntity row = due.get(i);
+                        scanned.incrementAndGet();
+                        QuotaService.QuotaCharge charge = new QuotaService.QuotaCharge(
+                                row.getUsername(), row.getPeriodKey(), row.getChargeId(), row.getUsageEpoch());
+                        try {
+                            QuotaService.RefundResult refundResult = chargeLedger.refund(charge);
+                            switch (refundResult) {
+                                case REFUNDED -> {
+                                    refunded.incrementAndGet();
+                                    metrics.recordQuotaRefund("refunded");
+                                }
+                                case DUPLICATE -> {
+                                    skipped.incrementAndGet();
+                                    metrics.recordQuotaRefund("duplicate");
+                                }
+                                default -> {
+                                    skipped.incrementAndGet();
+                                    metrics.recordQuotaRefund("nothing_to_refund");
+                                }
+                            }
+                        } catch (Exception e) {
+                            int nextAttempt = (row.getRetryCount() == null ? 0 : row.getRetryCount()) + 1;
+                            if (nextAttempt >= config.getRefundMaxAttempts()) {
+                                if (markDead(row, e)) {
+                                    dead.incrementAndGet();
+                                    metrics.recordQuotaRefund("dead");
+                                } else {
+                                    skipped.incrementAndGet();
+                                }
+                            } else {
+                                scheduleRetry(row, nextAttempt, config, e);
+                                retrying.incrementAndGet();
+                                metrics.recordQuotaRefund("failed");
+                            }
+                            failed++;
+                        }
                     }
-                    case DUPLICATE -> {
-                        skipped++;
-                        metrics.recordQuotaRefund("duplicate");
-                    }
-                    default -> {
-                        skipped++;
-                        metrics.recordQuotaRefund("nothing_to_refund");
-                    }
-                }
-            } catch (Exception e) {
-                int nextAttempt = (row.getRetryCount() == null ? 0 : row.getRetryCount()) + 1;
-                if (nextAttempt >= config.getRefundMaxAttempts()) {
-                    if (markDead(row, e)) {
-                        dead++;
-                        metrics.recordQuotaRefund("dead");
-                    } else {
-                        skipped++;
-                    }
-                } else {
-                    scheduleRetry(row, nextAttempt, config, e);
-                    retrying++;
-                    metrics.recordQuotaRefund("failed");
-                }
-            }
+                    return new PlatformScanTemplate.TenantCounters(due.size(), failed);
+                });
+
+        if (scanned.get() == 0) {
+            log.debug("配额退款补偿：无到期流水（租户 {} 个，失败 {} 个）",
+                    result.tenantsOk(), result.tenantsFailed());
+            return null;
         }
 
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("event", "quota.refund.compensated");
-        payload.put("scanned", due.size());
-        payload.put("refunded", refunded);
-        payload.put("retrying", retrying);
-        payload.put("dead", dead);
-        payload.put("skipped", skipped);
+        payload.put("scanned", scanned.get());
+        payload.put("refunded", refunded.get());
+        payload.put("retrying", retrying.get());
+        payload.put("dead", dead.get());
+        payload.put("skipped", skipped.get());
+        payload.put("tenants", result.tenantsTotal());
+        payload.put("tenantsFailed", result.tenantsFailed());
         log.info("配额退款补偿完成: {}", payload);
         return payload;
     }

@@ -186,28 +186,33 @@ public class QuotaChargeLedger {
     }
 
     /** 扫描待补偿流水（已扣未决 / 退款失败到期）。 */
+    @Transactional(readOnly = true)
     public List<QuotaChargeEntity> findDueRefunds(LocalDateTime protectionCutoff, LocalDateTime now, int limit) {
         int size = Math.max(1, Math.min(limit, properties.getCharge().getRefundBatchSize()));
         return chargeMapper.selectDueRefunds(protectionCutoff, now, size);
     }
 
     /** 管理端查询单笔流水（只读）。 */
+    @Transactional(readOnly = true)
     public QuotaChargeEntity findCharge(String chargeId) {
         return chargeMapper.selectByChargeId(chargeId);
     }
 
     /** 按任务标识取最近一条流水（续跑轮次识别用）。 */
+    @Transactional(readOnly = true)
     public QuotaChargeEntity findLatestByTaskId(String taskId) {
         return taskId == null || taskId.isBlank() ? null : chargeMapper.selectLatestByTaskId(taskId);
     }
 
     /** 取会话在指定时刻之前最近的一条流水（识别本轮对话是否已结算）。 */
+    @Transactional(readOnly = true)
     public QuotaChargeEntity findLatestBySessionBefore(Long sessionId, LocalDateTime before) {
         return sessionId == null || before == null ? null
                 : chargeMapper.selectLatestBySessionBefore(sessionId, before);
     }
 
     /** 管理端查询退款异常流水（只读）。 */
+    @Transactional(readOnly = true)
     public List<QuotaChargeEntity> findRefundIssues(String status, String username, int offset, int limit) {
         int safeLimit = Math.max(1, Math.min(limit, 200));
         int safeOffset = Math.max(0, offset);
@@ -215,6 +220,7 @@ public class QuotaChargeLedger {
     }
 
     /** 管理端退款异常流水总数。 */
+    @Transactional(readOnly = true)
     public long countRefundIssues(String status, String username) {
         return chargeMapper.countRefundIssues(status, username);
     }

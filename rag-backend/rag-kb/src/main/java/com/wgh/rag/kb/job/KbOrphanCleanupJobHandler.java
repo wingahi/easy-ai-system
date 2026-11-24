@@ -43,6 +43,6 @@ public class KbOrphanCleanupJobHandler implements JobHandler, RecurringJob {
             return;
         }
         context.cancellation().throwIfCancellationRequested();
-        cleanupScheduler.runOnce();
+        cleanupScheduler.runOnce(() -> context.cancellation().isCancelled());
     }
 }

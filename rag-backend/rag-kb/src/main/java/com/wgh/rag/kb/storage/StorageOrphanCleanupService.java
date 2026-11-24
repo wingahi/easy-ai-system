@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.wgh.rag.common.exception.BusinessException;
 import com.wgh.rag.common.metrics.RagMetrics;
 import com.wgh.rag.common.security.TenantContext;
+import com.wgh.rag.data.tenant.TenantTransactionTemplate;
 import com.wgh.rag.kb.entity.KnowledgeFile;
 import com.wgh.rag.kb.entity.UploadSession;
 import com.wgh.rag.kb.mapper.KnowledgeFileMapper;
@@ -55,6 +56,7 @@ public class StorageOrphanCleanupService {
     private final RagMetrics metrics;
     private final StorageProperties storageProperties;
     private final StorageOrphanCleanupProperties properties;
+    private final TenantTransactionTemplate transactions;
 
     private final AtomicBoolean running = new AtomicBoolean(false);
 
@@ -103,7 +105,9 @@ public class StorageOrphanCleanupService {
                     skippedUnattributable++;
                 }
             }
-            ReferenceKeys references = collectReferencedKeys(tenantId, scopePrefix);
+            // 引用查询必须显式指定租户：不能依赖调用方 TenantContext，否则会读错租户
+            ReferenceKeys references = transactions.execute(tenantId, true,
+                    () -> collectReferencedKeys(tenantId, scopePrefix));
 
             Set<String> listed = new HashSet<>(objects.size());
             for (StorageObjectInfo object : objects) {
@@ -151,6 +155,8 @@ public class StorageOrphanCleanupService {
                         missingDetails.size() - missingLogLimit);
             }
             if (delete) {
+                // 删除只作用于对象存储，不写数据库；放在事务外，避免对象存储 I/O 长时间占用数据库连接。
+                // 删除前仍做归属二次校验（belongsTo）与保护期校验，保留原有防误删约束。
                 long now = System.currentTimeMillis();
                 long minAgeMillis = Math.max(0, properties.getMinAgeMinutes()) * 60_000L;
                 for (StorageObjectInfo orphan : orphans) {

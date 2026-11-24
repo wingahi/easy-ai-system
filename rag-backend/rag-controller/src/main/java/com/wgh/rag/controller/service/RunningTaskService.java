@@ -10,6 +10,7 @@ import com.wgh.rag.agentmulti.entity.MultiAgentRun;
 import com.wgh.rag.agentmulti.entity.MultiAgentStep;
 import com.wgh.rag.agentmulti.mapper.MultiAgentRunMapper;
 import com.wgh.rag.agentmulti.mapper.MultiAgentStepMapper;
+import com.wgh.rag.data.tenant.TenantTransactionTemplate;
 import com.wgh.rag.execution.api.InteractiveRunRegistry;
 import com.wgh.rag.execution.model.ExecutionLane;
 import com.wgh.rag.scheduler.entity.ExecutionJob;
@@ -24,6 +25,7 @@ import com.wgh.rag.workflow.mapper.WorkflowNodeRunMapper;
 import com.wgh.rag.workflow.mapper.WorkflowRunMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -70,6 +72,10 @@ public class RunningTaskService {
     private final ExecutionJobMapper executionJobMapper;
     private final JobStore jobStore;
 
+    /** 指定租户查询时显式下发 {@code app.tenant_id}。 */
+    private final TenantTransactionTemplate transactions;
+
+    @Transactional(readOnly = true)
     public Map<String, Object> listRunningTasks(String type, String status, Long page, Long size) {
         String normalizedType = normalizeType(type);
         if (type != null && !type.isBlank() && normalizedType == null) {
@@ -122,6 +128,22 @@ public class RunningTaskService {
         if (staleMinutes <= 0 || limit <= 0) {
             return List.of();
         }
+        return doListStaleCandidates(staleMinutes, limit);
+    }
+
+    /**
+     * 指定租户的中断候选（平台级扫描逐租户调用）。
+     *
+     * <p>必须在租户只读事务内查询：切换 wgh_app 后缺少 {@code app.tenant_id} 时 RLS 会静默返回 0 行。
+     */
+    public List<StaleCandidate> listStaleCandidates(String tenantId, long staleMinutes, int limit) {
+        if (tenantId == null || tenantId.isBlank() || staleMinutes <= 0 || limit <= 0) {
+            return List.of();
+        }
+        return transactions.execute(tenantId, true, () -> doListStaleCandidates(staleMinutes, limit));
+    }
+
+    private List<StaleCandidate> doListStaleCandidates(long staleMinutes, int limit) {
         List<TaskView> views = new ArrayList<>();
         views.addAll(agentViews(ACTIVE_STATUSES));
         views.addAll(multiAgentViews(ACTIVE_STATUSES));

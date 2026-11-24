@@ -42,6 +42,6 @@ public class KbConnectorSyncJobHandler implements JobHandler, RecurringJob {
             return;
         }
         context.cancellation().throwIfCancellationRequested();
-        connectorScheduler.tick();
+        connectorScheduler.tick(() -> context.cancellation().isCancelled());
     }
 }
