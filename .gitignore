@@ -54,6 +54,8 @@ backups/
 *.class
 hs_err_pid*
 replay_pid*
+# javac @argfile（带时间戳的临时编译参数，不入库）
+javac.*.args
 
 # ===== Skill runtime dirs (wgh.skill.base-path) =====
 rag-backend/rag-app/skills/
