@@ -44,7 +44,7 @@ class PromptTemplateServiceVisibilityTest {
     @Test
     void privateOtherIsInvisibleAsNotFound() {
         loginAs("user-b");
-        when(mapper.selectById(1L)).thenReturn(template("user-a", "PRIVATE", false));
+        when(mapper.selectOne(any())).thenReturn(template("user-a", "PRIVATE", false));
 
         BusinessException ex = catchThrowableOfType(() -> service().getVisible(1L), BusinessException.class);
 
@@ -54,7 +54,7 @@ class PromptTemplateServiceVisibilityTest {
     @Test
     void publicOtherIsReadable() {
         loginAs("user-b");
-        when(mapper.selectById(1L)).thenReturn(template("user-a", "PUBLIC", false));
+        when(mapper.selectOne(any())).thenReturn(template("user-a", "PUBLIC", false));
 
         assertThat(service().getVisible(1L).getName()).isEqualTo("tpl");
     }
@@ -62,7 +62,7 @@ class PromptTemplateServiceVisibilityTest {
     @Test
     void nonAdminCannotEditBuiltinTemplate() {
         loginAs("editor");
-        when(mapper.selectById(1L)).thenReturn(template("system", "PUBLIC", true));
+        when(mapper.selectOne(any())).thenReturn(template("system", "PUBLIC", true));
         PromptTemplate payload = new PromptTemplate();
         payload.setId(1L);
         payload.setName("tpl");
@@ -77,7 +77,7 @@ class PromptTemplateServiceVisibilityTest {
     @Test
     void builtinVisibilityCannotBeChanged() {
         loginAs("admin", "admin");
-        when(mapper.selectById(1L)).thenReturn(template("system", "PUBLIC", true));
+        when(mapper.selectOne(any())).thenReturn(template("system", "PUBLIC", true));
 
         BusinessException ex = catchThrowableOfType(
                 () -> service().updateVisibility(1L, "PRIVATE"), BusinessException.class);
@@ -88,7 +88,7 @@ class PromptTemplateServiceVisibilityTest {
     @Test
     void ownerCanChangeVisibility() {
         loginAs("user-a");
-        when(mapper.selectById(1L)).thenReturn(template("user-a", "PRIVATE", false));
+        when(mapper.selectOne(any())).thenReturn(template("user-a", "PRIVATE", false));
 
         PromptTemplate updated = service().updateVisibility(1L, "team");
 

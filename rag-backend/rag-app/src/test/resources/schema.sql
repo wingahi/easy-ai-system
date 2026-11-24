@@ -1,6 +1,25 @@
 -- H2 内存数据库 (MODE=PostgreSQL, H2 2.2+)
 -- 使用 PostgreSQL SERIAL 方言（H2 MODE=PostgreSQL 支持）
 
+-- ===== 租户目录（多租户阶段 1） =====
+
+CREATE TABLE IF NOT EXISTS wgh_tenant (
+    id BIGSERIAL PRIMARY KEY,
+    code VARCHAR(64) NOT NULL UNIQUE,
+    name VARCHAR(128) NOT NULL,
+    status SMALLINT NOT NULL DEFAULT 1,
+    plan VARCHAR(32) NOT NULL DEFAULT 'standard',
+    isolation_mode VARCHAR(16) NOT NULL DEFAULT 'shared',
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    create_by VARCHAR(64),
+    update_by VARCHAR(64),
+    deleted SMALLINT NOT NULL DEFAULT 0
+);
+
+MERGE INTO wgh_tenant (id, code, name, status, plan, isolation_mode) KEY(id)
+VALUES (1, 'default', '默认租户', 1, 'standard', 'shared');
+
 -- ===== 用户 / RBAC =====
 
 CREATE TABLE IF NOT EXISTS wgh_user (
@@ -899,3 +918,54 @@ CREATE TABLE IF NOT EXISTS wgh_kb_chunk (
 CREATE UNIQUE INDEX IF NOT EXISTS uk_kb_chunk ON wgh_kb_chunk(kb_id, file_id, chunk_index);
 CREATE INDEX IF NOT EXISTS idx_kb_chunk_tenant ON wgh_kb_chunk(tenant_id, kb_id);
 CREATE INDEX IF NOT EXISTS idx_kb_chunk_status ON wgh_kb_chunk(vector_status);
+
+-- ===== 多租户阶段 1 列补齐（对齐 sql/migrations/20261124-01 与 sql/migrations/20261113） =====
+-- 本节只补测试库列，生产建表/迁移脚本不在此改动。
+
+ALTER TABLE wgh_tool ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_chat_window ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_chat_session ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_chat_message ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_knowledge_base ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_knowledge_file ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_knowledge_file_version ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_quota_usage ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_user_quota_config ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_quota_charge ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_tag ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_kb_tag_rel ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_file_tag_rel ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_semantic_cache ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_kb_ground_truth ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_eval_dataset ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_eval_case ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_eval_result ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_workflow ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_workflow_version ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_workflow_trigger ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_workflow_run ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_workflow_node_run ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_agent_plan ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_agent_step ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_m_agent_crew ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_m_agent_run ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_m_agent_step ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_prompt_template ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_share_link ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_api_key ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_api_call_log ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_kb_connector ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_kb_connector_run ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_upload_session ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+ALTER TABLE wgh_agent_memory ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';
+
+-- 资源归属与可见性（20261113/01_resource_visibility.sql）
+ALTER TABLE wgh_knowledge_base ADD COLUMN IF NOT EXISTS visibility VARCHAR(16) NOT NULL DEFAULT 'PRIVATE';
+ALTER TABLE wgh_chat_window ADD COLUMN IF NOT EXISTS visibility VARCHAR(16) NOT NULL DEFAULT 'PRIVATE';
+ALTER TABLE wgh_tool ADD COLUMN IF NOT EXISTS visibility VARCHAR(16) NOT NULL DEFAULT 'PRIVATE';
+ALTER TABLE wgh_workflow ADD COLUMN IF NOT EXISTS visibility VARCHAR(16) NOT NULL DEFAULT 'PRIVATE';
+ALTER TABLE wgh_prompt_template ADD COLUMN IF NOT EXISTS visibility VARCHAR(16) NOT NULL DEFAULT 'PRIVATE';
+
+-- 平台/租户范围（20261124-01/12_rls_prompt_tool_scope.sql）
+ALTER TABLE wgh_tool ADD COLUMN IF NOT EXISTS scope VARCHAR(16) NOT NULL DEFAULT 'tenant';
+ALTER TABLE wgh_prompt_template ADD COLUMN IF NOT EXISTS scope VARCHAR(16) NOT NULL DEFAULT 'tenant';

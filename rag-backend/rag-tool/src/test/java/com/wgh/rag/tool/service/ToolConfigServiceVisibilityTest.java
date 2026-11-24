@@ -43,7 +43,7 @@ class ToolConfigServiceVisibilityTest {
     @Test
     void privateOtherIsInvisibleAsNotFound() {
         loginAs("user-b");
-        when(toolMapper.selectById(1L)).thenReturn(tool("user-a", "PRIVATE"));
+        when(toolMapper.selectOne(any())).thenReturn(tool("user-a", "PRIVATE"));
 
         BusinessException ex = catchThrowableOfType(() -> service().getVisible(1L), BusinessException.class);
 
@@ -53,7 +53,7 @@ class ToolConfigServiceVisibilityTest {
     @Test
     void publicOtherIsReadable() {
         loginAs("user-b");
-        when(toolMapper.selectById(1L)).thenReturn(tool("user-a", "PUBLIC"));
+        when(toolMapper.selectOne(any())).thenReturn(tool("user-a", "PUBLIC"));
 
         assertThat(service().getVisible(1L).getName()).isEqualTo("tool");
     }
@@ -85,7 +85,7 @@ class ToolConfigServiceVisibilityTest {
     @Test
     void ownerCanChangeVisibility() {
         loginAs("user-a");
-        when(toolMapper.selectById(1L)).thenReturn(tool("user-a", "PRIVATE"));
+        when(toolMapper.selectOne(any())).thenReturn(tool("user-a", "PRIVATE"));
 
         ToolConfig updated = service().updateVisibility(1L, "PUBLIC");
 

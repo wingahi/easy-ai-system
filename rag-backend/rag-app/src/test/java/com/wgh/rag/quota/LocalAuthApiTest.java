@@ -89,6 +89,10 @@ class LocalAuthApiTest {
     @EnableConfigurationProperties(QuotaProperties.class)
     @Import({
             SecurityConfig.class,
+            com.wgh.rag.data.tenant.TenantTransactionTemplate.class,
+            com.wgh.rag.auth.tenant.TenantProperties.class,
+            com.wgh.rag.auth.tenant.TenantService.class,
+            com.wgh.rag.auth.security.TenantContextFilter.class,
             OidcAuthenticationFilter.class,
             OidcProperties.class,
             LocalAuthProperties.class,

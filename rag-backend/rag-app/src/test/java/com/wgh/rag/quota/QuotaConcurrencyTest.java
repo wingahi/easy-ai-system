@@ -52,6 +52,7 @@ class QuotaConcurrencyTest {
             com.wgh.rag.common.metrics.RagMetrics.class,
             QuotaService.class,
             QuotaChargeLedger.class,
+            com.wgh.rag.quota.service.QuotaUsageRowInserter.class,
             DefaultQuotaUserResolver.class,
             QuotaAdminGuard.class
     })

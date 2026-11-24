@@ -26,3 +26,5 @@ CREATE TABLE IF NOT EXISTS wgh_audit_log (
     update_by VARCHAR(64),
     deleted INT DEFAULT 0
 );
+-- 多租户阶段 1：审计日志租户维度
+ALTER TABLE wgh_audit_log ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(64) NOT NULL DEFAULT 'default';

@@ -77,6 +77,10 @@ class EvalDatasetServiceTest {
         KnowledgeBase kb = new KnowledgeBase();
         kb.setId(1L);
         when(knowledgeBaseMapper.selectById(1L)).thenReturn(kb);
+        // 第二个知识库用于验证「知识库可读但数据集不属于它」时的归属校验分支
+        KnowledgeBase otherKb = new KnowledgeBase();
+        otherKb.setId(2L);
+        when(knowledgeBaseMapper.selectById(2L)).thenReturn(otherKb);
     }
 
     private void stubMappers() {

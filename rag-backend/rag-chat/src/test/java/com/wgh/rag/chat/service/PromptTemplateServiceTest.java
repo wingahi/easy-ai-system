@@ -97,8 +97,8 @@ class PromptTemplateServiceTest {
     @Test
     void update_bumps_version_only_on_content_change() {
         PromptTemplate existing = tpl(1L, "t1", "旧内容", false);
-        when(mapper.selectById(1L)).thenReturn(existing);
-        when(mapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
+        // 每次 update 依次：按 id 查现有模板（selectOne）→ 按名查重（selectOne，结果为 null）
+        when(mapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(existing, null, existing, null);
 
         // 内容未变：版本不变
         service.update(tpl(1L, "t1", "旧内容", false));
@@ -113,7 +113,7 @@ class PromptTemplateServiceTest {
     @Test
     void builtin_cannot_rename_or_delete() {
         PromptTemplate existing = tpl(1L, "内置", "内容", true);
-        when(mapper.selectById(1L)).thenReturn(existing);
+        when(mapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(existing);
 
         assertThatThrownBy(() -> service.update(tpl(1L, "改名", "内容", true)))
                 .isInstanceOf(BusinessException.class)
