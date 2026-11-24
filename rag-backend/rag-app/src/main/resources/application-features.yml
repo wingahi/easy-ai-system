@@ -43,7 +43,28 @@ wgh:
     retry-backoff: 30s                          # 失败重试退避基数（按尝试次数线性递增）
     max-attempts: 3                             # 默认最大尝试次数（含首次）
     event-retention: 5m                         # 终态事件保留时长（供本实例 attach 重放）
-    tenant-max-concurrent: 2                    # 单租户后台并发上限（S1 为进程内口径）
+    event-table-retention: ${WGH_SCHEDULER_EVENT_TABLE_RETENTION:7d}   # 事件表保留期（跨实例 Last-Event-ID 重放）
+    tenant-max-concurrent: 2                    # 单租户后台并发上限（策略表无覆盖时的兜底值）
+
+    # ===== 租户调度策略（需先执行 sql/migrations/20261124/04_tenant_schedule_policy.sql）=====
+    anonymous-tenant-id: ${WGH_SCHEDULER_ANONYMOUS_TENANT:default}      # 空租户统一落该桶
+    policy-refresh-interval: ${WGH_SCHEDULER_POLICY_REFRESH_INTERVAL:30s}   # 策略本地缓存刷新间隔
+    slot-reconcile-interval: ${WGH_SCHEDULER_SLOT_RECONCILE_INTERVAL:1m}    # 运行槽与作业表对账间隔
+    default-policy:
+      interactive:
+        max-concurrent: 2                       # 运行中并发上限
+        max-queue: 20                           # 等待中排队上限
+        weight: 10                              # 公平调度权重（1-100）
+        priority-boost: 0                       # 优先级加成
+        reject-policy: REJECT                   # 并发满立即拒绝
+        queue-timeout-seconds: 300              # 排队超时秒数
+      background:
+        max-concurrent: 2
+        max-queue: 200
+        weight: 10
+        priority-boost: 0
+        reject-policy: QUEUE                    # 并发满允许排队
+        queue-timeout-seconds: 300
 
     # 交互式：进程内执行，不落作业表
     interactive:
@@ -197,3 +218,35 @@ wgh:
       fallback-context-window-tokens: 8192   # 模型未配置窗口时的兜底窗口（Tokens）
       node-output-max-bytes: 65536      # 单节点输出落库上限（字节）
       context-json-max-bytes: 262144    # context_json 落库总上限（字节）
+
+  # -------------------------------------------------------------------
+  # 向量后端与 chunk 事实层（VectorStoreProperties，前缀 wgh.vector）
+  # 默认 pgvector + 事实层关闭：行为与引入端口化前完全一致。
+  # -------------------------------------------------------------------
+  vector:
+    backend: pgvector                    # pgvector（默认）/ memory（仅开发测试）
+    fact-layer-enabled: false            # 是否双写 wgh_kb_chunk 事实层
+    fact-backfill-batch-size: 200        # 事实层回填单批条数
+
+  # -------------------------------------------------------------------
+  # 关键词后端（KeywordSearchProperties，前缀 wgh.search）
+  # 默认 pgtrgm：行为与现有混合检索关键词路一致。
+  # -------------------------------------------------------------------
+  search:
+    backend: pgtrgm                      # pgtrgm（默认）/ memory（仅开发测试）
+    fallback-backend: pgtrgm             # 主后端异常时的降级后端
+    degrade-on-error: true               # 允许关键词路异常时降级
+    compare-enabled: false               # 双读对比：同一 query 两路都跑，只记差异不改变返回
+    compare-backend: pgtrgm              # 双读对照后端（与主后端同名时跳过）
+    gray-backend: ""                     # 灰度后端；留空表示未启用按 KB 白名单灰度
+    gray-kb-ids: []                      # 灰度知识库白名单（KB ID）
+
+  # -------------------------------------------------------------------
+  # 多路召回融合（RetrievalFusionProperties，前缀 wgh.retrieval.fusion）
+  # 默认 k=60、权重 1.0：与引入权重前完全一致。
+  # -------------------------------------------------------------------
+  retrieval:
+    fusion:
+      rrf-k: 60                          # RRF 常数 k
+      vector-weight: 1.0                 # 向量路权重
+      keyword-weight: 1.0                # 关键词路权重

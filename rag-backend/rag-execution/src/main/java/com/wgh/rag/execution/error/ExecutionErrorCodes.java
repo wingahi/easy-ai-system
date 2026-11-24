@@ -13,6 +13,9 @@ public final class ExecutionErrorCodes {
     /** 租户并发上限已满。 */
     public static final String TENANT_CONCURRENCY_EXCEEDED = "TENANT_CONCURRENCY_EXCEEDED";
 
+    /** 租户排队上限已满（策略 max_queue）。 */
+    public static final String TENANT_QUEUE_FULL = "TENANT_QUEUE_FULL";
+
     /** 后台作业排队超时。 */
     public static final String JOB_QUEUE_TIMEOUT = "JOB_QUEUE_TIMEOUT";
 

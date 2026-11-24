@@ -65,8 +65,23 @@ public class SchedulerProperties {
     /** 终态事件在内存事件总线中的保留时长，供 attach 重放。 */
     private Duration eventRetention = Duration.ofMinutes(5);
 
-    /** 单租户后台并发上限（S1 仅进程内口径；集群口径在多租户阶段引入）。 */
+    /** 事件表保留期；超过后由调度层低频清理，避免无限增长。 */
+    private Duration eventTableRetention = Duration.ofDays(7);
+
+    /** 单租户后台并发上限（策略表无覆盖时的默认值，见 {@link #defaultPolicy}）。 */
     private int tenantMaxConcurrent = 2;
+
+    /** 匿名/默认租户标识；未携带租户上下文的请求统一落在该桶。 */
+    private String anonymousTenantId = "default";
+
+    /** 租户策略缓存刷新间隔；请求路径只读本地缓存，不查库。 */
+    private Duration policyRefreshInterval = Duration.ofSeconds(30);
+
+    /** 集群运行槽与作业表实际在跑数的对账间隔。 */
+    private Duration slotReconcileInterval = Duration.ofMinutes(1);
+
+    /** 默认租户策略；策略表无对应 (tenant_id, lane) 行时使用。 */
+    private DefaultPolicy defaultPolicy = new DefaultPolicy();
 
     /** 交互式车道。 */
     private Lane interactive = Lane.of(4, 16, 100, "sched-interactive-");
@@ -138,5 +153,51 @@ public class SchedulerProperties {
 
         /** 未抢到锁或 Redis 不可用时，作业回到 PENDING 的重试延迟。 */
         private Duration retryDelay = Duration.ofSeconds(10);
+    }
+
+    /** 默认租户策略。 */
+    @Data
+    public static class DefaultPolicy {
+
+        /** 交互式默认策略。 */
+        private LanePolicy interactive = LanePolicy.of(2, 20, 10, 0, "REJECT", 300);
+
+        /** 后台默认策略。 */
+        private LanePolicy background = LanePolicy.of(2, 200, 10, 0, "QUEUE", 300);
+    }
+
+    /** 单车道租户策略默认值。 */
+    @Data
+    public static class LanePolicy {
+
+        /** 运行中并发上限（不含排队）。 */
+        private int maxConcurrent;
+
+        /** 等待中排队上限。 */
+        private int maxQueue;
+
+        /** 公平调度权重（1-100），只影响排队顺序，不做抢占。 */
+        private int weight;
+
+        /** 作业基础优先级加成。 */
+        private int priorityBoost;
+
+        /** 拒绝策略：REJECT 立即拒绝 / QUEUE 允许排队。 */
+        private String rejectPolicy;
+
+        /** 排队超时秒数；超时转失败。 */
+        private int queueTimeoutSeconds;
+
+        static LanePolicy of(int maxConcurrent, int maxQueue, int weight, int priorityBoost,
+                             String rejectPolicy, int queueTimeoutSeconds) {
+            LanePolicy policy = new LanePolicy();
+            policy.maxConcurrent = maxConcurrent;
+            policy.maxQueue = maxQueue;
+            policy.weight = weight;
+            policy.priorityBoost = priorityBoost;
+            policy.rejectPolicy = rejectPolicy;
+            policy.queueTimeoutSeconds = queueTimeoutSeconds;
+            return policy;
+        }
     }
 }

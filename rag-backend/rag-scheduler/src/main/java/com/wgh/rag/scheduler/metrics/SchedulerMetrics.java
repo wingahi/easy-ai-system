@@ -34,6 +34,14 @@ public class SchedulerMetrics {
     public static final String RECONCILE_MISMATCH = "wgh.scheduler.reconcile.mismatch";
     /** 对账自动修复数（type=job_cancelled）。 */
     public static final String RECONCILE_REPAIRED = "wgh.scheduler.reconcile.repaired";
+    /** 准入拒绝数（lane + reason）。 */
+    public static final String JOB_REJECTED = "wgh.scheduler.rejected";
+    /** 作业排队时长（lane + jobType）。 */
+    public static final String JOB_WAIT = "wgh.scheduler.wait.seconds";
+    /** 作业执行时长（jobType + outcome）。 */
+    public static final String JOB_DURATION = "wgh.scheduler.job.duration";
+    /** 租户策略加载失败次数。 */
+    public static final String POLICY_LOAD_FAILURES = "wgh.scheduler.policy.load.failures";
 
     private final MeterRegistry registry;
 
@@ -84,6 +92,41 @@ public class SchedulerMetrics {
 
     public void recordReconcileRepaired(String type) {
         counter(RECONCILE_REPAIRED, "type", type == null ? "unknown" : type).increment();
+    }
+
+    /** 准入拒绝：租户标识不进标签（高基数），只保留车道与原因。 */
+    public void recordRejected(String lane, String reason) {
+        counter(JOB_REJECTED,
+                "lane", lane == null ? "unknown" : lane,
+                "reason", reason == null ? "unknown" : reason).increment();
+    }
+
+    /** 作业排队时长：从计划时间到实际开始执行。 */
+    public void recordWait(String lane, String jobType, java.time.Duration wait) {
+        if (wait == null || wait.isNegative()) {
+            return;
+        }
+        io.micrometer.core.instrument.Timer.builder(JOB_WAIT)
+                .tag("lane", lane == null ? "unknown" : lane)
+                .tag("jobType", jobType == null ? "unknown" : jobType)
+                .register(registry)
+                .record(wait);
+    }
+
+    /** 作业执行时长与结果。 */
+    public void recordJobDuration(String jobType, String outcome, java.time.Duration duration) {
+        if (duration == null || duration.isNegative()) {
+            return;
+        }
+        io.micrometer.core.instrument.Timer.builder(JOB_DURATION)
+                .tag("jobType", jobType == null ? "unknown" : jobType)
+                .tag("outcome", outcome == null ? "unknown" : outcome)
+                .register(registry)
+                .record(duration);
+    }
+
+    public void recordPolicyLoadFailure() {
+        counter(POLICY_LOAD_FAILURES).increment();
     }
 
     private Counter counter(String name, String... tags) {

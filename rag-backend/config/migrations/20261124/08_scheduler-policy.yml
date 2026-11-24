@@ -1,0 +1,32 @@
+# 增量配置片段：租户调度策略与运行槽（2026-11-24，第 8 个片段）
+# 目标文件：rag-backend/rag-app/src/main/resources/application-features.yml（wgh.scheduler 段）
+# 依赖：先执行 sql/migrations/20261124/04_tenant_schedule_policy.sql
+# 说明：策略表不可用时调度器按本片段/代码默认值运行；槽位表不可用时失败开放（只告警）。
+# 键数：9（3 个全局键 + 2 个车道 × 6 个策略字段，其中 tenant-max-concurrent 注释口径调整不计新增）
+
+wgh:
+  scheduler:
+    # 空租户统一落到该桶，与 ExecutionRequest.DEFAULT_TENANT 一致
+    anonymous-tenant-id: ${WGH_SCHEDULER_ANONYMOUS_TENANT:default}
+    # 策略本地缓存刷新间隔；请求路径只读缓存，不查库
+    policy-refresh-interval: ${WGH_SCHEDULER_POLICY_REFRESH_INTERVAL:30s}
+    # 运行槽与作业表实际在跑数的对账间隔（校正进程异常退出造成的槽位泄漏）
+    slot-reconcile-interval: ${WGH_SCHEDULER_SLOT_RECONCILE_INTERVAL:1m}
+    # 事件表保留期（跨实例 / 断线重连 Last-Event-ID 重放，默认 7 天）
+    event-table-retention: ${WGH_SCHEDULER_EVENT_TABLE_RETENTION:7d}
+    # 策略表无对应 (tenant_id, lane) 行时的默认值
+    default-policy:
+      interactive:
+        max-concurrent: 2
+        max-queue: 20
+        weight: 10
+        priority-boost: 0
+        reject-policy: REJECT
+        queue-timeout-seconds: 300
+      background:
+        max-concurrent: 2
+        max-queue: 200
+        weight: 10
+        priority-boost: 0
+        reject-policy: QUEUE
+        queue-timeout-seconds: 300

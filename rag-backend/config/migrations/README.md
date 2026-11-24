@@ -101,8 +101,9 @@ spring:
 
 ## 2026-11-24 片段清单
 
-本目录 2026-11-24 共 7 个片段（下表 7 行），编号即合并/上线顺序，合计 6+9+2+9+3+1+3 = 33 个键
-（`01` 中的 1 个键为既有 `management.endpoint.health` 段的补充节点）。各片段头部「键数」与下表一致。
+本目录 2026-11-24 共 11 个片段（调度线新增 `01`/`02`/`08`/`11`，其余由多租户/存储/检索线登记）；
+调度线合计 6+9+10+1 = 26 个键（`01` 中的 1 个键为既有 `management.endpoint.health` 段的补充节点）。
+各片段头部「键数」与下表一致。
 
 | 文件 | 分区 | 键数 | 目标文件 |
 | --- | --- | --- | --- |
@@ -113,13 +114,33 @@ spring:
 | `05_chat-run-registry.yml` | 普通对话运行态登记 | 3（新增） | `application-features.yml` |
 | `06_quota-count-policy.yml` | 配额计数异常处理策略 | 1（新增） | `application.yml` |
 | `07_auth-user-cache.yml` | 用户信息 Redis 缓存 | 3（新增） | `application.yml` |
+| `08_scheduler-policy.yml` | 租户调度策略与运行槽 | 10（新增） | `application-features.yml` |
+| `11_cache-cleanup-interval.yml` | 语义缓存周期清理间隔（`KB_SEMCACHE_CLEANUP`） | 1（新增） | `application.yml` |
 
 顺序说明：`01` 只影响停机与探针；`02` 依赖 `sql/migrations/20261124/01_scheduler_instance.sql`；
 `03` 依赖 K8s ConfigMap 的 `WGH_STORAGE_*`；`04` 依赖共享 Redis；`05` 依赖 `wgh.scheduler.enabled=true`；
-`06` 与 `sql/migrations/20261124/02_quota_usage_epoch.sql` 同批上线；`07` 复用 `wgh.rag.redis.*`。
+`06` 与 `sql/migrations/20261124/02_quota_usage_epoch.sql` 同批上线；`07` 复用 `wgh.rag.redis.*`；
+`08` 依赖 `sql/migrations/20261124/04_tenant_schedule_policy.sql`，策略表缺失时按代码默认值降级；
+`11` 依赖 `wgh.scheduler.enabled=true` 时由 `KB_SEMCACHE_CLEANUP` 作业按该间隔提交。
 
-同日 SQL 增量：`sql/migrations/20261124/` 共 3 个脚本——`01_scheduler_instance.sql`、`02_quota_usage_epoch.sql`、
-`03_quota_charge_output_at.sql`（`wgh_quota_charge.output_at` 产出落库标记）；均由部署前在目标库手动执行，
-不纳入迁移 Job。本目录当日配置片段数仍为 7。
+同日 SQL 增量（调度线）：`sql/migrations/20261124/` 中新增 `01_scheduler_instance.sql`、
+`04_tenant_schedule_policy.sql`（租户调度策略表与集群运行槽）、
+`08_execution_event.sql`（执行事件表，跨实例/断线重连重放）；均由部署前在目标库手动执行，
+不纳入迁移 Job。`02`/`03` 与 `05`-`07` 属配额/多租户/检索线，见各自说明。
 
 说明：`server.shutdown=graceful` 与 `spring.lifecycle.timeout-per-shutdown-phase=45s` 保证滚动更新时在途请求不被硬切；`management.endpoint.health.probes.enabled` 开启 liveness/readiness 分组，liveness 仅含 `livenessState`，readiness 含 `readinessState,db`（Redis 可降级、磁盘余量不阻断服务，均不纳入）。超时取值需小于 Pod `terminationGracePeriodSeconds` 减去 `preStop` 时长；对应清单变更见 [deployment-backend.yaml](../../../deploy/k8s/base/deployment-backend.yaml)。
+
+## 2026-11-24 追加：检索 V0（本目录第 9 个片段）
+
+上表 8 个片段属于同日的调度/存储/认证改造；本节记录同日追加的检索侧增量，编号接续为 `09`。
+
+| 文件 | 分区 | 键数 | 目标文件 |
+| --- | --- | --- | --- |
+| `10_vector-store.yml` | 向量后端选择 + chunk 事实层（`wgh.vector.*` / `wgh.search.*`） | 6（新增） | `application-features.yml` |
+
+默认值即现状：`wgh.vector.backend=pgvector`、`wgh.search.backend=pgtrgm`、`wgh.vector.fact-layer-enabled=false`。
+因此不合并本片段也能保持现有 pgvector / pg_trgm 行为；开启事实层双写才算改变写入链路。
+
+同日 SQL 增量：`sql/migrations/20261124/07_kb_chunk.sql`，新增 `wgh_kb_chunk` 事实层表与 3 个索引
+（全部 `IF NOT EXISTS`，只新增不改既有对象）。本次仅在 `wgh_rag_dev` 执行；`wgh_rag_prod` / `wgh_rag_test`
+不动。事实层是原文与元数据的唯一副本，向量/关键词索引均可按它重建。

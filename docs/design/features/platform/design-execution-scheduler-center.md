@@ -1,7 +1,7 @@
 # 任务调度中心统一规划（Chat / 工作流 / 计划任务 / Agent / 多 Agent）
 
-> **版本**：v1.0
-> **日期**：2026-11-19
+> **版本**：v1.1（2026-11-24 同步落地状态）
+> **日期**：2026-11-19（初稿）/ 2026-11-24（落地状态同步）
 > **性质**：规划文档。不修改业务代码、不改配置、不执行 DDL、不重启服务、不做 git 操作。
 > **定位**：本文是「任务调度中心」的统一规划层，**不推翻既有设计**，而是把两份既有设计中的 S0–S3 与 A–D 口径收敛成一份可执行排期，并补齐此前未单独列出的两类执行体（单 Agent、计划任务）。
 > **复用来源（结论以此为准）**：
@@ -312,8 +312,74 @@ PENDING ──claim──▶ LEASED ──start──▶ RUNNING ──▶ SUCCE
 
 ---
 
-## 9. 未验证与推断声明
+## 9. 落地状态（2026-11-24）
 
+> 本节为实施后回填，逐条对照 §3 阶段项与代码；未完成项明确标注，不把规划当现状。
+
+### 9.1 S0 止血
+
+| 项 | 状态 | 代码 / 说明 |
+|---|---|---|
+| 三车道受管池 + 有界队列 | 已完成 | `rag-scheduler` `LaneExecutors` + `SchedulerProperties.lane.*` |
+| 全局准入 + 显式拒绝 | 已完成 | `AdmissionController`（交互/后台/维护三口径；拒绝码 `SCHEDULER_REJECTED`） |
+| 维护作业单飞 | 已完成 | `SingleFlightGuard`（Redis TTL；不可用时失败关闭） |
+| 指标与运行时快照 | 已完成 | `SchedulerMetrics` + `GET /api/admin/scheduler/overview`、`/runtime` |
+| K0 优雅停机与探针分组 | 已完成 | `application.yml` 停机/探针分组，`config/migrations/20261124/01_graceful-shutdown-probes.yml` |
+| 普通对话接入调度中心 | 已完成 | 交互车道登记 `DefaultInteractiveRunFacade` + `ChatRunProperties` |
+| 单 Agent 移出请求线程 | 部分完成 | HITL 恢复已改为 `AGENT_PLAN` 后台作业；首轮计划执行仍在聊天流式链路（见 §9.4） |
+
+### 9.2 S1 后台作业化
+
+| 项 | 状态 | 代码 / 说明 |
+|---|---|---|
+| 作业表 + 租约 + 心跳 + 重试 + 死信 | 已完成 | `wgh_execution_job`、`JobStore`、`JobDispatcher`、`JobRunner` |
+| 评测 `EVAL_RUN` | 已完成 | `EvalRunJobHandler`；接口 202 + `GET .../evaluate/runs/{executionId}` 轮询；未启用调度时保留同步返回 |
+| 静默/CRON/Webhook 工作流 `WF_RUN` | 已完成 | `WorkflowRunJobHandler`，`WorkflowService` 提交均走 `JobSubmitter` |
+| 连接器 / 上传清理 / 语义缓存 / 配额退款 / 恢复扫描 | 已完成 | `KB_CONNECTOR_SYNC`、`KB_UPLOAD_CLEANUP`、`KB_SEMCACHE_CLEANUP`、`QUOTA_REFUND`、`RUN_RESUME_SCAN` |
+| 单 Agent `AGENT_PLAN` | 部分完成 | HITL 确认续跑已后台化（bizKey `agent-hitl:{stepId}`）；首轮 ReAct 计划仍走聊天 SSE |
+| 租户字段与默认策略 | 已完成 | 作业表 `tenant_id`（VARCHAR(64)，单租户 `default`）+ `wgh.scheduler.default-policy` |
+| 提交返回 202 + jobId | 已完成 | 评测、单 Agent HITL；工作流聊天沿用既有 SSE 契约（事件重放承载断线续传） |
+
+### 9.3 S2 / S3
+
+| 项 | 状态 | 代码 / 说明 |
+|---|---|---|
+| `wgh_tenant_schedule_policy` + `PolicyCache` | 已完成 | 30s 轮询 + 管理端写后主动 reload；表缺失时回退默认策略 |
+| 准入读取租户策略 | 已完成 | 并发/排队/拒绝方式；维护车道不受租户策略限制 |
+| `wgh_tenant_runtime_slot` + `slot.drift` | 已完成（后台车道强制） | `TenantSlotManager` 执行前占槽、结束释放、周期按作业表校正；交互车道仍以作业/登记计数为准 |
+| 管理端策略查询/更新/试算 | 已完成 | `GET/PUT /api/admin/scheduler/policies/{tenantId}`、`POST .../dry-run`（乐观锁 `version`） |
+| 作业重试 / 强制回收 | 已完成 | `POST /jobs/{id}/retry`、`POST /jobs/{id}/reclaim`（`@Audit`） |
+| 指标补齐 | 已完成 | `rejected`、`wait.seconds`、`job.duration`、`policy.load.failures`、`slot.drift` |
+| 管理端前端页面 | 代码已交付，编译/构建通过 | `SchedulerCenter.vue` 页签：作业执行 / 租户策略 / 失败与死信 / 实例与对账；失败列表 `GET /jobs/failures`；`vite build` 通过，运行时待端到端 |
+| `wgh_execution_event` + `Last-Event-ID` | 已完成 | 事件总线订阅落库、`ExecutionEventStore` 重放、`GET /api/executions/{id}/events` SSE、7 天保留清理 |
+| 多 Agent `BACKGROUND` + attach | 代码已交付，编译通过 | 抽出传输无关 `AgentEventStream`（`SseAgentEventStream` / `JobAgentEventStream`）；新增 `AGENT_MULTI_RUN`、`AGENT_MULTI_HITL` 作业与事件桥接 |
+| 聊天工作流 `BACKGROUND` + attach | 代码已交付，编译通过 | `WorkflowService#runForChatBlocking` / `#resumeForChatBlocking`（确认与扣费独立事务提交后再续跑）+ `WF_CHAT_RUN` / `WF_CHAT_HITL` 作业；`ChatWorkflowService` 提交作业并 attach 到聊天 SSE |
+| 行级安全（RLS） | **未实现** | 不在本轮范围；租户隔离仍由应用层 `tenant_id` 过滤承担 |
+
+### 9.4 与初稿的偏差（需后续确认）
+
+1. **租户标识类型**：策略表/槽位表使用 `VARCHAR(64)`（与 `wgh_execution_job` 一致），不采用初稿的 `BIGINT`，避免调度域出现两种租户标识。
+2. **策略字段生效范围**：`daily_job_limit`、`rate_per_minute`、`time_window_json` 已落表与透出，但准入暂未强制执行（只执行并发/排队/拒绝方式）。
+3. **跨副本实时订阅**：事件表支持断线/跨副本**重放**；跨副本**实时 tail** 仍依赖执行实例内存总线，未做集群广播。
+4. **多 Agent / 聊天工作流**：均已抽传输无关事件出口并提交后台作业 + attach；多 Agent 与聊天工作流的 HITL 续跑均已后台化（聊天 HITL 的确认/扣费先独立事务提交，再同步续跑）。
+5. **验证记录（2026-11-24）**：`rag-controller -am` 编译 EXIT=0；`rag-scheduler` 单元测试 EXIT=0（40 个用例，含 `AdmissionControllerTest` 调整后的后台排队语义）；`rag-frontend` `vite build` EXIT=0。运行时链路（SSE attach、跨副本重放、计费结算）待端到端验证。
+
+### 9.5 静态自检不一致点（2026-11-24）
+
+| # | 不一致点 | 处理 |
+|---|---|---|
+| 1 | `wgh.scheduler.tenant-max-concurrent` 已不被读取（由 `default-policy.*` 取代） | 保留键避免存量配置启动失败；新配置请使用 `default-policy` |
+| 2 | `daily_job_limit` / `rate_per_minute` / `time_window_json` 已落表并透出，但准入未强制执行 | 明确标注为「已建模、未启用」，不把字段存在当作能力 |
+| 3 | `/api/executions/**` 无 `@RequiresPermission`，只依赖登录态 + ownerUserId 校验 | 系统执行（无 owner）仅管理员可查；如需细粒度权限需新增权限码 |
+| 4 | 管理端调度读/写共用 `PERM_AUDIT_VIEW` | 未拆 `scheduler:view` / `scheduler:manage`，避免本轮扩大 RBAC 面 |
+| 5 | 事件表对每个事件（含高频 DELTA）同步落库 | 存在写放大风险；如遇瓶颈按事件类型过滤或异步批量写入 |
+| 6 | 跨副本仅支持事件表重放，不支持实时 tail | 多副本实时 tail 依赖集群广播，未在本轮实现 |
+| 7 | 聊天工作流 HITL 的确认/扣费与续跑拆成「独立事务提交 → 作业线程执行」两段 | 与既有异步路径语义一致；失败时由 `executeHitlResume` 的计费收口处理 |
+| 8 | 交互式车道未接入 `wait.seconds` / `job.duration` | 指标当前覆盖后台/维护作业；交互式沿用运行登记观测 |
+
+---
+
+## 10. 未验证与推断声明
 1. **未做运行压测**：线程数、排队时长、连接池耗尽均为公式估算。
 2. **单 Agent 请求线程时长**：结论来自 `AgentController` 同步调用路径，未实测长计划耗时分布。
 3. **生产副本数未知**：仓库只有单实例 compose；「多副本重复触发」是代码层面成立。

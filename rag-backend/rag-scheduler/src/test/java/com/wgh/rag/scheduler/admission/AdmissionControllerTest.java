@@ -85,15 +85,16 @@ class AdmissionControllerTest {
     }
 
     @Test
-    void shouldRejectBackgroundWhenTenantConcurrencyFull() {
+    void shouldQueueBackgroundWhenTenantConcurrencyFullAndQueueAllowed() {
         when(jobStore.countPending(ExecutionLane.BACKGROUND)).thenReturn(0L);
         when(jobStore.countTenantActive(any(), any())).thenReturn(2L);
+        when(jobStore.countPendingByTenant(any(), any())).thenReturn(0L);
 
+        // S2 默认策略：后台车道 reject_policy=QUEUE，并发满但未达排队上限时允许入队
         AdmissionDecision decision = admissionController.decide(
                 ExecutionRequest.builder("EVAL_RUN", ExecutionLane.BACKGROUND).build());
 
-        assertThat(decision.allowed()).isFalse();
-        assertThat(decision.code()).isEqualTo(ExecutionErrorCodes.TENANT_CONCURRENCY_EXCEEDED);
+        assertThat(decision.allowed()).isTrue();
     }
 
     @Test
