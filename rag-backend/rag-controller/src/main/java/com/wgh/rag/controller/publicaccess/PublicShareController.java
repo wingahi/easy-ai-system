@@ -15,6 +15,7 @@ import com.wgh.rag.common.result.Result;
 import com.wgh.rag.common.result.ResultCode;
 import com.wgh.rag.controller.support.SseExecutionStreamSink;
 import com.wgh.rag.controller.support.SseReplaySupport;
+import com.wgh.rag.data.tenant.TenantTransactionTemplate;
 import com.wgh.rag.kb.entity.KnowledgeBase;
 import com.wgh.rag.kb.mapper.KnowledgeBaseMapper;
 import com.wgh.rag.kb.service.RagRetrieveService;
@@ -77,6 +78,8 @@ public class PublicShareController {
     private final SharePasswordGuard passwordGuard;
     /** SSE 事件重放：按 Last-Event-ID 从共享缓冲补齐缺失事件 */
     private final StreamReplayService streamReplayService;
+    /** 匿名业务表读取：按分享链接所属租户开只读事务（wgh_app + app.tenant_id GUC） */
+    private final TenantTransactionTemplate transactions;
 
     @Operation(summary = "分享链接元信息（免登录）")
     @GetMapping("/{token}")
@@ -106,7 +109,8 @@ public class PublicShareController {
         data.put("readOnly", !ShareLinkService.SCOPE_WINDOW.equals(link.getScope()));
 
         if (ShareLinkService.SCOPE_KB.equals(link.getScope())) {
-            KnowledgeBase kb = knowledgeBaseMapper.selectById(link.getTargetId());
+            KnowledgeBase kb = readInLinkTenant(link,
+                    () -> knowledgeBaseMapper.selectById(link.getTargetId()));
             if (kb == null) throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "知识库不存在");
             data.put("kbId", kb.getId());
             data.put("kbName", kb.getName());
@@ -121,7 +125,8 @@ public class PublicShareController {
             data.put("title", window.getName());
             data.put("mode", ShareLinkService.SCOPE_SESSION.equals(link.getScope()) ? "session" : "chat");
             if (ShareLinkService.SCOPE_SESSION.equals(link.getScope())) {
-                ChatSession session = sessionMapper.selectById(link.getTargetId());
+                ChatSession session = readInLinkTenant(link,
+                        () -> sessionMapper.selectById(link.getTargetId()));
                 if (session == null) throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "会话不存在");
                 data.put("sessionId", session.getId());
                 data.put("sessionTitle", session.getTitle());
@@ -168,7 +173,8 @@ public class PublicShareController {
             HttpServletRequest request) {
         ShareLink link = access(token, password, ShareLinkService.SCOPE_WINDOW, request);
         ChatWindow window = loadTargetWindow(link);
-        return Result.success(windowService.listSessions(window.getId(), visitorIdentifier(visitorId)));
+        return Result.success(readInLinkTenant(link,
+                () -> windowService.listSessions(window.getId(), visitorIdentifier(visitorId))));
     }
 
     @Operation(summary = "分享链接：新建访客会话（WINDOW 范围）")
@@ -209,13 +215,14 @@ public class PublicShareController {
         ShareLink link = access(token, password, null, request);
         ChatWindow window = loadTargetWindow(link);
         if (ShareLinkService.SCOPE_SESSION.equals(link.getScope())) {
-            ChatSession session = sessionMapper.selectById(link.getTargetId());
+            ChatSession session = readInLinkTenant(link,
+                    () -> sessionMapper.selectById(link.getTargetId()));
             if (session == null) throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "会话不存在");
-            return Result.success(windowService.pageMessages(session.getChatWindowId(),
-                    session.getUserIdentifier(), session.getId(), page, size));
+            return Result.success(readInLinkTenant(link, () -> windowService.pageMessages(
+                    session.getChatWindowId(), session.getUserIdentifier(), session.getId(), page, size)));
         }
-        return Result.success(windowService.pageMessages(window.getId(),
-                visitorIdentifier(visitorId), sessionId, page, size));
+        return Result.success(readInLinkTenant(link, () -> windowService.pageMessages(window.getId(),
+                visitorIdentifier(visitorId), sessionId, page, size)));
     }
 
     @Operation(summary = "分享链接：匿名流式问答（WINDOW 范围，复用既有 RAG 链路与配额）")
@@ -240,7 +247,9 @@ public class PublicShareController {
             if (sessionId == null) {
                 throw new BusinessException(ResultCode.PARAM_ERROR, "重连需要提供 sessionId");
             }
-            windowService.getOwnedSession(window.getId(), sessionId, identifier);
+            final Long reconnectSessionId = sessionId;
+            readInLinkTenant(link,
+                    () -> windowService.getOwnedSession(window.getId(), reconnectSessionId, identifier));
             SseEmitter resumeEmitter = new SseEmitter(ChatConstants.SSE_TIMEOUT_MS);
             streamReplayService.resume(StreamReplayService.KIND_CHAT, sessionId, lastEventId,
                     new SseExecutionStreamSink(resumeEmitter), SseReplaySupport.wireCloseFlag(resumeEmitter));
@@ -251,7 +260,9 @@ public class PublicShareController {
         if (sessionId == null) {
             sessionId = windowService.createSession(window.getId(), identifier).getId();
         } else {
-            windowService.getOwnedSession(window.getId(), sessionId, identifier);
+            final Long existingSessionId = sessionId;
+            readInLinkTenant(link,
+                    () -> windowService.getOwnedSession(window.getId(), existingSessionId, identifier));
         }
 
         String message = body.get("message") == null ? "" : String.valueOf(body.get("message")).trim();
@@ -303,9 +314,10 @@ public class PublicShareController {
         String query = body.get("query") == null ? "" : String.valueOf(body.get("query")).trim();
         if (query.isEmpty()) throw new BusinessException(ResultCode.PARAM_ERROR, "query 不能为空");
         Integer topK = parseTopK(body.get("topK"), 5);
-        List<EmbeddingMatch<TextSegment>> matches = retrieveService.searchMultiple(
-                List.of(link.getTargetId()), query,
-                new RetrievalOptions(null, false, null, null, topK)).matches();
+        List<EmbeddingMatch<TextSegment>> matches = readInLinkTenant(link,
+                () -> retrieveService.searchMultiple(
+                        List.of(link.getTargetId()), query,
+                        new RetrievalOptions(null, false, null, null, topK)).matches());
 
         List<Map<String, Object>> results = new ArrayList<>();
         for (EmbeddingMatch<TextSegment> m : matches) {
@@ -347,17 +359,30 @@ public class PublicShareController {
     }
 
     private ChatWindow loadTargetWindow(ShareLink link) {
-        Long windowId = link.getTargetId();
-        if (ShareLinkService.SCOPE_SESSION.equals(link.getScope())) {
-            ChatSession session = sessionMapper.selectById(link.getTargetId());
-            if (session == null) throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "会话不存在");
-            windowId = session.getChatWindowId();
-        }
-        ChatWindow window = windowService.getById(windowId);
-        if (window.getStatus() == null || window.getStatus() == 0) {
-            throw new BusinessException(ResultCode.OPERATION_NOT_ALLOWED, "聊天窗口已停用");
-        }
-        return window;
+        return readInLinkTenant(link, () -> {
+            Long windowId = link.getTargetId();
+            if (ShareLinkService.SCOPE_SESSION.equals(link.getScope())) {
+                ChatSession session = sessionMapper.selectById(link.getTargetId());
+                if (session == null) throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "会话不存在");
+                windowId = session.getChatWindowId();
+            }
+            ChatWindow window = windowService.getById(windowId);
+            if (window.getStatus() == null || window.getStatus() == 0) {
+                throw new BusinessException(ResultCode.OPERATION_NOT_ALLOWED, "聊天窗口已停用");
+            }
+            return window;
+        });
+    }
+
+    /**
+     * 匿名业务表读取：以分享链接所属租户执行只读事务。
+     * <p>
+     * 不使用 {@code wgh_preauth} 角色——该角色只被授权读取 {@code wgh_share_link}/{@code wgh_api_key}，
+     * 迁移 11 明确禁止用于业务表。这里按 link 的 tenantId 设置 {@code app.tenant_id} GUC，
+     * 使 RLS 与租户插件都按链接归属过滤。事务只包查询，SSE / 流式生成在事务外。
+     */
+    private <T> T readInLinkTenant(ShareLink link, java.util.function.Supplier<T> action) {
+        return transactions.execute(link.getTenantId(), true, action);
     }
 
     private String visitorIdentifier(String visitorId) {

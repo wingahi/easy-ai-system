@@ -40,6 +40,7 @@ public class ChatWindowService {
     private final ChatMessageMapper messageMapper;
     private final WorkflowService workflowService;
 
+    @Transactional(readOnly = true)
     public PageResult<ChatWindow> page(Long page, Long size, String keyword) {
         return DataScopeContext.runWithScope(() -> {
             LambdaQueryWrapper<ChatWindow> wrapper = new LambdaQueryWrapper<>();
@@ -53,6 +54,7 @@ public class ChatWindowService {
         });
     }
 
+    @Transactional(readOnly = true)
     public ChatWindow getById(Long id) {
         ChatWindow window = windowMapper.selectById(id);
         if (window == null) throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "聊天窗口不存在");
@@ -60,6 +62,7 @@ public class ChatWindowService {
     }
 
     /** 详情可见性校验：PRIVATE 他人窗口按不存在处理 */
+    @Transactional(readOnly = true)
     public ChatWindow getVisible(Long id) {
         ChatWindow window = getById(id);
         DataScopeGuard.assertReadable(window.getCreateBy(), window.getVisibility(), "聊天窗口");
@@ -70,6 +73,7 @@ public class ChatWindowService {
      * 查询窗口，不存在（含已软删除）时返回 null。
      * 用于恢复类入口：历史计划对应的窗口可能已删除，不应阻断恢复。
      */
+    @Transactional(readOnly = true)
     public ChatWindow findById(Long id) {
         return id == null ? null : windowMapper.selectById(id);
     }
@@ -261,6 +265,7 @@ public class ChatWindowService {
      * 分页查询聊天消息
      * 根据 windowId + userIdentifier 找到会话，返回分页消息（倒序，最新在前）
      */
+    @Transactional(readOnly = true)
     public PageResult<ChatMessage> pageMessages(Long windowId, String userIdentifier, Long page, Long size) {
         return pageMessages(windowId, userIdentifier, null, page, size);
     }
@@ -269,6 +274,7 @@ public class ChatWindowService {
      * 分页查询聊天消息
      * sessionId 为空时取该用户在此窗口下最新的会话；否则加载指定会话的消息
      */
+    @Transactional(readOnly = true)
     public PageResult<ChatMessage> pageMessages(Long windowId, String userIdentifier, Long sessionId,
                                                 Long page, Long size) {
         // 1. 确定会话：显式指定 sessionId 优先，否则取最新会话
@@ -309,6 +315,7 @@ public class ChatWindowService {
     /**
      * 列出某窗口下当前用户的会话（按更新时间倒序，最多 50 条）
      */
+    @Transactional(readOnly = true)
     public List<ChatSession> listSessions(Long windowId, String userIdentifier) {
         return sessionMapper.selectList(new LambdaQueryWrapper<ChatSession>()
                 .eq(ChatSession::getChatWindowId, windowId)
@@ -321,6 +328,7 @@ public class ChatWindowService {
     /**
      * 校验会话归属（窗口 + 用户），用于工作流运行状态查询与 HITL 确认
      */
+    @Transactional(readOnly = true)
     public ChatSession getOwnedSession(Long windowId, Long sessionId, String userIdentifier) {
         ChatSession session = sessionMapper.selectById(sessionId);
         if (session == null || !windowId.equals(session.getChatWindowId())

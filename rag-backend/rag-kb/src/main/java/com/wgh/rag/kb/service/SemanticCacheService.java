@@ -17,6 +17,7 @@ import dev.langchain4j.model.embedding.EmbeddingModel;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -59,6 +60,7 @@ public class SemanticCacheService {
     /**
      * 查询语义缓存：相似度 >= 阈值时返回缓存答案并累加命中计数，否则返回 null。
      */
+    @Transactional
     public CacheHit lookup(Long windowId, List<Long> kbIds, String query) {
         if (!enabled() || windowId == null || kbIds == null || kbIds.isEmpty()
                 || query == null || query.isBlank()) {
@@ -115,6 +117,7 @@ public class SemanticCacheService {
     /**
      * 写入语义缓存（问答对 + 向量），随后按 max-per-window 淘汰最旧条目。
      */
+    @Transactional
     public void save(Long windowId, List<Long> kbIds, String query, String answer) {
         if (!enabled() || windowId == null || kbIds == null || kbIds.isEmpty()
                 || query == null || query.isBlank() || answer == null || answer.isBlank()) {
@@ -154,6 +157,7 @@ public class SemanticCacheService {
      * 按窗口失效缓存：删除该窗口全部缓存行及其向量。
      * 用于知识库内容变更后避免继续返回旧答案。
      */
+    @Transactional
     public int invalidateByWindow(Long windowId) {
         if (windowId == null) return 0;
         try {
@@ -170,6 +174,7 @@ public class SemanticCacheService {
      * 按知识库失效缓存：找出引用该知识库的聊天窗口，逐个清理窗口缓存。
      * 知识库文件重切/删除或知识库删除后调用。
      */
+    @Transactional
     public int invalidateByKbId(Long kbId) {
         if (kbId == null) return 0;
         try {
@@ -198,6 +203,7 @@ public class SemanticCacheService {
      *
      * @return 本次清理条数
      */
+    @Transactional
     public int cleanupExpired() {
         Integer ttl = ragProperties.getCache().getTtlMinutes();
         if (ttl == null || ttl <= 0) return 0;

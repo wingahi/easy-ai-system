@@ -19,6 +19,7 @@ import dev.langchain4j.store.embedding.EmbeddingMatch;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import javax.sql.DataSource;
 import java.sql.Connection;
@@ -62,12 +63,14 @@ public class RetrievalEvaluationService {
     public record GroundTruthPayload(String queryText, List<String> relevantChunks) {
     }
 
+    @Transactional(readOnly = true)
     public List<KbGroundTruth> list(Long kbId) {
         return groundTruthMapper.selectList(new LambdaQueryWrapper<KbGroundTruth>()
                 .eq(KbGroundTruth::getKnowledgeBaseId, kbId)
                 .orderByAsc(KbGroundTruth::getId));
     }
 
+    @Transactional
     public KbGroundTruth save(Long kbId, GroundTruthPayload payload) {
         KbGroundTruth gt = new KbGroundTruth();
         gt.setKnowledgeBaseId(kbId);
@@ -79,6 +82,7 @@ public class RetrievalEvaluationService {
     /**
      * 批量导入：同一知识库内相同查询已存在则覆盖标注，避免重复导入产生重复评测样本
      */
+    @Transactional
     public List<KbGroundTruth> importBatch(Long kbId, List<GroundTruthPayload> payloads) {
         if (payloads == null || payloads.isEmpty()) {
             throw new BusinessException(ResultCode.PARAM_ERROR, "导入数据为空");
@@ -102,6 +106,7 @@ public class RetrievalEvaluationService {
         return saved;
     }
 
+    @Transactional
     public KbGroundTruth update(Long kbId, Long id, GroundTruthPayload payload) {
         KbGroundTruth gt = requireOwned(kbId, id);
         applyPayload(gt, payload);
@@ -109,6 +114,7 @@ public class RetrievalEvaluationService {
         return gt;
     }
 
+    @Transactional
     public void delete(Long kbId, Long id) {
         requireOwned(kbId, id);
         groundTruthMapper.deleteById(id);
@@ -127,6 +133,7 @@ public class RetrievalEvaluationService {
      * 聚合均为「可计算查询」的算术平均；无标注相关集合的查询会被跳过，不会以 0 分参与平均。
      * K 由 options.topK() 指定（null 用全局配置），单次评测查询数有上限保护。
      */
+    @Transactional
     public Map<String, Object> evaluate(Long kbId, RetrievalOptions options) {
         List<KbGroundTruth> truths = list(kbId);
         if (truths.isEmpty()) {
@@ -260,6 +267,7 @@ public class RetrievalEvaluationService {
     /**
      * 列出知识库 chunk（来自 pgvector 表），用于标注相关 chunk 与离线评测扫描语料
      */
+    @Transactional(readOnly = true)
     public Map<String, Object> listChunks(Long kbId, Long fileId, int page, int size) {
         KnowledgeBase kb = knowledgeBaseMapper.selectById(kbId);
         if (kb == null) {

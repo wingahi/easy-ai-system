@@ -10,6 +10,7 @@ import com.wgh.rag.common.share.ChatShareTargetPort;
 import com.wgh.rag.common.share.KnowledgeBaseShareTargetPort;
 import com.wgh.rag.common.security.TenantContext;
 import com.wgh.rag.data.scope.DataScopeContext;
+import com.wgh.rag.data.tenant.DatabaseRoleTemplate;
 import com.wgh.rag.publicaccess.config.PublicAccessProperties;
 import com.wgh.rag.publicaccess.entity.ShareLink;
 import com.wgh.rag.publicaccess.mapper.ShareLinkMapper;
@@ -45,6 +46,7 @@ public class ShareLinkService {
     private final KnowledgeBaseShareTargetPort knowledgeBaseTargets;
     private final PublicAccessProperties properties;
     private final SharePasswordGuard passwordGuard;
+    private final DatabaseRoleTemplate roles;
 
     private final BCryptPasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
 
@@ -130,9 +132,11 @@ public class ShareLinkService {
         if (token == null || token.isBlank()) {
             throw new BusinessException(ResultCode.PARAM_ERROR, "分享 token 不能为空");
         }
-        ShareLink link = shareLinkMapper.selectOne(new LambdaQueryWrapper<ShareLink>()
-                .eq(ShareLink::getToken, token)
-                .last("LIMIT 1"));
+        // 免登录链路：wgh_preauth 只读解析 token，解析结果再用于后续带租户的业务事务
+        ShareLink link = roles.runReadOnlyAs("wgh_preauth", () -> shareLinkMapper.selectOne(
+                new LambdaQueryWrapper<ShareLink>()
+                        .eq(ShareLink::getToken, token)
+                        .last("LIMIT 1")));
         if (link == null) {
             throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "分享链接无效");
         }
@@ -294,6 +298,7 @@ public class ShareLinkService {
     /**
      * 管理端分页列表
      */
+    @Transactional(readOnly = true)
     public PageResult<ShareLink> page(Long page, Long size, String keyword, String scope) {
         DataScopeContext.Scope user = DataScopeContext.resolveUser();
         LambdaQueryWrapper<ShareLink> wrapper = new LambdaQueryWrapper<ShareLink>()

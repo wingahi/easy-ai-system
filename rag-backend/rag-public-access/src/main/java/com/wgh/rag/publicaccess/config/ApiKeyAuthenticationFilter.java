@@ -98,12 +98,13 @@ public class ApiKeyAuthenticationFilter extends OncePerRequestFilter {
                 writeError(request, response, e.getCode(), e.getMessage());
             }
         } finally {
-            LoginUser.clear();
-            TenantContext.clear();
+            // 先写调用日志再清理上下文：日志写入需要 Key 归属租户，清理后无处可取
             if (key != null) {
                 apiCallLogService.record(key, request, response.getStatus(),
                         System.currentTimeMillis() - start);
             }
+            LoginUser.clear();
+            TenantContext.clear();
         }
     }
 

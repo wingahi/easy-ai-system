@@ -267,6 +267,7 @@ public class KnowledgeFileService {
     /**
      * 按 ID 获取文件，不存在时统一抛 3001「文件不存在」。
      */
+    @Transactional(readOnly = true)
     public KnowledgeFile getById(Long fileId) {
         KnowledgeFile file = fileMapper.selectById(fileId);
         if (file == null) {
@@ -344,6 +345,7 @@ public class KnowledgeFileService {
     /**
      * 预览分割情况
      */
+    @Transactional(readOnly = true)
     public Map<String, Object> previewSplit(Long fileId) {
         KnowledgeFile file = getById(fileId);
         requireReadableKb(file.getKnowledgeBaseId());
@@ -389,6 +391,7 @@ public class KnowledgeFileService {
     /**
      * 列出知识库文件
      */
+    @Transactional(readOnly = true)
     public List<KnowledgeFile> listByKbId(Long kbId) {
         // kbId 不存在时明确返回业务码 3001，避免前端把空数组误判为“该知识库无文件”
         requireReadableKb(kbId);

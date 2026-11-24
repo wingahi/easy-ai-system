@@ -11,10 +11,12 @@ import com.wgh.rag.chat.mapper.PromptTemplateMapper;
 import com.wgh.rag.common.exception.BusinessException;
 import com.wgh.rag.common.result.PageResult;
 import com.wgh.rag.common.result.ResultCode;
+import com.wgh.rag.common.security.TenantContext;
 import com.wgh.rag.common.template.TemplateRenderer;
 import com.wgh.rag.data.scope.DataScopeContext;
 import com.wgh.rag.data.scope.DataScopeGuard;
 import com.wgh.rag.data.scope.ResourceVisibility;
+import com.wgh.rag.data.tenant.TenantScopeSupport;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -49,6 +51,7 @@ public class PromptTemplateService {
     private final PromptTemplateMapper mapper;
     private final ObjectMapper objectMapper;
 
+    @Transactional(readOnly = true)
     public PageResult<PromptTemplate> page(Long page, Long size, String keyword, String category) {
         return DataScopeContext.runWithScope(() -> {
             LambdaQueryWrapper<PromptTemplate> qw = new LambdaQueryWrapper<PromptTemplate>()
@@ -58,15 +61,21 @@ public class PromptTemplateService {
                     .eq(category != null && !category.isBlank(), PromptTemplate::getCategory, category)
                     .orderByDesc(PromptTemplate::getBuiltin)
                     .orderByDesc(PromptTemplate::getUpdateTime);
+            TenantScopeSupport.applyVisibleScope(qw, PromptTemplate::getTenantId, PromptTemplate::getScope);
             Page<PromptTemplate> result = mapper.selectPage(Page.of(page, size), qw);
             return new PageResult<>(result.getTotal(), result.getCurrent(), result.getSize(), result.getRecords());
         });
     }
 
+    @Transactional(readOnly = true)
     public List<PromptTemplate> listAll() {
-        return DataScopeContext.runWithScope(() -> mapper.selectList(new LambdaQueryWrapper<PromptTemplate>()
-                .orderByDesc(PromptTemplate::getBuiltin)
-                .orderByAsc(PromptTemplate::getName)));
+        return DataScopeContext.runWithScope(() -> {
+            LambdaQueryWrapper<PromptTemplate> qw = new LambdaQueryWrapper<PromptTemplate>()
+                    .orderByDesc(PromptTemplate::getBuiltin)
+                    .orderByAsc(PromptTemplate::getName);
+            TenantScopeSupport.applyVisibleScope(qw, PromptTemplate::getTenantId, PromptTemplate::getScope);
+            return mapper.selectList(qw);
+        });
     }
 
     /**
@@ -76,6 +85,7 @@ public class PromptTemplateService {
      * - query 非空：对 name / remark（简述）/ category（标签）做模糊匹配
      * - limit 归一化到 [1, {@link #SUGGEST_MAX_LIMIT}]，为空取 {@link #SUGGEST_DEFAULT_LIMIT}
      */
+    @Transactional(readOnly = true)
     public List<PromptTemplateSuggestion> suggest(String query, Integer limit) {
         return DataScopeContext.runWithScope(() -> doSuggest(query, limit));
     }
@@ -89,6 +99,7 @@ public class PromptTemplateService {
                     .or().like(PromptTemplate::getRemark, keyword)
                     .or().like(PromptTemplate::getCategory, keyword));
         }
+        TenantScopeSupport.applyVisibleScope(qw, PromptTemplate::getTenantId, PromptTemplate::getScope);
         // 内置模板优先，其余按最近更新
         qw.orderByDesc(PromptTemplate::getBuiltin)
                 .orderByDesc(PromptTemplate::getUpdateTime);
@@ -126,8 +137,12 @@ public class PromptTemplateService {
         }
     }
 
+    @Transactional(readOnly = true)
     public PromptTemplate getById(Long id) {
-        PromptTemplate t = mapper.selectById(id);
+        LambdaQueryWrapper<PromptTemplate> qw = new LambdaQueryWrapper<PromptTemplate>()
+                .eq(PromptTemplate::getId, id);
+        TenantScopeSupport.applyVisibleScope(qw, PromptTemplate::getTenantId, PromptTemplate::getScope);
+        PromptTemplate t = mapper.selectOne(qw);
         if (t == null) {
             throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "模板不存在");
         }
@@ -152,6 +167,9 @@ public class PromptTemplateService {
         t.setBuiltin(false);
         t.setVisibility(ResourceVisibility.normalize(t.getVisibility()));
         t.setVariables(variablesJson(t.getContent()));
+        // 租户接口只允许创建租户范围模板；平台内置由迁移/平台角色维护
+        t.setTenantId(TenantContext.tenantIdOrDefault());
+        t.setScope(TenantScopeSupport.SCOPE_TENANT);
         mapper.insert(t);
         return t;
     }
@@ -251,9 +269,12 @@ public class PromptTemplateService {
         return render(t.getContent(), vars);
     }
 
+    @Transactional(readOnly = true)
     public PromptTemplate findByName(String name) {
-        return mapper.selectOne(new LambdaQueryWrapper<PromptTemplate>()
-                .eq(PromptTemplate::getName, name).last("LIMIT 1"));
+        LambdaQueryWrapper<PromptTemplate> qw = new LambdaQueryWrapper<PromptTemplate>()
+                .eq(PromptTemplate::getName, name);
+        TenantScopeSupport.applyVisibleScope(qw, PromptTemplate::getTenantId, PromptTemplate::getScope);
+        return mapper.selectOne(qw.last("LIMIT 1"));
     }
 
     /**

@@ -24,6 +24,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -59,6 +60,7 @@ public class RagRetrieveService {
     /**
      * 多知识库联合检索（默认配置，不做增强）
      */
+    @Transactional(readOnly = true)
     public List<EmbeddingMatch<TextSegment>> searchMultiple(List<Long> kbIds, String queryText) {
         return searchMultiple(kbIds, queryText, RetrievalOptions.defaults()).matches();
     }
@@ -66,6 +68,7 @@ public class RagRetrieveService {
     /**
      * 多知识库联合检索（带耗时/命中指标埋点）。
      */
+    @Transactional(readOnly = true)
     public RetrieveResult searchMultiple(List<Long> kbIds, String queryText, RetrievalOptions options) {
         RetrievalOptions opts = options != null ? options : RetrievalOptions.defaults();
         long start = System.nanoTime();

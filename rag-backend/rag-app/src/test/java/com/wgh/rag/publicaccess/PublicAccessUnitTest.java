@@ -16,6 +16,9 @@ import com.wgh.rag.publicaccess.service.PublicAccessRateLimiter;
 import com.wgh.rag.publicaccess.service.ShareLinkService;
 import com.wgh.rag.publicaccess.service.SharePasswordGuard;
 import com.wgh.rag.config.redis.RedisCommandPort;
+import com.wgh.rag.data.tenant.DatabaseRoleTemplate;
+import com.wgh.rag.data.tenant.TenantTransactionTemplate;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
@@ -24,9 +27,12 @@ import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.function.Supplier;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
 /**
@@ -43,14 +49,34 @@ class PublicAccessUnitTest {
     private final PublicAccessProperties properties = new PublicAccessProperties();
     private final DefaultPublicAccessStore store = new DefaultPublicAccessStore(RedisCommandPort.disabled());
     private final SharePasswordGuard passwordGuard = new SharePasswordGuard(store, properties);
+    private final DatabaseRoleTemplate roles = mock(DatabaseRoleTemplate.class);
+    private final TenantTransactionTemplate transactions = mock(TenantTransactionTemplate.class);
     private final ShareLinkService shareLinkService = new ShareLinkService(
-            shareLinkMapper, chatTargets, knowledgeBaseTargets, properties, passwordGuard);
+            shareLinkMapper, chatTargets, knowledgeBaseTargets, properties, passwordGuard, roles);
 
     private final ApiKeyMapper apiKeyMapper = mock(ApiKeyMapper.class);
-    private final ApiKeyService apiKeyService = new ApiKeyService(apiKeyMapper);
+    private final ApiKeyService apiKeyService = new ApiKeyService(apiKeyMapper, roles, transactions);
     private final PublicAccessRateLimiter rateLimiter = new PublicAccessRateLimiter(store, properties,
             new com.wgh.rag.common.metrics.RagMetrics(
                     new io.micrometer.core.instrument.simple.SimpleMeterRegistry()));
+
+    @BeforeEach
+    @SuppressWarnings("unchecked")
+    void stubTenantTemplates() {
+        // 角色切换 / 租户事务在单元测试中穿透执行，聚焦业务规则
+        lenient().when(roles.runReadOnlyAs(anyString(), any()))
+                .thenAnswer(inv -> ((Supplier<Object>) inv.getArgument(1)).get());
+        lenient().when(roles.runAs(anyString(), any()))
+                .thenAnswer(inv -> ((Supplier<Object>) inv.getArgument(1)).get());
+        lenient().when(transactions.execute(anyString(), anyBoolean(), any()))
+                .thenAnswer(inv -> ((Supplier<Object>) inv.getArgument(2)).get());
+        lenient().when(transactions.execute(anyBoolean(), any()))
+                .thenAnswer(inv -> ((Supplier<Object>) inv.getArgument(1)).get());
+        lenient().doAnswer(inv -> {
+            ((Runnable) inv.getArgument(1)).run();
+            return null;
+        }).when(transactions).executeNew(anyString(), any());
+    }
 
     private ShareLink link(String token, boolean revoked, OffsetDateTime expiresAt, boolean withPassword) {
         ShareLink link = new ShareLink();

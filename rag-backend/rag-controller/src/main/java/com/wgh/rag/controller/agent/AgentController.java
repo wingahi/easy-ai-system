@@ -30,6 +30,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.http.ResponseEntity;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.*;
@@ -58,6 +59,7 @@ public class AgentController {
 
     /** 查询 plan 当前状态（刷新页面恢复面板用）。 */
     @GetMapping("/plans/{planId}/state")
+    @Transactional(readOnly = true)
     public Result<Map<String, Object>> getPlanState(@PathVariable Long planId) {
         AgentPlan plan = planMapper.selectById(planId);
         if (plan == null) return Result.fail("Plan 不存在");
@@ -196,6 +198,7 @@ public class AgentController {
 
     /** 按 sessionId 查询最新 plan（页面刷新恢复面板用）。 */
     @GetMapping("/sessions/{sessionId}/plan")
+    @Transactional(readOnly = true)
     public Result<Map<String, Object>> getPlanBySession(@PathVariable Long sessionId) {
         AgentPlan plan = planMapper.selectOne(
                 new LambdaQueryWrapper<AgentPlan>()

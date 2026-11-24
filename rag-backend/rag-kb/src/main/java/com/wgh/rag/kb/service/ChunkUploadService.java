@@ -112,6 +112,7 @@ public class ChunkUploadService {
     /**
      * 上传单个分片。重复上传同一序号幂等：覆盖对象并保持进度集合不变。
      */
+    @Transactional
     public UploadChunkResult uploadChunk(Long sessionId, int index, MultipartFile chunk) {
         UploadSession session = requireSession(sessionId);
         if (!STATUS_UPLOADING.equals(session.getStatus())) {
@@ -197,6 +198,7 @@ public class ChunkUploadService {
     /**
      * 查询会话进度，供前端刷新后续传。
      */
+    @Transactional(readOnly = true)
     public Progress progress(Long sessionId) {
         UploadSession session = requireSession(sessionId);
         Set<Integer> uploaded = parseUploaded(session.getUploadedChunks());

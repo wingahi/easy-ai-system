@@ -66,7 +66,8 @@ class WorkflowEngineDebugStepTest {
                 new EndNodeExecutor(variableResolver)));
         engine = new WorkflowEngine(runMapper, nodeRunMapper, variableResolver, conditionEvaluator,
                 registry, objectMapper, org.mockito.Mockito.mock(RagMetrics.class),
-                new com.wgh.rag.workflow.config.WorkflowContextProperties());
+                new com.wgh.rag.workflow.config.WorkflowContextProperties(),
+                org.mockito.Mockito.mock(org.springframework.transaction.PlatformTransactionManager.class));
         lenient().when(runMapper.updateById(any(WorkflowRun.class))).thenReturn(1);
         lenient().when(nodeRunMapper.insert(any(WorkflowNodeRun.class))).thenReturn(1);
         lenient().when(nodeRunMapper.updateById(any(WorkflowNodeRun.class))).thenReturn(1);

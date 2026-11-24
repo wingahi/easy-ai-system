@@ -17,6 +17,7 @@ import dev.langchain4j.model.embedding.EmbeddingModel;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -90,6 +91,7 @@ public class KbChunkService {
     /**
      * 索引写入成功后回填 embedding_id 并置 SYNCED（按 kb/file/chunkIndex 定位）。
      */
+    @Transactional
     public void markSynced(Long kbId, Long fileId, List<TextSegment> segments, List<String> embeddingIds) {
         if (!enabled() || segments == null || embeddingIds == null) {
             return;
@@ -108,6 +110,7 @@ public class KbChunkService {
     }
 
     /** 文件删除/重切时清理事实层。 */
+    @Transactional
     public void markFileDeleted(Long kbId, Long fileId) {
         if (!enabled() || fileId == null) {
             return;
@@ -124,6 +127,7 @@ public class KbChunkService {
      * @param limit 单次最多处理条数
      * @return 实际回填条数
      */
+    @Transactional
     public int backfill(Long kbId, int limit) {
         if (!enabled()) {
             log.debug("事实层未启用，跳过向量回填");
@@ -200,6 +204,7 @@ public class KbChunkService {
     /**
      * 对账：事实层与向量层行数；向量少于事实时把该库 SYNCED 事实置 STALE 等待回填。
      */
+    @Transactional(readOnly = true)
     public ReconcileResult reconcile(Long kbId) {
         if (!enabled() || kbId == null) {
             return new ReconcileResult(kbId, 0, 0, false);

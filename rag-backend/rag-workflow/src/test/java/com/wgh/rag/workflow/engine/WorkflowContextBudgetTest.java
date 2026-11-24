@@ -70,7 +70,8 @@ class WorkflowContextBudgetTest {
                 new ExpressionNodeExecutor(objectMapper),
                 new EndNodeExecutor(variableResolver)));
         engine = new WorkflowEngine(runMapper, nodeRunMapper, variableResolver, conditionEvaluator,
-                registry, objectMapper, org.mockito.Mockito.mock(RagMetrics.class), properties);
+                registry, objectMapper, org.mockito.Mockito.mock(RagMetrics.class), properties,
+                org.mockito.Mockito.mock(org.springframework.transaction.PlatformTransactionManager.class));
         events = new ConcurrentLinkedQueue<>();
         lenient().when(runMapper.updateById(any(WorkflowRun.class))).thenReturn(1);
         lenient().when(runMapper.selectById(any())).thenAnswer(inv -> {

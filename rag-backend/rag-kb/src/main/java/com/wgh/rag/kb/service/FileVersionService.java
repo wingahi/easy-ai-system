@@ -23,6 +23,7 @@ public class FileVersionService {
     private final KnowledgeFileVersionMapper versionMapper;
     private final KnowledgeFileService knowledgeFileService;
 
+    @Transactional(readOnly = true)
     public List<KnowledgeFileVersion> list(Long fileId) {
         knowledgeFileService.getById(fileId);
         return versionMapper.selectList(

@@ -10,6 +10,7 @@ import com.wgh.rag.common.result.ResultCode;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * 会话生命周期：归属校验、创建、分享态复用与首条消息自动标题。
@@ -22,11 +23,13 @@ public class ChatSessionStore {
     private final ChatSessionMapper sessionMapper;
 
     /** 按 ID 查询会话（不存在返回 null）。 */
+    @Transactional(readOnly = true)
     public ChatSession findById(Long sessionId) {
         return sessionId == null ? null : sessionMapper.selectById(sessionId);
     }
 
     /** 确保会话存在且归属当前身份；sessionId 为空时复用/创建该窗口下当前身份的会话。 */
+    @Transactional
     public ChatSession ensureSession(Long sessionId, ChatWindow window, String userIdentifier) {
         if (sessionId != null) {
             ChatSession session = sessionMapper.selectById(sessionId);
@@ -49,6 +52,7 @@ public class ChatSessionStore {
     }
 
     /** 分享态会话：指定会话需校验归属，否则复用该匿名标识最近一次会话。 */
+    @Transactional
     public ChatSession resolveShareSession(ChatWindow window, Long sessionId, String userIdentifier) {
         if (sessionId != null) {
             ChatSession target = sessionMapper.selectById(sessionId);
@@ -68,6 +72,7 @@ public class ChatSessionStore {
         return existing != null ? existing : createSession(window, userIdentifier);
     }
 
+    @Transactional
     public ChatSession createSession(ChatWindow window, String userIdentifier) {
         ChatSession session = new ChatSession();
         session.setChatWindowId(window.getId());
@@ -82,6 +87,7 @@ public class ChatSessionStore {
     }
 
     /** 首条消息生成会话标题，避免历史会话列表全是「新对话」。 */
+    @Transactional
     public void applyAutoTitle(ChatSession session, String userMessage) {
         if (session.getTitle() != null && !"新对话".equals(session.getTitle())) {
             return;

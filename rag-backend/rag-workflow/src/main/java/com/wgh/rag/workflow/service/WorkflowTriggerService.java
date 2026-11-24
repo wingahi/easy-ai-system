@@ -81,6 +81,7 @@ public class WorkflowTriggerService {
 
     // ==================== CRUD ====================
 
+    @Transactional(readOnly = true)
     public List<WorkflowTrigger> listByWorkflow(Long workflowId) {
         return triggerMapper.selectList(new LambdaQueryWrapper<WorkflowTrigger>()
                 .eq(WorkflowTrigger::getWorkflowId, workflowId)
@@ -130,6 +131,7 @@ public class WorkflowTriggerService {
         triggerMapper.deleteById(triggerId);
     }
 
+    @Transactional(readOnly = true)
     public WorkflowTrigger getById(Long triggerId) {
         WorkflowTrigger t = triggerMapper.selectById(triggerId);
         if (t == null) throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "触发器不存在");

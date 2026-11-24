@@ -8,6 +8,7 @@ import com.wgh.rag.common.result.PageResult;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -52,6 +53,7 @@ public class FeedbackService {
     /**
      * 窗口满意度统计：{likes, dislikes, rate}；rate = 赞 / (赞+踩)，无反馈时为 0
      */
+    @Transactional(readOnly = true)
     public Map<String, Object> windowStats(Long windowId) {
         long likes = messageMapper.countFeedbackByWindow(windowId, 1);
         long dislikes = messageMapper.countFeedbackByWindow(windowId, -1);
@@ -66,6 +68,7 @@ public class FeedbackService {
     /**
      * 差评分页（运营闭环：差评消息 + 触发回复的用户问题 + 所属窗口）
      */
+    @Transactional(readOnly = true)
     public PageResult<Map<String, Object>> dislikePage(long page, long size) {
         long offset = (Math.max(page, 1) - 1) * size;
         return new PageResult<>(messageMapper.dislikeCount(), page, size,

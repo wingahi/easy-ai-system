@@ -55,4 +55,14 @@ public class ToolConfig extends BaseEntity {
      * 可见性：PRIVATE（仅自己）/ TEAM（团队内可读）/ PUBLIC（公开可读）
      */
     private String visibility;
+
+    /**
+     * 归属租户编码（scope='platform' 的行也保留创建租户，便于审计）
+     */
+    private String tenantId;
+
+    /**
+     * 范围：platform（平台内置共享）/ tenant（租户自建）
+     */
+    private String scope;
 }

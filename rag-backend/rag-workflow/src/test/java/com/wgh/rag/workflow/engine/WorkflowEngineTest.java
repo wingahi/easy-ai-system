@@ -129,7 +129,8 @@ class WorkflowEngineTest {
         engine = new WorkflowEngine(runMapper, nodeRunMapper, variableResolver,
                 conditionEvaluator, registry, objectMapper,
                 org.mockito.Mockito.mock(com.wgh.rag.common.metrics.RagMetrics.class),
-                new com.wgh.rag.workflow.config.WorkflowContextProperties());
+                new com.wgh.rag.workflow.config.WorkflowContextProperties(),
+                org.mockito.Mockito.mock(org.springframework.transaction.PlatformTransactionManager.class));
         events = new ConcurrentLinkedQueue<>();
 
         lenient().when(runMapper.selectById(any())).thenAnswer(inv -> {

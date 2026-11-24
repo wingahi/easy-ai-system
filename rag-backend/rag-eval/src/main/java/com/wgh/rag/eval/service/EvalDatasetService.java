@@ -64,6 +64,7 @@ public class EvalDatasetService {
 
     // ============ 数据集 CRUD ============
 
+    @Transactional(readOnly = true)
     public List<EvalDataset> list(Long kbId) {
         requireReadableKb(kbId);
         return datasetMapper.selectList(new LambdaQueryWrapper<EvalDataset>()
@@ -71,6 +72,7 @@ public class EvalDatasetService {
                 .orderByDesc(EvalDataset::getId));
     }
 
+    @Transactional
     public EvalDataset create(Long kbId, DatasetPayload payload) {
         requireWritableKb(kbId);
         EvalDataset dataset = new EvalDataset();
@@ -81,6 +83,7 @@ public class EvalDatasetService {
         return dataset;
     }
 
+    @Transactional
     public EvalDataset update(Long kbId, Long id, DatasetPayload payload) {
         requireWritableKb(kbId);
         EvalDataset dataset = requireOwned(kbId, id);
@@ -89,6 +92,7 @@ public class EvalDatasetService {
         return dataset;
     }
 
+    @Transactional
     public void delete(Long kbId, Long id) {
         requireWritableKb(kbId);
         requireOwned(kbId, id);
@@ -100,6 +104,7 @@ public class EvalDatasetService {
     /**
      * 数据集已有版本号（升序）；空数据集返回 [0]，便于前端始终有可选版本
      */
+    @Transactional(readOnly = true)
     public List<Integer> listVersions(Long kbId, Long datasetId) {
         requireReadableKb(kbId);
         EvalDataset dataset = requireOwned(kbId, datasetId);
@@ -120,6 +125,7 @@ public class EvalDatasetService {
     /**
      * 列出版本用例：version 为空时取当前版本
      */
+    @Transactional(readOnly = true)
     public List<EvalCase> listCases(Long kbId, Long datasetId, Integer version) {
         requireReadableKb(kbId);
         EvalDataset dataset = requireOwned(kbId, datasetId);
@@ -217,6 +223,7 @@ public class EvalDatasetService {
     /**
      * 数据集的历史评测结果（新版本在前）
      */
+    @Transactional(readOnly = true)
     public List<EvalResult> listResults(Long kbId, Long datasetId) {
         requireReadableKb(kbId);
         requireOwned(kbId, datasetId);
@@ -229,6 +236,7 @@ public class EvalDatasetService {
     /**
      * 对比两次归档结果：指标差值 + 逐查询 recall 差值
      */
+    @Transactional(readOnly = true)
     public Map<String, Object> compareResults(Long kbId, Long datasetId, Long baseId, Long targetId) {
         requireReadableKb(kbId);
         requireOwned(kbId, datasetId);

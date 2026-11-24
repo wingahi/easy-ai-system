@@ -47,6 +47,7 @@ public class KnowledgeBaseService {
     @Autowired(required = false)
     private KeywordIndexMaintenanceRouter keywordIndexMaintenance;
 
+    @Transactional(readOnly = true)
     public PageResult<KnowledgeBase> page(Long page, Long size, String keyword) {
         return DataScopeContext.runWithScope(() -> {
             LambdaQueryWrapper<KnowledgeBase> wrapper = new LambdaQueryWrapper<>();
@@ -61,6 +62,7 @@ public class KnowledgeBaseService {
         });
     }
 
+    @Transactional(readOnly = true)
     public KnowledgeBase getById(Long id) {
         KnowledgeBase kb = kbMapper.selectById(id);
         if (kb == null) {
@@ -70,6 +72,7 @@ public class KnowledgeBaseService {
     }
 
     /** 详情可见性校验：PRIVATE 他人资源按不存在处理 */
+    @Transactional(readOnly = true)
     public KnowledgeBase getVisible(Long id) {
         KnowledgeBase kb = getById(id);
         DataScopeGuard.assertReadable(kb.getCreateBy(), kb.getVisibility(), "知识库");

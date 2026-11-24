@@ -37,6 +37,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.core.task.AsyncTaskExecutor;
 import org.springframework.core.task.TaskRejectedException;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -244,6 +245,7 @@ public class MultiAgentController {
     /** 查询 Run 的 Steps 列表 */
     @GetMapping("/runs/{runId}/steps")
     @RequiresPermission(AuthConstants.PERM_AGENT_USE)
+    @Transactional(readOnly = true)
     public Result<List<MultiAgentStep>> listSteps(@PathVariable String runId) {
         assertRunAccessible(runId);
         List<MultiAgentStep> steps = stepMapper.selectList(
@@ -257,6 +259,7 @@ public class MultiAgentController {
 
     @GetMapping("/crews")
     @RequiresPermission(AuthConstants.PERM_AGENT_MANAGE)
+    @Transactional(readOnly = true)
     public Result<List<MultiAgentCrew>> listCrews() {
         List<MultiAgentCrew> crews = crewMapper.selectList(
                 new LambdaQueryWrapper<MultiAgentCrew>()
@@ -266,6 +269,7 @@ public class MultiAgentController {
 
     @GetMapping("/crews/{id}")
     @RequiresPermission(AuthConstants.PERM_AGENT_MANAGE)
+    @Transactional(readOnly = true)
     public Result<MultiAgentCrew> getCrew(@PathVariable Long id) {
         return Result.success(crewMapper.selectById(id));
     }
@@ -299,6 +303,7 @@ public class MultiAgentController {
     /** 校验 Crew 的 agentsJson / graphJson 合法性 */
     @PostMapping("/crews/{id}/validate")
     @RequiresPermission(AuthConstants.PERM_AGENT_MANAGE)
+    @Transactional(readOnly = true)
     public Result<Map<String, Object>> validateCrew(@PathVariable Long id) {
         MultiAgentCrew crew = crewMapper.selectById(id);
         Map<String, Object> result = new LinkedHashMap<>();

@@ -195,7 +195,8 @@ class PublicAccessRedisSecurityTest {
         SharePasswordGuard guard = new SharePasswordGuard(store, properties, now::get);
         ShareLinkService service = new ShareLinkService(
                 mock(ShareLinkMapper.class), mock(ChatShareTargetPort.class),
-                mock(KnowledgeBaseShareTargetPort.class), properties, guard);
+                mock(KnowledgeBaseShareTargetPort.class), properties, guard,
+                mock(com.wgh.rag.data.tenant.DatabaseRoleTemplate.class));
 
         ShareLink link = new ShareLink();
         link.setToken("lock-1");
@@ -228,7 +229,9 @@ class PublicAccessRedisSecurityTest {
     @DisplayName("APIKEY-UNIT-01 IP 白名单命中放行、未命中 403、空值不限制")
     void apiKeyIpWhitelist() {
         ApiKeyMapper mapper = mock(ApiKeyMapper.class);
-        ApiKeyService service = new ApiKeyService(mapper);
+        ApiKeyService service = new ApiKeyService(mapper,
+                mock(com.wgh.rag.data.tenant.DatabaseRoleTemplate.class),
+                mock(com.wgh.rag.data.tenant.TenantTransactionTemplate.class));
 
         ApiKey key = new ApiKey();
         key.setId(1L);
@@ -248,7 +251,9 @@ class PublicAccessRedisSecurityTest {
     void apiKeyCreateIpWhitelist() {
         ApiKeyMapper mapper = mock(ApiKeyMapper.class);
         when(mapper.insert(any(ApiKey.class))).thenReturn(1);
-        ApiKeyService service = new ApiKeyService(mapper);
+        ApiKeyService service = new ApiKeyService(mapper,
+                mock(com.wgh.rag.data.tenant.DatabaseRoleTemplate.class),
+                mock(com.wgh.rag.data.tenant.TenantTransactionTemplate.class));
         ApiKeyService.CreatedKey created = service.create("k", List.of("kb:read"), null,
                 "10.0.0.0/8, 192.168.1.1", "tester");
         assertEquals("10.0.0.0/8,192.168.1.1/32", created.record().getIpWhitelist());

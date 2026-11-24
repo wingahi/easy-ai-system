@@ -7,6 +7,8 @@ import com.wgh.rag.common.result.PageResult;
 import com.wgh.rag.common.result.ResultCode;
 import com.wgh.rag.data.scope.DataScopeContext;
 import com.wgh.rag.common.security.TenantContext;
+import com.wgh.rag.data.tenant.DatabaseRoleTemplate;
+import com.wgh.rag.data.tenant.TenantTransactionTemplate;
 import com.wgh.rag.publicaccess.entity.ApiKey;
 import com.wgh.rag.publicaccess.mapper.ApiKeyMapper;
 import lombok.RequiredArgsConstructor;
@@ -40,6 +42,8 @@ public class ApiKeyService {
     private static final long LAST_USED_THROTTLE_MS = 60_000L;
 
     private final ApiKeyMapper apiKeyMapper;
+    private final DatabaseRoleTemplate roles;
+    private final TenantTransactionTemplate transactions;
     /** keyId -> 上次落库时间（毫秒），仅用于节流，进程内有效 */
     private final ConcurrentHashMap<Long, Long> lastUsedWriteAt = new ConcurrentHashMap<>();
 
@@ -152,9 +156,11 @@ public class ApiKeyService {
         if (rawKey == null || rawKey.isBlank()) {
             throw new BusinessException(ResultCode.TOKEN_INVALID, "缺少 API Key");
         }
-        ApiKey key = apiKeyMapper.selectOne(new LambdaQueryWrapper<ApiKey>()
-                .eq(ApiKey::getKeyHash, sha256(rawKey.trim()))
-                .last("LIMIT 1"));
+        // 免登录链路：切换 wgh_preauth 只读查 Key，解析出租户后的事务仍以 wgh_app + GUC 执行
+        ApiKey key = roles.runReadOnlyAs("wgh_preauth", () -> apiKeyMapper.selectOne(
+                new LambdaQueryWrapper<ApiKey>()
+                        .eq(ApiKey::getKeyHash, sha256(rawKey.trim()))
+                        .last("LIMIT 1")));
         if (key == null) {
             throw new BusinessException(ResultCode.TOKEN_INVALID, "API Key 无效");
         }
@@ -183,7 +189,10 @@ public class ApiKeyService {
         }
         lastUsedWriteAt.put(keyId, now);
         key.setLastUsedTime(LocalDateTime.now());
-        apiKeyMapper.updateById(key);
+        String tenantId = key.getTenantId() == null || key.getTenantId().isBlank()
+                ? TenantContext.tenantIdOrDefault() : key.getTenantId();
+        // 写回必须落在 Key 归属租户事务内（wgh_app + app.tenant_id），否则 RLS 拒绝
+        transactions.execute(tenantId, false, () -> apiKeyMapper.updateById(key));
     }
 
     /**
@@ -212,6 +221,7 @@ public class ApiKeyService {
         log.info("吊销 API Key: id={}, operator={}", id, operator);
     }
 
+    @Transactional(readOnly = true)
     public PageResult<ApiKey> page(Long page, Long size, String keyword) {
         DataScopeContext.Scope user = DataScopeContext.resolveUser();
         LambdaQueryWrapper<ApiKey> wrapper = new LambdaQueryWrapper<ApiKey>()
@@ -228,6 +238,7 @@ public class ApiKeyService {
         return new PageResult<>(result.getTotal(), result.getCurrent(), result.getSize(), result.getRecords());
     }
 
+    @Transactional(readOnly = true)
     public ApiKey findById(Long id) {
         return apiKeyMapper.selectById(id);
     }

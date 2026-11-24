@@ -11,6 +11,7 @@ import com.wgh.rag.workflow.entity.WorkflowRun;
 import com.wgh.rag.workflow.service.WorkflowService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * 登录链路运行态归属校验（与分享链路 {@code WorkflowService#assertRunOfWorkflow} 同一思路）：
@@ -23,6 +24,7 @@ public class RunAccessGuard {
     private final WorkflowService workflowService;
     private final ChatSessionMapper chatSessionMapper;
 
+    @Transactional(readOnly = true)
     public void assertAccessible(Long runId) {
         WorkflowRun run = workflowService.getRun(runId);
         String username = SecurityUtils.currentUsername();

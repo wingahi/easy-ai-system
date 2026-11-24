@@ -19,6 +19,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -63,6 +64,7 @@ public class AgentMemoryService {
     private RagMetrics metrics;
 
     /** 写入一条记忆；同作用域同正文自动去重，失败只记日志。 */
+    @Transactional
     public void remember(ScopeType scopeType, String scopeId, String agentId,
                          String memoryType, String content, Long sourceMessageId) {
         if (!enabled() || scopeType == null || isBlank(scopeId) || isBlank(content)) {
@@ -124,6 +126,7 @@ public class AgentMemoryService {
      * 写入任务级记忆：先做摘要（LLM 可选，失败回退截断），再写入 TASK 作用域；
      * 传了 sessionId 时同步镜像到 SESSION 作用域，使任务结束后仍可被同会话召回。
      */
+    @Transactional
     public void rememberTask(String taskId, Long sessionId, String agentId,
                              String memoryType, String content) {
         if (!enabled() || isBlank(taskId) || isBlank(content)) {
@@ -153,6 +156,7 @@ public class AgentMemoryService {
     /**
      * 按作用域召回记忆：scopeKey 过滤 + 相似度阈值 + Token 预算裁剪。
      */
+    @Transactional(readOnly = true)
     public List<MemoryHit> recall(ScopeType scopeType, String scopeId, String query) {
         if (!enabled() || scopeType == null || isBlank(scopeId) || isBlank(query)) {
             return List.of();

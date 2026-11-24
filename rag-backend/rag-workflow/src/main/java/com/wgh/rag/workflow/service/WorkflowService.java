@@ -43,6 +43,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.time.LocalDateTime;
@@ -111,6 +112,7 @@ public class WorkflowService {
 
     // ==================== CRUD ====================
 
+    @Transactional(readOnly = true)
     public PageResult<Workflow> page(Long page, Long size, String keyword, Integer status) {
         return DataScopeContext.runWithScope(() -> {
             LambdaQueryWrapper<Workflow> wrapper = new LambdaQueryWrapper<>();
@@ -124,12 +126,14 @@ public class WorkflowService {
         });
     }
 
+    @Transactional(readOnly = true)
     public List<Workflow> listEnabled() {
         return DataScopeContext.runWithScope(() -> workflowMapper.selectList(new LambdaQueryWrapper<Workflow>()
                 .eq(Workflow::getStatus, 1)
                 .orderByDesc(Workflow::getUpdateTime)));
     }
 
+    @Transactional(readOnly = true)
     public Workflow getById(Long id) {
         Workflow wf = workflowMapper.selectById(id);
         if (wf == null) throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "工作流不存在");
@@ -137,6 +141,7 @@ public class WorkflowService {
     }
 
     /** 详情可见性校验：PRIVATE 他人工作流按不存在处理 */
+    @Transactional(readOnly = true)
     public Workflow getVisible(Long id) {
         Workflow wf = getById(id);
         DataScopeGuard.assertReadable(wf.getCreateBy(), wf.getVisibility(), "工作流");
@@ -750,7 +755,8 @@ public class WorkflowService {
      * 终态直接返回，保证重复投递幂等。租约丢失/作业取消向上抛出，不写业务终态。
      */
     public WorkflowRun resumeInterrupted(Long runId, JobContext context) {
-        WorkflowRun run = runMapper.selectById(runId);
+        // 只读快照：run 的读取与后续读写短事务解耦，长执行过程不占用事务与连接
+        WorkflowRun run = readOnlyTx().execute(status -> runMapper.selectById(runId));
         if (run == null) {
             throw new BusinessException("运行记录不存在：" + runId);
         }
@@ -772,6 +778,7 @@ public class WorkflowService {
         }
 
         try {
+            // 中断态重置在引擎内以短事务落库；节点执行循环本身不在事务内
             engine.resumeInterrupted(run, graph, validation, ctx,
                     JobRunSupport.events(context), JobRunSupport.lifecycle(context));
         } catch (PauseSignal pause) {
@@ -783,7 +790,14 @@ public class WorkflowService {
             markRunFailed(runId, e.getMessage());
             throw new BusinessException("工作流续跑失败：" + e.getMessage());
         }
-        return runMapper.selectById(runId);
+        return readOnlyTx().execute(status -> runMapper.selectById(runId));
+    }
+
+    /** 只读查询事务模板：单次快照读取独立成短事务。 */
+    private TransactionTemplate readOnlyTx() {
+        TransactionTemplate template = new TransactionTemplate(transactionManager);
+        template.setReadOnly(true);
+        return template;
     }
 
     // ==================== 单步调试 ====================

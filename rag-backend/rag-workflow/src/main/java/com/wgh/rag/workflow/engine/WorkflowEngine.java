@@ -23,6 +23,8 @@ import com.wgh.rag.workflow.mapper.WorkflowRunMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
@@ -61,6 +63,7 @@ public class WorkflowEngine {
     private final ObjectMapper objectMapper;
     private final RagMetrics metrics;
     private final WorkflowContextProperties contextProperties;
+    private final PlatformTransactionManager transactionManager;
 
     // ==================== 入口 ====================
 
@@ -131,21 +134,25 @@ public class WorkflowEngine {
             return;
         }
 
-        List<WorkflowNodeRun> runningNodes = nodeRunMapper.selectList(new LambdaQueryWrapper<WorkflowNodeRun>()
-                .eq(WorkflowNodeRun::getRunId, run.getId())
-                .eq(WorkflowNodeRun::getStatus, WorkflowConstants.STATUS_RUNNING));
-        for (WorkflowNodeRun nodeRun : runningNodes) {
-            nodeRun.setStatus(WorkflowConstants.STATUS_FAILED);
-            nodeRun.setEndTime(LocalDateTime.now());
-            nodeRun.setErrorMessage("实例中断，续跑时重放该节点");
-            nodeRunMapper.updateById(nodeRun);
-        }
+        // 中断态重置独立成短事务：节点状态与 run 状态要么一起落地，要么都不改；
+        // 随后的 executeLoop 是长执行，绝不能放进同一个事务里
+        new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+            List<WorkflowNodeRun> runningNodes = nodeRunMapper.selectList(new LambdaQueryWrapper<WorkflowNodeRun>()
+                    .eq(WorkflowNodeRun::getRunId, run.getId())
+                    .eq(WorkflowNodeRun::getStatus, WorkflowConstants.STATUS_RUNNING));
+            for (WorkflowNodeRun nodeRun : runningNodes) {
+                nodeRun.setStatus(WorkflowConstants.STATUS_FAILED);
+                nodeRun.setEndTime(LocalDateTime.now());
+                nodeRun.setErrorMessage("实例中断，续跑时重放该节点");
+                nodeRunMapper.updateById(nodeRun);
+            }
 
-        run.setStatus(WorkflowConstants.STATUS_RUNNING);
-        run.setErrorMessage(null);
-        run.setFinishTime(null);
-        run.setUpdateTime(LocalDateTime.now());
-        runMapper.updateById(run);
+            run.setStatus(WorkflowConstants.STATUS_RUNNING);
+            run.setErrorMessage(null);
+            run.setFinishTime(null);
+            run.setUpdateTime(LocalDateTime.now());
+            runMapper.updateById(run);
+        });
 
         Map<String, Integer> pendingIn = ctx.getResumePendingIn() == null
                 ? null : new HashMap<>(ctx.getResumePendingIn());

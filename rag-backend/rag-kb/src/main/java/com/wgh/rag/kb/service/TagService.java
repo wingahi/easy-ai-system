@@ -30,6 +30,7 @@ public class TagService {
     private final KnowledgeBaseMapper knowledgeBaseMapper;
     private final KnowledgeFileService knowledgeFileService;
 
+    @Transactional(readOnly = true)
     public PageResult<Tag> page(Long page, Long size, String keyword) {
         LambdaQueryWrapper<Tag> qw = new LambdaQueryWrapper<>();
         if (keyword != null && !keyword.isBlank()) {
@@ -40,10 +41,12 @@ public class TagService {
         return new PageResult<>(p.getTotal(), p.getCurrent(), p.getSize(), p.getRecords());
     }
 
+    @Transactional(readOnly = true)
     public List<Tag> listAll() {
         return tagMapper.selectList(new LambdaQueryWrapper<Tag>().orderByAsc(Tag::getName));
     }
 
+    @Transactional(readOnly = true)
     public Tag getById(Long id) {
         Tag t = tagMapper.selectById(id);
         if (t == null) throw new BusinessException(ResultCode.RESOURCE_NOT_FOUND, "标签不存在");

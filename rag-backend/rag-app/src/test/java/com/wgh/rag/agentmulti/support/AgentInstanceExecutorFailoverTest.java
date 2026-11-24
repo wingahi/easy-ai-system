@@ -1,5 +1,6 @@
 package com.wgh.rag.agentmulti.support;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wgh.rag.agentmulti.config.MultiAgentContextProperties;
 import com.wgh.rag.agentmulti.context.MultiAgentContext;
 import com.wgh.rag.agentmulti.dto.AgentInstance;
@@ -72,7 +73,8 @@ class AgentInstanceExecutorFailoverTest {
                 Mockito.mock(SseEventSender.class), new RagProperties(),
                 failoverService, new MultiAgentContextProperties());
 
-        AgentInstanceResult result = executor.execute(agent(), "你好", new MultiAgentContext(), new SseEmitter());
+        AgentInstanceResult result = executor.execute(agent(), "你好", new MultiAgentContext(),
+                new SseAgentEventStream(new SseEmitter(), new ObjectMapper()));
 
         assertThat(result.getOutput()).isEqualTo("备用模型结果");
         assertThat(result.getCard()).isNotNull();
