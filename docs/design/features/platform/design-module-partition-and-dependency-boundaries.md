@@ -607,7 +607,7 @@ com.wgh.rag.execution
 | 回滚 | 配置开关 `wgh.scheduler.background.enabled`；作业表只新增不删；旧调度器保留一版 |
 | 验收 | 评测不占请求线程；kill -9 后 ≤90s 离开 RUNNING；两副本同一 CRON/连接器只执行一次；计划任务有执行记录 |
 | 冲突面 | 中：`rag-kb` 的 `AgentMemoryService` 在 rag-chat 链路被调用，但只改「谁触发清理」，不改方法签名 |
-| 状态 | **部分落地（2026-11-20）**：`rag-scheduler` 模块、`wgh_execution_job`（已在 `wgh_rag` / `wgh_rag_fresh` 执行并登记 `01-schema.sql`）、三车道准入、租约/回收/重试/死信、Redis 单飞、`WF_RUN` 作业化、`rag-app` 装配已完成；`PolicyCache` / `wgh_tenant_schedule_policy`、其余 9 类 handler（含 `EVAL_RUN`、`INGEST_FILE`、连接器与清理类）、评测接口 `202 + jobId`、管理端只读接口顺延，见 1.3.0 文档 §3.9.7 |
+| 状态 | **部分落地（2026-11-20）**：`rag-scheduler` 模块、`wgh_execution_job`（已在 `wgh_rag_dev` / `wgh_rag_test` 执行并登记 `01-schema.sql`）、三车道准入、租约/回收/重试/死信、Redis 单飞、`WF_RUN` 作业化、`rag-app` 装配已完成；`PolicyCache` / `wgh_tenant_schedule_policy`、其余 9 类 handler（含 `EVAL_RUN`、`INGEST_FILE`、连接器与清理类）、评测接口 `202 + jobId`、管理端只读接口顺延，见 1.3.0 文档 §3.9.7 |
 
 ### P4 模块拆分与收敛
 

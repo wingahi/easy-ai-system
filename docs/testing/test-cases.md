@@ -1,6 +1,6 @@
 # WGH RAG System 全面测试用例
 
-> 版本：v1.3　｜　日期：2026-11-21（增补批次 4：调度中心 / 配额扣费与退款补偿 / 任务恢复 / 存储迁移与孤儿清理 / 代码沙箱）　｜　历史：v1.2，2026-11-18（批次 3：窗口检索参数 / 评测数据集版本化 / CI 检索门禁 / 表达式节点 / 单步调试 / URL 连接器 / 迁移脚本）；v1.1，2026-11-12（批次 2：引用溯源 / 资源可见性 / OpenAI 兼容入口）；v1.0，2026-10-28
+> 版本：v1.4　｜　日期：2026-11-24（增补批次 5：无产出不计费 / HITL 续跑计费 / 计数异常拒绝 / 人工退款核销 / 实例视图与对账 / SSE 断线重连 / 刷新不落失败 / 用户缓存 / 运行中任务分栏）　｜　历史：v1.3，2026-11-21（批次 4：调度中心 / 配额扣费与退款补偿 / 任务恢复 / 存储迁移与孤儿清理 / 代码沙箱）；v1.2，2026-11-18（批次 3：窗口检索参数 / 评测数据集版本化 / CI 检索门禁 / 表达式节点 / 单步调试 / URL 连接器 / 迁移脚本）；v1.1，2026-11-12（批次 2：引用溯源 / 资源可见性 / OpenAI 兼容入口）；v1.0，2026-10-28
 > 测试方法：黑盒 + 灰盒（已知 API 面）
 > 分类：正常功能 / 边界条件 / 异常场景
 > 覆盖模块：鉴权 · 知识库 · 模型 · 聊天 · Agent · 工作流 · 工具 · 上下文压缩 · 评估 · 分享 · 触发器 · 多 Agent 协作 · 引用溯源 · 资源可见性 · OpenAI 兼容 API · 窗口检索参数 · 评测数据集版本化 · CI 检索门禁 · 工作流表达式 · 单步调试 · URL 连接器 · 存量库迁移 · 调度中心 · 配额扣费与退款补偿 · 任务恢复 · 存储迁移与孤儿清理 · 代码沙箱
@@ -55,6 +55,7 @@
 44. [任务恢复（批次 4）](#44-任务恢复批次-42026-11-21)
 45. [存储迁移与孤儿清理（批次 4）](#45-存储迁移与孤儿清理批次-42026-11-21)
 46. [代码沙箱（批次 4）](#46-代码沙箱批次-42026-11-21)
+47. [批次 5：计费收敛 / SSE 重放 / 集群运维（2026-11-24）](#47-批次-5计费收敛--sse-重放--集群运维2026-11-24)
 
 - [附录 A：测试环境速查](#附录-a测试环境速查)
 - [附录 B：测试代码规范与自动化门禁](#附录-b测试代码规范与自动化门禁)
@@ -797,7 +798,7 @@
 | QTA-14 | 边界 | 用户无自定义配置 | 恢复默认 | 返回 false（无操作） | 单元 | `QuotaServiceTest#resetUserConfigNoop` |
 | QTA-15 | 边界 | 8 线程 × 25 次并发发送 | 并发计数 | 全部落库，总增量 200，无异常 | 单元 | `QuotaServiceTest#concurrentIncrementsAreNotLost` |
 | QTA-16 | 正常 | token 增量为 0/负数 | 累加 token | 不写库；正数按生效周期键累加 | 单元 | `QuotaServiceTest#addTokensSkipsNonPositive` |
-| QTA-17 | 异常 | DB 不可用 | 发送/累加 token | 不阻断主流程，仅 WARN 日志 | 单元 | `QuotaServiceTest#dbFailureIsSwallowed` |
+| QTA-17 | 异常 | DB 不可用（fail-open 开启时） | 发送/累加 token | 仅当 `fail-open-on-count-error=true` 不阻断主流程，WARN 日志；默认配置下改为拒绝并返回 5004（见 §47.3） | 单元 | `QuotaServiceTest#dbFailureIsSwallowed`；§47.3 QCHG-30 |
 | QTA-18 | 端到端 | 用户上限 2 条，当期已用 2 条 | 发送对话 → 全局异常处理 | 响应体 `code=429`，message 含「对话次数已达上限」 | 端到端 | `QuotaServiceTest#quotaExhaustedMapsTo429Response` |
 | QTA-19 | 接口 | 后端 8080，admin 登录 | 打开「用户配额」→ 搜索/编辑上限与周期/启用开关/保存 → 列表刷新 | 行内来源/周期/上限/用量即时更新 | 仅手工 | `QuotaManagement.vue` |
 | QTA-20 | 接口 | 同上 | 点击「重置用量」/「恢复默认」 | 用量归零 / 来源变全局默认，提示成功 | 仅手工 | `QuotaManagement.vue` |
@@ -1848,9 +1849,9 @@
 | 编号 | 分类 | 名称 | 前置条件 | 数据准备 | 操作步骤 | 预期结果 | 判定方式 | 自动化落点 |
 |------|------|------|---------|---------|---------|---------|---------|-----------|
 | QCHG-01 | 正常 | 扣费流水创建 | 可用窗口（`status=1` 且有 `llm_model_id`） | 记录 `max(id)` 与当期 `chat_count` | `POST /api/chat/windows/{id}/stream` 发送一条消息 | 新增 `wgh_quota_charge` 行，`status` 由 CHARGED 迁移；`session_id` 回填；`chat_count+1` | 新增流水 + 用量对比 | `e2e-quota-refund.sh` Q1 |
-| QCHG-02 | 正常 | 执行开始置 SETTLED | 同上 | 同上 | 请求返回后查询流水 | 流水 `SETTLED`（异步执行体启动后置位） | `status` 字段 | `e2e-quota-refund.sh` Q1 |
+| QCHG-02 | 正常 | 首个有效产出置 SETTLED | 同上 | 同上 | 生成过程中收到首个非空 content 后查询流水 | 流水由 `CHARGED` 置 `SETTLED`（不再以「执行开始」为结算点；无产出见 QCHG-18） | `status` 字段 | `e2e-quota-refund.sh` Q1；§47.1 QCHG-17 |
 | QCHG-03 | 边界 | 超限拒绝不产生流水 | 用户当期 `chat_limit=1` 已用尽 | 预置用量 | 再次请求 | HTTP 业务码为配额超限；不新增 CHARGED 流水；计数不变 | 业务码 + 流水行数 | 单元（`QuotaServiceTest`）/接口 |
-| QCHG-04 | 边界 | 计数失败放行且无退款凭据 | 模拟计数异常 | — | 请求 | 不阻断聊天；不产生可退款凭据（`QuotaCharge=null`） | 日志 + 流水行数 | 单元 |
+| QCHG-04 | 边界 | 计数失败默认拒绝 | 模拟计数异常 | — | 请求 | 默认 `fail-open-on-count-error=false`：拒绝并返回业务码 5004，不产生扣费；仅显式开启 fail-open 时才放行且无退款凭据（见 §47.3 QCHG-30/31） | 响应 code + 日志 + 流水行数 | 单元 + §47.3 |
 
 ### 43.2 补偿扫描与幂等
 
@@ -2054,3 +2055,121 @@
 | 平台依赖 | `sandbox-exec`（macOS）/`bwrap`（Linux）任一可用；`PYTHON` 需 `python3`，`JAVASCRIPT` 需 `node`。 |
 | H2 说明 | 沙箱执行本身不依赖数据库特性，但本文档的端到端入口经工作流与工具配置落库，需真实 PostgreSQL。 |
 | 判定 | 以工具节点 `output_json.text` 中的 `exitCode/timedOut/truncated/isolation` 字段为准；拒绝场景以错误文本中的原因判定。 |
+
+---
+
+## 47. 批次 5：计费收敛 / SSE 重放 / 集群运维（2026-11-24）
+
+> 代码：`rag-quota`（`QuotaService` / `QuotaChargeTracker` / `QuotaUsageRowInserter`）· `rag-chat`（`StreamBillingObserver` / `stream/replay/*`）· `rag-scheduler`（`SchedulerInstanceRegistry` / `reconcile/*`）· `rag-auth`（`cache/UserInfoCacheService`）· `rag-controller`（`SseReplaySupport` / 管理端接口）· 前端（`utils/sseStream.js` / `RunningTasks.vue` / `ChatPlayground.vue`）
+> 表：`wgh_quota_usage`、`wgh_quota_charge`、`wgh_scheduler_instance`、`wgh_execution_job`、`wgh_audit_log`
+> 环境要求：**backend + 真实 PostgreSQL + Redis**。`wgh_scheduler_instance` 必须先执行 `sql/migrations/20261124/01_scheduler_instance.sql`；`usage_epoch` 两列必须先执行 `sql/migrations/20261124/02_quota_usage_epoch.sql`。缺表/缺列时本节用例全部阻塞，**不得自行执行 DDL 或改配置绕过**。
+> 代码默认值：计数异常默认拒绝（`wgh.rag.quota.fail-open-on-count-error=false`）；用户缓存 TTL 30m、回填锁等待 200ms；SSE 重放活跃 TTL 35m / 完成后 5m / 单流 5000 条 / 跟随轮询 300ms / 空闲 120s / 跟随上限 29m；实例心跳 10s、存活阈值 45s、失联扫描 10s；对账间隔 10m、回看 24h、PENDING 宽限 5m。
+
+### 47.1 无产出不计费与首次产出结算
+
+| 编号 | 分类 | 名称 | 前置条件 | 数据准备 | 操作步骤 | 预期结果 | 判定方式 | 自动化落点 |
+|------|------|------|---------|---------|---------|---------|---------|-----------|
+| QCHG-17 | 正常 | 首次有效产出即结算 | 可用窗口；用户当期 `chat_count=N` | 记录基线 `max(id)` 与 `chat_count` | 在调试对话发一条会较长输出的问题，生成过程中（收到首个 content 后）查询最新流水 | 最新流水在流式未结束时已由 `CHARGED` 变为 `SETTLED`；`chat_count=N+1`；`done` 后状态保持 SETTLED | 流中轮询 `wgh_quota_charge.status` | 手工 + SQL（浏览器发起） |
+| QCHG-18 | 异常 | 首包前失败不计费 | 窗口模型指向无效 Key/不可达模型 | 同上 | 发送消息，等待 SSE 错误或 `done` | 未下发任何非空 content；流水在数秒内变 `REFUNDED`（`finish_time` 非空），`chat_count` 回到 N；错误提示可见 | 流水状态 + 用量 + 页面错误提示 | 手工（浏览器发起） |
+| QCHG-19 | 边界 | 无产出即时退款而非等补偿 | 同上 | 同上 | 失败后立即查询（<5min 保护期内） | 流水已 `REFUNDED`；不依赖补偿作业（`retry_count=0`，`last_error` 为空） | 流水状态与时间差 | 手工 + SQL |
+| QCHG-20 | 边界 | 语义缓存命中仍计费 | 已开启语义缓存；同一问题第二次发送 | 基线 `chat_count` | 连发两次相同/近义问题，第二次命中缓存 | 第二次 `done.cacheHit=true`，仍产生扣费并 `SETTLED`，`chat_count` 再 +1 | SSE `cacheHit` + 流水 | 手工（浏览器） |
+| QCHG-21 | 边界 | 工作流对话空产出（已覆盖，见 QCHG-28） | 聊天窗口绑定 START→END 且 END 无输出文本的工作流 | 基线 | 发送消息运行工作流 | 非 HITL 路径下 END 空输出会回显上游（用户输入），纯空产出分支不可达；该分支由 QCHG-28（HITL 续跑空产出）覆盖 | 结论见报告 §9；不再单独判定 | 由 QCHG-28 覆盖 |
+| QCHG-22 | 边界 | 事务未提交则不生成不结算 | 正常入口（`@Transactional`） | — | 构造事务内失败（如用户消息落库异常）触发回滚 | 异步任务因提交闸门不放行而不生成；计数与流水随事务回滚，不产生 CHARGED/REFUNDED 行 | 日志「事务未提交…放弃本次生成」+ 流水行数 | 单元（`RagChatServiceTest`） |
+| QCHG-23 | 边界 | 仅空白增量不算产出 | — | — | 模型只返回空白/空串增量 | `markOutput` 不被触发；结束按无产出退款 | 单元 | `RagChatServiceTest` |
+
+### 47.2 HITL 续跑计费（整轮只收一次）
+
+| 编号 | 分类 | 名称 | 前置条件 | 数据准备 | 操作步骤 | 预期结果 | 判定方式 | 自动化落点 |
+|------|------|------|---------|---------|---------|---------|---------|-----------|
+| QCHG-24 | 正常 | Agent HITL 续跑不重复扣费 | 窗口开启 HITL；首轮已产出并结算 | `wgh_agent_plan(session_id, chat_window_id)` 已存在；基线 `chat_count` | 计划停在 HITL → 在调试页确认续跑并得到最终答复 | `chat_count` 不增加；不新增 `task_id=hitl:agent-plan:{planId}` 之外的流水；最终答复补写回会话 | 用量 + 流水（按 `task_id`/`session_id`） | 手工（浏览器） |
+| QCHG-25 | 正常 | 工作流 HITL 续跑不重复扣费 | 聊天窗口绑定含 HITL 节点的工作流；首轮已结算 | 基线 | HITL 卡片确认 → 运行完成 | 不新增扣费；流水 `task_id=hitl:workflow:{runId}` 若存在则为同一笔且已 SETTLED | 用量 + 流水 | 手工（浏览器） |
+| QCHG-26 | 正常 | 多 Agent HITL 续跑不重复扣费 | 多 Agent 运行停在 PAUSED；原对话本轮已结算 | 基线 | 确认续跑至结束 | 不新增扣费；`task_id=hitl:multi-agent:{runId}` 不产生第二笔 | 用量 + 流水 | 手工（浏览器） |
+| QCHG-27 | 正常 | 再次暂停复用未决流水 | 含两个 HITL 节点的工作流/计划 | 基线 | 第一次确认 → 再次暂停 → 第二次确认 | 两次确认之间 `chat_count` 只在首次扣费时 +1；第二次复用同一 `charge_id`（不叠加） | 同一 `charge_id` + 用量 | 手工 + SQL |
+| QCHG-28 | 异常 | 续跑无产出退款 | 续跑执行但最终无文本 | 基线 | 确认后续跑失败/空产出 | 流水 `REFUNDED`，`chat_count` 回到基线 | 流水 + 用量 | 手工（需可失败场景） |
+| QCHG-29 | 异常 | 重复/并发确认幂等 | 某 HITL 步骤已确认 | — | 再次 POST 同一确认接口 | 返回「Step 非 HITL_PENDING 状态或已完成确认」/「该 HITL 确认已处理」；不产生第二笔扣费 | 响应 message + 用量 | 接口（`curl` 两次） |
+
+### 47.3 计数异常默认拒绝
+
+| 编号 | 分类 | 名称 | 前置条件 | 数据准备 | 操作步骤 | 预期结果 | 判定方式 | 自动化落点 |
+|------|------|------|---------|---------|---------|---------|---------|-----------|
+| QCHG-30 | 异常 | 默认 fail-closed 返回 5004 | 未显式开启 `fail-open-on-count-error` | 故障注入：临时收回应用账号对 `wgh_quota_usage` 的写权限，或断开计数库写连接 | 发送一条对话 | 请求失败，业务码 `5004`、message「计费服务暂不可用，请稍后重试」；未生成回答；指标 `wgh.quota.count.failure{result=reject}` +1；日志 `[ALERT]` | 响应 code + 指标 + 日志 | 手工（故障注入，见 47.9） |
+| QCHG-31 | 边界 | fail-open 开启时放行 | 显式配置 `wgh.rag.quota.fail-open-on-count-error=true` | 同上故障注入 | 发送对话 | 对话正常生成；不扣费、无流水；指标 `{result=allow}` +1；日志 `[ALERT]` 标注 allow | 对话可用 + 指标 | 手工（需改配置重启，默认不执行） |
+| QCHG-32 | 异常 | 前端展示 5004 可读提示 | 默认 fail-closed | 故障注入 | 在调试对话页/分享页发送消息 | 页面显示「计费服务暂不可用，请稍后重试」，不是静默结束或空白回答 | 页面提示 | 手工（浏览器） |
+
+### 47.4 管理员人工退款与核销
+
+| 编号 | 分类 | 名称 | 前置条件 | 数据准备 | 操作步骤 | 预期结果 | 判定方式 | 自动化落点 |
+|------|------|------|---------|---------|---------|---------|---------|-----------|
+| QCHG-33 | 正常 | 单笔流水查询 | admin 登录 | 任取一条流水 `chargeId` | `GET /api/admin/quota/refunds/{chargeId}` | 返回该笔 `chargeId/username/periodKey/status/retryCount/usageEpoch/...`；不存在时业务码 `RESOURCE_NOT_FOUND` | 响应字段 | 接口（`curl`） |
+| QCHG-34 | 正常 | DEAD 人工退款 | 存在 `status=DEAD` 的流水，且用量纪元未重置 | 基线 `chat_count` | `POST /api/admin/quota/refunds/{chargeId}/refund`，body `{"reason":"..."}` | 返回 `previousStatus=DEAD`、`result=REFUNDED`、`applied=true`；流水变 `REFUNDED` 且 `finish_time` 非空；`chat_count-1` | 响应 + 流水 + 用量 | 接口（`curl`）+ SQL |
+| QCHG-35 | 边界 | 纪元保护 | 流水 `usage_epoch=0`，管理端「重置用量」后 `wgh_quota_usage.usage_epoch=1` | 记录重置后的 `chat_count` | 对旧纪元流水执行人工退款 | 流水仍变 `REFUNDED`，但计数不回退；日志「计数无可减…usageEpoch=0」 | 流水 + 用量不变 | 接口 + SQL |
+| QCHG-36 | 异常 | SETTLED 不可人工退款 | `status=SETTLED` 的流水 | — | 调用人工退款 | 业务错误「该流水已结算生效，不在人工退款范围」；状态与计数均不变 | 响应 message | 接口 |
+| QCHG-37 | 正常 | 重复退款幂等 | 已 `REFUNDED` 的流水 | — | 再次调用人工退款 | 返回 `result=DUPLICATE`、`applied=false`；计数不再减少 | 响应 + 用量 | 接口 |
+| QCHG-38 | 正常 | DEAD 人工核销 | `status=DEAD` 的流水 | 基线 `chat_count` | `POST /api/admin/quota/refunds/{chargeId}/write-off` | 返回 `result=WRITTEN_OFF`、`applied=true`；流水变 `SETTLED`，`last_error` 含 `MANUAL_WRITE_OFF`，计数不变；已 REFUNDED 的流水核销被拒 | 响应 + 流水 | 接口 + SQL |
+| QCHG-39 | 安全 | 权限与审计 | 普通用户登录 | — | 以普通用户调用上述查询/退款/核销 | 均返回业务码 1004（HTTP 200，项目统一错误码），不执行任何变更；admin 成功操作后 `wgh_audit_log` 新增 `QUOTA_CHARGE_MANUAL_REFUND` / `QUOTA_CHARGE_WRITE_OFF`（resourceType=QUOTA） | 响应 code + 审计行 | 接口 + SQL |
+| QCHG-40 | 边界 | 管理页退款列表只读 | admin 登录 | 存在 REFUND_FAILED/DEAD 流水 | 打开「用户配额管理」页退款异常流水卡片 | 列表展示状态/重试次数/最近错误；页面暂未提供退款/核销按钮，人工处理走接口（当前 UI 缺口，非缺陷） | 页面元素 | 手工（浏览器） |
+
+### 47.5 调度实例视图与作业对账
+
+| 编号 | 分类 | 名称 | 前置条件 | 数据准备 | 操作步骤 | 预期结果 | 判定方式 | 自动化落点 |
+|------|------|------|---------|---------|---------|---------|---------|-----------|
+| SCHED-25 | 正常 | 启动注册与周期心跳 | backend + 已建 `wgh_scheduler_instance` | — | 启动后等待 ≥2 个心跳周期 | 存在当前实例行：`stopped_at IS NULL`，`last_heartbeat` 持续推进，`version` 递增，`lanes_json` 为对象 | 表字段 | SQL + 日志 |
+| SCHED-26 | 正常 | 实例视图接口 | 同上，admin 登录 | — | `GET /api/admin/scheduler/instances` | 返回数组，本实例 `alive=true`、`ageSeconds` 接近 0、`lanes` 可解析；非 admin 返回 403 | 响应字段 | 接口（`curl`） |
+| SCHED-27 | 边界 | 失联实例标灰 | 存在历史实例行 | 将该行 `last_heartbeat` 改为 `now()-2*存活阈值` | 再次查询实例视图 | 该行 `alive=false`，`stoppedAt` 仍为空；本实例不受影响 | 响应 `alive` | 接口 + SQL（仅测试行） |
+| SCHED-28 | 边界 | 失联实例作业提前回收 | 调度开启 | 插入 `status=RUNNING`、`lease_owner=<失联实例>`、`lease_expire_time=now()+10min` 的作业 | 等待失联扫描 | 作业被提前回收且不等租约自然到期：未超上限回 `PENDING`、`error_code=LEASE_LOST` 并正常重试；超过 `max_attempts` 才 `DEAD`/`INSTANCE_LOST`；不得因回收后 `scheduled_at` 未刷新而被排队超时直接判失败 | 作业表字段 | SQL（仅测试行） |
+| SCHED-29 | 正常 | 对账报告接口 | 调度开启 | — | `GET /api/admin/scheduler/reconcile` | 未执行过时返回 `notRun` 语义；执行过后返回 `generatedAt/scanned/mismatches/autoRepaired/alertOnly/byType/findings`；非 admin 返回业务码 1004（HTTP 200） | 响应字段 | 接口（`curl`） |
+| SCHED-30 | 正常 | 对账自动修复 | 调度开启；存在已终态工作流运行 | 插入 `WF_RUN` 作业：`status=PENDING`、`scheduled_at` 设为未来（避免被领取）、`result_json={"runId":<终态运行>}`、`update_time=now()-10min` | 等待对账周期（≤10min） | 作业被改为 `CANCELLED` 并写入对账原因；报告 `autoRepaired+1`、`byType.business_terminal_job_active+1` | 作业状态 + 报告 | 手工（需等待周期或单独触发） |
+| SCHED-31 | 边界 | 活跃作业与业务终态只告警 | 同上 | 插入 `status=RUNNING` 的 `WF_RUN` 作业（`result_json` 指向终态运行，租约归当前实例） | 等待对账 | 报告含 `ALERT_ONLY` finding，作业状态不被对账改写；非 admin 返回 1004 | 报告 + 作业状态 | 手工 |
+
+### 47.6 SSE 断线重连与重放提示
+
+| 编号 | 分类 | 名称 | 前置条件 | 数据准备 | 操作步骤 | 预期结果 | 判定方式 | 自动化落点 |
+|------|------|------|---------|---------|---------|---------|---------|-----------|
+| SSE-01 | 接口 | 事件带流内序号 | 后端 + Redis；可用窗口 | — | `curl -N` 调 `POST /api/chat/windows/{id}/stream` | 每条事件含 `id: chat-<uuid>:<seq>`，`seq` 从 1 单调递增；`event`/`data` 结构不变 | 原始 SSE 文本 | `curl` |
+| SSE-02 | 正常 | Last-Event-ID 接管续传 | 同上 | 断开前记录最后一个 `id` 与会话 id | 中断首个请求后，带 `Last-Event-ID: <id>` + `{"sessionId":...}` 重新 POST | 先回放 `seq > last` 的事件，再持续跟随至 `done`；不重新生成、不重复写用户消息、不新增扣费 | 事件序号连续性 + 消息数 + 流水 | `curl` + SQL |
+| SSE-03 | 异常 | 重连参数校验 | 同上 | — | 分别发送：非法 `Last-Event-ID`；缺 `sessionId`；跨会话/跨窗口 id；已被新流取代或已过期 | 依次返回 2001 / 参数错误 / 3003 / 3001（JSON 业务错误），不触发重新生成 | 响应 code | 接口 |
+| SSE-04 | 边界 | 截断缺口提示 | 单流事件数超过上限 | 需临时下调 `max-events-per-stream`（环境变更） | 超限后带早期 `Last-Event-ID` 重连 | 先发 `stream_replay_gap`（含 `requestedFrom`/`oldestAvailable`），随后从最老可用事件继续 | 事件内容 | 手工（默认不执行） |
+| SSE-05 | 边界 | 空闲/实例消失收口 | 生成实例停止产生事件 | 需多副本或杀进程（环境变更） | 重连后等待空闲阈值 | 回放已有事件后发 `stream_replay_incomplete{reason=idle-timeout}` 并关闭 | 事件内容 | 手工（默认不执行） |
+| SSE-06 | 正常 | 前端重连提示条 | 调试对话页，模型输出较长 | — | 生成中把浏览器置为离线，数秒后恢复 | 先显示「网络连接中断，正在重新连接（第 N/5 次）…」，恢复后提示消失，回答继续并完整结束 | 页面 `.reconnect-tip` | 浏览器自动化 |
+| SSE-07 | 正常 | 重连失败保留已生成内容 | 同上 | — | 离线至超过最大重连次数后恢复 | 已生成内容保留，末尾追加 ⚠️ 提示，不整段清空；不重复提交消息 | 页面内容 + 消息数 | 浏览器自动化 |
+| SSE-08 | 正常 | 重放信令提示文案 | 调试对话页 | 需构造 gap/incomplete（或桩） | 页面收到两个信令事件 | 渲染 `.replay-notice` 标签：gap 为 warn 文案；incomplete 按 reason 映射中文；不暴露技术术语 | 页面元素 + 文案 | 单元（`describeReplayNotice`）+ 手工 |
+| SSE-09 | 正常 | 主动停止不重连 | 生成中 | — | 点击「停止生成」 | 立即中断并标记「已停止生成」，不发起重连；后端落 `STOPPED` | 页面 + 会话状态 | 浏览器自动化 |
+| SSE-10 | 正常 | 分享页/公开分享重连 | WINDOW 分享链接；Redis 可用 | 记录最后 id | 断网再恢复，或在公开分享页重复上述步骤 | 与调试页一致：接管续传、不重复消费分享次数、不重复扣费 | 事件 + 用量 | 浏览器自动化 |
+| SSE-11 | 正常 | HITL 流重连不重复确认 | 工作流 HITL 流进行中 | 记录最后 id | 带 `Last-Event-ID` 重连 HITL 流 | 只回放/跟随，不再次推进暂停状态、不重复扣费、不重复补写答复 | 运行状态 + 用量 | 接口 |
+| SSE-12 | 边界 | 总开关关闭回退旧语义 | `wgh.rag.stream.replay.enabled=false`（需改配置重启） | — | 生成中断开 | 断连即取消并落 `STOPPED`；上报 `wgh.stream.replay.fallbacks{reason=disabled}` | 会话状态 + 指标 | 手工（默认不执行） |
+
+### 47.7 刷新不落失败与运行中任务分栏
+
+| 编号 | 分类 | 名称 | 前置条件 | 数据准备 | 操作步骤 | 预期结果 | 判定方式 | 自动化落点 |
+|------|------|------|---------|---------|---------|---------|---------|-----------|
+| TASK-01 | 正常 | 对话生成中刷新不落失败 | 调试对话页，答案较长 | — | 生成中刷新页面，等待原请求自然结束 | 执行未被打断：会话历史出现完整助手消息，状态非 STOPPED；不产生失败记录 | 历史消息 + 会话状态 | 浏览器自动化 |
+| TASK-02 | 正常 | 关闭标签页不落失败 | 同上 | — | 生成中关闭标签页，稍后重新打开会话 | 同 TASK-01，最终答案完整落库 | 历史消息 | 手工（浏览器） |
+| TASK-03 | 正常 | 显式停止仍 STOPPED | 同上 | — | 生成中点击停止 | `ChatCancellationStore` 显式标记生效，落 `STOPPED`，与断连区分 | 会话/消息状态 | 浏览器自动化 |
+| TASK-04 | 正常 | 多 Agent 运行中刷新不误判失败 | 多 Agent 运行中 | — | 刷新页面 / 断开 SSE | Run 不被标 `FAILED`，执行继续至终态；错误仅出现在日志（写失败跳过） | 运行状态 | 浏览器自动化 |
+| TASK-05 | 正常 | 运行中任务按类型分栏 | admin 登录；后端调度开启 | — | 打开「运行中任务」 | 顶部 4 个页签（Agent/多 Agent/工作流/普通对话）；切换后只加载该类型，空态文案按类型区分 | 页面元素 | 浏览器自动化 |
+| TASK-06 | 正常 | 普通对话进行中可见 | 调度开启，正在生成对话 | — | 切到「普通对话」页签并刷新 | 展示会话 id/标题、「对话生成中」与停留时长；结束后从列表消失 | 列表行 | 浏览器自动化 |
+| TASK-07 | 边界 | 未传 type 保持三源口径 | 同上 | — | `GET /api/admin/tasks/running`（不带 type） | 只合并 Agent/多 Agent/工作流，不出现 CHAT 行 | 响应 items | 接口 |
+| TASK-08 | 边界 | 快速切换不串数据 | 同上 | — | 快速连续切换页签 | 最终列表与最后选中页签一致（请求序号丢弃过期响应），不出现其它类型残留行 | 页面列表 | 浏览器自动化 |
+
+### 47.8 用户信息缓存
+
+| 编号 | 分类 | 名称 | 前置条件 | 数据准备 | 操作步骤 | 预期结果 | 判定方式 | 自动化落点 |
+|------|------|------|---------|---------|---------|---------|---------|-----------|
+| UCACHE-01 | 正常 | 缓存命中与 TTL | Redis 可用；缓存开启 | — | 登录后调用任一需鉴权接口，再查 Redis | 存在 `{root}:auth:user:{userId}`，TTL ≤ 30min 且非永久键；二次调用指标 `hit` 增加 | Redis key + TTL + 指标 | `redis-cli` |
+| UCACHE-02 | 正常 | 管理员禁用即时生效 | 存在体验账号 A 且已登录（缓存已预热） | — | admin 禁用 A → A 立即调用接口 | A 的请求返回 401「账号已禁用」，不受缓存影响（提交后删除缓存） | HTTP 状态 | 浏览器 + `curl` |
+| UCACHE-03 | 正常 | 改密/重置后旧凭证失效 | 账号 A 已登录 | — | admin 重置 A 口令 → A 用旧 token 调用 | 401「会话凭证无效」，强制重新登录（passwordVersion 递增且缓存已失效） | HTTP 状态 | 接口 |
+| UCACHE-04 | 正常 | 角色/资料变更即时生效 | 账号 A 在线 | — | admin 修改 A 的角色/到期时间 → A 刷新页面 | 菜单与权限立即按新角色渲染，无需等待缓存过期 | 页面 + 接口 | 浏览器 |
+| UCACHE-05 | 异常 | Redis 不可用降级直读 | 缓存开启 | 停 Redis 或断开连接（环境变更） | 调用鉴权接口 | 请求正常，直读数据库；日志 WARN（60s 节流）；指标 `wgh.user.cache{result=degraded}`；不降级为进程内锁 | 接口可用 + 日志 | 手工（默认不执行） |
+| UCACHE-06 | 安全 | 缓存不含敏感字段 | 缓存已写入 | — | `redis-cli GET` 缓存值 | 仅含 id/username/name/email/tenantId/status/source/trial/expireAt/remark/passwordMustChange/passwordVersion；不含 `passwordHash`、`oidcSubject`/`oidcIssuer`、任何额度/用量 | 缓存 JSON 字段 | `redis-cli` |
+
+### 47.9 执行环境与判定说明
+
+| 项目 | 说明 |
+|------|------|
+| 迁移前置 | `wgh_scheduler_instance` 与两处 `usage_epoch` 必须先行存在；缺表/缺列时本节用例全部阻塞，按任务约束只报告、不执行 DDL。 |
+| 故障注入 | QCHG-30/31/32 需要临时收回 `wgh_quota_usage` 写权限或断开写连接；UCACHE-05 需要停 Redis。这些均属人工前置，默认不在浏览器脚本中自动执行，操作后必须恢复原状。 |
+| 需要改配置的用例 | QCHG-31（fail-open）、SSE-04（截断阈值）、SSE-12（重放开关）、UCACHE-05（Redis）需改配置/重启，属「默认不执行」项。 |
+| 浏览器可覆盖 | QCHG-17~21、24~25、32、40；SSE-06~07、09~10；TASK-01~06、08；UCACHE-02、04。其余以接口/SQL/单元/手工判定。 |
+| 测试数据 | 仅使用本轮自建可识别数据（如 `e2e1124-` 前缀用户名、临时窗口/计划/作业），结束后按主键清理；不得修改既有业务行（QCHG-35 的纪元场景使用自建用户）。 |
+| UI 缺口 | 管理端「用户配额管理」暂未提供人工退款/核销按钮；「调度中心」暂未展示实例视图与对账报告。对应用例以接口判定，报告中标注为产品待补。 |
+| 判定 | 计费以 `wgh_quota_charge.status/usage_epoch/task_id` 与 `wgh_quota_usage.chat_count` 为准；重放以 SSE `id/事件序列` 为准；实例与对账以 `wgh_scheduler_instance` 与作业表字段为准。 |

@@ -202,9 +202,50 @@ Ingress (SSE 关闭缓冲、超时 3600s、body 210m)
 
 ### 3.4 K3：生产级
 
-**改动**：GitOps（Argo CD/Flux）；多环境（dev/staging/prod）分离；PG 备份 + PITR 演练；跨可用区部署；灾备切换手册；成本与容量看板；沙箱独立节点池与镜像白名单；密钥轮换；审计与合规（镜像扫描、SBOM、准入策略）。
+**目标**：把清单从「能跑多副本」提升到「生产可运维」——具备可用性边界、安全边界、容量边界、恢复能力与运维动作。
+K3 以 K2 为基线（`deploy/k8s/overlays/k2-multi`），落地清单在 `deploy/k8s/overlays/k3-prod/` 与 `deploy/k8s/optional/`，
+操作与参数说明见 `deploy/k8s/README.md` §10。
 
-**验收**：RTO/RPO 达到承诺；镜像无高危漏洞；密钥可轮换且不重启业务；租户导出/删除在集群环境可执行。
+**范围与交付物**
+
+| 维度 | 本次落地 | 位置 |
+|---|---|---|
+| 高可用 | backend 3 副本（HPA 3–8，CPU 65%）、frontend 2 副本；zone/hostname 两级 `topologySpreadConstraints` + 反亲和；PDB `minAvailable: 2`；滚动 `maxUnavailable: 0` | `overlays/k3-prod/kustomization.yaml` |
+| 容量 | `ResourceQuota` + `LimitRange`；连接池按 HPA 上限复算（15 × 8 + 2 ≤ `max_connections × 0.7`） | `quota-limitrange.yaml` + ConfigMap patch |
+| 存储 | OSS 作为多副本主存储；关闭过渡期回落读；PVC 保留给聊天图片；OSS vs RWX 的选择条件与切换点 | README §10.4 |
+| 备份 | 每日逻辑备份直传 OSS（校验和 + rclone），与 PVC 版二选一；bucket 版本化 + 生命周期；恢复演练 CronJob（默认挂起） | `optional/cronjob-db-backup-oss.yaml`、`optional/cronjob-restore-drill.yaml`、`optional/restore/restore-drill.sh` |
+| 安全 | 默认拒绝 NetworkPolicy（1 条拒绝 + 7 条放行）；Pod/容器安全上下文取舍；Secret 外置（Sealed Secrets）；镜像固定 digest | `networkpolicy.yaml`、`optional/sealedsecret.example.yaml` |
+| 可观测 | Pod 注解抓取 9090（选它而非 ServiceMonitor 的依据见 README §10.6）；现有 12 条告警规则以 ConfigMap 交付；日志走 stdout 采集 | `kustomization.yaml`（annotations + configMapGenerator） |
+| 发布与回滚 | 迁移 Job → 后端滚动 → 前端滚动的顺序约束；expand-contract 规则；金丝雀/蓝绿的可行性与暂不启用理由；回滚与不可逆迁移边界 | README §10.7 |
+| 运维交付 | 容量基线、6 类故障 runbook、SLO 与 12 条告警的对应关系 | README §10.8 |
+
+**清单外的手动迁移**：`20261124/01_scheduler_instance.sql` 与 `20261124/02_quota_usage_epoch.sql`
+不纳入 `base/kustomization.yaml` 的 `configMapGenerator`（已定方案，清单侧保持现状），由部署前在目标库手动执行：
+顺序为「手动迁移 → 迁移 Job（清单内脚本）→ apply 应用」；使用 `psql -v ON_ERROR_STOP=1` 逐脚本执行，
+两个脚本均为 `IF NOT EXISTS` / `ADD COLUMN IF NOT EXISTS` 写法，可重复执行。执行后需确认
+`wgh_scheduler_instance` 表与 `wgh_quota_usage.usage_epoch`、`wgh_quota_charge.usage_epoch` 两列存在；
+漏执行会导致实例心跳/失联回收写入失败、配额扣费与退款 SQL 报列不存在。
+
+**关键取舍**
+
+1. **HPA 不用内存指标**：JVM 堆按 `MaxRAMPercentage` 常驻，内存利用率无法区分常驻与压力；
+   按队列深度扩容需接 `wgh.scheduler.queued`（Prometheus Adapter），作为后续项。
+2. **打散用 `ScheduleAnyway`**：硬约束在小集群会把 Pod 卡成 Pending；节点数 ≥ 3 且容量确认后可改 `DoNotSchedule`。
+3. **抓取用注解而非 ServiceMonitor**：既有告警中多条按 `job="wgh-rag-backend"` 过滤，注解能精确控制该标签；
+   且不引入 Prometheus Operator CRD 依赖（否则 schema 校验需跳过未知类型）。
+4. **前端仍以 root 运行 nginx**：`nginx:1.27-alpine` 需要绑定 80；彻底非 root 需换 `nginx-unprivileged` 镜像（构建改动，不在清单范围）。
+5. **K3 继承 K2 overlay 而非复制**：避免双份真相；代价是 `k2-multi` 的改动会自动进入 K3，合并前需复核。
+
+**不在本次范围**：GitOps（Argo CD/Flux）、多环境分离、准入策略、镜像扫描/SBOM、审计合规证据、
+PITR 的具体实现（依赖托管库或 CloudNativePG）、沙箱独立节点池与镜像白名单、跨地域灾备、成本看板。
+这些仍按原规划在 K3 之后推进；本次只把「清单可交付、可演练、可回滚」的部分做实。
+
+**验收**（对应 §6.1 的 K-A11–K-A14）
+
+- K-A11：默认拒绝策略下，仅允许的调用链可达；DNS 与探针不被误拦（K-T10）。
+- K-A12：扩容到 HPA 上限时连接池总量仍 ≤ PG 上限的 70%。
+- K-A13：从对象存储备份完成一次恢复演练，核心表与扩展校验通过（K-T8）。
+- K-A14：清单外迁移脚本先手动执行完成，再跑迁移 Job，最后 apply 应用；回滚不依赖数据库 down 脚本。
 
 ---
 
@@ -284,6 +325,10 @@ Ingress (SSE 关闭缓冲、超时 3600s、body 210m)
 | K-A8 | 连接池总量 ≤ PG 上限 70% | K2 |
 | K-A9 | 备份可恢复，RTO/RPO 达标 | K3 |
 | K-A10 | 镜像扫描无高危；Secret 不出现在镜像/ConfigMap | K3 |
+| K-A11 | 默认拒绝网络策略下仅允许的调用链可达，DNS 与探针不被误拦 | K3 |
+| K-A12 | 扩到 HPA 上限时连接池总量仍 ≤ PG 上限的 70% | K3 |
+| K-A13 | 从对象存储备份完成一次恢复演练，核心表与扩展校验通过 | K3 |
+| K-A14 | 迁移先于应用：清单外脚本手动执行完成，再跑迁移 Job，最后 apply；回滚不依赖数据库 down 脚本 | K3 |
 
 ### 6.2 测试场景
 
