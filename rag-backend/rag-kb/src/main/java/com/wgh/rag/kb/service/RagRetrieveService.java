@@ -3,22 +3,26 @@ package com.wgh.rag.kb.service;
 import com.wgh.rag.common.exception.BusinessException;
 import com.wgh.rag.common.metrics.RagMetrics;
 import com.wgh.rag.common.result.ResultCode;
+import com.wgh.rag.common.security.TenantContext;
 import com.wgh.rag.config.property.RagProperties;
+import com.wgh.rag.config.property.RetrievalFusionProperties;
 import com.wgh.rag.kb.entity.KnowledgeBase;
 import com.wgh.rag.kb.mapper.KnowledgeBaseMapper;
+import com.wgh.rag.kb.port.KeywordFilter;
+import com.wgh.rag.kb.port.KeywordHit;
 import com.wgh.rag.kb.port.KeywordSearchPort;
 import com.wgh.rag.kb.port.VectorStorePort;
+import com.wgh.rag.kb.port.vector.VectorFilter;
+import com.wgh.rag.kb.port.vector.VectorMatch;
 import com.wgh.rag.llm.factory.ModelCacheManager;
 import dev.langchain4j.data.document.Metadata;
 import dev.langchain4j.data.embedding.Embedding;
 import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.model.embedding.EmbeddingModel;
 import dev.langchain4j.store.embedding.EmbeddingMatch;
-import dev.langchain4j.store.embedding.EmbeddingSearchRequest;
-import dev.langchain4j.store.embedding.EmbeddingSearchResult;
-import dev.langchain4j.store.embedding.EmbeddingStore;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -47,6 +51,10 @@ public class RagRetrieveService {
     private final KeywordSearchPort keywordSearchService;
     private final QueryTransformService queryTransformService;
     private final RagMetrics metrics;
+
+    /** RRF 权重配置；字段注入避免改变既有构造器签名，未注入时使用默认权重。 */
+    @Autowired(required = false)
+    private RetrievalFusionProperties fusionProperties;
 
     /**
      * 多知识库联合检索（默认配置，不做增强）
@@ -98,6 +106,8 @@ public class RagRetrieveService {
      */
     private RetrieveResult doSearchMultiple(List<KnowledgeBase> kbs, String queryText, RetrievalOptions opts) {
         if (kbs == null || kbs.isEmpty()) return RetrieveResult.empty();
+        String kbMode = kbs.size() > 1 ? "multi" : "single";
+        metrics.recordFanoutKbCount(kbs.size());
 
         RagProperties.Retrieve retrieve = ragProperties.getRetrieve();
         // 评测可显式指定 K；否则用全局配置
@@ -129,6 +139,12 @@ public class RagRetrieveService {
             return RetrieveResult.empty();
         }
 
+        // 非默认租户在召回层做租户断言：端口侧过滤 metadata.tenantId，避免未来换向量引擎后丢失隔离。
+        // 默认租户（含无上下文的后台/维护链路）不加条件，保持存量向量（无 tenantId）可读，行为与改造前一致。
+        String scopedTenant = scopedTenant();
+        VectorFilter vectorFilter = scopedTenant == null ? VectorFilter.none() : VectorFilter.byTenant(scopedTenant);
+        KeywordFilter keywordFilter = scopedTenant == null ? KeywordFilter.none() : KeywordFilter.byTenant(scopedTenant);
+
         // 每个变换查询一条向量召回路；关键词路始终用原查询（一条）
         List<List<EmbeddingMatch<TextSegment>>> rankedLists = new ArrayList<>();
         List<EmbeddingMatch<TextSegment>> keywordMatches = new ArrayList<>();
@@ -147,16 +163,25 @@ public class RagRetrieveService {
             for (int i = 0; i < vectorQueries.size(); i++) variantLists.add(new ArrayList<>());
             for (KnowledgeBase kb : entry.getValue()) {
                 try {
-                    EmbeddingStore<TextSegment> store = vectorStoreService.createEmbeddingStore(
-                            kb.getCollectionName(),
-                            kb.getDimension() != null ? kb.getDimension() : 1536);
                     for (int qi = 0; qi < queryEmbeddings.size(); qi++) {
-                        variantLists.get(qi).addAll(
-                                search(store, queryEmbeddings.get(qi), candidateTopN, minScore));
+                        long vectorStart = System.nanoTime();
+                        List<VectorMatch> matches = vectorStoreService.search(kb.getCollectionName(),
+                                queryEmbeddings.get(qi).vector(), candidateTopN, minScore, vectorFilter);
+                        metrics.recordBackendLatency(vectorStoreService.backendName(), kbMode,
+                                System.nanoTime() - vectorStart);
+                        for (VectorMatch match : matches) {
+                            variantLists.get(qi).add(toEmbeddingMatch(match));
+                        }
                     }
                     if (opts.hybridEnabled()) {
-                        keywordMatches.addAll(
-                                keywordSearchService.search(kb.getCollectionName(), queryText, keywordTopN));
+                        long keywordStart = System.nanoTime();
+                        List<KeywordHit> hits = keywordSearchService.search(kb.getCollectionName(), queryText,
+                                keywordTopN, keywordFilter, kb.getId());
+                        metrics.recordBackendLatency(keywordSearchService.backendName(), kbMode,
+                                System.nanoTime() - keywordStart);
+                        for (KeywordHit hit : hits) {
+                            keywordMatches.add(toEmbeddingMatch(hit));
+                        }
                     }
                 } catch (Exception e) {
                     log.error("搜索知识库 {} 失败", kb.getId(), e);
@@ -165,7 +190,7 @@ public class RagRetrieveService {
             rankedLists.addAll(variantLists);
         }
 
-        // 多路融合：多路（多查询变体和/或关键词路）→ RRF(k=60)；单路 → 原始分数序
+        // 多路融合：多路（多查询变体和/或关键词路）→ RRF；单路 → 原始分数序
         List<List<EmbeddingMatch<TextSegment>>> allLists = new ArrayList<>(rankedLists);
         boolean keywordParticipates = opts.hybridEnabled() && !keywordMatches.isEmpty();
         if (keywordParticipates) allLists.add(keywordMatches);
@@ -173,7 +198,8 @@ public class RagRetrieveService {
         List<EmbeddingMatch<TextSegment>> fused;
         Set<String> keywordOnlyIds = Set.of();
         if (allLists.size() > 1) {
-            fused = RrfFusion.fuse(allLists, candidateTopN);
+            fused = RrfFusion.fuse(allLists, rrfWeights(rankedLists.size(), keywordParticipates),
+                    rrfK(), candidateTopN);
             if (keywordParticipates) {
                 Set<String> vectorIds = rankedLists.stream().flatMap(List::stream)
                         .map(EmbeddingMatch::embeddingId).filter(Objects::nonNull).collect(Collectors.toSet());
@@ -210,6 +236,46 @@ public class RagRetrieveService {
                 opts.hybridEnabled(), keywordOnlyIds,
                 transform.transformedQueries(), transform.latencyMs(),
                 reranked.rerankApplied() ? RetrieveResult.ScoreType.RERANK : scoreType);
+    }
+
+    /**
+     * 需要做租户断言时的租户编码；默认租户与无上下文场景返回 {@code null}（不加过滤）。
+     */
+    private String scopedTenant() {
+        String tenantId = TenantContext.currentTenantId();
+        if (tenantId == null || tenantId.isBlank() || TenantContext.DEFAULT_TENANT.equals(tenantId)) {
+            return null;
+        }
+        return tenantId;
+    }
+
+    /** RRF 常数 k：默认 60，配置非法值回落到默认。 */
+    private int rrfK() {
+        Integer configured = fusionProperties != null ? fusionProperties.getRrfK() : null;
+        return configured != null && configured > 0 ? configured : RrfFusion.DEFAULT_K;
+    }
+
+    /**
+     * 构造与 allLists 对齐的权重：向量路按 vector-weight，关键词路（若参与）按 keyword-weight。
+     * 默认均为 1.0，与引入权重前结果一致。
+     */
+    private List<Double> rrfWeights(int vectorListCount, boolean keywordParticipates) {
+        double vectorWeight = positiveOrDefault(
+                fusionProperties != null ? fusionProperties.getVectorWeight() : null, 1.0);
+        double keywordWeight = positiveOrDefault(
+                fusionProperties != null ? fusionProperties.getKeywordWeight() : null, 1.0);
+        List<Double> weights = new ArrayList<>(vectorListCount + (keywordParticipates ? 1 : 0));
+        for (int i = 0; i < vectorListCount; i++) {
+            weights.add(vectorWeight);
+        }
+        if (keywordParticipates) {
+            weights.add(keywordWeight);
+        }
+        return weights;
+    }
+
+    private static double positiveOrDefault(Double value, double fallback) {
+        return value == null || value <= 0 ? fallback : value;
     }
 
     /**
@@ -295,20 +361,18 @@ public class RagRetrieveService {
     }
 
     /**
-     * 执行向量相似度搜索
+     * 端口命中 → 编排层统一表示（保留 embeddingId 供 RRF 去重/融合）。
      */
-    public List<EmbeddingMatch<TextSegment>> search(EmbeddingStore<TextSegment> store,
-                                                    Embedding queryEmbedding,
-                                                    int maxResults,
-                                                    double minScore) {
-        EmbeddingSearchRequest request = EmbeddingSearchRequest.builder()
-                .queryEmbedding(queryEmbedding)
-                .maxResults(maxResults)
-                .minScore(minScore)
-                .build();
+    private EmbeddingMatch<TextSegment> toEmbeddingMatch(VectorMatch match) {
+        String text = match.text() != null ? match.text() : "";
+        return new EmbeddingMatch<>(match.score(), match.id(), null,
+                TextSegment.from(text, Metadata.from(match.metadata())));
+    }
 
-        EmbeddingSearchResult<TextSegment> result = store.search(request);
-        return result.matches();
+    private EmbeddingMatch<TextSegment> toEmbeddingMatch(KeywordHit hit) {
+        String text = hit.text() != null ? hit.text() : "";
+        return new EmbeddingMatch<>(hit.score(), hit.id(), null,
+                TextSegment.from(text, Metadata.from(hit.metadata())));
     }
 
     /**

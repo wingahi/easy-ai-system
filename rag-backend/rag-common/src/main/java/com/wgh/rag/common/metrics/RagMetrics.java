@@ -1,11 +1,14 @@
 package com.wgh.rag.common.metrics;
 
 import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.DistributionSummary;
+import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import org.springframework.stereotype.Component;
 
 import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
 
 /**
  * 业务指标埋点统一入口。
@@ -36,6 +39,22 @@ public class RagMetrics {
     public static final String RAG_CONTEXT_TOKENS = "wgh.rag.context.tokens";
     /** 检索上下文被裁剪情况（kind: chunk/truncated） */
     public static final String RAG_CONTEXT_DROPPED = "wgh.rag.context.dropped";
+    /** 分后端检索延迟（backend；kbMode: single/multi） */
+    public static final String RETRIEVAL_BACKEND_LATENCY = "wgh.retrieval.backend.latency";
+    /** 单次检索 fan-out 的知识库数量 */
+    public static final String RETRIEVAL_FANOUT_KB_COUNT = "wgh.retrieval.fanout.kb_count";
+    /** 当前向量表（集合）数量 */
+    public static final String RETRIEVAL_VECTOR_TABLE_COUNT = "wgh.retrieval.vector.table_count";
+    /** 索引构建耗时（backend, collection；单位秒） */
+    public static final String RETRIEVAL_INDEX_BUILD = "wgh.retrieval.index.build.seconds";
+    /** 关键词路命中情况（backend, hit） */
+    public static final String RETRIEVAL_KEYWORD_HIT = "wgh.retrieval.keyword.hit";
+    /** 检索降级次数（reason） */
+    public static final String RETRIEVAL_DEGRADED = "wgh.retrieval.degraded";
+    /** 双读对比执行的查询数（active, compare） */
+    public static final String RETRIEVAL_COMPARE_QUERIES = "wgh.retrieval.compare.queries";
+    /** 双读对比结果不一致次数（active, compare, kind: top1/set） */
+    public static final String RETRIEVAL_COMPARE_MISMATCHES = "wgh.retrieval.compare.mismatches";
 
     /** LLM 调用次数（provider 为有限提供商枚举） */
     public static final String LLM_CALLS = "wgh.llm.calls";
@@ -145,6 +164,76 @@ public class RagMetrics {
 
     public void recordRetrievalError() {
         counter(RETRIEVAL_ERRORS).increment();
+    }
+
+    /** 分后端检索延迟：backend 为有限枚举（pgvector/pgtrgm/...），kbMode 为 single/multi。 */
+    public void recordBackendLatency(String backend, String kbMode, long nanos) {
+        Timer.builder(RETRIEVAL_BACKEND_LATENCY)
+                .tag("backend", safeTag(backend))
+                .tag("kbMode", safeTag(kbMode))
+                .publishPercentileHistogram()
+                .register(registry)
+                .record(nanos, TimeUnit.NANOSECONDS);
+    }
+
+    /** 单次检索 fan-out 的知识库数量。 */
+    public void recordFanoutKbCount(int kbCount) {
+        if (kbCount < 0) return;
+        DistributionSummary.builder(RETRIEVAL_FANOUT_KB_COUNT)
+                .publishPercentileHistogram()
+                .register(registry)
+                .record(kbCount);
+    }
+
+    /**
+     * 注册向量表数量 Gauge（由调用方提供带缓存的数量来源，避免每次抓取都查库）。
+     * 同名 Gauge 重复注册时 Micrometer 复用同一计量器。
+     */
+    public void registerVectorTableCount(Supplier<Number> supplier) {
+        Gauge.builder(RETRIEVAL_VECTOR_TABLE_COUNT, supplier)
+                .register(registry);
+    }
+
+    /** 索引构建耗时（单位秒），用于观察 HNSW / 关键词索引的一次性构建成本。 */
+    public void recordIndexBuild(String backend, String collection, long nanos) {
+        Timer.builder(RETRIEVAL_INDEX_BUILD)
+                .tag("backend", safeTag(backend))
+                .tag("collection", safeTag(collection))
+                .publishPercentileHistogram()
+                .register(registry)
+                .record(nanos, TimeUnit.NANOSECONDS);
+    }
+
+    /** 关键词路命中情况：空结果也记录，便于观察后端召回是否失效。 */
+    public void recordKeywordHit(String backend, boolean hit) {
+        counter(RETRIEVAL_KEYWORD_HIT,
+                "backend", safeTag(backend),
+                "hit", String.valueOf(hit)).increment();
+    }
+
+    /** 检索降级次数（reason 为有限枚举，如 keyword-fallback / vector-fallback）。 */
+    public void recordRetrievalDegraded(String reason) {
+        counter(RETRIEVAL_DEGRADED, "reason", safeTag(reason)).increment();
+    }
+
+    /** 双读对比：记录查询数与 top1/集合不一致次数，不参与返回结果。 */
+    public void recordRetrievalCompare(String activeBackend, String compareBackend,
+                                       boolean sameTop1, boolean sameSet) {
+        String active = safeTag(activeBackend);
+        String compare = safeTag(compareBackend);
+        counter(RETRIEVAL_COMPARE_QUERIES, "active", active, "compare", compare).increment();
+        if (!sameTop1) {
+            counter(RETRIEVAL_COMPARE_MISMATCHES, "active", active, "compare", compare,
+                    "kind", "top1").increment();
+        }
+        if (!sameSet) {
+            counter(RETRIEVAL_COMPARE_MISMATCHES, "active", active, "compare", compare,
+                    "kind", "set").increment();
+        }
+    }
+
+    private static String safeTag(String value) {
+        return value == null || value.isBlank() ? "unknown" : value;
     }
 
     /**

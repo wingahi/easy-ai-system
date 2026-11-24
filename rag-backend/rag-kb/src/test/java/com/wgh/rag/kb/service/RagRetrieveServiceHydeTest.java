@@ -4,26 +4,24 @@ import com.wgh.rag.common.metrics.RagMetrics;
 import com.wgh.rag.config.property.RagProperties;
 import com.wgh.rag.kb.entity.KnowledgeBase;
 import com.wgh.rag.kb.mapper.KnowledgeBaseMapper;
+import com.wgh.rag.kb.port.vector.VectorMatch;
+import com.wgh.rag.kb.port.vector.VectorScoreType;
 import com.wgh.rag.llm.factory.ModelCacheManager;
 import dev.langchain4j.data.embedding.Embedding;
-import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.model.embedding.EmbeddingModel;
 import dev.langchain4j.model.output.Response;
-import dev.langchain4j.store.embedding.EmbeddingMatch;
-import dev.langchain4j.store.embedding.EmbeddingSearchRequest;
-import dev.langchain4j.store.embedding.EmbeddingSearchResult;
-import dev.langchain4j.store.embedding.pgvector.PgVectorEmbeddingStore;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyDouble;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -46,7 +44,6 @@ class RagRetrieveServiceHydeTest {
     private final QueryTransformService queryTransformService = Mockito.mock(QueryTransformService.class);
 
     private final EmbeddingModel embeddingModel = Mockito.mock(EmbeddingModel.class);
-    private final PgVectorEmbeddingStore store = Mockito.mock(PgVectorEmbeddingStore.class);
 
     private RagRetrieveService service;
 
@@ -58,7 +55,6 @@ class RagRetrieveServiceHydeTest {
         service = newService(props);
 
         when(embeddingModel.embed(anyString())).thenReturn(Response.from(new Embedding(new float[]{0.1f})));
-        Mockito.doReturn(store).when(vectorStoreService).createEmbeddingStore(eq("kb_a"), anyInt());
     }
 
     @Test
@@ -66,9 +62,8 @@ class RagRetrieveServiceHydeTest {
     void hyde_searches_both_original_and_hypothetical_answer() {
         mockKb();
         when(modelCacheManager.getEmbeddingModel(7L)).thenReturn(embeddingModel);
-        when(store.search(any()))
-                .thenReturn(new EmbeddingSearchResult<>(matches("orig-doc")))
-                .thenReturn(new EmbeddingSearchResult<>(matches("hyde-doc")));
+        Mockito.doReturn(matches("orig-doc")).doReturn(matches("hyde-doc"))
+                .when(vectorStoreService).search(eq("kb_a"), any(), anyInt(), anyDouble(), any());
         when(queryTransformService.transform("原查询", "HYDE", 9L))
                 .thenReturn(new QueryTransformService.TransformResult(
                         List.of("原查询", "假设答案"), List.of("假设答案"), true, 12));
@@ -78,8 +73,8 @@ class RagRetrieveServiceHydeTest {
 
         verify(embeddingModel).embed("原查询");
         verify(embeddingModel).embed("假设答案");
-        verify(store, times(2)).search(any());
-        assertThat(result.matches()).extracting(EmbeddingMatch::embeddingId)
+        verify(vectorStoreService, times(2)).search(eq("kb_a"), any(), anyInt(), anyDouble(), any());
+        assertThat(result.matches()).extracting(m -> m.embeddingId())
                 .contains("orig-doc", "hyde-doc");
         assertThat(result.scoreType()).isEqualTo(RetrieveResult.ScoreType.RRF);
         assertThat(result.transformedQueries()).containsExactly("假设答案");
@@ -90,9 +85,8 @@ class RagRetrieveServiceHydeTest {
     void original_query_path_survives_when_hyde_returns_nothing() {
         mockKb();
         when(modelCacheManager.getEmbeddingModel(7L)).thenReturn(embeddingModel);
-        when(store.search(any()))
-                .thenReturn(new EmbeddingSearchResult<>(matches("orig-doc")))
-                .thenReturn(new EmbeddingSearchResult<>(List.of()));
+        Mockito.doReturn(matches("orig-doc")).doReturn(List.of())
+                .when(vectorStoreService).search(eq("kb_a"), any(), anyInt(), anyDouble(), any());
         when(queryTransformService.transform("原查询", "HYDE", 9L))
                 .thenReturn(new QueryTransformService.TransformResult(
                         List.of("原查询", "假设答案"), List.of("假设答案"), true, 12));
@@ -100,7 +94,7 @@ class RagRetrieveServiceHydeTest {
         RetrieveResult result = service.searchMultiple(List.of(1L), "原查询",
                 new RetrievalOptions(null, false, "HYDE", 9L));
 
-        assertThat(result.matches()).extracting(EmbeddingMatch::embeddingId)
+        assertThat(result.matches()).extracting(m -> m.embeddingId())
                 .containsExactly("orig-doc");
     }
 
@@ -110,14 +104,12 @@ class RagRetrieveServiceHydeTest {
         RagRetrieveService defaultService = newService(new RagProperties());
         mockKb();
         when(modelCacheManager.getEmbeddingModel(7L)).thenReturn(embeddingModel);
-        when(store.search(any())).thenReturn(new EmbeddingSearchResult<>(List.of()));
+        Mockito.doReturn(List.of()).when(vectorStoreService)
+                .search(eq("kb_a"), any(), anyInt(), anyDouble(), any());
 
         defaultService.searchMultiple(List.of(1L), "q", RetrievalOptions.defaults());
 
-        ArgumentCaptor<EmbeddingSearchRequest> captor = ArgumentCaptor.forClass(EmbeddingSearchRequest.class);
-        verify(store).search(captor.capture());
-        assertThat(captor.getValue().minScore()).isEqualTo(0.55);
-        assertThat(captor.getValue().maxResults()).isEqualTo(5);
+        verify(vectorStoreService).search(eq("kb_a"), any(), eq(5), eq(0.55), any());
     }
 
     // ===== 辅助 =====
@@ -136,10 +128,11 @@ class RagRetrieveServiceHydeTest {
         when(kbMapper.selectById(1L)).thenReturn(kb);
     }
 
-    private List<EmbeddingMatch<TextSegment>> matches(String... ids) {
-        List<EmbeddingMatch<TextSegment>> list = new ArrayList<>();
+    private List<VectorMatch> matches(String... ids) {
+        List<VectorMatch> list = new ArrayList<>();
         for (int i = 0; i < ids.length; i++) {
-            list.add(new EmbeddingMatch<>(0.9 - i * 0.01, ids[i], null, TextSegment.from("chunk-" + ids[i])));
+            list.add(new VectorMatch(ids[i], 0.9 - i * 0.01, VectorScoreType.COSINE,
+                    "chunk-" + ids[i], Map.of()));
         }
         return list;
     }

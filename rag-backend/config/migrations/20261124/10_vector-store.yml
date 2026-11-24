@@ -1,0 +1,15 @@
+# 2026-11-24 / 09
+# 检索 V0：向量/关键词后端选择 + chunk 事实层开关（新增键，默认值保持现有行为）
+# 目标文件：rag-app/src/main/resources/application-features.yml
+
+# VectorStoreProperties（前缀 wgh.vector）
+vector:
+  backend: pgvector              # pgvector（默认）/ memory（仅开发测试）
+  fact-layer-enabled: false      # 是否双写 wgh_kb_chunk 事实层
+  fact-backfill-batch-size: 200  # 事实层回填单批条数
+
+# KeywordSearchProperties（前缀 wgh.search）
+search:
+  backend: pgtrgm                # pgtrgm（默认）/ memory（仅开发测试）
+  fallback-backend: pgtrgm       # 主后端异常时的降级后端（留空表示不降级）
+  degrade-on-error: true         # 允许关键词路异常时降级

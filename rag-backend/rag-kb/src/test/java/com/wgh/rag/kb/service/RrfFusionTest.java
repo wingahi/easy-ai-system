@@ -40,6 +40,30 @@ class RrfFusionTest {
     }
 
     @Test
+    void weights_shift_ranking_without_changing_original_scores() {
+        List<EmbeddingMatch<TextSegment>> vector = List.of(m("A", 0.9, "甲"), m("B", 0.8, "乙"));
+        List<EmbeddingMatch<TextSegment>> keyword = List.of(m("B", 0.6, "乙"), m("C", 0.5, "丙"));
+
+        // 向量权重远大于关键词：A（仅向量）反超两路命中的 B
+        List<EmbeddingMatch<TextSegment>> fused = RrfFusion.fuse(
+                List.of(vector, keyword), List.of(10.0, 0.1), RrfFusion.DEFAULT_K, 10);
+
+        assertThat(fused).extracting(EmbeddingMatch::embeddingId).containsExactly("A", "B", "C");
+        assertThat(fused.get(0).score()).isEqualTo(0.9);
+    }
+
+    @Test
+    void weights_default_to_one_when_missing_or_invalid() {
+        List<EmbeddingMatch<TextSegment>> vector = List.of(m("A", 0.9, "甲"), m("B", 0.8, "乙"));
+        List<EmbeddingMatch<TextSegment>> keyword = List.of(m("B", 0.6, "乙"), m("C", 0.5, "丙"));
+
+        List<EmbeddingMatch<TextSegment>> fused = RrfFusion.fuse(
+                List.of(vector, keyword), List.of(0.0), RrfFusion.DEFAULT_K, 10);
+
+        assertThat(fused).extracting(EmbeddingMatch::embeddingId).containsExactly("B", "A", "C");
+    }
+
+    @Test
     void empty_keyword_list_degrades_to_vector_order() {
         List<EmbeddingMatch<TextSegment>> vector = List.of(m("A", 0.9, "甲"), m("B", 0.8, "乙"));
         List<EmbeddingMatch<TextSegment>> fused = RrfFusion.fuse(List.of(vector, List.of()), 10);

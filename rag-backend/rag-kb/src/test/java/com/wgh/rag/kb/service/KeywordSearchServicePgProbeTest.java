@@ -1,8 +1,8 @@
 package com.wgh.rag.kb.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import dev.langchain4j.data.segment.TextSegment;
-import dev.langchain4j.store.embedding.EmbeddingMatch;
+import com.wgh.rag.kb.port.KeywordFilter;
+import com.wgh.rag.kb.port.KeywordHit;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
@@ -39,7 +39,7 @@ class KeywordSearchServicePgProbeTest {
             conn.createStatement().execute("INSERT INTO " + table
                     + " VALUES ('00000000-0000-0000-0000-000000000001', '" + chunk + "', '{}'::jsonb)");
 
-            List<EmbeddingMatch<TextSegment>> matches = service.search(table, "混合检索与向量召回", 10);
+            List<KeywordHit> matches = service.search(table, "混合检索与向量召回", 10, KeywordFilter.none());
 
             assertThat(matches).isNotEmpty();
             assertThat(matches.get(0).score()).isGreaterThan(0.0);

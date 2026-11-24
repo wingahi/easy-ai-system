@@ -1,26 +1,31 @@
 package com.wgh.rag.kb.service;
 
 import com.wgh.rag.common.metrics.RagMetrics;
+import com.wgh.rag.common.security.TenantContext;
 import com.wgh.rag.config.property.RagProperties;
 import com.wgh.rag.kb.entity.KnowledgeBase;
 import com.wgh.rag.kb.mapper.KnowledgeBaseMapper;
+import com.wgh.rag.kb.port.KeywordHit;
+import com.wgh.rag.kb.port.vector.VectorFilter;
+import com.wgh.rag.kb.port.vector.VectorMatch;
+import com.wgh.rag.kb.port.vector.VectorScoreType;
 import com.wgh.rag.llm.factory.ModelCacheManager;
 import dev.langchain4j.data.embedding.Embedding;
-import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.model.embedding.EmbeddingModel;
 import dev.langchain4j.model.output.Response;
-import dev.langchain4j.store.embedding.EmbeddingMatch;
-import dev.langchain4j.store.embedding.EmbeddingSearchResult;
-import dev.langchain4j.store.embedding.pgvector.PgVectorEmbeddingStore;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -35,7 +40,6 @@ class RagRetrieveServiceRerankTest {
     private final KeywordSearchService keywordSearchService = Mockito.mock(KeywordSearchService.class);
     private final QueryTransformService queryTransformService = Mockito.mock(QueryTransformService.class);
     private final EmbeddingModel embeddingModel = Mockito.mock(EmbeddingModel.class);
-    private final PgVectorEmbeddingStore store = Mockito.mock(PgVectorEmbeddingStore.class);
 
     private RagRetrieveService service;
 
@@ -55,16 +59,43 @@ class RagRetrieveServiceRerankTest {
         when(kbMapper.selectById(1L)).thenReturn(kb);
         when(modelCacheManager.getEmbeddingModel(7L)).thenReturn(embeddingModel);
         when(embeddingModel.embed(anyString())).thenReturn(Response.from(new Embedding(new float[]{0.1f})));
-        Mockito.doReturn(store).when(vectorStoreService).createEmbeddingStore(eq("kb_1"), anyInt());
     }
 
     private void mockVectorMatches(int count) {
-        List<EmbeddingMatch<TextSegment>> matches = new ArrayList<>();
+        List<VectorMatch> matches = new ArrayList<>();
         for (int i = 0; i < count; i++) {
-            matches.add(new EmbeddingMatch<>(0.9 - i * 0.01, "id" + i, null,
-                    TextSegment.from("chunk" + i)));
+            matches.add(new VectorMatch("id" + i, 0.9 - i * 0.01, VectorScoreType.COSINE,
+                    "chunk" + i, Map.of()));
         }
-        when(store.search(any())).thenReturn(new EmbeddingSearchResult<>(matches));
+        Mockito.doReturn(matches).when(vectorStoreService)
+                .search(eq("kb_1"), any(), anyInt(), anyDouble(), any());
+    }
+
+    @AfterEach
+    void tearDown() {
+        TenantContext.clear();
+    }
+
+    @Test
+    void tenantContext_addsTenantAssertionToVectorSearch() {
+        mockVectorMatches(3);
+        TenantContext.set("t-acme", 1L, "u");
+        service.searchMultiple(List.of(1L), "q", RetrievalOptions.defaults());
+
+        ArgumentCaptor<VectorFilter> captor = ArgumentCaptor.forClass(VectorFilter.class);
+        verify(vectorStoreService).search(eq("kb_1"), any(), anyInt(), anyDouble(), captor.capture());
+        assertThat(captor.getValue().tenantId()).isEqualTo("t-acme");
+    }
+
+    @Test
+    void defaultTenant_keepsUnfilteredVectorBehavior() {
+        mockVectorMatches(3);
+        TenantContext.set(TenantContext.DEFAULT_TENANT, 1L, "u");
+        service.searchMultiple(List.of(1L), "q", RetrievalOptions.defaults());
+
+        ArgumentCaptor<VectorFilter> captor = ArgumentCaptor.forClass(VectorFilter.class);
+        verify(vectorStoreService).search(eq("kb_1"), any(), anyInt(), anyDouble(), captor.capture());
+        assertThat(captor.getValue().tenantId()).isNull();
     }
 
     @Test
@@ -116,9 +147,9 @@ class RagRetrieveServiceRerankTest {
     void hybrid_fuses_keyword_only_hits_and_marks_source() {
         mockVectorMatches(3);
         // 关键词路召回：chunk1（两路命中）+ kwOnly（仅关键词）
-        when(keywordSearchService.search(eq("kb_1"), eq("q"), anyInt())).thenReturn(List.of(
-                new EmbeddingMatch<>(0.6, "id1", null, TextSegment.from("chunk1")),
-                new EmbeddingMatch<>(0.55, "kw1", null, TextSegment.from("kwOnly"))));
+        when(keywordSearchService.search(eq("kb_1"), eq("q"), anyInt(), any(), any())).thenReturn(List.of(
+                new KeywordHit("id1", 0.6, VectorScoreType.KEYWORD, "chunk1", Map.of(), List.of()),
+                new KeywordHit("kw1", 0.55, VectorScoreType.KEYWORD, "kwOnly", Map.of(), List.of())));
 
         RetrieveResult result = service.searchMultiple(List.of(1L), "q", new RetrievalOptions(null, true));
 
@@ -134,7 +165,7 @@ class RagRetrieveServiceRerankTest {
     @Test
     void hybrid_with_empty_keyword_path_degrades_to_vector_order() {
         mockVectorMatches(3);
-        when(keywordSearchService.search(anyString(), anyString(), anyInt())).thenReturn(List.of());
+        when(keywordSearchService.search(anyString(), anyString(), anyInt(), any(), any())).thenReturn(List.of());
 
         RetrieveResult result = service.searchMultiple(List.of(1L), "q", new RetrievalOptions(null, true));
 
@@ -158,7 +189,8 @@ class RagRetrieveServiceRerankTest {
         Mockito.verify(embeddingModel).embed("q");
         Mockito.verify(embeddingModel).embed("v1");
         Mockito.verify(embeddingModel).embed("v2");
-        Mockito.verify(store, Mockito.times(3)).search(any());
+        Mockito.verify(vectorStoreService, Mockito.times(3))
+                .search(eq("kb_1"), any(), anyInt(), anyDouble(), any());
         assertThat(result.transformedQueries()).containsExactly("v1", "v2");
         assertThat(result.transformLatencyMs()).isEqualTo(12);
         assertThat(result.matches()).hasSize(2);

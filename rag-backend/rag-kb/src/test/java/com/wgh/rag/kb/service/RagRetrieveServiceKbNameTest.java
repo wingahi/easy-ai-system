@@ -11,8 +11,8 @@ import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.model.embedding.EmbeddingModel;
 import dev.langchain4j.model.output.Response;
 import dev.langchain4j.store.embedding.EmbeddingMatch;
-import dev.langchain4j.store.embedding.EmbeddingSearchResult;
-import dev.langchain4j.store.embedding.pgvector.PgVectorEmbeddingStore;
+import com.wgh.rag.kb.port.vector.VectorMatch;
+import com.wgh.rag.kb.port.vector.VectorScoreType;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -24,6 +24,7 @@ import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyDouble;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -38,8 +39,6 @@ class RagRetrieveServiceKbNameTest {
     private final ModelCacheManager modelCacheManager = Mockito.mock(ModelCacheManager.class);
     private final VectorStoreService vectorStoreService = Mockito.mock(VectorStoreService.class);
     private final EmbeddingModel embeddingModel = Mockito.mock(EmbeddingModel.class);
-    private final PgVectorEmbeddingStore store = Mockito.mock(PgVectorEmbeddingStore.class);
-
     private RagRetrieveService service;
 
     @BeforeEach
@@ -60,11 +59,16 @@ class RagRetrieveServiceKbNameTest {
         when(kbMapper.selectById(1L)).thenReturn(kb);
         when(modelCacheManager.getEmbeddingModel(7L)).thenReturn(embeddingModel);
         when(embeddingModel.embed(anyString())).thenReturn(Response.from(new Embedding(new float[]{0.1f})));
-        Mockito.doReturn(store).when(vectorStoreService).createEmbeddingStore(eq("kb_1"), anyInt());
     }
 
     private void mockVectorMatches(List<EmbeddingMatch<TextSegment>> matches) {
-        when(store.search(any())).thenReturn(new EmbeddingSearchResult<>(matches));
+        List<VectorMatch> vectorMatches = matches.stream()
+                .map(m -> new VectorMatch(m.embeddingId(), m.score(), VectorScoreType.COSINE,
+                        m.embedded() != null ? m.embedded().text() : null,
+                        m.embedded() != null ? m.embedded().metadata().toMap() : Map.of()))
+                .toList();
+        Mockito.doReturn(vectorMatches).when(vectorStoreService)
+                .search(eq("kb_1"), any(), anyInt(), anyDouble(), any());
     }
 
     @Test

@@ -32,14 +32,25 @@ public final class RrfFusion {
 
     public static List<EmbeddingMatch<TextSegment>> fuse(List<List<EmbeddingMatch<TextSegment>>> rankedLists,
                                                          int k, int limit) {
+        return fuse(rankedLists, null, k, limit);
+    }
+
+    /**
+     * 带权融合：weights 与 rankedLists 按下标对齐，缺省或非正值按 1.0 处理。
+     * <p>rrfScore(d) = Σ_路 weight_路 / (k + rank_路(d))；权重只影响排序，不改变原始分数语义。</p>
+     */
+    public static List<EmbeddingMatch<TextSegment>> fuse(List<List<EmbeddingMatch<TextSegment>>> rankedLists,
+                                                         List<Double> weights, int k, int limit) {
         Map<String, EmbeddingMatch<TextSegment>> best = new LinkedHashMap<>();
         Map<String, Double> rrfScores = new LinkedHashMap<>();
-        for (List<EmbeddingMatch<TextSegment>> ranked : rankedLists) {
+        for (int listIndex = 0; listIndex < rankedLists.size(); listIndex++) {
+            List<EmbeddingMatch<TextSegment>> ranked = rankedLists.get(listIndex);
             if (ranked == null) continue;
+            double weight = weightAt(weights, listIndex);
             for (int rank = 0; rank < ranked.size(); rank++) {
                 EmbeddingMatch<TextSegment> m = ranked.get(rank);
                 String key = keyOf(m);
-                rrfScores.merge(key, 1.0 / (k + rank + 1), Double::sum);
+                rrfScores.merge(key, weight / (k + rank + 1), Double::sum);
                 // 保留原始分数更高的一方作为代表（向量分数通常高于 similarity）
                 EmbeddingMatch<TextSegment> prev = best.get(key);
                 if (prev == null || score(prev) < score(m)) {
@@ -55,6 +66,12 @@ public final class RrfFusion {
             out.add(best.get(e.getKey()));
         }
         return out;
+    }
+
+    private static double weightAt(List<Double> weights, int index) {
+        if (weights == null || index < 0 || index >= weights.size()) return 1.0;
+        Double weight = weights.get(index);
+        return weight == null || weight <= 0 ? 1.0 : weight;
     }
 
     private static String keyOf(EmbeddingMatch<TextSegment> m) {

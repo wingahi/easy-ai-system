@@ -89,6 +89,37 @@ class RagMetricsTest {
     }
 
     @Test
+    @DisplayName("METRIC-06 检索后端延迟、fanout、表数量、索引构建与双读/降级指标")
+    void retrievalBackendAndQualityMetrics() {
+        metrics.recordBackendLatency("pgvector", "multi", TimeUnit.MILLISECONDS.toNanos(10));
+        metrics.recordFanoutKbCount(3);
+        metrics.registerVectorTableCount(() -> 12);
+        metrics.recordIndexBuild("pgtrgm", "wgh_kb_1", TimeUnit.MILLISECONDS.toNanos(200));
+        metrics.recordKeywordHit("pgtrgm", true);
+        metrics.recordKeywordHit("pgtrgm", false);
+        metrics.recordRetrievalDegraded("keyword-fallback");
+        metrics.recordRetrievalCompare("pgtrgm", "opensearch", false, false);
+
+        assertEquals(1, registry.get("wgh.retrieval.backend.latency")
+                .tag("backend", "pgvector").tag("kbMode", "multi").timer().count());
+        assertEquals(1, registry.get("wgh.retrieval.fanout.kb_count").summary().count());
+        assertEquals(3.0, registry.get("wgh.retrieval.fanout.kb_count").summary().totalAmount());
+        assertEquals(12.0, registry.get("wgh.retrieval.vector.table_count").gauge().value());
+        assertEquals(1, registry.get("wgh.retrieval.index.build.seconds")
+                .tag("backend", "pgtrgm").tag("collection", "wgh_kb_1").timer().count());
+        assertEquals(1.0, registry.get("wgh.retrieval.keyword.hit")
+                .tag("backend", "pgtrgm").tag("hit", "true").counter().count());
+        assertEquals(1.0, registry.get("wgh.retrieval.degraded")
+                .tag("reason", "keyword-fallback").counter().count());
+        assertEquals(1.0, registry.get("wgh.retrieval.compare.queries")
+                .tag("active", "pgtrgm").tag("compare", "opensearch").counter().count());
+        assertEquals(1.0, registry.get("wgh.retrieval.compare.mismatches")
+                .tag("active", "pgtrgm").tag("compare", "opensearch").tag("kind", "top1").counter().count());
+        assertEquals(1.0, registry.get("wgh.retrieval.compare.mismatches")
+                .tag("active", "pgtrgm").tag("compare", "opensearch").tag("kind", "set").counter().count());
+    }
+
+    @Test
     @DisplayName("METRIC-05 配额超限、限流拒绝、工作流结果与节点失败计数")
     void quotaReadLimitsAndWorkflow() {
         metrics.recordQuotaExceeded("chat");

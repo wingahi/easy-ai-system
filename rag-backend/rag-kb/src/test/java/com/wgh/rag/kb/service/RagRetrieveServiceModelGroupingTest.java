@@ -4,26 +4,25 @@ import com.wgh.rag.common.metrics.RagMetrics;
 import com.wgh.rag.config.property.RagProperties;
 import com.wgh.rag.kb.entity.KnowledgeBase;
 import com.wgh.rag.kb.mapper.KnowledgeBaseMapper;
+import com.wgh.rag.kb.port.vector.VectorMatch;
+import com.wgh.rag.kb.port.vector.VectorScoreType;
 import com.wgh.rag.llm.factory.ModelCacheManager;
 import dev.langchain4j.data.embedding.Embedding;
-import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.model.embedding.EmbeddingModel;
 import dev.langchain4j.model.output.Response;
-import dev.langchain4j.store.embedding.EmbeddingMatch;
-import dev.langchain4j.store.embedding.EmbeddingSearchRequest;
-import dev.langchain4j.store.embedding.EmbeddingSearchResult;
-import dev.langchain4j.store.embedding.pgvector.PgVectorEmbeddingStore;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyDouble;
+import static org.mockito.ArgumentMatchers.anyFloat;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -48,8 +47,6 @@ class RagRetrieveServiceModelGroupingTest {
 
     private final EmbeddingModel modelA = Mockito.mock(EmbeddingModel.class);
     private final EmbeddingModel modelB = Mockito.mock(EmbeddingModel.class);
-    private final PgVectorEmbeddingStore storeA = Mockito.mock(PgVectorEmbeddingStore.class);
-    private final PgVectorEmbeddingStore storeB = Mockito.mock(PgVectorEmbeddingStore.class);
 
     private RagRetrieveService service;
 
@@ -63,8 +60,6 @@ class RagRetrieveServiceModelGroupingTest {
 
         when(modelA.embed(anyString())).thenReturn(Response.from(new Embedding(new float[]{0.1f})));
         when(modelB.embed(anyString())).thenReturn(Response.from(new Embedding(new float[]{0.2f})));
-        Mockito.doReturn(storeA).when(vectorStoreService).createEmbeddingStore(eq("kb_a"), anyInt());
-        Mockito.doReturn(storeB).when(vectorStoreService).createEmbeddingStore(eq("kb_b"), anyInt());
     }
 
     @Test
@@ -74,8 +69,8 @@ class RagRetrieveServiceModelGroupingTest {
         mockKb(2L, "kb_b", 8L, 768);
         when(modelCacheManager.getEmbeddingModel(7L)).thenReturn(modelA);
         when(modelCacheManager.getEmbeddingModel(8L)).thenReturn(modelB);
-        when(storeA.search(any())).thenReturn(new EmbeddingSearchResult<>(matches("a1", "a2")));
-        when(storeB.search(any())).thenReturn(new EmbeddingSearchResult<>(matches("b1")));
+        mockVector("kb_a", matches("a1", "a2"));
+        mockVector("kb_b", matches("b1"));
 
         RetrieveResult result = service.searchMultiple(List.of(1L, 2L), "同一个问题", RetrievalOptions.defaults());
 
@@ -93,16 +88,12 @@ class RagRetrieveServiceModelGroupingTest {
     void searchParametersArePropagated() {
         mockKb(1L, "kb_a", 7L, 1536);
         when(modelCacheManager.getEmbeddingModel(7L)).thenReturn(modelA);
-        EmbeddingSearchResult<TextSegment> searchResult = new EmbeddingSearchResult<>(matches("a1"));
-        when(storeA.search(any())).thenReturn(searchResult);
+        mockVector("kb_a", matches("a1"));
 
         service.searchMultiple(List.of(1L), "q", RetrievalOptions.defaults());
 
-        ArgumentCaptor<EmbeddingSearchRequest> captor = ArgumentCaptor.forClass(EmbeddingSearchRequest.class);
-        verify(storeA).search(captor.capture());
-        assertThat(captor.getValue().maxResults()).isEqualTo(5);
-        assertThat(captor.getValue().minScore()).isEqualTo(0.4);
-        assertThat(captor.getValue().queryEmbedding()).isNotNull();
+        // 无增强时候选池 = topK=5；minScore 透传 0.4
+        verify(vectorStoreService).search(eq("kb_a"), any(), eq(5), eq(0.4), any());
     }
 
     @Test
@@ -112,12 +103,12 @@ class RagRetrieveServiceModelGroupingTest {
         mockKb(2L, "kb_b", 8L, 768);
         when(modelCacheManager.getEmbeddingModel(7L)).thenReturn(modelA);
         when(modelCacheManager.getEmbeddingModel(8L)).thenReturn(null);
-        when(storeA.search(any())).thenReturn(new EmbeddingSearchResult<>(matches("a1")));
+        mockVector("kb_a", matches("a1"));
 
         RetrieveResult result = service.searchMultiple(List.of(1L, 2L), "q", RetrievalOptions.defaults());
 
         verify(modelB, never()).embed(anyString());
-        verify(storeB, never()).search(any());
+        verify(vectorStoreService, never()).search(eq("kb_b"), any(), anyInt(), anyDouble(), any());
         assertThat(result.matches()).extracting(m -> m.embeddingId()).containsExactly("a1");
     }
 
@@ -133,7 +124,7 @@ class RagRetrieveServiceModelGroupingTest {
         RetrieveResult result = service.searchMultiple(List.of(1L), "q", RetrievalOptions.defaults());
 
         assertThat(result.matches()).isEmpty();
-        verify(vectorStoreService, never()).createEmbeddingStore(anyString(), anyInt());
+        verify(vectorStoreService, never()).search(anyString(), any(), anyInt(), anyDouble(), any());
     }
 
     @Test
@@ -141,7 +132,7 @@ class RagRetrieveServiceModelGroupingTest {
     void sameKbIdQueriedOnlyOnce() {
         mockKb(1L, "kb_a", 7L, 1536);
         when(modelCacheManager.getEmbeddingModel(7L)).thenReturn(modelA);
-        when(storeA.search(any())).thenReturn(new EmbeddingSearchResult<>(matches("a1")));
+        mockVector("kb_a", matches("a1"));
 
         service.searchMultiple(List.of(1L), "q", RetrievalOptions.defaults());
 
@@ -170,10 +161,16 @@ class RagRetrieveServiceModelGroupingTest {
         when(kbMapper.selectById(id)).thenReturn(kb);
     }
 
-    private List<EmbeddingMatch<TextSegment>> matches(String... ids) {
-        List<EmbeddingMatch<TextSegment>> list = new ArrayList<>();
+    private void mockVector(String collection, List<VectorMatch> matches) {
+        Mockito.doReturn(matches).when(vectorStoreService)
+                .search(eq(collection), any(), anyInt(), anyDouble(), any());
+    }
+
+    private List<VectorMatch> matches(String... ids) {
+        List<VectorMatch> list = new ArrayList<>();
         for (int i = 0; i < ids.length; i++) {
-            list.add(new EmbeddingMatch<>(0.9 - i * 0.01, ids[i], null, TextSegment.from("chunk-" + ids[i])));
+            list.add(new VectorMatch(ids[i], 0.9 - i * 0.01, VectorScoreType.COSINE,
+                    "chunk-" + ids[i], Map.of()));
         }
         return list;
     }

@@ -1,8 +1,8 @@
 package com.wgh.rag.kb.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import dev.langchain4j.data.segment.TextSegment;
-import dev.langchain4j.store.embedding.EmbeddingMatch;
+import com.wgh.rag.kb.port.KeywordFilter;
+import com.wgh.rag.kb.port.KeywordHit;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -16,6 +16,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -55,11 +56,12 @@ class KeywordSearchServiceTest {
         when(resultSet.getString("embedding_id")).thenReturn("id-1");
         when(resultSet.getDouble("score")).thenReturn(0.72);
 
-        List<EmbeddingMatch<TextSegment>> matches = service.search("wgh_kb_123", "混合检索", 10);
+        List<KeywordHit> hits = service.search("wgh_kb_123", "混合检索", 10, KeywordFilter.none());
 
-        assertThat(matches).hasSize(1);
-        assertThat(matches.get(0).score()).isEqualTo(0.72);
-        assertThat(matches.get(0).embedded().text()).isEqualTo("很长的知识库段落……");
+        assertThat(hits).hasSize(1);
+        assertThat(hits.get(0).score()).isEqualTo(0.72);
+        assertThat(hits.get(0).text()).isEqualTo("很长的知识库段落……");
+        assertThat(hits.get(0).highlights()).isEmpty();
     }
 
     @Test
@@ -67,7 +69,7 @@ class KeywordSearchServiceTest {
     void sqlUsesWordSimilarityWithExpectedParameterOrder() throws SQLException {
         when(resultSet.next()).thenReturn(false);
 
-        service.search("wgh_kb_123", "混合检索", 10);
+        service.search("wgh_kb_123", "混合检索", 10, KeywordFilter.none());
 
         ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
         verify(connection).prepareStatement(sqlCaptor.capture());
@@ -77,10 +79,26 @@ class KeywordSearchServiceTest {
                 .doesNotContain("similarity(text, ?)")
                 .doesNotContain("text % ?");
         // 1/2 为 query（SELECT 分数与 WHERE 谓词），3 为阈值，4 为 topN
-        verify(preparedStatement).setString(1, "混合检索");
-        verify(preparedStatement).setString(2, "混合检索");
-        verify(preparedStatement).setDouble(3, 0.5);
-        verify(preparedStatement).setInt(4, 10);
+        verify(preparedStatement).setObject(1, "混合检索");
+        verify(preparedStatement).setObject(2, "混合检索");
+        verify(preparedStatement).setObject(3, 0.5);
+        verify(preparedStatement).setObject(4, 10);
+    }
+
+    @Test
+    @DisplayName("过滤条件翻译为 metadata JSONB 谓词，且不改变主谓词顺序")
+    void filterIsTranslatedIntoMetadataPredicate() throws SQLException {
+        when(resultSet.next()).thenReturn(false);
+
+        service.search("wgh_kb_123", "混合检索", 10, new KeywordFilter("7", Map.of("fileId", "42")));
+
+        ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
+        verify(connection).prepareStatement(sqlCaptor.capture());
+        assertThat(sqlCaptor.getValue()).contains("metadata->>'tenantId' = ?")
+                .contains("metadata->>'fileId' = ?");
+        verify(preparedStatement).setObject(4, "7");
+        verify(preparedStatement).setObject(5, "42");
+        verify(preparedStatement).setObject(6, 10);
     }
 
     @Test
@@ -88,9 +106,9 @@ class KeywordSearchServiceTest {
     void queryFailure_returnsEmptyWithoutThrow() throws SQLException {
         when(preparedStatement.executeQuery()).thenThrow(new SQLException("function word_similarity does not exist"));
 
-        List<EmbeddingMatch<TextSegment>> matches = service.search("wgh_kb_123", "混合检索", 10);
+        List<KeywordHit> hits = service.search("wgh_kb_123", "混合检索", 10, KeywordFilter.none());
 
-        assertThat(matches).isEmpty();
+        assertThat(hits).isEmpty();
     }
 
     @Test
@@ -98,17 +116,17 @@ class KeywordSearchServiceTest {
     void noHit_returnsEmpty() throws SQLException {
         when(resultSet.next()).thenReturn(false);
 
-        List<EmbeddingMatch<TextSegment>> matches = service.search("wgh_kb_123", "混合检索", 10);
+        List<KeywordHit> hits = service.search("wgh_kb_123", "混合检索", 10, KeywordFilter.none());
 
-        assertThat(matches).isEmpty();
+        assertThat(hits).isEmpty();
         verify(resultSet, never()).getString("text");
     }
 
     @Test
     @DisplayName("非法表名/空查询：不访问数据库")
     void illegalInput_neverQueriesDatabase() throws SQLException {
-        assertThat(service.search("bad;drop table", "q", 10)).isEmpty();
-        assertThat(service.search("wgh_kb_123", "  ", 10)).isEmpty();
+        assertThat(service.search("bad;drop table", "q", 10, KeywordFilter.none())).isEmpty();
+        assertThat(service.search("wgh_kb_123", "  ", 10, KeywordFilter.none())).isEmpty();
         verify(dataSource, never()).getConnection();
     }
 }

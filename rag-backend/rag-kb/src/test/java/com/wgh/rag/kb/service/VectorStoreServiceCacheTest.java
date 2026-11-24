@@ -46,7 +46,8 @@ class VectorStoreServiceCacheTest {
         when(dataSource.getConnection()).thenReturn(connection);
         when(connection.createStatement()).thenReturn(statement);
 
-        service = new VectorStoreService(dataSource, props, Mockito.mock(ModelCacheManager.class));
+        service = new VectorStoreService(dataSource, props, Mockito.mock(ModelCacheManager.class),
+                new com.fasterxml.jackson.databind.ObjectMapper());
     }
 
     @Test
