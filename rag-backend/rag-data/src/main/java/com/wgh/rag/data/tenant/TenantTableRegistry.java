@@ -57,11 +57,12 @@ public final class TenantTableRegistry {
             "wgh_audit_log",
             "wgh_user_quota_config",
             "wgh_quota_usage",
-            "wgh_quota_charge",
-            // 提示词与工具（租户可自建）
-            "wgh_prompt_template",
-            "wgh_tool"
+            "wgh_quota_charge"
     );
+    // 提示词与工具（wgh_prompt_template / wgh_tool）刻意不在此清单：
+    // 它们需要同时可见 scope='platform' 的平台共享行，插件生成的
+    // 「tenant_id = ?」会挡住平台行；改由服务层显式条件
+    // 「(tenant_id = ? OR scope = 'platform')」控制（见 PromptTemplateService / ToolConfigService）。
 
     private TenantTableRegistry() {
     }

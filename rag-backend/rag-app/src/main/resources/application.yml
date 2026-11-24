@@ -78,6 +78,14 @@ mybatis-plus:
 
 # ===== WGH RAG 自定义配置 =====
 wgh:
+  # ===== 平台级全租户扫描（连接器同步、对账、续跑扫描、配额退款、各类清理共用） =====
+  # 维护作业按 wgh_tenant 枚举租户逐户执行；单租户失败只告警不中断整轮。
+  platform-scan:
+    enabled: ${WGH_PLATFORM_SCAN_ENABLED:true}
+    tenant-concurrency: ${WGH_PLATFORM_SCAN_CONCURRENCY:1}   # 1=串行
+    max-tenants-per-round: ${WGH_PLATFORM_SCAN_MAX_TENANTS:200}
+    statement-timeout: ${WGH_PLATFORM_SCAN_STATEMENT_TIMEOUT:5s}
+
   # ===== 统一异步执行器（替代裸 new Thread；有界队列 + 显式拒绝） =====
   async:
     executor:
@@ -109,6 +117,15 @@ wgh:
     # true=MyBatis 插件自动为租户表追加 tenant_id 条件（依赖 06_tenant_data_plane.sql 已执行）；
     # 仅在租户列迁移未完成、需要紧急回滚时置为 false。
     sql-isolation-enabled: ${WGH_TENANT_SQL_ISOLATION:true}
+    # true=事务开始时对连接下发 set_config('app.tenant_id', ?, true)（RLS 生效前提）；
+    # 关闭仅用于故障回滚，关闭后 RLS 会拒绝所有带策略的租户表访问。
+    guc-enabled: ${WGH_TENANT_GUC_ENABLED:true}
+    # true=免登录（wgh_preauth）与调度（wgh_scheduler）链路在独立事务内 SET LOCAL ROLE；
+    # 连接用户仍是应用角色，需要该角色在这两个专用角色上具备成员关系（见 09_rls_roles.sql）。
+    role-switch-enabled: ${WGH_TENANT_ROLE_SWITCH:true}
+    # true=启动自检发现 superuser / BYPASSRLS / INHERIT 时直接启动失败。
+    # dev 切换 wgh_app 并验证通过后置为 true；当前保持 false 只告警。
+    database-role-check-enforced: ${WGH_TENANT_DB_ROLE_ENFORCED:false}
 
   # ===== 外部 OIDC 资源服务器（本系统只验签，不签发 token） =====
   # token 由上游 IdP 签发；issuer / audience / jwks-uri 必配（jwks-uri 留空则自动发现）。

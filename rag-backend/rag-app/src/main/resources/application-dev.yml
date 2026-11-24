@@ -13,8 +13,9 @@ spring:
 
   datasource:
     url: jdbc:postgresql://localhost:5432/${WGH_DB_NAME:wgh_rag_dev}?currentSchema=public&stringtype=unspecified
-    username: ${WGH_DB_USERNAME:postgres}
-    password: ${WGH_DB_PASSWORD:123456}
+    # 阶段 B：dev 以非超级用户 wgh_app 连接，RLS 才对应用生效；口令不写入本文件，由环境变量注入
+    username: ${WGH_DB_USERNAME:wgh_app}
+    password: ${WGH_DB_PASSWORD:}
 
 mybatis-plus:
   configuration:
@@ -23,8 +24,13 @@ mybatis-plus:
 wgh:
   pgvector:
     default-dimension: 1536
+    # dev 以 wgh_app 连接后无法在 public 建表（除非显式授予 schema CREATE），
+    # 每知识库向量表仍由应用在首次建库时创建；生产应收紧为 false 并由特权路径预建
     create-table: true
-    skip-create-vector-extension: false     # dev 环境自动 CREATE EXTENSION vector
+    # dev 使用 pgvector trusted 派生镜像（vector.control 追加 trusted = true），
+    # wgh_app 持库级 CREATE，可在扩展缺失时自愈执行 CREATE EXTENSION；
+    # 生产仍由 DBA 预建扩展（WGH_PGVECTOR_SKIP_EXT 控制）
+    skip-create-vector-extension: false
     use-index: false
     connect-on-startup: true
     allow-fallback-to-in-memory: true         # pgvector 连不上不阻断启动
